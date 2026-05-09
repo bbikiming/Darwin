@@ -11,6 +11,8 @@ use forge_core::dynamixel::Bus;
 use forge_core::joint::JointId;
 use forge_core::motion::{parse_mtn, write_mtn, Motion};
 use forge_core::serial::PosixSerial;
+use forge_core::strategy::{StrategyInput, StrategyState};
+use forge_core::vision::{detect_blob, BlobResult, Frame, HsvRange, Pixel};
 use forge_core::walk::{WalkCommand, WalkEngine};
 
 #[derive(Parser, Debug)]
@@ -100,6 +102,13 @@ enum Command {
         /// 시뮬레이션 사이클 수.
         #[arg(short, long, default_value_t = 1)]
         cycles: u32,
+    },
+
+    /// 전략 FSM 한 사이클 시뮬레이션 (가짜 frame).
+    Strategy {
+        /// "found" | "none".
+        #[arg(short, long, default_value = "found")]
+        ball: String,
     },
 }
 
@@ -286,6 +295,48 @@ fn main() -> anyhow::Result<()> {
         Command::Motion { action } => handle_motion(action)?,
 
         Command::Walk { x, y, a, cycles } => handle_walk(x, y, a, cycles)?,
+
+        Command::Strategy { ball } => handle_strategy(&ball)?,
+    }
+    Ok(())
+}
+
+fn handle_strategy(ball_arg: &str) -> anyhow::Result<()> {
+    // 가짜 frame
+    let frame = if ball_arg == "found" {
+        let mut f = Frame::solid(64, 48, Pixel::rgb(0, 0, 0));
+        // 큰 주황 영역 (충분히 가까이 보이는 공)
+        for y in 10..38 {
+            for x in 20..60 {
+                f.set_pixel(x, y, Pixel::rgb(255, 100, 0));
+            }
+        }
+        f
+    } else {
+        Frame::solid(64, 48, Pixel::rgb(0, 0, 0))
+    };
+
+    let ball = detect_blob(&frame, HsvRange::ROBOCUP_BALL);
+    println!("== Strategy FSM 시뮬레이션 ==");
+    println!(
+        "  ball: pixel_count={}  centroid=({:.1},{:.1})",
+        ball.pixel_count, ball.centroid_x, ball.centroid_y
+    );
+
+    let mut state = StrategyState::Idle;
+    for step in 0..6 {
+        let input = StrategyInput {
+            ball: if step == 0 { BlobResult::NONE } else { ball },
+            since_kick_ms: if matches!(state, StrategyState::Cooldown) {
+                2000
+            } else {
+                0
+            },
+            abort: false,
+        };
+        let next = state.next(input);
+        println!("  step {}  {:20} → {}", step, state.label(), next.label());
+        state = next;
     }
     Ok(())
 }

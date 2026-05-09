@@ -26,6 +26,8 @@ pub mod error;
 pub mod joint;
 pub mod motion;
 pub mod serial;
+pub mod strategy;
+pub mod vision;
 pub mod walk;
 
 pub use error::Error;
