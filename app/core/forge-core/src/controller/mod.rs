@@ -3,6 +3,9 @@
 //! 두 보드는 펌웨어 ABI 호환이라 같은 enum으로 다루되, 분기 사례에서
 //! `model()`로 구분.
 
+mod cm;
+pub use cm::{BoardSnapshot, CmController};
+
 use serde::{Deserialize, Serialize};
 
 /// 어느 sub-controller PCB냐.

@@ -25,4 +25,6 @@ pub trait SerialPort: Send {
 }
 
 mod loopback;
+mod posix;
 pub use loopback::LoopbackBus;
+pub use posix::PosixSerial;

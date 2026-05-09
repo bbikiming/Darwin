@@ -3,7 +3,9 @@
 //! 출처: `docs/protocols/dynamixel-1.0.md`.
 //! ROBOTIS-GIT/DynamixelSDK (Apache 2.0)을 1차 참조.
 
+pub mod bus;
 pub mod v1;
 pub mod v2;
 
+pub use bus::Bus;
 pub use v1::{Codec, CodecError, ErrorFlags, Instruction, InstructionPacket, StatusPacket};
