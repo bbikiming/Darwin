@@ -65,6 +65,11 @@ serial-traces/
 *.swp
 *~
 
+# Rust / Cargo
+target/
+Cargo.lock.bak
+**/*.rs.bk
+
 # Python (for any utility scripts)
 __pycache__/
 *.py[cod]

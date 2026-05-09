@@ -1,0 +1,23 @@
+[package]
+name = "forge-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core library for DarwinForge — Dynamixel Protocol 1.0 + control loops for ROBOTIS DARwIn-OP / OP2."
+
+[lib]
+name = "forge_core"
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+thiserror.workspace = true
+anyhow.workspace    = true
+serde.workspace     = true
+serde_json.workspace = true
+tracing.workspace   = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
