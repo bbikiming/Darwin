@@ -9,6 +9,7 @@ use forge_core::control::JointController;
 use forge_core::controller::CmController;
 use forge_core::dynamixel::Bus;
 use forge_core::joint::JointId;
+use forge_core::motion::{parse_mtn, write_mtn, Motion};
 use forge_core::serial::PosixSerial;
 
 #[derive(Parser, Debug)]
@@ -76,6 +77,40 @@ enum Command {
     Joint {
         #[command(subcommand)]
         action: JointAction,
+    },
+
+    /// 모션 import/export (.mtn ↔ JSON).
+    Motion {
+        #[command(subcommand)]
+        action: MotionAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MotionAction {
+    /// `.mtn` → `.json` 변환.
+    Import {
+        /// 입력 .mtn 경로.
+        input: std::path::PathBuf,
+        /// 출력 .json 경로.
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+        /// 대상 로봇 generation (op | op2).
+        #[arg(short, long, default_value = "op2")]
+        generation: String,
+    },
+    /// `.json` → `.mtn` 변환.
+    Export {
+        /// 입력 .json 경로.
+        input: std::path::PathBuf,
+        /// 출력 .mtn 경로.
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+    },
+    /// `.mtn` 또는 `.json`을 읽어 페이지 요약만 출력.
+    Inspect {
+        /// 입력 파일.
+        input: std::path::PathBuf,
     },
 }
 
@@ -230,6 +265,71 @@ fn main() -> anyhow::Result<()> {
         }
 
         Command::Joint { action } => handle_joint(action)?,
+
+        Command::Motion { action } => handle_motion(action)?,
+    }
+    Ok(())
+}
+
+fn handle_motion(action: MotionAction) -> anyhow::Result<()> {
+    use std::fs;
+    match action {
+        MotionAction::Import {
+            input,
+            output,
+            generation,
+        } => {
+            let text = fs::read_to_string(&input)?;
+            let mut motion = parse_mtn(&text)?;
+            motion.robot_generation = generation;
+            let json = motion.to_json_pretty()?;
+            let out_path = output.unwrap_or_else(|| input.with_extension("json"));
+            fs::write(&out_path, json)?;
+            println!(
+                "imported {} → {} ({} pages)",
+                input.display(),
+                out_path.display(),
+                motion.pages.len()
+            );
+        }
+        MotionAction::Export { input, output } => {
+            let text = fs::read_to_string(&input)?;
+            let motion = Motion::from_json(&text)?;
+            let mtn = write_mtn(&motion);
+            let out_path = output.unwrap_or_else(|| input.with_extension("mtn"));
+            fs::write(&out_path, mtn)?;
+            println!(
+                "exported {} → {} ({} pages)",
+                input.display(),
+                out_path.display(),
+                motion.pages.len()
+            );
+        }
+        MotionAction::Inspect { input } => {
+            let text = fs::read_to_string(&input)?;
+            let motion = if input.extension().and_then(|e| e.to_str()) == Some("json") {
+                Motion::from_json(&text)?
+            } else {
+                parse_mtn(&text)?
+            };
+            println!("== {} ==", input.display());
+            println!("  version            : {}", motion.version);
+            println!("  robot_generation   : {}", motion.robot_generation);
+            println!("  pages              : {}", motion.pages.len());
+            println!("---");
+            for p in &motion.pages {
+                println!(
+                    "  page id={:3} name={:20} steps={} next={} exit={} repeat={} speed={}",
+                    p.id,
+                    p.name,
+                    p.steps.len(),
+                    p.next_page,
+                    p.exit_page,
+                    p.repeat,
+                    p.speed
+                );
+            }
+        }
     }
     Ok(())
 }

@@ -24,6 +24,7 @@ pub mod controller;
 pub mod dynamixel;
 pub mod error;
 pub mod joint;
+pub mod motion;
 pub mod serial;
 
 pub use error::Error;
