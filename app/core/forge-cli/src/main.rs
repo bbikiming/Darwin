@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use forge_core::control::JointController;
 use forge_core::controller::CmController;
 use forge_core::dynamixel::Bus;
 use forge_core::joint::JointId;
@@ -70,6 +71,58 @@ enum Command {
 
     /// 캐논 20-DOF 관절 매핑 표 출력.
     ListJoints,
+
+    /// 관절 제어 (set/state/torque/estop).
+    Joint {
+        #[command(subcommand)]
+        action: JointAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum JointAction {
+    /// 한 관절의 goal position 설정 (raw 0..4095, default limits로 clamp).
+    Set {
+        /// 직렬 포트.
+        #[arg(short, long)]
+        port: String,
+        /// JointId raw u8 (1..6, 11..20).
+        #[arg(short, long)]
+        id: u8,
+        /// goal position raw 0..4095.
+        position: u16,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
+    },
+    /// 한 관절의 현재 상태 출력.
+    State {
+        #[arg(short, long)]
+        port: String,
+        #[arg(short, long)]
+        id: u8,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
+    },
+    /// 한 관절 또는 전체 관절의 토크 enable/disable.
+    Torque {
+        #[arg(short, long)]
+        port: String,
+        /// "all" 또는 ID 숫자.
+        #[arg(short, long)]
+        target: String,
+        /// "on" 또는 "off".
+        #[arg(short = 'e', long)]
+        enable: String,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
+    },
+    /// 비상 정지 — 모든 관절 토크 OFF (소프트 e-stop, ⌘⇧. 대응).
+    Estop {
+        #[arg(short, long)]
+        port: String,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
+    },
 }
 
 fn parse_range(s: &str) -> anyhow::Result<std::ops::RangeInclusive<u8>> {
@@ -174,6 +227,84 @@ fn main() -> anyhow::Result<()> {
             for j in JointId::ALL {
                 println!("{}\t{:?}\t\t{:?}", j as u8, j, j.body_part());
             }
+        }
+
+        Command::Joint { action } => handle_joint(action)?,
+    }
+    Ok(())
+}
+
+fn handle_joint(action: JointAction) -> anyhow::Result<()> {
+    match action {
+        JointAction::Set {
+            port,
+            id,
+            position,
+            baud,
+        } => {
+            let joint = JointId::from_byte(id)
+                .ok_or_else(|| anyhow::anyhow!("invalid JointId raw {}", id))?;
+            let p = PosixSerial::open(&port, baud)
+                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
+            let mut bus = Bus::new(p);
+            let mut jc = JointController::new(&mut bus);
+            let clamped = jc.set_position(joint, position)?;
+            println!(
+                "SET {:?} (ID {}): goal_position={} (clamped from {})",
+                joint, id, clamped, position
+            );
+        }
+        JointAction::State { port, id, baud } => {
+            let joint = JointId::from_byte(id)
+                .ok_or_else(|| anyhow::anyhow!("invalid JointId raw {}", id))?;
+            let p = PosixSerial::open(&port, baud)
+                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
+            let mut bus = Bus::new(p);
+            let mut jc = JointController::new(&mut bus);
+            let s = jc.read_state(joint)?;
+            println!("== {:?} (ID {}) 상태 ==", joint, id);
+            println!("  Goal Position    : {}", s.goal_position);
+            println!("  Present Position : {}", s.present_position);
+            println!("  Present Speed    : {}", s.present_speed);
+            println!("  Present Load     : {}", s.present_load);
+            println!("  Voltage          : {:.1} V", s.voltage_volts());
+            println!("  Temperature      : {} °C", s.present_temperature);
+            println!("  Torque Enabled   : {}", s.torque_enabled);
+        }
+        JointAction::Torque {
+            port,
+            target,
+            enable,
+            baud,
+        } => {
+            let on = match enable.as_str() {
+                "on" | "true" | "1" => true,
+                "off" | "false" | "0" => false,
+                _ => anyhow::bail!("--enable는 on/off"),
+            };
+            let p = PosixSerial::open(&port, baud)
+                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
+            let mut bus = Bus::new(p);
+            let mut jc = JointController::new(&mut bus);
+            if target == "all" {
+                let all: Vec<JointId> = JointId::ALL.to_vec();
+                jc.set_torque_many(&all, on)?;
+                println!("TORQUE all = {}", on);
+            } else {
+                let raw: u8 = target.parse()?;
+                let joint = JointId::from_byte(raw)
+                    .ok_or_else(|| anyhow::anyhow!("invalid JointId raw {}", raw))?;
+                jc.set_torque(joint, on)?;
+                println!("TORQUE {:?} (ID {}) = {}", joint, raw, on);
+            }
+        }
+        JointAction::Estop { port, baud } => {
+            let p = PosixSerial::open(&port, baud)
+                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
+            let mut bus = Bus::new(p);
+            let mut jc = JointController::new(&mut bus);
+            jc.emergency_stop()?;
+            println!("⚠️  E-STOP triggered — all torque OFF");
         }
     }
     Ok(())

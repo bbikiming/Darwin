@@ -1,4 +1,7 @@
-//! 20-DOF 관절 ID 매핑 — `docs/architecture/joint-conventions.md`.
+//! 20-DOF 관절 ID 매핑 + 상태 — `docs/architecture/joint-conventions.md`.
+
+mod state;
+pub use state::{JointLimits, JointState};
 
 use serde::{Deserialize, Serialize};
 
