@@ -1,0 +1,77 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+*.xcworkspace/xcuserdata/
+*.xcworkspace/contents.xcworkspacedata.swp
+xcuserdata/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+timeline.xctimeline
+playground.xcworkspace
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+Packages/
+*.xcodeproj
+
+# CocoaPods
+Pods/
+*.pcm
+
+# Carthage
+Carthage/Build/
+Carthage/Checkouts
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# Logs / databases produced at runtime
+*.log
+*.sqlite
+*.sqlite-journal
+logs/
+
+# Robot capture artifacts (per-machine)
+captures/
+firmware-backups/
+serial-traces/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python (for any utility scripts)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets
+.env
+.env.local
+secrets/

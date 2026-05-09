@@ -1,0 +1,17 @@
+* text=auto eol=lf
+
+*.swift  diff=swift
+*.m      diff=objc
+*.mm     diff=objc
+
+# Xcode binary plists
+*.pbxproj merge=union -text
+*.xcworkspacedata -text
+
+# Binary blobs that should not be diffed
+*.png   binary
+*.jpg   binary
+*.pdf   binary
+*.zip   binary
+*.bin   binary
+*.firm  binary
