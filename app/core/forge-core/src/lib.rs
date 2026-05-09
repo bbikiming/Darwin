@@ -26,5 +26,6 @@ pub mod error;
 pub mod joint;
 pub mod motion;
 pub mod serial;
+pub mod walk;
 
 pub use error::Error;

@@ -11,6 +11,7 @@ use forge_core::dynamixel::Bus;
 use forge_core::joint::JointId;
 use forge_core::motion::{parse_mtn, write_mtn, Motion};
 use forge_core::serial::PosixSerial;
+use forge_core::walk::{WalkCommand, WalkEngine};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -83,6 +84,22 @@ enum Command {
     Motion {
         #[command(subcommand)]
         action: MotionAction,
+    },
+
+    /// 워크 엔진 시뮬레이션 (실기기 명령 X — Mac에서 향후 활성화).
+    Walk {
+        /// 전후 보폭 (m / cycle).
+        #[arg(short, long, default_value_t = 0.0)]
+        x: f64,
+        /// 좌우 보폭 (m / cycle).
+        #[arg(short, long, default_value_t = 0.0)]
+        y: f64,
+        /// 회전 (rad / cycle).
+        #[arg(short, long, default_value_t = 0.0)]
+        a: f64,
+        /// 시뮬레이션 사이클 수.
+        #[arg(short, long, default_value_t = 1)]
+        cycles: u32,
     },
 }
 
@@ -267,6 +284,45 @@ fn main() -> anyhow::Result<()> {
         Command::Joint { action } => handle_joint(action)?,
 
         Command::Motion { action } => handle_motion(action)?,
+
+        Command::Walk { x, y, a, cycles } => handle_walk(x, y, a, cycles)?,
+    }
+    Ok(())
+}
+
+fn handle_walk(x: f64, y: f64, a: f64, cycles: u32) -> anyhow::Result<()> {
+    let mut e = WalkEngine::new();
+    e.command = WalkCommand {
+        x_amplitude: x,
+        y_amplitude: y,
+        a_amplitude: a,
+        enabled: true,
+    };
+    let dt = Duration::from_millis(100);
+    println!("== walk 시뮬레이션 (실기기 명령 안 보냄) ==");
+    println!("  command: x={} y={} a={} (m/cycle, rad/cycle)", x, y, a);
+    println!(
+        "  period: {} ms, cycles: {}",
+        e.params.period_time_ms, cycles
+    );
+    println!("  tick   phase    left(x,y,z)            right(x,y,z)");
+    let total_ticks = (e.params.period_time_ms / 100.0).ceil() as u32 * cycles;
+    for tick in 0..total_ticks {
+        let f = e.foot_targets();
+        if tick % 2 == 0 {
+            println!(
+                "  {:4}  {:?}  ({:+.3} {:+.3} {:+.3})  ({:+.3} {:+.3} {:+.3})",
+                tick,
+                e.phase(),
+                f.left[0],
+                f.left[1],
+                f.left[2],
+                f.right[0],
+                f.right[1],
+                f.right[2]
+            );
+        }
+        e.tick(dt);
     }
     Ok(())
 }
