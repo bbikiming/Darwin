@@ -278,6 +278,61 @@ KUKA LBR iiwa는 7축 모두 토크 센서 내장이라 직접 측정. UR은 베
 
 ---
 
+---
+
+## 9) Mitsubishi RT ToolBox3 — 일본 보수적 패턴
+
+MELFA 시리즈 산업 로봇 (FR / CR 시리즈) 용. Windows 데스크탑.
+
+```
+┌─────────────────────────────────────────────────┐
+│ File  Edit  View  Workspace  Online  Tool       │
+├──────────────┬───────────────┬──────────────────┤
+│ Project Tree │ MELFA-BASIC V │ Variables        │
+│              │ Editor        │                  │
+│ - Programs   │               │ J1: 0.0          │
+│   - 1.prg    │ 10 Mov P1     │ J2: 30.0         │
+│   - 2.prg    │ 20 Wait 0.5   │ ...              │
+│              │ 30 Mov P2     │                  │
+│ - Position   │               │                  │
+│   - P1       │               │                  │
+│   - P2       │               │                  │
+└──────────────┴───────────────┴──────────────────┘
+```
+
+- **MELFA-BASIC V** — BASIC 유사 언어. 줄 번호 기반 (10, 20, 30 ...).
+- **위치 변수 (P1, P2)** — Joint 또는 Cartesian.
+- **Spline / Pallet** — 사전 정의 함수.
+
+UI는 기능적이지만 **2010년대 초반 윈도우 디자인** 그대로 유지. 일본 자동차 부품 라인에서 우세 (Toyota / Denso 협력사).
+
+(출처: Mitsubishi RT ToolBox3 — https://www.mitsubishielectric.com/fa/products/rbt/robot/pmerit/rttoolbox/ ; MELFA-BASIC V Reference — Mitsubishi 회원 가입 필요. **확인 필요**: 공개 직링크.)
+
+> ★ DarwinForge 적용:
+> - **줄 번호 + 위치 변수 패턴**은 LLM 친화적이지 않음 (자연어 → 줄 번호 변환 어색). 차용 X. 단, "위치 변수 라이브러리" 개념은 우리 SwiftData `Pose` 엔티티와 동등 — 이미 채택.
+
+---
+
+## 10) Liquid Glass / Apple HIG 와의 통합 메모
+
+DarwinForge는 macOS 26 Tahoe + Liquid Glass 디자인 시스템 채택. 산업 cobot UI와 결정적 차이:
+
+| 영역 | 산업 cobot | DarwinForge (macOS) |
+|------|-----------|---------------------|
+| 배경 | 펜던트 = 단색 다크/라이트 | Liquid Glass material 반투명 |
+| E-Stop | 물리 머쉬룸 버튼 | SwiftUI Button + Glass material 금지 (솔리드 빨강 + 노랑) |
+| 폰트 | 산업용 sans (Helvetica 등) | SF Pro |
+| 한국어 | 영문 위주 | 토스 8원칙 + 해요체 |
+
+★ 핵심 원칙: **안전 critical UI 요소 (E-Stop / Mode / Battery) 는 Liquid Glass 절대 사용 금지** — 솔리드 색상 + 강한 contrast 만. 이미 우리 `DESIGN_CONVERSATIONAL_UX.md` 에 명시.
+
+(출처: Apple HIG — https://developer.apple.com/design/human-interface-guidelines/ ; macOS 26 Tahoe Liquid Glass — https://developer.apple.com/macos/whats-new/ ; 토스 디자인 시스템 — https://toss.tech/article/tossface-design)
+
+> ★ DarwinForge 적용:
+> - 이미 채택. **E-Stop 솔리드 #FF3B30 + 노랑 외곽** 유지.
+
+---
+
 ## 학술 인용
 
 - [AlbuSchaffer 2007] Albu-Schäffer et al. "The DLR lightweight robot — design and control concepts for robots in human environments", *Industrial Robot*. https://doi.org/10.1108/01439910710749653

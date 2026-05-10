@@ -253,6 +253,53 @@ DarwinForge 제안:
 
 ---
 
+---
+
+## 10) OSHA 1910 Subpart O — 미국 산업 안전 관점
+
+미국은 ISO 표준이 직접 법적 효력 없고 **OSHA (Occupational Safety and Health Administration)** 1910 Subpart O (Machinery and Machine Guarding) 가 적용. ISO 10218 / TS 15066 적합은 OSHA 일반 의무 (General Duty Clause §5(a)(1)) 충족의 한 방법.
+
+ANSI/RIA R15.06-2012 → 2025 ANSI/RIA R15.06 개정 진행 중 (확인 필요). ISO 10218-1:2025를 기반으로 미국 시장 적합화.
+
+(출처: OSHA 1910 Subpart O — https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910SubpartO ; ANSI/RIA R15.06 — https://www.automate.org/industry-insights/ria-r15-06-the-american-national-standard-for-industrial-robots-and-robot-systems-safety-requirements **확인 필요**)
+
+> ★ DarwinForge 적용:
+> - **미국 시장 출시 시 검토** — DARwIn-OP는 교육·연구용이라 OSHA 직접 적용 대상 아님. 그러나 학교·박물관 시연 시 General Duty Clause 적용 가능.
+
+---
+
+## 11) EN 775 (구식) — 점검
+
+EN 775:1992 "Safety of industrial robots" — 1992 발행 후 **2008년 ISO 10218-1:2006 발행과 함께 EU에서 폐지**. 현재는 인용 가치 없으나 옛 매뉴얼·논문에 등장 시:
+
+- EN 775 §6 = 현재 ISO 10218-1 §5에 해당
+- EN 775 §7.3 = 현재 ISO 10218-1 §5.7 (Modes of Operation)
+
+(출처: EN 775:1992 (폐지) — Wikipedia 또는 BSI 아카이브 ; CEN 조회 https://standards.cencenelec.eu/dyn/www/f?p=CEN:6:::NO:::)
+
+> ★ DarwinForge 적용:
+> - **인용 시 항상 "구 표준 (1992 폐지, ISO 10218 대체)" 명시**.
+
+---
+
+## 12) HRC Levels (Human-Robot Collaboration 1~4) — DGUV 분류
+
+독일 직업조합 (Deutsche Gesetzliche Unfallversicherung, DGUV) 가 HRC 4단계 정의. 각 cobot 인증 시 "HRC 레벨 N 인증" 표시:
+
+| HRC 레벨 | 정의 | 사례 |
+|----------|------|------|
+| 1 | 분리 작업 (펜스 분리) | 전통 산업 로봇 |
+| 2 | 시퀀스 협업 (사람·로봇 다른 시간) | 컨베이어 + 인간 검수 |
+| 3 | 공간 공유 (같은 공간, 다른 작업) | UR 5e + 작업자 옆 |
+| 4 | 직접 협업 (같은 작업) | KUKA LBR iiwa hand-guiding |
+
+(출처: DGUV Information 209-074 — https://publikationen.dguv.de/regelwerk/dguv-informationen/3499/kollaborierende-robotersysteme **확인 필요** ; Saenz et al. [Saenz 2018] 인용)
+
+> ★ DarwinForge 적용:
+> - **DARwIn-OP는 HRC 4 등급 동등** — 사용자가 직접 잡고 자세 잡기 (Pose Capture). 이를 UI에 표시: "HRC 4 동등 (직접 협업)".
+
+---
+
 ## 학술 인용
 
 - [Bai 2022] Bai et al. "Constitutional AI: Harmlessness from AI Feedback", *arXiv:2212.08073*. https://arxiv.org/abs/2212.08073

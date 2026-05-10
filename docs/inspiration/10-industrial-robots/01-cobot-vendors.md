@@ -253,11 +253,69 @@
 
 ---
 
+---
+
+## 7) 비-협동 (전통) 산업 로봇 — 보강 메모
+
+DarwinForge는 cobot에 가깝지만 비-협동 산업 라인의 **컨트롤러 사상**도 차용 가치가 있어 짧게 정리.
+
+### FANUC R-30iB Plus 컨트롤러
+
+산업 6축 매니퓰레이터 (M-710iC / R-2000iC 등) 의 표준 컨트롤러. 별도 펜던트 (iPendant) 와 통신. Tool Center Point (TCP) 보정 / Calibration 절차 / 좌표계 (World / User / Tool) 분리가 표준.
+
+(출처: FANUC R-30iB+ 컨트롤러 — https://www.fanucamerica.com/products/robots/robot-controllers ; **확인 필요**: 정확한 하드웨어 사양 매뉴얼 직링크 부재)
+
+> ★ DarwinForge 적용:
+> - **좌표계 분리 = World / Robot / Joint** — 우리는 현재 Joint 좌표만 다루는데, "World 좌표계 (책상 위 절대 위치)" 추가 시 자세 재현성 향상.
+
+### ABB RobotStudio (시뮬레이터)
+
+PC Office Ribbon UI. **VirtualController** — 실 IRC5 컨트롤러를 PC에서 동일 펌웨어로 시뮬. 시뮬 결과를 그대로 실 로봇에 download. **★ 우리 Webots 차용 사상과 동일.**
+
+(출처: ABB RobotStudio — https://new.abb.com/products/robotics/robotstudio)
+
+### KUKA.Sim (시뮬레이터)
+
+3DEXPERIENCE / Visual Components 기반 PC 시뮬레이터. KUKA.OfficeLite (가상 컨트롤러) 와 통합. KUKA.Sim 4.x 부터 cloud 협업 추가.
+
+(출처: KUKA.Sim — https://www.kuka.com/en-de/products/robot-systems/software/simulation)
+
+### Mitsubishi RT ToolBox3
+
+MELFA 시리즈 산업 로봇용 PC 시뮬·프로그래밍 도구. MELFA-BASIC V (BASIC 유사) 언어. 일본 자동차 부품 라인에서 우세. 학습 곡선 가파르고 UI 보수적.
+
+(출처: Mitsubishi RT ToolBox3 — https://www.mitsubishielectric.com/fa/products/rbt/robot/pmerit/rttoolbox/)
+
+> ★ DarwinForge 적용:
+> - **이들 4개 시뮬레이터의 공통 사상 = 시뮬 ↔ 실기 동일 펌웨어 / 동일 코드** — 우리도 forge-core가 Webots controller 로 컴파일되도록 (`01-simulation/webots.md` §Step 1) 구현하면 동일 가치.
+
+---
+
+## 8) IFR 시장 통계 — 우리가 어디에 위치하나
+
+International Federation of Robotics (IFR) 2024 World Robotics 보고서:
+
+- **신규 산업 로봇 설치 (2023)**: 540,000 대 (전세계).
+- **협동 로봇 비중**: ~10% (54,000 대), 매년 30%+ 성장.
+- **시장 점유율 (cobot)**: UR ~50%, Techman/Doosan/FANUC/ABB ~10% 각, 기타.
+- **휴머노이드 cobot**: < 1% (Apptronik, Figure, Agility 등 신규 진입).
+
+DarwinForge는 **데스크탑 휴머노이드 (DARwIn-OP)** 라 cobot 시장에 직접 들어가지 않으나, Apptronik Apollo / Figure 02 같은 산업용 휴머노이드 cobot 진입 시 동일 안전 표준 (ISO 10218 + TS 15066) 가 적용 예상.
+
+(출처: IFR World Robotics 2024 — https://ifr.org/worldrobotics ; Apptronik Apollo — https://apptronik.com/apollo ; Figure AI — https://www.figure.ai/)
+
+> ★ DarwinForge 적용:
+> - **장기 (Q4+)**: DarwinForge 안전 모델이 산업용 휴머노이드 cobot 진입 시 그대로 전이 가능한 설계로 갖추는 것이 가치.
+
+---
+
 ## 학술 인용
 
 - Aaltonen et al. [Aaltonen 2018] "Refining levels of collaboration to support the design and evaluation of human-robot interaction in the manufacturing industry", *Procedia CIRP*. (출처 https://doi.org/10.1016/j.procir.2018.03.214)
 - Vicentini [Vicentini 2021] "Collaborative Robotics: A Survey", *Journal of Mechanical Design*. (출처 https://doi.org/10.1115/1.4046238)
 - Kruger et al. [Kruger 2009] "Cooperation of human and machines in assembly lines", *CIRP Annals*. (출처 https://doi.org/10.1016/j.cirp.2009.09.009)
+- Bauer et al. [Bauer 2008] "Human-robot collaboration: a survey", *Int. J. of Humanoid Robotics*. https://doi.org/10.1142/S0219843608001303
+- Villani et al. [Villani 2018] "Survey on human-robot collaboration in industrial settings: Safety, intuitive interfaces and applications", *Mechatronics*. https://doi.org/10.1016/j.mechatronics.2018.02.009
 
 ## 출처 종합
 
