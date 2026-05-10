@@ -53,7 +53,9 @@ pub const FC_ERR_PANIC: c_int = -99;
 
 /// Rust → C 문자열 변환. nullptr은 빈 문자열 반환.
 fn rust_to_c_string(s: String) -> *mut c_char {
-    CString::new(s).map(|c| c.into_raw()).unwrap_or(ptr::null_mut())
+    CString::new(s)
+        .map(|c| c.into_raw())
+        .unwrap_or(ptr::null_mut())
 }
 
 /// `fc_*` 함수가 반환한 문자열 해제.
@@ -108,11 +110,9 @@ pub extern "C" fn fc_version() -> *mut c_char {
 /// 실패 시 nullptr 반환 (out_err에 에러코드 set).
 #[no_mangle]
 pub unsafe extern "C" fn fc_serial_list_ports(out_err: *mut c_int) -> *mut c_char {
-    let result: Result<String, c_int> = catch_unwind(|| {
-        match PosixSerial::list_ports() {
-            Ok(v) => Ok(v.join("\n")),
-            Err(e) => Err(err_code(&e)),
-        }
+    let result: Result<String, c_int> = catch_unwind(|| match PosixSerial::list_ports() {
+        Ok(v) => Ok(v.join("\n")),
+        Err(e) => Err(err_code(&e)),
     })
     .unwrap_or(Err(FC_ERR_PANIC));
     match result {
@@ -704,7 +704,9 @@ pub unsafe extern "C" fn fc_walk_tick(
     *out = FfiFootTargets {
         elapsed_ms: e.elapsed_ms,
         phase,
-        feet: [f.left[0], f.left[1], f.left[2], f.right[0], f.right[1], f.right[2]],
+        feet: [
+            f.left[0], f.left[1], f.left[2], f.right[0], f.right[1], f.right[2],
+        ],
     };
     FC_OK
 }

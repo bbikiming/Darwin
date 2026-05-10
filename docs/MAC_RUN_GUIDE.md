@@ -2,6 +2,14 @@
 
 > macOS Sonoma+ / Apple Silicon 또는 Intel. ROBOTIS DARwIn-OP / OP2 둘 다.
 
+## 빠른 시작 (한 줄)
+
+```sh
+make run     # 도구 점검 → cargo build → swift build → swift run DarwinForgeApp
+```
+
+자세한 단계는 아래 §1..§6 참조.
+
 ## 1. 일회성 사전 준비
 
 ### 도구 설치
@@ -14,7 +22,7 @@
 
 도구 점검:
 ```sh
-bash scripts/bootstrap-tools.sh
+make doctor    # 또는 bash scripts/bootstrap-tools.sh
 ```
 
 ### USB-Serial 드라이버 (CM-730/740)
@@ -30,13 +38,12 @@ bash scripts/check-mac-drivers.sh
 ## 2. 빌드
 
 ```sh
-# Apple Silicon Mac (현재 호스트만)
-bash scripts/build-mac.sh
+make mac           # Apple Silicon만 (현재 호스트)
+make mac-universal # arm64 + x86_64 universal
+make app           # mac + swift build
+make run           # mac + swift run DarwinForgeApp (앱 실행)
 
-# Universal binary (M1/M2/M3 + Intel)
-bash scripts/build-mac.sh -u
-
-# Universal + swift build까지 (앱 즉시 실행 가능 상태)
+# 또는 직접:
 bash scripts/build-mac.sh -u --swift
 ```
 
@@ -105,11 +112,25 @@ xed app/ui/DarwinForge/Package.swift
    - **다리 관절(L_HIP_*, L_KNEE, R_HIP_*, R_KNEE)은 cradle 미거치 시 토크 ON 절대 금지**.
 7. 종료 시 e-stop 단축키(⌘⇧.) → 토글 OFF → LiPo 분리.
 
-## 5. 트러블슈팅
+## 5. 빌드 후 스모크 테스트 (실기기 없이)
+
+```sh
+bash scripts/smoke-test.sh
+```
+
+확인 항목:
+- forge --version, list-joints, ports
+- motion .mtn ↔ JSON round-trip (의미 있는 데이터 100% 일치)
+- walk simulation 1 cycle
+- strategy FSM 6 step
+
+모두 통과하면 실기기 검증 단계로 진입 가능.
+
+## 6. 트러블슈팅
 
 | 증상 | 해결 |
 |------|------|
-| `swift build` 실패: `cannot find 'fc_*' in scope` | `bash scripts/build-mac.sh`를 먼저 실행 — Vendor/CForgeCore가 비어있음 |
+| `swift build` 실패: `cannot find 'fc_*' in scope` | `make mac`(또는 `bash scripts/build-mac.sh`)를 먼저 실행 — Vendor/CForgeCore가 비어있음 |
 | `swift run` 실패: `Library not loaded: libforge_core` | static link이므로 일반 발생 X. 혹시 dylib 모드로 바꿨다면 `DYLD_LIBRARY_PATH` 설정 |
 | 포트 목록이 비어 있음 | 케이블 / CM-730 전원 / FTDI 드라이버 시스템 확장 허용 확인 |
 | ping ID 200 timeout | baud 1 Mbps 확인, FTDI latency 1 ms 설정 (`mac-driver-setup.md`) |
