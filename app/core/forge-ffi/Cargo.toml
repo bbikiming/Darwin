@@ -1,0 +1,19 @@
+[package]
+name = "forge-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "C-ABI bindings for forge-core (used by Swift via cbindgen-generated header)."
+
+[lib]
+name = "forge_core"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+serde_json.workspace = true
+
+[build-dependencies]
+cbindgen = "0.27"

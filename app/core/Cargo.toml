@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "forge-core",
     "forge-cli",
+    "forge-ffi",
 ]
 
 [workspace.package]

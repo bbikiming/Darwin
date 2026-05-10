@@ -1,18 +1,19 @@
-import SwiftUI
 import DarwinForgeUI
+import SwiftUI
 
 @main
 struct DarwinForgeApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .frame(minWidth: 960, minHeight: 600)
+                .frame(minWidth: 1024, minHeight: 640)
         }
         .commands {
-            CommandGroup(replacing: .appInfo) {
-                Button("About DarwinForge") {
-                    // TODO: present an About panel sourced from the bundle's Info.plist
-                }
+            CommandGroup(after: .appInfo) {
+                Link("ROBOTIS e-Manual",
+                     destination: URL(string: "https://emanual.robotis.com/docs/en/platform/op2/getting_started/")!)
+                Link("Project README",
+                     destination: URL(string: "https://github.com/bbikiming/Darwin")!)
             }
         }
     }

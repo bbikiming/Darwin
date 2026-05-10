@@ -17,16 +17,20 @@ bash scripts/check-mac-drivers.sh
 
 필요 도구: Xcode 15.4+, Swift 5.10+, Rust 1.94+, Python 3.11+, Node 22+, Homebrew.
 
-### 빌드 (Phase 4 이후 가능)
+### 빌드 + 실행
 
 ```sh
-# Rust 코어
-cargo build --workspace
+# Rust 코어 + cbindgen 헤더 + Vendor/ 자동 생성 + (옵션) swift build
+bash scripts/build-mac.sh -u --swift
 
-# Swift UI / 앱
-swift build --package-path app/ui/DarwinForge
-xed app/ui/DarwinForge/Package.swift   # Xcode에서 열기
+# 앱 실행
+swift run --package-path app/ui/DarwinForge DarwinForgeApp
+
+# 또는 Xcode
+xed app/ui/DarwinForge/Package.swift
 ```
+
+자세한 가이드: [`docs/MAC_RUN_GUIDE.md`](docs/MAC_RUN_GUIDE.md)
 
 ### 실기기 연결
 
