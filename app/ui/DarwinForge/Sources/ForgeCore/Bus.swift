@@ -123,7 +123,7 @@ public final class Bus: @unchecked Sendable {
         guard let h else {
             throw ForgeError.from(err) ?? .generic
         }
-        self.handle = OpaquePointer(h)
+        self.handle = h
         self.portPath = portPath
         self.baud = baud
         self.timeoutMs = timeoutMs
@@ -131,12 +131,12 @@ public final class Bus: @unchecked Sendable {
 
     deinit {
         if let h = handle {
-            fc_bus_close(UnsafeMutablePointer(h))
+            fc_bus_close(h)
         }
     }
 
-    private func raw() -> UnsafeMutablePointer<fc_bus>? {
-        handle.map { UnsafeMutablePointer($0) }
+    private func raw() -> OpaquePointer? {
+        handle
     }
 
     /// 단일 ID PING (응답 없으면 throw).

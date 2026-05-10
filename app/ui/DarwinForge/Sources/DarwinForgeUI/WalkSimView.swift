@@ -74,13 +74,20 @@ public struct WalkSimView: View {
         }
     }
 
+    private struct TraceRow: Identifiable {
+        let id: Int
+        let foot: FootTargets
+    }
+
     @ViewBuilder
     private var traceTable: some View {
-        Table(Array(trace.suffix(12).reversed().enumerated()), id: \.offset) {
-            TableColumn("Phase") { Text($0.element.phase.label).font(.system(.caption, design: .monospaced)) }
+        let rows: [TraceRow] = Array(trace.suffix(12).reversed().enumerated())
+            .map { TraceRow(id: $0.offset, foot: $0.element) }
+        Table(rows) {
+            TableColumn("Phase") { Text($0.foot.phase.label).font(.system(.caption, design: .monospaced)) }
                 .width(min: 80, ideal: 100)
-            TableColumn("L (x,y,z)") { Text(fmt($0.element.leftXYZ)).font(.system(.caption, design: .monospaced)) }
-            TableColumn("R (x,y,z)") { Text(fmt($0.element.rightXYZ)).font(.system(.caption, design: .monospaced)) }
+            TableColumn("L (x,y,z)") { Text(fmt($0.foot.leftXYZ)).font(.system(.caption, design: .monospaced)) }
+            TableColumn("R (x,y,z)") { Text(fmt($0.foot.rightXYZ)).font(.system(.caption, design: .monospaced)) }
         }
         .frame(minHeight: 160)
     }

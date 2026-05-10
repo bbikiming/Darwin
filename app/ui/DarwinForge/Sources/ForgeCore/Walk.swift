@@ -34,20 +34,19 @@ public final class WalkEngine: @unchecked Sendable {
     private let handle: OpaquePointer
 
     public init() {
-        let h = fc_walk_new()!
-        self.handle = OpaquePointer(h)
+        self.handle = fc_walk_new()!
     }
 
-    deinit { fc_walk_free(UnsafeMutablePointer(handle)) }
+    deinit { fc_walk_free(handle) }
 
     public func setCommand(x: Double, y: Double, a: Double, enabled: Bool) {
-        _ = fc_walk_set_command(UnsafeMutablePointer(handle), x, y, a, enabled ? 1 : 0)
+        _ = fc_walk_set_command(handle, x, y, a, enabled ? 1 : 0)
     }
 
     /// dt만큼 진행 후 발 궤적 sample.
     public func tick(dtMs: UInt32) -> FootTargets {
         var out = fc_foot_targets()
-        _ = fc_walk_tick(UnsafeMutablePointer(handle), dtMs, &out)
+        _ = fc_walk_tick(handle, dtMs, &out)
         return FootTargets(out)
     }
 }
