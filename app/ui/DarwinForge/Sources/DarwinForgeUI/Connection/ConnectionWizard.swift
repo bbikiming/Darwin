@@ -209,6 +209,7 @@ public struct ConnectionWizardView: View {
             }
             .padding(DFSpace.md)
         }
+        .glassScroll(accent: DFColor.accent)
     }
 
     /// 사용자가 직접 IP/호스트 입력해서 ping + 포트 검사 — 자동 진단이 못 잡는 IP를 점검할 때.
@@ -979,7 +980,7 @@ public struct ConnectionWizardView: View {
                 } label: {
                     Label("USB 자동 연결", systemImage: "cable.connector")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassNeon(tint: DFColor.accent))
                 .keyboardShortcut(.defaultAction)
 
                 Button {
@@ -1055,7 +1056,7 @@ public struct ConnectionWizardView: View {
                 } label: {
                     Label("TCP 연결 시도", systemImage: "network")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassNeon(tint: DFColor.accent))
                 .disabled(manualHost.trimmingCharacters(in: .whitespaces).isEmpty)
                 .keyboardShortcut(.defaultAction)
             }

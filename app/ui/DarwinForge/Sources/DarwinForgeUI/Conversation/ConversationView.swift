@@ -88,6 +88,7 @@ public struct ConversationView: View {
                 }
                 .padding(.vertical, DFSpace.md)
             }
+            .glassScroll(accent: DFNeon.magenta, fadeHeight: 16)
             .onChange(of: vm.messages.count) { _, _ in
                 if let last = vm.messages.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }

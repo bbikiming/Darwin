@@ -102,6 +102,7 @@ public struct PoseInspector: View {
             .padding(.horizontal, DFSpace.md)
             .padding(.vertical, DFSpace.sm)
         }
+        .glassScroll(accent: DFColor.forge)
     }
 
     private func bodyPartSection(_ group: BodyPartGroup) -> some View {
@@ -231,8 +232,7 @@ public struct PoseInspector: View {
             } label: {
                 Label("로봇에 보내기", systemImage: "bolt.horizontal.fill")
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .buttonStyle(.glassNeon(tint: DFColor.forge, height: DFSize.buttonHSmall))
             .help("지금 편집 중인 자세를 한 번에 실제 로봇에 적용합니다")
         }
         .padding(DFSpace.md)

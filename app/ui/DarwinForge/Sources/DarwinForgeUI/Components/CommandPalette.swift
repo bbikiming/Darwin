@@ -99,6 +99,7 @@ public struct CommandPalette: View {
                 }
                 .padding(.vertical, 4)
             }
+            .glassScroll(accent: DFColor.accent, fadeHeight: 14, edgeColor: DFColor.card)
             .onChange(of: query) { _, _ in selectedIndex = 0 }
             .onChange(of: selectedIndex) { _, idx in
                 if idx >= 0, idx < filtered.count {

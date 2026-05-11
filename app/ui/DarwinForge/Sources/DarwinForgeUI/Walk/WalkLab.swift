@@ -130,7 +130,7 @@ public struct WalkLab: View {
                 .tint(.red)
             }
             .controlSize(.small)
-            .buttonStyle(.bordered)
+            .buttonStyle(.glassNeon(tint: DFColor.textPrimary, prominent: false))
 
             Spacer()
 
@@ -231,9 +231,9 @@ public struct WalkLab: View {
                     }
                 }
             }
+            .glassScroll(accent: DFColor.info, fadeHeight: 10, edgeColor: DFColor.card)
             .frame(maxHeight: 180)
-            .background(DFColor.card)
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+            .glass(radius: DFRadius.sm, intensity: 0.7)
         }
     }
 

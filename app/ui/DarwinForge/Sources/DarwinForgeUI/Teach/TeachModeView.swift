@@ -133,6 +133,7 @@ public struct TeachModeView: View {
             }
             .padding(DFSpace.md)
         }
+        .glassScroll(accent: DFColor.success)
         .background(DFColor.canvas)
     }
 

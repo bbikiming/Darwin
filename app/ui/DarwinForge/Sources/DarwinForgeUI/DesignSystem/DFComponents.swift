@@ -2,14 +2,15 @@ import SwiftUI
 
 // MARK: - DFButton
 
-/// 다윈포지 표준 버튼 — Linear / Vercel Geist 패턴.
+/// 다윈포지 표준 버튼 — 글래스모피즘 + 네온 글로우.
 ///
-/// 5가지 variants:
-///   - primary:   accent 색 채움. 메인 액션.
-///   - secondary: 카드 배경 + 테두리. 보조 액션.
-///   - ghost:     배경 없음 + hover 만 강조. 텍스트 액션.
+/// 6가지 variants:
+///   - primary:   accent (blue) 채움. 메인 액션.
+///   - secondary: 투명 글래스 + 텍스트 컬러. 보조 액션.
+///   - ghost:     배경 없음 + hover 글래스 in-fill. 텍스트 액션.
 ///   - danger:    빨강 채움. 파괴적 액션 (confirm 후).
 ///   - success:   초록 채움. 완료/성공 액션.
+///   - forge:     forge-orange 채움. 모션/로봇 액션.
 public struct DFButton<Label: View>: View {
     public enum Variant { case primary, secondary, ghost, danger, success, forge }
     public enum Size { case small, medium, large }
@@ -18,7 +19,6 @@ public struct DFButton<Label: View>: View {
     public let size: Size
     public let action: () -> Void
     @ViewBuilder public let label: () -> Label
-    @State private var hovering = false
 
     public init(_ variant: Variant = .primary, size: Size = .medium,
                 action: @escaping () -> Void,
@@ -31,26 +31,19 @@ public struct DFButton<Label: View>: View {
 
     public var body: some View {
         Button(action: action) {
-            label()
-                .font(fontFor(size))
-                .padding(.horizontal, hPad)
-                .frame(minHeight: heightFor(size))
-                .foregroundStyle(foreground)
-                .background(background)
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .stroke(borderColor, lineWidth: borderWidth)
-                )
+            label().font(fontFor(size))
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .animation(DFAnimation.fast, value: hovering)
+        .buttonStyle(
+            GlassNeonButtonStyle(
+                tint: tint,
+                prominent: prominent,
+                glow: glow,
+                height: heightFor(size),
+                radius: DFRadius.md
+            )
+        )
     }
 
-    private var hPad: CGFloat {
-        switch size { case .small: return 8; case .medium: return 12; case .large: return 16 }
-    }
     private func heightFor(_ s: Size) -> CGFloat {
         switch s { case .small: return DFSize.buttonHSmall; case .medium: return DFSize.buttonHMedium; case .large: return DFSize.buttonHLarge }
     }
@@ -71,30 +64,15 @@ public struct DFButton<Label: View>: View {
         case .forge:     return DFColor.forge
         }
     }
-    private var foreground: Color {
+    private var prominent: Bool {
         switch variant {
-        case .primary, .danger, .success, .forge: return .white
-        case .secondary, .ghost: return tint
+        case .primary, .danger, .success, .forge: return true
+        case .secondary, .ghost: return false
         }
     }
-    private var background: Color {
-        switch variant {
-        case .primary, .danger, .success, .forge:
-            return hovering ? tint.opacity(0.85) : tint
-        case .secondary:
-            return hovering ? DFColor.elev2 : DFColor.card
-        case .ghost:
-            return hovering ? DFColor.elev2.opacity(0.6) : .clear
-        }
-    }
-    private var borderColor: Color {
-        switch variant {
-        case .secondary: return DFColor.textSecondary.opacity(0.25)
-        default: return .clear
-        }
-    }
-    private var borderWidth: CGFloat {
-        variant == .secondary ? 0.5 : 0
+    private var glow: Bool {
+        // ghost 는 글로우 없음 (텍스트 액션이라 시각 노이즈 최소화).
+        variant != .ghost
     }
 }
 
@@ -128,11 +106,31 @@ public struct DFChip: View {
                 .font(.system(size: 10, weight: .bold,
                               design: mono ? .monospaced : .default))
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2)
-        .background(tint.opacity(0.14))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
         .foregroundStyle(tint)
+        .background(
+            ZStack {
+                Capsule().fill(.ultraThinMaterial)
+                Capsule().fill(
+                    LinearGradient(
+                        colors: [tint.opacity(0.28), tint.opacity(0.08)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+                Capsule().fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.15), .clear],
+                        startPoint: .top, endPoint: .center
+                    )
+                )
+            }
+        )
+        .overlay(
+            Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.5)
+        )
         .clipShape(Capsule())
+        .shadow(color: tint.opacity(0.18), radius: 4, x: 0, y: 0)
     }
 
     private var tint: Color {
@@ -278,19 +276,35 @@ public struct DFKeyboardHint: View {
     }
 
     public var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 3) {
             ForEach(keys, id: \.self) { k in
                 Text(k)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(DFColor.elev2)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
                     .foregroundStyle(DFColor.textSecondary)
-                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
+                    .background(
+                        ZStack {
+                            RoundedRectangle(cornerRadius: DFRadius.xs)
+                                .fill(.ultraThinMaterial)
+                            RoundedRectangle(cornerRadius: DFRadius.xs)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(0.18),
+                                            Color.white.opacity(0.0)
+                                        ],
+                                        startPoint: .top, endPoint: .bottom
+                                    )
+                                )
+                        }
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: DFRadius.xs)
-                            .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: 0.5)
+                            .stroke(Color.white.opacity(0.22), lineWidth: 0.5)
                     )
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
+                    .shadow(color: Color.black.opacity(0.10), radius: 2, x: 0, y: 1)
             }
         }
     }
@@ -341,13 +355,9 @@ public struct DFPanel<Content: View, Trailing: View, Footer: View>: View {
         .padding(DFSpace.md - 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: height)
-        .background(prominent ? tint.opacity(0.04) : DFColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.md)
-                .stroke(prominent ? tint.opacity(0.25) : DFColor.textSecondary.opacity(DFOpacity.subtle),
-                        lineWidth: prominent ? 0.8 : 0.5)
-        )
+        .glass(radius: DFRadius.md, tint: prominent ? tint : nil, intensity: prominent ? 1.0 : 0.6)
+        .shadow(color: prominent ? tint.opacity(0.18) : Color.black.opacity(0.10),
+                radius: prominent ? 14 : 8, x: 0, y: 2)
     }
 
     private var header: some View {
@@ -478,7 +488,6 @@ public struct DFPageScaffold<Content: View, Trailing: View, Footer: View>: View 
     public var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             footer()
@@ -491,12 +500,22 @@ public struct DFPageScaffold<Content: View, Trailing: View, Footer: View>: View 
             if let icon {
                 ZStack {
                     RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .fill(tint.opacity(0.14))
-                        .frame(width: 36, height: 36)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: DFRadius.sm)
+                        .fill(
+                            LinearGradient(
+                                colors: [tint.opacity(0.40), tint.opacity(0.14)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                    RoundedRectangle(cornerRadius: DFRadius.sm)
+                        .stroke(Color.white.opacity(0.22), lineWidth: 0.6)
                     Image(systemName: icon)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(tint)
                 }
+                .frame(width: 36, height: 36)
+                .shadow(color: tint.opacity(0.32), radius: 10, x: 0, y: 0)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -516,6 +535,15 @@ public struct DFPageScaffold<Content: View, Trailing: View, Footer: View>: View 
         .padding(.horizontal, DFSpace.md)
         .padding(.vertical, DFSpace.sm + 2)
         .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            // 네온 underline — 페이지마다 tint 가 다르므로 색상 변경되며 정체성 확립.
+            LinearGradient(
+                colors: [tint.opacity(0), tint.opacity(0.55), tint.opacity(0)],
+                startPoint: .leading, endPoint: .trailing
+            )
+            .frame(height: 1.2)
+            .blur(radius: 0.4)
+        }
     }
 }
 

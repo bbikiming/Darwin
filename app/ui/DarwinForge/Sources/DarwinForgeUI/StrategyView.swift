@@ -29,7 +29,7 @@ public struct StrategyView: View {
 
             HStack {
                 Button("Step") { advance() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.glassNeon(tint: DFColor.accent))
                 Button("Reset") {
                     state = .idle
                     history = []

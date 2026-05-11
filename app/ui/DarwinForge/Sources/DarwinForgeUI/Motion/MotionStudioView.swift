@@ -344,7 +344,7 @@ public struct MotionStudioView: View {
                     .frame(width: 18)
             }
             .controlSize(.large)
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassNeon(tint: DFColor.forge))
             .keyboardShortcut(.return, modifiers: .command)
             .help(player.mode == .playing ? "일시 정지 (⌘↵)" : "재생 시작 (⌘↵)")
 

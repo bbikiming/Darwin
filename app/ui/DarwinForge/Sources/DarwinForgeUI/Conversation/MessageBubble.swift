@@ -102,11 +102,10 @@ public struct MessageBubble: View {
                 HStack(spacing: DFSpace.sm) {
                     Spacer()
                     Button(KoreanUX.Action.close, action: onReject)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.glassNeon(tint: DFColor.textPrimary, prominent: false))
                         .keyboardShortcut(".", modifiers: .command)
                     Button(KoreanUX.Action.execute, action: onApprove)
-                        .buttonStyle(.borderedProminent)
-                        .tint(DFColor.accent)
+                        .buttonStyle(.glassNeon(tint: DFColor.accent))
                         .keyboardShortcut("a", modifiers: [.command, .shift])
                         .disabled(message.resolved)
                 }

@@ -257,6 +257,7 @@ public struct RemoteShellView: View {
                 .padding(DFSpace.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .glassScroll(accent: DFNeon.electric)
             .onChange(of: shell.history.count) { _, _ in
                 if let last = shell.history.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }

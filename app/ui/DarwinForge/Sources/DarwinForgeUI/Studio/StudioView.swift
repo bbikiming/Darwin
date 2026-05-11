@@ -891,7 +891,7 @@ struct ConnectionInlineControls: View {
                 Label(connectLabel, systemImage: connectIcon)
             }
             .controlSize(.small)
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassNeon(tint: DFColor.forge))
             .keyboardShortcut(.return, modifiers: .command)
         }
     }

@@ -136,6 +136,7 @@ public struct InitialSetupWizardView: View {
             }
             .padding(DFSpace.md)
         }
+        .glassScroll(accent: DFColor.accent)
         .background(DFColor.canvas)
         .onAppear {
             state.startAutoVerification()

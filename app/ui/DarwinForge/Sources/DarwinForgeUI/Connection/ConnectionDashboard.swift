@@ -140,6 +140,7 @@ public struct ConnectionDashboardView: View {
             }
             .padding(DFSpace.md)
         }
+        .glassScroll(accent: DFColor.accent)
     }
 
     // MARK: - 원격 도구

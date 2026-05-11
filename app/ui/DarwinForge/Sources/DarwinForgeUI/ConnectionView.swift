@@ -51,7 +51,7 @@ public struct ConnectionView: View {
                         Button("Connect") {
                             store.connect()
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.glassNeon(tint: DFColor.accent))
                         .disabled((store.selectedPort ?? "").isEmpty)
                     }
                 }

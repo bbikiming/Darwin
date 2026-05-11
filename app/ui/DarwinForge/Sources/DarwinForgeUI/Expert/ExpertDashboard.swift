@@ -46,6 +46,7 @@ public struct ExpertDashboard: View {
                     }
                     .padding(DFSpace.md)
                 }
+                .glassScroll(accent: DFNeon.electric)
                 .onReceive(tick) { now = $0 }
             }
         }

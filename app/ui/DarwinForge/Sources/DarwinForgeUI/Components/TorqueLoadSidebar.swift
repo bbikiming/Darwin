@@ -92,8 +92,9 @@ public struct TorqueLoadSidebar: View {
             }
             .padding(8)
         }
+        .glassScroll(accent: DFColor.torque, fadeHeight: 12)
         .frame(maxHeight: .infinity)
-        .background(DFColor.card)
+        .glass(radius: DFRadius.md, intensity: 0.9)
     }
 
     private var header: some View {
