@@ -11,8 +11,8 @@ import SwiftUI
 public struct ConversationView: View {
     @StateObject private var vm: ConversationViewModel
     @ObservedObject public var dispatcher: IntentDispatcher
-    @State private var estopAck: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dfWindowWidth) private var winWidth
 
     public init(commander: ClaudeCommander, dispatcher: IntentDispatcher) {
         _vm = StateObject(wrappedValue: ConversationViewModel(
@@ -22,63 +22,46 @@ public struct ConversationView: View {
     }
 
     public var body: some View {
-        ZStack(alignment: .topLeading) {
-            // 메인 콘텐츠
+        // 비상 정지 overlay 는 사이드바의 [긴급 정지] 버튼 + ⌘⇧. 단축키로 대체.
+        DFPageScaffold(
+            "DarwinForge",
+            subtitle: winWidth >= 700 ? "자연어로 로봇과 대화해 보세요" : nil,
+            icon: "bubble.left.and.bubble.right.fill",
+            tint: DFColor.info,
+            trailing: {
+                HStack(spacing: 8) {
+                    if winWidth >= 600 {
+                        ModeBadge(dispatcher: dispatcher)
+                    }
+                    Button {
+                        vm.clear()
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(DFColor.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .help("새 대화 시작 (⌘⇧N)")
+                }
+            }
+        ) {
             VStack(spacing: 0) {
-                topBar
-                Divider()
                 if vm.messages.isEmpty {
                     EmptyState(vm: vm)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     messageList
+                        .frame(maxHeight: .infinity)
+                        .layoutPriority(1)
                 }
                 InputBar(vm: vm)
             }
-
-            // L5 — E-Stop 좌상단 항상 가시 (모달 위에서도)
-            EStopOverlay(dispatcher: dispatcher, ack: $estopAck)
-                .allowsHitTesting(true)
         }
-        .background(DFColor.canvas)
         .navigationTitle("DarwinForge")
     }
 
-    // MARK: - Top bar
-
-    private var topBar: some View {
-        HStack(spacing: DFSpace.md) {
-            // 좌측 padding (E-Stop 아래)
-            Color.clear.frame(width: DFSize.estop + DFSpace.lg, height: 1)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("DarwinForge")
-                    .font(DFFont.bodyEmph)
-                    .foregroundStyle(DFColor.textPrimary)
-                Text("자연어로 로봇과 대화해 보세요")
-                    .font(DFFont.caption)
-                    .foregroundStyle(DFColor.textSecondary)
-            }
-
-            Spacer()
-
-            ModeBadge(dispatcher: dispatcher)
-
-            Button {
-                vm.clear()
-            } label: {
-                Label("새 대화", systemImage: "square.and.pencil")
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut("n", modifiers: [.command, .shift])
-            .help("새 대화 시작 (⌘⇧N)")
-            .accessibilityLabel("새 대화 시작")
-        }
-        .padding(.horizontal, DFSpace.md)
-        .padding(.vertical, DFSpace.sm + 2)
-        .background(.regularMaterial)
-    }
+    // MARK: - Top bar — DFPageScaffold 가 대체
 
     // MARK: - Messages
 

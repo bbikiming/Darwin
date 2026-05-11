@@ -85,3 +85,10 @@ venv/
 .env
 .env.local
 secrets/
+
+# Claude Code internal state (worktrees, session metadata)
+.claude/
+
+# Large vendor archives (firmware recovery images, etc.)
+*.zip
+ROBOTIS-OP2_Recovery_*.zip

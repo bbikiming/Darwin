@@ -16,6 +16,7 @@
 - [x] **Sprint 4** Motion Editor 골격 (timeline + library + SwiftUI stub, 50 tests)
 - [x] **Sprint 5** Walk Engine MVP (params + engine + IMU + sim CLI, 59 tests)
 - [x] **Sprint 6** Vision & Strategy MVP (HSV blob + FSM + sim CLI, **73 tests**)
+- [x] **Sprint 7** SwiftUI Studio 본 구현 (3D viewer + 타임라인 에디터 + 명령 팔레트, **+36 Swift tests**)
 
 ## 🎉 MVP 달성 (2026-05-09)
 
@@ -44,11 +45,63 @@ ROADMAP §5 MVP 정의 100% 충족:
 - 브랜치: `claude/robotis-darwin-op-setup-oyzTi`
 - PR: #1 (draft, MVP 완료 후 갱신)
 
+## Sprint 7 — SwiftUI Studio (2026-05-10)
+
+ROADMAP §"Mac 측 SwiftUI 본 구현"이 완료되었음.
+
+### 추가된 Swift 모듈 (12개)
+- **ForgeCore (5)**: `Kinematics.swift` (raw↔도, 한계, 회전축, 미러), `RobotPose.swift` (16-DOF 불변 자세 + lerp + mirror), `MotionDoc.swift` (forge-core JSON 미러 + step↔pose), `BusActor.swift` (Bus actor wrap), `LiveTelemetry.swift` (백그라운드 폴링 + AsyncStream)
+- **시각화 (3)**: `RobotScene3D.swift` (SceneKit 16-DOF 휴머노이드 + 발 trail + 그리드), `BodyMap2D.swift` (사람 실루엣 위 16점 + 색상 인디케이터), `TelemetrySparkline.swift` (Path 기반 미니 차트)
+- **컴포넌트 (2)**: `CommandPalette.swift` (⌘K 팔레트 + 19 명령 카탈로그), `StatusBar.swift` (모드/연결/배터리/온도/토크/팔레트)
+- **화면 (5)**: `StudioView.swift` + `PoseInspector.swift` (3D + 슬라이더 + 텔레메트리 sparklines), `MotionStudioView.swift` + `TimelineCanvas.swift` + `MotionPlayer.swift` (RoboPlus 대체), `WalkLab.swift` (Webots 스타일 발 trail), 새 `RootView.swift` (5 모드 통합)
+- **연결 (1)**: `AutoConnect.swift` (USB 포트 best-guess heuristic), `ConnectionStore` 향상 (autoConnect + 텔레메트리 폴링 + voltageHistory/avgTempHistory)
+
+### 핵심 기능
+- **3D 미러 뷰**: SceneKit으로 본 트리 렌더, 슬라이더 변경 시 즉시 회전 반영
+- **타임라인 에디터**: 페이지 목록 + step bar (play/pause 시각화) + seek + 재생 + 키프레임 추가/삭제 + 실측 캡처
+- **명령 팔레트**: ⌘K로 19개 명령 (연결, 깨우기, 자세 적용, 모션 임포트, 섹션 전환 등) 빠른 검색·실행
+- **실기기 즉시 적용 토글**: Studio/Motion에서 슬라이더 → 모터 명령 즉시 발행
+- **글로벌 단축키**: ⌘1..5 섹션, ⌘⇧. 비상정지, ⌘⇧C 자동 연결, ⌘K 팔레트, ⌘⇧P 실측 캡처
+
+### 통계
+- 총 Swift 파일: 25 → 39
+- Swift 테스트: 4 → 36 (Kinematics 10, RobotPose 10, MotionDoc 8, Strategy 3, Walk 1, Smoke 2 + 기존 2)
+- forge-core Rust 테스트: 73 / 73 그대로 통과
+- Universal binary `libforge_core.a`: 12 MB
+
+## Sprint 8 — V2 Production Hardening (2026-05-10)
+
+V2 점검 (`docs/reports/AUDIT_DARWIN_V2.md`)에서 도출한 P0 8개 패치 일괄 반영. 핵심:
+*하드웨어 안전*과 *비전문가 UX 신뢰*를 위한 최소 셋트.
+
+### P0 패치 (본 PR)
+- **P0-A** PoseInspector slider edit-end gating — 매 프레임 setPosition × 16관절 → 1슬라이더 1패킷
+- **P0-B** StudioView diff-based apply (`RobotPose.changedJoints`) — 변경된 관절만 발행 (15 패킷 / move 절감)
+- **P0-C** Live Apply confirm race 수정 — 사용자 동의 *이전* liveApply가 true가 되지 않게
+- **P0-D** USB drop watchdog (3 strikes → status .error) — 연결 끊겨도 계속 .connected이던 false-trust 윈도우 차단
+- **P0-E** Camera defaults centralized (defaultAzimuth/Elevation static) — `resetCamera()` 진실의 원천 통일
+- **P0-F** STL fallback banner — primitive rig fallback 시 노란 배너로 사용자 통지
+- **P0-G** macOS Menu commands (보기/로봇 메뉴) — ⌘1..5 / ⌘⇧. / ⌘K 단축키가 메뉴바에 노출 (Apple HIG)
+- **P0-H** Starter motion library 5페이지 — 기본자세 / T자세 / 인사 / 손 흔들기 / 앉기
+
+### 검증
+- `swift build` GREEN (8s, Universal)
+- `swift test` **70 tests / 0 failures** (Kinematics 10, RobotPose 15 (+5 changedJoints 신규), MotionDoc 8, Strategy 3, Walk 1, RobotSnapshot 5, StarterMotionLibrary 5 (신규), ConnectionStoreWatchdog 4 (신규))
+- 변경 파일: 9 (Swift), 추가: 2 (Tests/StarterMotionLibraryTests, Tests/ConnectionStoreWatchdogTests)
+- 추가 코드: ~280 LOC
+- Rust forge-core: 73 tests 그대로 GREEN
+
+### 통계
+- 총 Swift 파일: 39 → 41
+- Swift 테스트: 36 → 70
+- 새 정의: `RobotPose.changedJoints(from:)`, `MotionStudioView.starterPages()`, `ConnectionStore.handleBusError()`,
+  `InteractiveSceneView.defaultAzimuth/Elevation/Distance/Target`, `RobotScene3D.onMeshFallback`,
+  `RobotScene3D.Coordinator.usingMeshFallback`
+
 ## 다음 단계 (사용자 결정)
 
-MVP가 달성되었으므로 후속 우선순위는 사용자 선택:
-1. **Mac 측 SwiftUI 본 구현** — forge-core를 staticlib로 임포트, JointControlView/MotionEditorView/WalkTunerView 채움
-2. **실기기 검증** — Mac에서 ports/ping/scan/board/joint state 실 실행, 트레이스 캡처
-3. **walk loop 실 활성화** — IK 보강 + IMU 닫힌 루프 + walk_ready 자세 검증
-4. **카메라 + strategy 통합** — AVFoundation Frame ↔ forge-core::vision 어댑터
+1. **P1 (1주)**: Sync_Write FFI 노출 (16관절 1패킷 ≈ 12 ms), walking IK + 실 모터 발행 토글, Help cheat sheet
+2. **P2 (2주)**: AVFoundation 카메라 → forge-core::vision 라이브, SQLite persistence, undo/redo
+3. **P3 (4주)**: 거대 파일 분리 (RobotScene3D 936줄 → 4 파일), UI 픽셀 회귀, ROS2 bridge
+4. **실기기 검증** — Mac에서 USB 연결 → Studio 자동 연결 → 슬라이더 → 모션 재생까지 E2E
 5. **PR #1 ready for review 전환** — 문서 + 코드 리뷰

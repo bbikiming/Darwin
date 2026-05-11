@@ -1,11 +1,18 @@
-//! 20-DOF 관절 ID 매핑 + 상태 — `docs/architecture/joint-conventions.md`.
+//! 20-DOF 관절 ID 매핑 + 상태.
+//!
+//! ROBOTIS-OP2 e-Manual 표준 actuator ID:
+//!   팔   ID 1..6   (어깨 pitch/roll, 팔꿈치 — 한쪽 3 joint)
+//!   다리 ID 7..18  (hip yaw/roll/pitch, 무릎, 발목 pitch/roll — 한쪽 6 joint)
+//!   머리 ID 19,20  (pan/tilt)
+//!
+//! 출처: <https://emanual.robotis.com/docs/en/platform/op2/getting_started/>
 
 mod state;
 pub use state::{JointLimits, JointState};
 
 use serde::{Deserialize, Serialize};
 
-/// 캐논 관절 ID. `JointData.h`의 enum과 동일 번호.
+/// 캐논 관절 ID. ROBOTIS-OP2 e-Manual standard actuator ID 와 1:1 매핑.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum JointId {
@@ -22,21 +29,29 @@ pub enum JointId {
     /// 좌 팔꿈치.
     LElbow = 6,
     /// 우 hip yaw.
-    RHipYaw = 11,
+    RHipYaw = 7,
     /// 좌 hip yaw.
-    LHipYaw = 12,
+    LHipYaw = 8,
     /// 우 hip roll.
-    RHipRoll = 13,
+    RHipRoll = 9,
     /// 좌 hip roll.
-    LHipRoll = 14,
+    LHipRoll = 10,
     /// 우 hip pitch.
-    RHipPitch = 15,
+    RHipPitch = 11,
     /// 좌 hip pitch.
-    LHipPitch = 16,
+    LHipPitch = 12,
     /// 우 무릎.
-    RKnee = 17,
+    RKnee = 13,
     /// 좌 무릎.
-    LKnee = 18,
+    LKnee = 14,
+    /// 우 발목 pitch.
+    RAnklePitch = 15,
+    /// 좌 발목 pitch.
+    LAnklePitch = 16,
+    /// 우 발목 roll.
+    RAnkleRoll = 17,
+    /// 좌 발목 roll.
+    LAnkleRoll = 18,
     /// 머리 pan.
     HeadPan = 19,
     /// 머리 tilt.
@@ -44,8 +59,8 @@ pub enum JointId {
 }
 
 impl JointId {
-    /// 모든 관절 ID 순회.
-    pub const ALL: [JointId; 16] = [
+    /// 모든 관절 ID 순회 — 20 DOF.
+    pub const ALL: [JointId; 20] = [
         JointId::RShoulderPitch,
         JointId::LShoulderPitch,
         JointId::RShoulderRoll,
@@ -60,6 +75,10 @@ impl JointId {
         JointId::LHipPitch,
         JointId::RKnee,
         JointId::LKnee,
+        JointId::RAnklePitch,
+        JointId::LAnklePitch,
+        JointId::RAnkleRoll,
+        JointId::LAnkleRoll,
         JointId::HeadPan,
         JointId::HeadTilt,
     ];
@@ -76,12 +95,18 @@ impl JointId {
                 BodyPart::RightArm
             }
             JointId::LShoulderPitch | JointId::LShoulderRoll | JointId::LElbow => BodyPart::LeftArm,
-            JointId::RHipYaw | JointId::RHipRoll | JointId::RHipPitch | JointId::RKnee => {
-                BodyPart::RightLeg
-            }
-            JointId::LHipYaw | JointId::LHipRoll | JointId::LHipPitch | JointId::LKnee => {
-                BodyPart::LeftLeg
-            }
+            JointId::RHipYaw
+            | JointId::RHipRoll
+            | JointId::RHipPitch
+            | JointId::RKnee
+            | JointId::RAnklePitch
+            | JointId::RAnkleRoll => BodyPart::RightLeg,
+            JointId::LHipYaw
+            | JointId::LHipRoll
+            | JointId::LHipPitch
+            | JointId::LKnee
+            | JointId::LAnklePitch
+            | JointId::LAnkleRoll => BodyPart::LeftLeg,
             JointId::HeadPan | JointId::HeadTilt => BodyPart::Head,
         }
     }
@@ -133,14 +158,17 @@ mod tests {
     use std::f64::consts::PI;
 
     #[test]
-    fn sixteen_joints_total() {
-        assert_eq!(JointId::ALL.len(), 16);
+    fn twenty_joints_total() {
+        // ROBOTIS-OP2 e-Manual: 팔 6 + 다리 12 + 머리 2 = 20 DOF.
+        assert_eq!(JointId::ALL.len(), 20);
     }
 
     #[test]
     fn body_part_grouping() {
         assert_eq!(JointId::RShoulderPitch.body_part(), BodyPart::RightArm);
         assert_eq!(JointId::LKnee.body_part(), BodyPart::LeftLeg);
+        assert_eq!(JointId::RAnklePitch.body_part(), BodyPart::RightLeg);
+        assert_eq!(JointId::LAnkleRoll.body_part(), BodyPart::LeftLeg);
         assert_eq!(JointId::HeadTilt.body_part(), BodyPart::Head);
     }
 
@@ -149,8 +177,26 @@ mod tests {
         for j in JointId::ALL {
             assert_eq!(JointId::from_byte(j as u8), Some(j));
         }
-        assert_eq!(JointId::from_byte(7), None); // 7..10은 사용 안 함
+        // 0, 21..199, 200 (controller), 201..253, 254 (broadcast) 는 관절 ID 아님.
+        assert_eq!(JointId::from_byte(0), None);
+        assert_eq!(JointId::from_byte(21), None);
         assert_eq!(JointId::from_byte(200), None); // CONTROLLER는 별도
+    }
+
+    #[test]
+    fn each_leg_has_six_joints() {
+        let r_leg: Vec<JointId> = JointId::ALL
+            .iter()
+            .copied()
+            .filter(|j| j.body_part() == BodyPart::RightLeg)
+            .collect();
+        let l_leg: Vec<JointId> = JointId::ALL
+            .iter()
+            .copied()
+            .filter(|j| j.body_part() == BodyPart::LeftLeg)
+            .collect();
+        assert_eq!(r_leg.len(), 6, "한 다리는 6 DOF (yaw/roll/pitch/knee/ankle pitch/ankle roll)");
+        assert_eq!(l_leg.len(), 6);
     }
 
     #[test]

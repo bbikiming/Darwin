@@ -102,7 +102,7 @@ public enum KoreanUX {
 
     public enum Motion {
         public static let wakeUpStart = "로봇을 일으킬게요. 잠깐 시간 주세요."
-        public static let wakeUpDone = "관절 16개에 모두 힘이 들어갔어요. 살짝 자세를 잡아요."
+        public static let wakeUpDone = "관절 20개에 모두 힘이 들어갔어요. 살짝 자세를 잡아요."
         public static let sleepStart = "안전 자세로 천천히 앉을게요."
         public static let sleepDone = "관절 힘을 풀었어요. 손으로 받쳐주세요."
 

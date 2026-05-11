@@ -35,6 +35,12 @@ public enum ForgeTool: String, CaseIterable, Codable, Sendable {
     case sleep
     /// (Composite) 상태 보고 — board + joint state(all).
     case status_report
+    /// 명명 자세 적용 — PoseLibrary 의 id 로 즉시 자세 변경 (SafeMotion 검증).
+    case apply_named_pose
+    /// 자연어 → 모션 페이지 빌드. 사용자 요청을 MotionBuilder 가 분석해 페이지 생성.
+    case build_motion
+    /// 자세 검색 — keyword 로 PoseLibrary 검색 후 결과 표시 (실행 안 함).
+    case search_pose
     /// 거부 (안전 한계 외 또는 모호한 요청).
     case refuse
 
@@ -53,6 +59,9 @@ public enum ForgeTool: String, CaseIterable, Codable, Sendable {
         case .wake_up: return "로봇 깨우기"
         case .sleep: return "로봇 재우기"
         case .status_report: return "상태 보고"
+        case .apply_named_pose: return "명명 자세 적용"
+        case .build_motion: return "모션 만들기"
+        case .search_pose: return "자세 검색"
         case .refuse: return "거부"
         }
     }
@@ -60,11 +69,13 @@ public enum ForgeTool: String, CaseIterable, Codable, Sendable {
     /// 모터 동작 여부 — true면 HITL 승인 게이트 강제.
     public var movesMotors: Bool {
         switch self {
-        case .joint_set_position, .joint_torque, .wake_up, .sleep:
+        case .joint_set_position, .joint_torque, .wake_up, .sleep,
+             .apply_named_pose, .build_motion:
             return true
         case .emergency_stop:
             return false  // 즉시 실행 (안전 critical)
-        case .ports, .ping, .scan, .board_snapshot, .joint_state, .motion_inspect, .status_report, .refuse:
+        case .ports, .ping, .scan, .board_snapshot, .joint_state, .motion_inspect,
+             .status_report, .search_pose, .refuse:
             return false
         }
     }

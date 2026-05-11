@@ -18,10 +18,12 @@ pub struct Bus<P: SerialPort> {
 
 impl<P: SerialPort> Bus<P> {
     /// 새 버스. `set_baud(1_000_000)`은 호출자 책임.
+    /// 기본 timeout 1000ms — Atom Z530 같은 저사양 SBC + socat 경유 시에도 안정.
+    /// 직접 USB 사용은 보통 수 ms 안에 끝나므로 이 값이 발목을 잡지는 않는다.
     pub fn new(port: P) -> Self {
         Self {
             port,
-            timeout: Duration::from_millis(200),
+            timeout: Duration::from_millis(1000),
         }
     }
 
@@ -31,24 +33,48 @@ impl<P: SerialPort> Bus<P> {
         self
     }
 
-    /// 패킷 전송. flush 포함.
+    /// 패킷 전송. 새 명령 직전 input buffer drain (stale byte misalignment 방지).
     pub fn send(&mut self, packet: &InstructionPacket) -> Result<()> {
+        // 이전 응답의 trailing byte 또는 unsolicited broadcast 가 다음 recv()의
+        // 첫 byte로 들어가 model_number 같은 필드가 어긋나는 것을 막는다.
+        let _ = self.port.drain_input();
         let bytes = Codec::encode(packet);
         self.port.write_all(&bytes)?;
         self.port.flush()?;
         Ok(())
     }
 
-    /// Status 패킷 1개 수신. 헤더 6바이트 받아 길이 보고 추가 read.
+    /// Status 패킷 1개 수신. 0xFF 0xFF 헤더 동기화 후 길이 보고 추가 read.
+    ///
+    /// TCP/socat 환경에서는 패킷 경계가 byte stream으로 흐트러져 stale byte가 head에
+    /// 끼어들 수 있다. 매번 첫 byte가 0xFF가 아니면 abort 하면 polling 호출이
+    /// 거의 항상 fail → watchdog disconnect. 따라서 sync byte (0xFF 0xFF) 를 발견할
+    /// 때까지 byte slide → 정렬 후 정상 파싱.
     pub fn recv(&mut self) -> Result<StatusPacket> {
-        let mut head = [0u8; 4];
-        self.port.read_exact(&mut head, self.timeout)?;
-        if head[0] != 0xFF || head[1] != 0xFF {
+        // 1) 0xFF 두 개 연속 헤더 동기화. 최대 32 byte slide.
+        let mut prev: u8 = 0x00;
+        let mut sync_done = false;
+        for _ in 0..32 {
+            let mut b = [0u8; 1];
+            self.port.read_exact(&mut b, self.timeout)?;
+            if prev == 0xFF && b[0] == 0xFF {
+                sync_done = true;
+                break;
+            }
+            prev = b[0];
+        }
+        if !sync_done {
             return Err(Error::Codec(
                 crate::dynamixel::v1::CodecError::MissingHeader,
             ));
         }
+
+        // 2) id, length 두 byte.
+        let mut head = [0xFFu8, 0xFF, 0, 0];
+        self.port.read_exact(&mut head[2..4], self.timeout)?;
         let length = head[3] as usize;
+
+        // 3) error + parameters + checksum (length 바이트).
         let mut rest = vec![0u8; length];
         self.port.read_exact(&mut rest, self.timeout)?;
 
@@ -179,8 +205,21 @@ mod tests {
     #[test]
     fn bus_recv_rejects_bad_header() {
         let mut bus = Bus::new(LoopbackBus::default());
-        bus.port.queue_read(&[0x00, 0xFF, 0x01, 0x02]); // 헤더 깨짐
-        let err = bus.recv().unwrap_err();
-        assert!(matches!(err, Error::Codec(_)));
+        // 헤더(0xFF 0xFF) 없이 32 byte 이상의 garbage → sync 실패 또는 buffer 고갈로 에러.
+        let garbage: Vec<u8> = (0..40).map(|i| (i as u8).wrapping_add(0xAA)).collect();
+        bus.port.queue_read(&garbage);
+        assert!(bus.recv().is_err());
+    }
+
+    #[test]
+    fn bus_recv_resyncs_on_stale_bytes() {
+        // socat/TCP 환경 시뮬레이션 — 정상 패킷 앞에 stale byte가 끼어 있어도 sync 회복.
+        let mut bus = Bus::new(LoopbackBus::default());
+        let mut stream = vec![0xAA, 0xBB, 0x00, 0x55]; // garbage prefix
+        stream.extend_from_slice(&status_bytes(7, 0, &[0x42])); // 정상 패킷
+        bus.port.queue_read(&stream);
+        let pkt = bus.recv().unwrap();
+        assert_eq!(pkt.id, 7);
+        assert_eq!(pkt.parameters, vec![0x42]);
     }
 }

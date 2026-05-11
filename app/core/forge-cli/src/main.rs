@@ -8,12 +8,116 @@ use clap::{Parser, Subcommand};
 use forge_core::control::JointController;
 use forge_core::controller::CmController;
 use forge_core::dynamixel::Bus;
-use forge_core::joint::JointId;
+use forge_core::joint::{JointId, JointState};
 use forge_core::motion::{parse_mtn, write_mtn, Motion};
-use forge_core::serial::PosixSerial;
+use forge_core::serial::{PosixSerial, TcpBus};
 use forge_core::strategy::{StrategyInput, StrategyState};
 use forge_core::vision::{detect_blob, BlobResult, Frame, HsvRange, Pixel};
 use forge_core::walk::{WalkCommand, WalkEngine};
+
+/// USB 또는 TCP backend wrapping enum — 모든 명령 핸들러가 endpoint 무관하게 동작.
+enum AnyBus {
+    Posix(Bus<PosixSerial>),
+    Tcp(Bus<TcpBus>),
+}
+
+impl AnyBus {
+    /// `--port` 또는 `--remote` 중 하나를 받아 적절한 Bus 생성.
+    fn open(
+        port: Option<&str>,
+        remote: Option<&str>,
+        baud: u32,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Self> {
+        match (port, remote) {
+            (_, Some(addr)) => {
+                let tcp = TcpBus::connect(addr, Duration::from_millis(3000))
+                    .map_err(|e| anyhow::anyhow!("TCP connect {}: {}", addr, e))?;
+                let bus = Bus::new(tcp).with_timeout(Duration::from_millis(timeout_ms));
+                Ok(AnyBus::Tcp(bus))
+            }
+            (Some(p), None) => {
+                let posix = PosixSerial::open(p, baud)
+                    .map_err(|e| anyhow::anyhow!("USB open {}: {}", p, e))?;
+                let bus = Bus::new(posix).with_timeout(Duration::from_millis(timeout_ms));
+                Ok(AnyBus::Posix(bus))
+            }
+            (None, None) => {
+                anyhow::bail!("--port (USB) 또는 --remote (host:port) 중 하나가 필요해요")
+            }
+        }
+    }
+
+    fn ping(&mut self, id: u8) -> Result<forge_core::dynamixel::StatusPacket, forge_core::Error> {
+        match self {
+            AnyBus::Posix(b) => b.ping(id),
+            AnyBus::Tcp(b) => b.ping(id),
+        }
+    }
+
+    fn scan(&mut self, range: std::ops::RangeInclusive<u8>) -> Vec<u8> {
+        match self {
+            AnyBus::Posix(b) => b.scan(range),
+            AnyBus::Tcp(b) => b.scan(range),
+        }
+    }
+
+    fn board_snapshot(
+        &mut self,
+    ) -> Result<forge_core::controller::cm::BoardSnapshot, forge_core::Error> {
+        match self {
+            AnyBus::Posix(b) => CmController::new(b).snapshot(),
+            AnyBus::Tcp(b) => CmController::new(b).snapshot(),
+        }
+    }
+
+    fn joint_set_position(
+        &mut self,
+        joint: JointId,
+        position: u16,
+    ) -> Result<u16, forge_core::Error> {
+        match self {
+            AnyBus::Posix(b) => JointController::new(b).set_position(joint, position),
+            AnyBus::Tcp(b) => JointController::new(b).set_position(joint, position),
+        }
+    }
+
+    fn joint_read_state(&mut self, joint: JointId) -> Result<JointState, forge_core::Error> {
+        match self {
+            AnyBus::Posix(b) => JointController::new(b).read_state(joint),
+            AnyBus::Tcp(b) => JointController::new(b).read_state(joint),
+        }
+    }
+
+    fn joint_set_torque(
+        &mut self,
+        joint: JointId,
+        on: bool,
+    ) -> Result<(), forge_core::Error> {
+        match self {
+            AnyBus::Posix(b) => JointController::new(b).set_torque(joint, on),
+            AnyBus::Tcp(b) => JointController::new(b).set_torque(joint, on),
+        }
+    }
+
+    fn joint_set_torque_many(
+        &mut self,
+        joints: &[JointId],
+        on: bool,
+    ) -> Result<(), forge_core::Error> {
+        match self {
+            AnyBus::Posix(b) => JointController::new(b).set_torque_many(joints, on),
+            AnyBus::Tcp(b) => JointController::new(b).set_torque_many(joints, on),
+        }
+    }
+
+    fn emergency_stop(&mut self) -> Result<(), forge_core::Error> {
+        match self {
+            AnyBus::Posix(b) => JointController::new(b).emergency_stop(),
+            AnyBus::Tcp(b) => JointController::new(b).emergency_stop(),
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -33,13 +137,16 @@ enum Command {
 
     /// 컨트롤러 또는 모터 ID에 PING 인스트럭션 전송.
     Ping {
-        /// 직렬 포트 경로 (예: /dev/cu.usbserial-A1B2).
+        /// USB 직렬 포트 경로 (예: /dev/cu.usbserial-A1B2). `--remote`와 양자택일.
         #[arg(short, long)]
-        port: String,
+        port: Option<String>,
+        /// 원격 forge serve 주소 (예: `10.0.0.42:5530` 또는 `op2.local:5530`).
+        #[arg(short = 'r', long)]
+        remote: Option<String>,
         /// 대상 ID (기본: 200 = 컨트롤러).
         #[arg(short, long, default_value_t = 200)]
         id: u8,
-        /// baud rate (기본 1 Mbps).
+        /// baud rate (USB 시 적용).
         #[arg(short, long, default_value_t = 1_000_000)]
         baud: u32,
         /// 응답 timeout (ms).
@@ -47,30 +154,33 @@ enum Command {
         timeout: u64,
     },
 
-    /// 모터 ID 1..253을 스캔.
+    /// 모터 ID 범위 스캔.
     Scan {
-        /// 직렬 포트 경로.
+        /// USB 직렬 포트.
         #[arg(short, long)]
-        port: String,
-        /// 스캔 범위 ("1-20" 또는 "1-253").
+        port: Option<String>,
+        /// 원격 forge serve 주소.
+        #[arg(short = 'r', long)]
+        remote: Option<String>,
+        /// 스캔 범위.
         #[arg(short, long, default_value = "1-20")]
         range: String,
-        /// baud rate.
         #[arg(short, long, default_value_t = 1_000_000)]
         baud: u32,
-        /// 각 PING의 timeout (ms).
         #[arg(short, long, default_value_t = 50)]
         timeout: u64,
     },
 
-    /// CM-730/CM-740 sub-controller 보드 상태 출력.
+    /// CM-730/CM-740 보드 상태.
     Board {
-        /// 직렬 포트 경로.
         #[arg(short, long)]
-        port: String,
-        /// baud rate.
+        port: Option<String>,
+        #[arg(short = 'r', long)]
+        remote: Option<String>,
         #[arg(short, long, default_value_t = 1_000_000)]
         baud: u32,
+        #[arg(short, long, default_value_t = 200)]
+        timeout: u64,
     },
 
     /// 캐논 20-DOF 관절 매핑 표 출력.
@@ -110,6 +220,24 @@ enum Command {
         #[arg(short, long, default_value = "found")]
         ball: String,
     },
+
+    /// USB ↔ TCP 양방향 브리지 데몬.
+    Serve {
+        #[arg(short, long)]
+        port: String,
+        #[arg(short, long, default_value = "0.0.0.0:5530")]
+        bind: String,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
+        #[arg(long, default_value_t = 30)]
+        usb_timeout: u64,
+        #[arg(long, default_value_t = 1)]
+        max_connections: u32,
+        /// 같은 네트워크에 mDNS / Bonjour로 자동 광고 (`_forge._tcp`).
+        /// 인자는 service 이름 (예: "OP2-A1"). 클라이언트 측 자동 검색 가능.
+        #[arg(long)]
+        advertise: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -142,47 +270,36 @@ enum MotionAction {
 
 #[derive(Subcommand, Debug)]
 enum JointAction {
-    /// 한 관절의 goal position 설정 (raw 0..4095, default limits로 clamp).
+    /// 한 관절의 goal position 설정.
     Set {
-        /// 직렬 포트.
-        #[arg(short, long)]
-        port: String,
-        /// JointId raw u8 (1..6, 11..20).
-        #[arg(short, long)]
-        id: u8,
-        /// goal position raw 0..4095.
+        #[arg(short, long)] port: Option<String>,
+        #[arg(short = 'r', long)] remote: Option<String>,
+        #[arg(short, long)] id: u8,
         position: u16,
-        #[arg(long, default_value_t = 1_000_000)]
-        baud: u32,
+        #[arg(long, default_value_t = 1_000_000)] baud: u32,
     },
     /// 한 관절의 현재 상태 출력.
     State {
-        #[arg(short, long)]
-        port: String,
-        #[arg(short, long)]
-        id: u8,
-        #[arg(long, default_value_t = 1_000_000)]
-        baud: u32,
+        #[arg(short, long)] port: Option<String>,
+        #[arg(short = 'r', long)] remote: Option<String>,
+        #[arg(short, long)] id: u8,
+        #[arg(long, default_value_t = 1_000_000)] baud: u32,
     },
     /// 한 관절 또는 전체 관절의 토크 enable/disable.
     Torque {
-        #[arg(short, long)]
-        port: String,
+        #[arg(short, long)] port: Option<String>,
+        #[arg(short = 'r', long)] remote: Option<String>,
         /// "all" 또는 ID 숫자.
-        #[arg(short, long)]
-        target: String,
+        #[arg(short, long)] target: String,
         /// "on" 또는 "off".
-        #[arg(short = 'e', long)]
-        enable: String,
-        #[arg(long, default_value_t = 1_000_000)]
-        baud: u32,
+        #[arg(short = 'e', long)] enable: String,
+        #[arg(long, default_value_t = 1_000_000)] baud: u32,
     },
-    /// 비상 정지 — 모든 관절 토크 OFF (소프트 e-stop, ⌘⇧. 대응).
+    /// 비상 정지 — 모든 관절 토크 OFF.
     Estop {
-        #[arg(short, long)]
-        port: String,
-        #[arg(long, default_value_t = 1_000_000)]
-        baud: u32,
+        #[arg(short, long)] port: Option<String>,
+        #[arg(short = 'r', long)] remote: Option<String>,
+        #[arg(long, default_value_t = 1_000_000)] baud: u32,
     },
 }
 
@@ -217,13 +334,12 @@ fn main() -> anyhow::Result<()> {
 
         Command::Ping {
             port,
+            remote,
             id,
             baud,
             timeout,
         } => {
-            let p = PosixSerial::open(&port, baud)
-                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
-            let mut bus = Bus::new(p).with_timeout(Duration::from_millis(timeout));
+            let mut bus = AnyBus::open(port.as_deref(), remote.as_deref(), baud, timeout)?;
             match bus.ping(id) {
                 Ok(s) => println!(
                     "PING ID {} OK (error_byte=0x{:02X}, params={:?})",
@@ -238,14 +354,13 @@ fn main() -> anyhow::Result<()> {
 
         Command::Scan {
             port,
+            remote,
             range,
             baud,
             timeout,
         } => {
             let r = parse_range(&range)?;
-            let p = PosixSerial::open(&port, baud)
-                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
-            let mut bus = Bus::new(p).with_timeout(Duration::from_millis(timeout));
+            let mut bus = AnyBus::open(port.as_deref(), remote.as_deref(), baud, timeout)?;
             let found = bus.scan(r);
             if found.is_empty() {
                 println!("(범위 내 응답한 ID 없음)");
@@ -262,12 +377,14 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Board { port, baud } => {
-            let p = PosixSerial::open(&port, baud)
-                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
-            let mut bus = Bus::new(p);
-            let mut cm = CmController::new(&mut bus);
-            let snap = cm.snapshot()?;
+        Command::Board {
+            port,
+            remote,
+            baud,
+            timeout,
+        } => {
+            let mut bus = AnyBus::open(port.as_deref(), remote.as_deref(), baud, timeout)?;
+            let snap = bus.board_snapshot()?;
             println!("== CM Board 상태 ==");
             println!("  Model    : {}", snap.model_number);
             println!("  Version  : {}", snap.version);
@@ -297,7 +414,198 @@ fn main() -> anyhow::Result<()> {
         Command::Walk { x, y, a, cycles } => handle_walk(x, y, a, cycles)?,
 
         Command::Strategy { ball } => handle_strategy(&ball)?,
+
+        Command::Serve {
+            port,
+            bind,
+            baud,
+            usb_timeout,
+            max_connections,
+            advertise,
+        } => handle_serve(
+            &port,
+            &bind,
+            baud,
+            usb_timeout,
+            max_connections,
+            advertise.as_deref(),
+        )?,
     }
+    Ok(())
+}
+
+fn handle_serve(
+    port: &str,
+    bind: &str,
+    baud: u32,
+    usb_timeout_ms: u64,
+    max_connections: u32,
+    advertise_name: Option<&str>,
+) -> anyhow::Result<()> {
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
+    let listener = TcpListener::bind(bind)
+        .map_err(|e| anyhow::anyhow!("bind {}: {}", bind, e))?;
+    println!(
+        "▶ forge serve (USB↔TCP bridge)\n  USB    : {} @ {} baud\n  Listen : {}\n  Max    : {} concurrent",
+        port, baud, bind, max_connections
+    );
+
+    // Bonjour / mDNS 자동 광고 (선택). 데몬은 함수 끝까지 살아있어야 ServiceInfo가 유지됨.
+    let _mdns_keepalive = if let Some(name) = advertise_name {
+        match start_mdns_advertise(name, &listener) {
+            Ok(d) => {
+                println!("  Bonjour: _forge._tcp / {} (자동 광고 활성)", name);
+                Some(d)
+            }
+            Err(e) => {
+                eprintln!("  ⚠ mDNS 광고 실패 (계속 진행): {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    println!("  Press Ctrl-C to stop.");
+    let active = Arc::new(AtomicU32::new(0));
+
+    for incoming in listener.incoming() {
+        let stream = match incoming {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("accept error: {}", e);
+                continue;
+            }
+        };
+        let peer = stream
+            .peer_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| "?".into());
+
+        if active.load(Ordering::SeqCst) >= max_connections {
+            eprintln!(
+                "[{}] 거부 — 동시 연결 제한 도달 ({} / {})",
+                peer,
+                active.load(Ordering::SeqCst),
+                max_connections
+            );
+            // 클라이언트가 명확히 알 수 있도록 짧은 메시지 후 종료.
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            continue;
+        }
+
+        let port = port.to_string();
+        let active = Arc::clone(&active);
+        thread::spawn(move || {
+            active.fetch_add(1, Ordering::SeqCst);
+            println!("[{}] 연결 — bridge 시작", peer);
+            if let Err(e) = bridge_one_session(&port, baud, usb_timeout_ms, stream) {
+                eprintln!("[{}] bridge 종료: {}", peer, e);
+            } else {
+                println!("[{}] bridge 정상 종료", peer);
+            }
+            active.fetch_sub(1, Ordering::SeqCst);
+        });
+    }
+    Ok(())
+}
+
+/// mDNS / Bonjour `_forge._tcp` advertise. 데몬을 반환 — drop되면 광고 종료.
+fn start_mdns_advertise(
+    name: &str,
+    listener: &std::net::TcpListener,
+) -> anyhow::Result<mdns_sd::ServiceDaemon> {
+    use mdns_sd::{ServiceDaemon, ServiceInfo};
+
+    let local_addr = listener
+        .local_addr()
+        .map_err(|e| anyhow::anyhow!("local_addr: {}", e))?;
+    let port = local_addr.port();
+
+    let daemon = ServiceDaemon::new()
+        .map_err(|e| anyhow::anyhow!("ServiceDaemon::new: {}", e))?;
+
+    let host_name = format!("{}.local.", name);
+    let service_type = "_forge._tcp.local.";
+    // ip = "" + enable_addr_auto() → 모든 인터페이스 IP를 자동 publish.
+    let info = ServiceInfo::new(service_type, name, &host_name, "", port, None)
+        .map_err(|e| anyhow::anyhow!("ServiceInfo::new: {}", e))?
+        .enable_addr_auto();
+
+    daemon
+        .register(info)
+        .map_err(|e| anyhow::anyhow!("daemon.register: {}", e))?;
+    Ok(daemon)
+}
+
+/// USB ↔ TCP 한 세션 양방향 byte pump.
+fn bridge_one_session(
+    port: &str,
+    baud: u32,
+    usb_timeout_ms: u64,
+    stream: std::net::TcpStream,
+) -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+    use std::thread;
+
+    // 작은 read poll timeout — TCP 측 종료 감지 latency 최소화.
+    let serial_read = serialport::new(port, baud)
+        .data_bits(serialport::DataBits::Eight)
+        .parity(serialport::Parity::None)
+        .stop_bits(serialport::StopBits::One)
+        .flow_control(serialport::FlowControl::None)
+        .timeout(Duration::from_millis(usb_timeout_ms))
+        .open()
+        .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
+    let serial_write = serial_read
+        .try_clone()
+        .map_err(|e| anyhow::anyhow!("clone serial: {}", e))?;
+
+    let stream_to_serial = stream
+        .try_clone()
+        .map_err(|e| anyhow::anyhow!("clone tcp: {}", e))?;
+    let stream_from_serial = stream;
+
+    // Thread A: serial → stream
+    let h_a = thread::spawn(move || -> std::io::Result<()> {
+        let mut serial = serial_read;
+        let mut sink = stream_from_serial;
+        let mut buf = [0u8; 1024];
+        loop {
+            match serial.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => sink.write_all(&buf[..n])?,
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    });
+
+    // Thread B: stream → serial (현재 thread)
+    let mut source = stream_to_serial;
+    let mut sink = serial_write;
+    let mut buf = [0u8; 1024];
+    let result = loop {
+        match source.read(&mut buf) {
+            Ok(0) => break Ok(()),
+            Ok(n) => {
+                if let Err(e) = sink.write_all(&buf[..n]) {
+                    break Err(e);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(e) => break Err(e),
+        }
+    };
+
+    // 한쪽 종료 시 다른 쪽도 닫고 thread join.
+    let _ = source.shutdown(std::net::Shutdown::Both);
+    let _ = h_a.join();
+    result.map_err(|e| anyhow::anyhow!("stream→serial: {}", e))?;
     Ok(())
 }
 
@@ -445,30 +753,25 @@ fn handle_joint(action: JointAction) -> anyhow::Result<()> {
     match action {
         JointAction::Set {
             port,
+            remote,
             id,
             position,
             baud,
         } => {
             let joint = JointId::from_byte(id)
                 .ok_or_else(|| anyhow::anyhow!("invalid JointId raw {}", id))?;
-            let p = PosixSerial::open(&port, baud)
-                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
-            let mut bus = Bus::new(p);
-            let mut jc = JointController::new(&mut bus);
-            let clamped = jc.set_position(joint, position)?;
+            let mut bus = AnyBus::open(port.as_deref(), remote.as_deref(), baud, 200)?;
+            let clamped = bus.joint_set_position(joint, position)?;
             println!(
                 "SET {:?} (ID {}): goal_position={} (clamped from {})",
                 joint, id, clamped, position
             );
         }
-        JointAction::State { port, id, baud } => {
+        JointAction::State { port, remote, id, baud } => {
             let joint = JointId::from_byte(id)
                 .ok_or_else(|| anyhow::anyhow!("invalid JointId raw {}", id))?;
-            let p = PosixSerial::open(&port, baud)
-                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
-            let mut bus = Bus::new(p);
-            let mut jc = JointController::new(&mut bus);
-            let s = jc.read_state(joint)?;
+            let mut bus = AnyBus::open(port.as_deref(), remote.as_deref(), baud, 200)?;
+            let s = bus.joint_read_state(joint)?;
             println!("== {:?} (ID {}) 상태 ==", joint, id);
             println!("  Goal Position    : {}", s.goal_position);
             println!("  Present Position : {}", s.present_position);
@@ -480,6 +783,7 @@ fn handle_joint(action: JointAction) -> anyhow::Result<()> {
         }
         JointAction::Torque {
             port,
+            remote,
             target,
             enable,
             baud,
@@ -489,28 +793,22 @@ fn handle_joint(action: JointAction) -> anyhow::Result<()> {
                 "off" | "false" | "0" => false,
                 _ => anyhow::bail!("--enable는 on/off"),
             };
-            let p = PosixSerial::open(&port, baud)
-                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
-            let mut bus = Bus::new(p);
-            let mut jc = JointController::new(&mut bus);
+            let mut bus = AnyBus::open(port.as_deref(), remote.as_deref(), baud, 200)?;
             if target == "all" {
                 let all: Vec<JointId> = JointId::ALL.to_vec();
-                jc.set_torque_many(&all, on)?;
+                bus.joint_set_torque_many(&all, on)?;
                 println!("TORQUE all = {}", on);
             } else {
                 let raw: u8 = target.parse()?;
                 let joint = JointId::from_byte(raw)
                     .ok_or_else(|| anyhow::anyhow!("invalid JointId raw {}", raw))?;
-                jc.set_torque(joint, on)?;
+                bus.joint_set_torque(joint, on)?;
                 println!("TORQUE {:?} (ID {}) = {}", joint, raw, on);
             }
         }
-        JointAction::Estop { port, baud } => {
-            let p = PosixSerial::open(&port, baud)
-                .map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
-            let mut bus = Bus::new(p);
-            let mut jc = JointController::new(&mut bus);
-            jc.emergency_stop()?;
+        JointAction::Estop { port, remote, baud } => {
+            let mut bus = AnyBus::open(port.as_deref(), remote.as_deref(), baud, 200)?;
+            bus.emergency_stop()?;
             println!("⚠️  E-STOP triggered — all torque OFF");
         }
     }

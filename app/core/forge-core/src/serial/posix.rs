@@ -87,4 +87,10 @@ impl SerialPort for PosixSerial {
         // serialport crate에는 명시적 close가 없음 — Drop이 처리.
         Ok(())
     }
+
+    /// `serialport` 의 `clear(ClearBuffer::Input)` 으로 input buffer 비우기.
+    fn drain_input(&mut self) -> Result<()> {
+        let _ = self.inner.clear(serialport::ClearBuffer::Input);
+        Ok(())
+    }
 }

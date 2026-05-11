@@ -61,11 +61,14 @@ public enum DFSpace {
     public static let xxl: CGFloat = 48
 }
 
-/// 코너 라운드.
+/// 코너 라운드 — Apple HIG + Linear/Vercel Geist 스케일.
 public enum DFRadius {
+    public static let xs: CGFloat = 4
     public static let sm: CGFloat = 8
     public static let md: CGFloat = 12
     public static let lg: CGFloat = 16
+    public static let xl: CGFloat = 20
+    public static let full: CGFloat = 999
 }
 
 /// E-Stop 버튼 사이즈 (ISO 13850 권장 머쉬룸 헤드 ≥40mm — 디지털 환산 56pt).
@@ -73,6 +76,71 @@ public enum DFSize {
     public static let estop: CGFloat = 56
     public static let toolbarIcon: CGFloat = 22
     public static let badgeMin: CGFloat = 28
+    /// 버튼 표준 높이 — small / medium / large.
+    public static let buttonHSmall: CGFloat = 24
+    public static let buttonHMedium: CGFloat = 30
+    public static let buttonHLarge: CGFloat = 40
+    /// 입력 필드 표준 높이.
+    public static let inputH: CGFloat = 30
+    /// 칩 표준 높이.
+    public static let chipH: CGFloat = 22
+}
+
+/// Elevation — Material Design 영감 + macOS 톤다운 그림자 단계.
+public enum DFShadow {
+    public static let none: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
+        (.clear, 0, 0, 0)
+    public static let card: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
+        (Color.black.opacity(0.06), 8, 0, 2)
+    public static let popover: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
+        (Color.black.opacity(0.12), 16, 0, 4)
+    public static let modal: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
+        (Color.black.opacity(0.24), 28, 0, 8)
+}
+
+/// 애니메이션 — 표준 timing.
+public enum DFAnimation {
+    public static let fast = Animation.easeOut(duration: 0.12)
+    public static let standard = Animation.easeOut(duration: 0.22)
+    public static let smooth = Animation.spring(response: 0.4, dampingFraction: 0.85)
+    public static let bounce = Animation.spring(response: 0.5, dampingFraction: 0.7)
+}
+
+/// 불투명도 토큰 — 일관 dim/disabled 처리.
+public enum DFOpacity {
+    public static let disabled: Double = 0.4
+    public static let dim: Double = 0.6
+    public static let ghost: Double = 0.08
+    public static let subtle: Double = 0.12
+    public static let strong: Double = 0.35
+}
+
+// MARK: - View modifiers (정형 helper)
+
+public extension View {
+    /// 카드 표준 스타일 — corner + border + shadow.
+    func dfCard(radius: CGFloat = DFRadius.md, padded: Bool = true,
+                shadow: Bool = false) -> some View {
+        self
+            .padding(padded ? DFSpace.md : 0)
+            .background(DFColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: radius))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius)
+                    .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: 0.5)
+            )
+            .shadow(color: shadow ? DFShadow.card.color : .clear,
+                    radius: shadow ? DFShadow.card.radius : 0,
+                    x: shadow ? DFShadow.card.x : 0,
+                    y: shadow ? DFShadow.card.y : 0)
+    }
+
+    /// 디스에이블 시 자연스러운 dim 처리.
+    func dfDisabled(_ disabled: Bool) -> some View {
+        self
+            .opacity(disabled ? DFOpacity.disabled : 1)
+            .allowsHitTesting(!disabled)
+    }
 }
 
 // MARK: - Color helpers (light/dark hex)

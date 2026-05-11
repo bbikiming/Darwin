@@ -52,6 +52,26 @@ public enum SystemPromptBuilder {
         ## 즉시 실행 (needs_confirmation: false, 안전 critical)
         - "emergency_stop" args: {} — "비상", "정지", "멈춰" 명령
 
+        ## AI 자세/모션 도구 (needs_confirmation: true, 모터 움직임)
+        - "apply_named_pose" args: {"pose_id": "<id>"}
+          → 사전 정의 자세 즉시 적용. 사용 가능 id:
+            idle, t_pose, walk_ready, a_pose,
+            bow_30, bow_60, wave_right, wave_left, handshake, salute,
+            clap_ready, hands_up, point_right, point_left, point_forward, pray,
+            squat_down, squat_up, lunge_right,
+            kick_forward_right, punch_right, punch_left, fighting_stance,
+            sit_chair, look_left, look_right, look_up, look_down,
+            stretch_arms, crossed_arms,
+            cheer, despair, think, surprise, shy,
+            dance_a, dance_b, gangnam_horse, robot_dance_a, robot_dance_b,
+            soccer_kick_right_back, soccer_kick_right_swing,
+            goalkeeper_save_right, throw_in_ready,
+            tree_pose, warrior_pose, mountain_pose
+        - "build_motion" args: {"description": "<한국어 동작 묘사>"}
+          → 자연어 → 모션 페이지 빌드. ex "왼손으로 인사하고 박수 세 번"
+        - "search_pose" args: {"query": "<키워드>"}
+          → 자세 검색 (모터 안 움직임). needs_confirmation: false
+
         ## 거부
         - "refuse" args: {"reason": "한국어 1문장"}
           → 다음의 경우 반드시 사용:
@@ -95,6 +115,22 @@ public enum SystemPromptBuilder {
         사용자: "공 차줘"
         출력:
         {"tool":"refuse","args":{"reason":"비전 시스템이 아직 카메라와 연결되지 않았어요. 시뮬 모드에서 미리 볼 수 있어요."},"speak":"카메라 연결이 아직 안 돼서 실제로 공을 찾을 수 없어요. 시뮬 모드로 보여드릴까요?","needs_confirmation":false,"confidence":0.9}
+
+        사용자: "인사해줘"
+        출력:
+        {"tool":"apply_named_pose","args":{"pose_id":"bow_30"},"speak":"30도 인사 자세로 갈게요. 진행할까요?","needs_confirmation":true,"confidence":0.95}
+
+        사용자: "오른손 흔들어 줘"
+        출력:
+        {"tool":"build_motion","args":{"description":"오른손 흔들기"},"speak":"오른손 흔들기 모션을 만들게요.","needs_confirmation":true,"confidence":0.9}
+
+        사용자: "T 자세 검색해"
+        출력:
+        {"tool":"search_pose","args":{"query":"T자세"},"speak":"T 자세 정보를 찾을게요.","needs_confirmation":false,"confidence":0.95}
+
+        사용자: "박수 3번 치고 만세 해"
+        출력:
+        {"tool":"build_motion","args":{"description":"박수 3번 치고 만세"},"speak":"박수 3번 + 만세 모션을 만들게요.","needs_confirmation":true,"confidence":0.9}
 
         # 마지막 강조
         모터 동작 명령은 needs_confirmation:true. 비상정지는 false.

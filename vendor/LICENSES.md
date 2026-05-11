@@ -30,6 +30,7 @@
 | 5 | [Interbotix/HROS5-Framework](https://github.com/Interbotix/HROS5-Framework) | **GPL v3** | (클론하지 않음 — 메타데이터만) | **❌ (격리)** | 알고리즘 참고만, 코드 복사 금지. |
 | 6 | [HumaRobotics/darwin_description](https://github.com/HumaRobotics/darwin_description) | BSD-2-Clause | (메타데이터만) | ✅ | Sprint 4+ 3D pose에서 URDF 가져올 시 BSD 표기 추가 |
 | 7 | [cyberbotics/webots](https://github.com/cyberbotics/webots) | Apache 2.0 | (메타데이터만) | ✅ | 시뮬레이터, 우리 코드와 분리 실행 |
+| 8 | [ROBOTIS-GIT/ROBOTIS-OP2-Common](https://github.com/ROBOTIS-GIT/ROBOTIS-OP2-Common) | Apache 2.0 | `vendor/robotis-op2-common/` (21개 STL mesh + URDF xacro + LICENSE 원본 보존) | ✅ | Sprint 7 — SwiftUI 3D 시각화에 사용. URDF의 joint origin/axis를 코드로 옮겨 본 트리 구성. STL은 SCNGeometry로 직접 파싱(Swift 자체 구현). attribution: `vendor/robotis-op2-common/LICENSE` 원본 동봉. |
 
 ## 알려진 출처별 기본 라이선스 (Phase 1 선조사)
 

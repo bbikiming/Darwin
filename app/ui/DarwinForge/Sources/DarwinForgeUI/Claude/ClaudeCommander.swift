@@ -13,6 +13,7 @@ public actor ClaudeCommander {
 
     public enum CommanderError: Error, LocalizedError {
         case cliNotFound
+        case notLoggedIn                              // Claude CLI 로그인 필요.
         case nonZeroExit(code: Int32, stderr: String)
         case invalidWrapper(String)
         case invalidPlan(String)
@@ -22,6 +23,8 @@ public actor ClaudeCommander {
             switch self {
             case .cliNotFound:
                 return KoreanUX.Errors.claudeNotInstalled.title
+            case .notLoggedIn:
+                return "Claude 로그인이 필요해요. Mac 터미널에서 `claude /login` 한 번만 실행 후 인증하세요."
             case .nonZeroExit(let code, let stderr):
                 return "Claude 호출 실패 (exit=\(code)): \(stderr.prefix(120))"
             case .invalidWrapper(let raw):
@@ -64,8 +67,16 @@ public actor ClaudeCommander {
     /// 사용자 발화를 받아 CommandPlan 생성.
     public func plan(userText: String) async throws -> CommandPlan {
         let wrapper = try await invoke(userText: userText)
-        guard wrapper.is_error != true else {
-            throw CommanderError.nonZeroExit(code: -1, stderr: wrapper.result ?? "")
+        if wrapper.is_error == true {
+            // Claude CLI 가 result 필드에 사람이 읽을 에러 문자열을 넣음.
+            let body = wrapper.result ?? ""
+            let lower = body.lowercased()
+            if lower.contains("not logged in")
+                || lower.contains("please run /login")
+                || lower.contains("/login") {
+                throw CommanderError.notLoggedIn
+            }
+            throw CommanderError.nonZeroExit(code: -1, stderr: body)
         }
         guard let inner = wrapper.result else {
             throw CommanderError.invalidWrapper("missing result")

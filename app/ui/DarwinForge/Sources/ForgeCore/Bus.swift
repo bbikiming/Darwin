@@ -1,16 +1,23 @@
 import CForgeCore
 import Foundation
 
-/// 캐논 관절 ID — `docs/architecture/joint-conventions.md`.
+/// 캐논 관절 ID — ROBOTIS-OP2 e-Manual 표준 actuator ID 와 1:1 매핑.
+///
+/// 팔   ID 1..6   (어깨 pitch/roll, 팔꿈치 — 한쪽 3 joint)
+/// 다리 ID 7..18  (hip yaw/roll/pitch, 무릎, 발목 pitch/roll — 한쪽 6 joint)
+/// 머리 ID 19,20  (pan/tilt)
+/// 출처: <https://emanual.robotis.com/docs/en/platform/op2/getting_started/>
 public enum JointID: UInt8, CaseIterable, Codable, Sendable, Hashable {
-    case rShoulderPitch = 1, lShoulderPitch = 2
-    case rShoulderRoll  = 3, lShoulderRoll  = 4
-    case rElbow         = 5, lElbow         = 6
-    case rHipYaw        = 11, lHipYaw       = 12
-    case rHipRoll       = 13, lHipRoll      = 14
-    case rHipPitch      = 15, lHipPitch     = 16
-    case rKnee          = 17, lKnee         = 18
-    case headPan        = 19, headTilt      = 20
+    case rShoulderPitch = 1,  lShoulderPitch = 2
+    case rShoulderRoll  = 3,  lShoulderRoll  = 4
+    case rElbow         = 5,  lElbow         = 6
+    case rHipYaw        = 7,  lHipYaw        = 8
+    case rHipRoll       = 9,  lHipRoll       = 10
+    case rHipPitch      = 11, lHipPitch      = 12
+    case rKnee          = 13, lKnee          = 14
+    case rAnklePitch    = 15, lAnklePitch    = 16
+    case rAnkleRoll     = 17, lAnkleRoll     = 18
+    case headPan        = 19, headTilt       = 20
 
     /// 영문 식별자 (UI 라벨 + 기록용).
     public var name: String {
@@ -29,6 +36,10 @@ public enum JointID: UInt8, CaseIterable, Codable, Sendable, Hashable {
         case .lHipPitch:      return "L_HIP_PITCH"
         case .rKnee:          return "R_KNEE"
         case .lKnee:          return "L_KNEE"
+        case .rAnklePitch:    return "R_ANKLE_PITCH"
+        case .lAnklePitch:    return "L_ANKLE_PITCH"
+        case .rAnkleRoll:     return "R_ANKLE_ROLL"
+        case .lAnkleRoll:     return "L_ANKLE_ROLL"
         case .headPan:        return "HEAD_PAN"
         case .headTilt:       return "HEAD_TILT"
         }
@@ -47,8 +58,10 @@ public enum JointID: UInt8, CaseIterable, Codable, Sendable, Hashable {
         switch self {
         case .rShoulderPitch, .rShoulderRoll, .rElbow: return .rightArm
         case .lShoulderPitch, .lShoulderRoll, .lElbow: return .leftArm
-        case .rHipYaw, .rHipRoll, .rHipPitch, .rKnee:  return .rightLeg
-        case .lHipYaw, .lHipRoll, .lHipPitch, .lKnee:  return .leftLeg
+        case .rHipYaw, .rHipRoll, .rHipPitch, .rKnee, .rAnklePitch, .rAnkleRoll:
+            return .rightLeg
+        case .lHipYaw, .lHipRoll, .lHipPitch, .lKnee, .lAnklePitch, .lAnkleRoll:
+            return .leftLeg
         case .headPan, .headTilt:                       return .head
         }
     }
@@ -105,7 +118,7 @@ public struct BoardSnapshot: Sendable, Equatable {
     }
 }
 
-/// Dynamixel Protocol 1.0 버스 핸들. PosixSerial 위 wrapping.
+/// Dynamixel Protocol 1.0 버스 핸들. PosixSerial 또는 TcpBus 위 wrapping.
 ///
 /// `Bus`는 reference type — 닫힘은 deinit에서 자동 처리.
 public final class Bus: @unchecked Sendable {
@@ -114,7 +127,7 @@ public final class Bus: @unchecked Sendable {
     public let baud: UInt32
     public let timeoutMs: UInt32
 
-    /// 직렬 포트 open + Bus 생성.
+    /// USB 직렬 포트 open + Bus 생성.
     public init(portPath: String, baud: UInt32 = 1_000_000, timeoutMs: UInt32 = 200) throws {
         var err: Int32 = FC_OK
         let h = portPath.withCString { ptr in
@@ -127,6 +140,26 @@ public final class Bus: @unchecked Sendable {
         self.portPath = portPath
         self.baud = baud
         self.timeoutMs = timeoutMs
+    }
+
+    /// 네트워크 endpoint(host:port)에 TCP 연결 + Bus 생성.
+    /// 서버 측은 `forge serve --port /dev/... --bind 0.0.0.0:5530` 으로 USB 브리지를 노출.
+    public init(networkHost: String,
+                networkPort: UInt16,
+                connectTimeoutMs: UInt32 = 3000,
+                ioTimeoutMs: UInt32 = 250) throws {
+        let addr = "\(networkHost):\(networkPort)"
+        var err: Int32 = FC_OK
+        let h = addr.withCString { ptr in
+            fc_bus_open_tcp(ptr, connectTimeoutMs, ioTimeoutMs, &err)
+        }
+        guard let h else {
+            throw ForgeError.from(err) ?? .generic
+        }
+        self.handle = h
+        self.portPath = addr
+        self.baud = 0
+        self.timeoutMs = ioTimeoutMs
     }
 
     deinit {
@@ -178,6 +211,12 @@ public final class Bus: @unchecked Sendable {
         var clamped: UInt16 = 0
         try checkForgeReturn(fc_joint_set_position(self.raw(), joint.rawValue, position, &clamped))
         return clamped
+    }
+
+    /// 한 관절 moving_speed 설정 — Dynamixel MX-28T address 32-33.
+    /// 0 = 무제한 (default), 1-1023 = 단계별 (0.114 rpm per unit, 526 ≈ 60rpm = 1초/360°).
+    public func setMovingSpeed(_ joint: JointID, speed: UInt16) throws {
+        try checkForgeReturn(fc_joint_set_moving_speed(self.raw(), joint.rawValue, speed))
     }
 
     /// 한 관절 상태 read.

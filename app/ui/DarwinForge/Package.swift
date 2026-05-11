@@ -33,7 +33,10 @@ let package = Package(
         .target(
             name: "DarwinForgeUI",
             dependencies: ["ForgeCore"],
-            path: "Sources/DarwinForgeUI"
+            path: "Sources/DarwinForgeUI",
+            resources: [
+                .copy("Resources/Meshes")
+            ]
         ),
         .executableTarget(
             name: "DarwinForgeApp",
@@ -44,6 +47,11 @@ let package = Package(
             name: "ForgeCoreTests",
             dependencies: ["ForgeCore"],
             path: "Tests/ForgeCoreTests"
+        ),
+        .testTarget(
+            name: "DarwinForgeUITests",
+            dependencies: ["DarwinForgeUI"],
+            path: "Tests/DarwinForgeUITests"
         )
     ]
 )

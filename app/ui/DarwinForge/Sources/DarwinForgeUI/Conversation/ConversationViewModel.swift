@@ -137,6 +137,13 @@ public final class ConversationViewModel: ObservableObject {
         switch err {
         case .cliNotFound:
             msg = KoreanUX.Errors.claudeNotInstalled
+        case .notLoggedIn:
+            msg = KoreanUX.ErrorMessage(
+                title: "Claude 로그인이 필요해요",
+                body: "Mac 터미널에서 다음을 한 번만 실행한 뒤 다시 시도하세요:\n\n  claude /login\n\n브라우저가 열리면 Anthropic 계정으로 인증하세요. 토큰은 이후 자동 저장됩니다.",
+                action: KoreanUX.Action.retry,
+                rawDetail: err.localizedDescription
+            )
         case .nonZeroExit(_, let stderr) where stderr.contains("auth") || stderr.contains("login"):
             msg = KoreanUX.Errors.claudeAuthExpired
         case .nonZeroExit(_, let stderr) where stderr.contains("rate") || stderr.contains("429"):

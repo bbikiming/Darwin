@@ -21,7 +21,7 @@ use forge_core::controller::{cm::BoardSnapshot, CmController};
 use forge_core::dynamixel::Bus;
 use forge_core::joint::{JointId, JointState};
 use forge_core::motion::{parse_mtn, write_mtn, Motion};
-use forge_core::serial::{LoopbackBus, PosixSerial};
+use forge_core::serial::{LoopbackBus, PosixSerial, TcpBus};
 use forge_core::strategy::{StrategyInput, StrategyState};
 use forge_core::vision::{detect_blob, BlobResult, Frame, HsvRange, Pixel};
 use forge_core::walk::{WalkCommand, WalkEngine};
@@ -135,16 +135,16 @@ pub unsafe extern "C" fn fc_serial_list_ports(out_err: *mut c_int) -> *mut c_cha
 // Bus 핸들 — open/close/ping/scan/board snapshot/joint ops
 // ============================================================================
 
-/// Bus 핸들. PosixSerial 또는 LoopbackBus를 감쌈.
+/// Bus 핸들. PosixSerial / LoopbackBus / TcpBus를 감쌈.
 pub struct FcBus {
-    /// 0=Posix, 1=Loopback (테스트용).
     backend: BusBackend,
 }
 
-#[allow(dead_code)] // Loopback은 추후 in-process 테스트 후크용으로 보존.
+#[allow(dead_code)] // Loopback은 in-process 테스트 후크용.
 enum BusBackend {
     Posix(Bus<PosixSerial>),
     Loopback(Bus<LoopbackBus>),
+    Tcp(Bus<TcpBus>),
 }
 
 /// 직렬 포트 open 후 Bus 생성. 실패 시 nullptr.
@@ -189,6 +189,51 @@ pub unsafe extern "C" fn fc_bus_open(
     }
 }
 
+/// 네트워크 endpoint(`host:port`) 로 TCP 연결 후 Bus 생성. 실패 시 nullptr.
+/// `connect_timeout_ms` 는 연결 자체의 timeout, `io_timeout_ms`는 read/write 작업.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_open_tcp(
+    address: *const c_char,
+    connect_timeout_ms: u32,
+    io_timeout_ms: u32,
+    out_err: *mut c_int,
+) -> *mut FcBus {
+    let addr = match cstr_to_str(address) {
+        Some(s) => s,
+        None => {
+            if !out_err.is_null() {
+                *out_err = FC_ERR_INVALID;
+            }
+            return ptr::null_mut();
+        }
+    };
+    match catch_unwind(|| {
+        TcpBus::connect(addr, Duration::from_millis(connect_timeout_ms as u64))
+    }) {
+        Ok(Ok(p)) => {
+            let bus = Bus::new(p).with_timeout(Duration::from_millis(io_timeout_ms as u64));
+            if !out_err.is_null() {
+                *out_err = FC_OK;
+            }
+            Box::into_raw(Box::new(FcBus {
+                backend: BusBackend::Tcp(bus),
+            }))
+        }
+        Ok(Err(e)) => {
+            if !out_err.is_null() {
+                *out_err = err_code(&e);
+            }
+            ptr::null_mut()
+        }
+        Err(_) => {
+            if !out_err.is_null() {
+                *out_err = FC_ERR_PANIC;
+            }
+            ptr::null_mut()
+        }
+    }
+}
+
 /// Bus 핸들 해제.
 #[no_mangle]
 pub unsafe extern "C" fn fc_bus_close(handle: *mut FcBus) {
@@ -201,6 +246,7 @@ fn bus_apply<R>(b: &mut FcBus, mut f: impl FnMut(&mut dyn BusOps) -> R) -> R {
     match &mut b.backend {
         BusBackend::Posix(bus) => f(bus),
         BusBackend::Loopback(bus) => f(bus),
+        BusBackend::Tcp(bus) => f(bus),
     }
 }
 
@@ -321,27 +367,23 @@ pub unsafe extern "C" fn fc_bus_board_snapshot(
     }
     safe_call(|| {
         let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            out: *mut FfiBoardSnapshot,
+        ) -> c_int {
+            let mut cm = CmController::new(b);
+            match cm.snapshot() {
+                Ok(s) => {
+                    unsafe { *out = s.into(); }
+                    FC_OK
+                }
+                Err(e) => err_code(&e),
+            }
+        }
         match &mut bus.backend {
-            BusBackend::Posix(b) => {
-                let mut cm = CmController::new(b);
-                match cm.snapshot() {
-                    Ok(s) => {
-                        *out = s.into();
-                        FC_OK
-                    }
-                    Err(e) => err_code(&e),
-                }
-            }
-            BusBackend::Loopback(b) => {
-                let mut cm = CmController::new(b);
-                match cm.snapshot() {
-                    Ok(s) => {
-                        *out = s.into();
-                        FC_OK
-                    }
-                    Err(e) => err_code(&e),
-                }
-            }
+            BusBackend::Posix(b) => run(b, out),
+            BusBackend::Loopback(b) => run(b, out),
+            BusBackend::Tcp(b) => run(b, out),
         }
     })
 }
@@ -354,19 +396,17 @@ pub unsafe extern "C" fn fc_bus_set_dxl_power(handle: *mut FcBus, on: c_int) -> 
     }
     safe_call(|| {
         let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(b: &mut Bus<P>, on: bool) -> c_int {
+            let mut cm = CmController::new(b);
+            cm.set_dxl_power(on)
+                .map(|_| FC_OK)
+                .unwrap_or_else(|e| err_code(&e))
+        }
+        let on_b = on != 0;
         match &mut bus.backend {
-            BusBackend::Posix(b) => {
-                let mut cm = CmController::new(b);
-                cm.set_dxl_power(on != 0)
-                    .map(|_| FC_OK)
-                    .unwrap_or_else(|e| err_code(&e))
-            }
-            BusBackend::Loopback(b) => {
-                let mut cm = CmController::new(b);
-                cm.set_dxl_power(on != 0)
-                    .map(|_| FC_OK)
-                    .unwrap_or_else(|e| err_code(&e))
-            }
+            BusBackend::Posix(b) => run(b, on_b),
+            BusBackend::Loopback(b) => run(b, on_b),
+            BusBackend::Tcp(b) => run(b, on_b),
         }
     })
 }
@@ -427,19 +467,21 @@ pub unsafe extern "C" fn fc_joint_set_torque(
     };
     safe_call(|| {
         let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            joint: JointId,
+            enable: bool,
+        ) -> c_int {
+            let mut jc = JointController::new(b);
+            jc.set_torque(joint, enable)
+                .map(|_| FC_OK)
+                .unwrap_or_else(|e| err_code(&e))
+        }
+        let en = enable != 0;
         match &mut bus.backend {
-            BusBackend::Posix(b) => {
-                let mut jc = JointController::new(b);
-                jc.set_torque(joint, enable != 0)
-                    .map(|_| FC_OK)
-                    .unwrap_or_else(|e| err_code(&e))
-            }
-            BusBackend::Loopback(b) => {
-                let mut jc = JointController::new(b);
-                jc.set_torque(joint, enable != 0)
-                    .map(|_| FC_OK)
-                    .unwrap_or_else(|e| err_code(&e))
-            }
+            BusBackend::Posix(b) => run(b, joint, en),
+            BusBackend::Loopback(b) => run(b, joint, en),
+            BusBackend::Tcp(b) => run(b, joint, en),
         }
     })
 }
@@ -461,15 +503,18 @@ pub unsafe extern "C" fn fc_joint_set_position(
     };
     safe_call(|| {
         let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            joint: JointId,
+            position: u16,
+        ) -> Result<u16, forge_core::Error> {
+            let mut jc = JointController::new(b);
+            jc.set_position(joint, position)
+        }
         let result: Result<u16, forge_core::Error> = match &mut bus.backend {
-            BusBackend::Posix(b) => {
-                let mut jc = JointController::new(b);
-                jc.set_position(joint, position)
-            }
-            BusBackend::Loopback(b) => {
-                let mut jc = JointController::new(b);
-                jc.set_position(joint, position)
-            }
+            BusBackend::Posix(b) => run(b, joint, position),
+            BusBackend::Loopback(b) => run(b, joint, position),
+            BusBackend::Tcp(b) => run(b, joint, position),
         };
         match result {
             Ok(c) => {
@@ -478,6 +523,44 @@ pub unsafe extern "C" fn fc_joint_set_position(
                 }
                 FC_OK
             }
+            Err(e) => err_code(&e),
+        }
+    })
+}
+
+/// 한 관절 moving_speed 설정 — Dynamixel MX-28T address 32-33 (2 byte).
+/// speed: 0 = 무제한 (default), 1-1023 = 단계별 (0.114 rpm per unit).
+/// 자세 변경 시 모터의 보간 속도 제한 → 부드러운 이동.
+#[no_mangle]
+pub unsafe extern "C" fn fc_joint_set_moving_speed(
+    handle: *mut FcBus,
+    raw_id: u8,
+    speed: u16,
+) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    let joint = match JointId::from_byte(raw_id) {
+        Some(j) => j,
+        None => return FC_ERR_INVALID,
+    };
+    safe_call(|| {
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>, joint: JointId, speed: u16,
+        ) -> Result<(), forge_core::Error> {
+            let low = (speed & 0xFF) as u8;
+            let high = ((speed >> 8) & 0xFF) as u8;
+            // MX-28T moving_speed register address = 32.
+            b.write(joint as u8, 32, &[low, high])
+        }
+        let result: Result<(), forge_core::Error> = match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, joint, speed),
+            BusBackend::Loopback(b) => run(b, joint, speed),
+            BusBackend::Tcp(b) => run(b, joint, speed),
+        };
+        match result {
+            Ok(()) => FC_OK,
             Err(e) => err_code(&e),
         }
     })
@@ -499,15 +582,17 @@ pub unsafe extern "C" fn fc_joint_read_state(
     };
     safe_call(|| {
         let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            joint: JointId,
+        ) -> Result<JointState, forge_core::Error> {
+            let mut jc = JointController::new(b);
+            jc.read_state(joint)
+        }
         let result = match &mut bus.backend {
-            BusBackend::Posix(b) => {
-                let mut jc = JointController::new(b);
-                jc.read_state(joint)
-            }
-            BusBackend::Loopback(b) => {
-                let mut jc = JointController::new(b);
-                jc.read_state(joint)
-            }
+            BusBackend::Posix(b) => run(b, joint),
+            BusBackend::Loopback(b) => run(b, joint),
+            BusBackend::Tcp(b) => run(b, joint),
         };
         match result {
             Ok(s) => {
@@ -527,19 +612,16 @@ pub unsafe extern "C" fn fc_emergency_stop(handle: *mut FcBus) -> c_int {
     }
     safe_call(|| {
         let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(b: &mut Bus<P>) -> c_int {
+            let mut jc = JointController::new(b);
+            jc.emergency_stop()
+                .map(|_| FC_OK)
+                .unwrap_or_else(|e| err_code(&e))
+        }
         match &mut bus.backend {
-            BusBackend::Posix(b) => {
-                let mut jc = JointController::new(b);
-                jc.emergency_stop()
-                    .map(|_| FC_OK)
-                    .unwrap_or_else(|e| err_code(&e))
-            }
-            BusBackend::Loopback(b) => {
-                let mut jc = JointController::new(b);
-                jc.emergency_stop()
-                    .map(|_| FC_OK)
-                    .unwrap_or_else(|e| err_code(&e))
-            }
+            BusBackend::Posix(b) => run(b),
+            BusBackend::Loopback(b) => run(b),
+            BusBackend::Tcp(b) => run(b),
         }
     })
 }

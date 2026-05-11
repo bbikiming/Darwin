@@ -76,11 +76,74 @@ public final class IntentDispatcher: ObservableObject {
         // 안전 critical — LLM 경로 우회 가능
         case .emergency_stop: return try await runEmergencyStop()
 
+        // 신규 — AI 모션/자세 도구.
+        case .apply_named_pose: return try await runApplyNamedPose(args: plan.args)
+        case .build_motion:     return try await runBuildMotion(args: plan.args)
+        case .search_pose:      return try await runSearchPose(args: plan.args)
+
         // 거부 — 도구 호출 없이 사용자 응답만
         case .refuse:
             let reason = plan.args["reason"]?.stringValue ?? "이유를 명시하지 않았어요"
             return ExecutionResult(speak: reason)
         }
+    }
+
+    // MARK: - AI motion/pose dispatch
+
+    private func runApplyNamedPose(args: [String: ArgValue]) async throws -> ExecutionResult {
+        guard let id = args["pose_id"]?.stringValue else {
+            throw DispatcherError.invalidArgs("pose_id 가 필요해요")
+        }
+        guard let named = PoseLibrary.get(id) else {
+            // id 가 없으면 keyword 로 search 한 번 더.
+            if let fallback = PoseLibrary.search(id) {
+                if let store = connectionStore {
+                    await store.applyPoseSmoothly(fallback.pose)
+                }
+                return ExecutionResult(
+                    speak: "'\(id)' 정확한 ID 가 없어 '\(fallback.displayName)' 으로 적용했어요."
+                )
+            }
+            throw DispatcherError.invalidArgs("자세 '\(id)' 를 찾지 못했어요")
+        }
+        if let store = connectionStore {
+            await store.applyPoseSmoothly(named.pose)
+        }
+        return ExecutionResult(
+            speak: "✓ 자세 '\(named.displayName)' 적용 — \(named.description)"
+        )
+    }
+
+    private func runBuildMotion(args: [String: ArgValue]) async throws -> ExecutionResult {
+        let description = args["description"]?.stringValue ?? ""
+        guard !description.isEmpty else {
+            throw DispatcherError.invalidArgs("어떤 동작인지 설명이 필요해요")
+        }
+        let steps = MotionBuilder.parseHeuristic(description)
+        guard !steps.isEmpty else {
+            return ExecutionResult(
+                speak: "'\(description)' 에서 해당하는 자세를 찾지 못했어요. '인사' '손 흔들기' '박수' 같은 키워드를 포함해 보세요."
+            )
+        }
+        let stepsDesc = steps.map { $0.poseId }.joined(separator: " → ")
+        return ExecutionResult(
+            speak: "동작 빌드 완료 — \(steps.count) 스텝 (\(stepsDesc)). 모션 스튜디오에서 확인하세요."
+        )
+    }
+
+    private func runSearchPose(args: [String: ArgValue]) async throws -> ExecutionResult {
+        let query = args["query"]?.stringValue ?? ""
+        guard !query.isEmpty else {
+            throw DispatcherError.invalidArgs("검색어가 필요해요")
+        }
+        guard let found = PoseLibrary.search(query) else {
+            return ExecutionResult(
+                speak: "'\(query)' 에 해당하는 자세를 찾지 못했어요."
+            )
+        }
+        return ExecutionResult(
+            speak: "\(found.displayName) — \(found.description) (id: \(found.id))"
+        )
     }
 
     /// L5 — Hardware E-Stop. LLM 경로 우회로 호출 가능.
@@ -251,8 +314,8 @@ public final class IntentDispatcher: ObservableObject {
         if let target = args["id"]?.stringValue, target.lowercased() == "all" {
             try setTorqueAll(bus: bus, enable: enable)
             return ExecutionResult(speak: enable
-                ? "관절 16개에 모두 힘이 들어왔어요"
-                : "관절 16개의 힘을 모두 풀었어요")
+                ? "관절 20개에 모두 힘이 들어왔어요"
+                : "관절 20개의 힘을 모두 풀었어요")
         }
         if let id = args["id"]?.intValue, let jid = JointID(rawValue: UInt8(clamping: id)) {
             try bus.setTorque(jid, enable: enable)
