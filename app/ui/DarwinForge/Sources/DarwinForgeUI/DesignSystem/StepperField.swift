@@ -210,8 +210,9 @@ public struct StepperField: View {
 
 // MARK: - Stepper button (자체 hover 상태 보유)
 
-/// 22×22pt 정사각 hit-target (Apple HIG mouse 권장 최소).
-/// hover 시 elev2 강조, press 시 0.92 scale.
+/// 26×24pt hit-target. background / overlay / foregroundStyle 을 label 바깥
+/// (Button 자체)에 modifier로 적용해 hit-area 충돌·축소 가능성을 배제.
+/// 호버/프레스 시 시각 피드백.
 private struct StepperButton: View {
     let system: String
     let direction: Double
@@ -221,32 +222,40 @@ private struct StepperButton: View {
     let action: (Double) -> Void
 
     @State private var hovering: Bool = false
+    @State private var pressing: Bool = false
 
     var body: some View {
-        Button {
-            action(direction)
-        } label: {
+        Button(action: { action(direction) }) {
             Image(systemName: system)
-                .font(.system(size: 10, weight: .bold))
-                .frame(width: 22, height: 22)
-                .foregroundStyle(hovering ? DFColor.textPrimary : DFColor.textSecondary)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(hovering ? DFColor.elev2 : DFColor.elev2.opacity(0.30))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(
-                            hovering ? DFColor.textSecondary.opacity(0.30)
-                                     : DFColor.textSecondary.opacity(0.18),
-                            lineWidth: 0.5
-                        )
-                )
+                .font(.system(size: 11, weight: .bold))
+                .frame(width: 26, height: 24)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .foregroundStyle(hovering ? DFColor.textPrimary : DFColor.textSecondary)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(pressing ? DFColor.accent.opacity(0.25)
+                      : hovering ? DFColor.elev2 : DFColor.elev2.opacity(0.30))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(
+                    hovering ? DFColor.textSecondary.opacity(0.30)
+                             : DFColor.textSecondary.opacity(0.18),
+                    lineWidth: 0.5
+                )
+        )
+        .scaleEffect(pressing ? 0.94 : 1.0)
         .onHover { hovering = $0 }
+        // 명시적 press detection — Button.plain 만으로는 press 시각 피드백 부재.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in if !pressing { pressing = true } }
+                .onEnded   { _ in pressing = false }
+        )
         .animation(.easeOut(duration: 0.10), value: hovering)
+        .animation(.easeOut(duration: 0.08), value: pressing)
         .help("\(direction > 0 ? "+" : "−")\(formatStep(step))\(unit) " +
               "(Shift: ±\(formatStep(bigStep))\(unit))")
     }

@@ -149,6 +149,8 @@ public struct PoseInspector: View {
         let limitNear = limitDistance < 8
 
         return HStack(spacing: 6) {
+            // 라벨만 selection 탭 영역으로 지정 — slider / StepperField hit-area 와의
+            // gesture 충돌 방지 (child Button 액션이 무시되던 원인).
             VStack(alignment: .leading, spacing: 0) {
                 Text(j.koreanLabel)
                     .font(.system(size: 11))
@@ -158,6 +160,8 @@ public struct PoseInspector: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
             .frame(width: 144, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { selected = j }
             .help("\(j.koreanLabel) · ID \(j.rawValue) · 한계 \(Int(limits.lowerBound))°~\(Int(limits.upperBound))°")
 
             // P0-A: drag 중에는 미리보기(pose 상태)만 갱신, 모터 명령은 *드래그 끝*에 1회.
@@ -207,8 +211,8 @@ public struct PoseInspector: View {
         .padding(.horizontal, 4)
         .background(isSelected ? DFColor.accent.opacity(0.10) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .contentShape(Rectangle())
-        .onTapGesture { selected = j }
+        // row-wide onTapGesture 제거 — child Button (StepperField + / −) 의 hit-test
+        // 와 충돌해 액션이 발화되지 않던 문제 수정. 선택은 라벨 컬럼 탭으로 일원화.
     }
 
     // MARK: - Footer
