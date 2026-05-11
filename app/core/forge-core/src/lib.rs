@@ -12,6 +12,7 @@
 //! - `walk`       — Sprint 5
 //! - `vision`     — Sprint 6
 //! - `db`         — Sprint 4
+//! - [`synth`]    — Sprint 9+ (Motion Synthesis 엔진, 스켈레톤)
 //!
 //! # 라이선스
 //! Apache 2.0. ROBOTIS upstream framework와 호환.
@@ -28,6 +29,7 @@ pub mod motion;
 pub mod safety;
 pub mod serial;
 pub mod strategy;
+pub mod synth;
 pub mod vision;
 pub mod walk;
 

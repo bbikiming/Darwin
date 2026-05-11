@@ -4,6 +4,7 @@ members = [
     "forge-core",
     "forge-cli",
     "forge-ffi",
+    "forge-mcp-synth",
 ]
 
 [workspace.package]

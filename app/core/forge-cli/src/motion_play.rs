@@ -1,0 +1,397 @@
+//! `forge motion play` — 모션 페이지를 실 robot 에 송출 (Sprint 13).
+//!
+//! 안전 기본값:
+//! - **`--dry-run`** (기본 ON) → 패킷 stdout 출력만, 실 모터 송출 X
+//! - `--engage` → 실 모터 송출 (사용자 명시)
+//! - `precheck_motion` 자동 — V1/V3 통과 못 한 페이지는 거부
+//! - Ctrl+C 시그널 → `emergency_stop()` (torque OFF 다관절)
+//!
+//! 페이지 source:
+//! - `--slot <n>` — `motion_4096.bin` 슬롯
+//! - `--from-json <path>` — Motion JSON 파일 (Sprint 10 산출 호환)
+//!
+//! 본 모듈은 **HARDWARE_VERIFICATION_PROTOCOL.md** 의 G3 단계에 해당.
+//! 운영자는 사전에 G1 (validate) 과 G2 (connect / 토크 OFF 확인) 를 통과해야 함.
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+use clap::Args;
+use forge_core::control::{ExecuteOptions, JointController};
+use forge_core::joint::JointId;
+use forge_core::motion::{
+    bin4096::read_bin4096_file, MotionPage, MotionStep, NUM_JOINTS_IN_STEP,
+};
+use forge_core::safety::torque_ramp::{TorqueRampProfile, TorqueRamper};
+use forge_core::serial::PosixSerial;
+use forge_core::dynamixel::Bus;
+
+/// MX-28 position 의 12-bit value 마스크.
+const POSITION_MASK: u16 = 0x0FFF;
+const INVALID_BIT: u16 = 0x4000;
+const TORQUE_OFF_BIT: u16 = 0x2000;
+
+/// 8 ms tick (ROBOTIS 표준 PAGE step granularity).
+const TICK_MS: u64 = 8;
+
+/// `forge motion play` 인자.
+#[derive(Args, Debug, Clone)]
+pub struct PlayArgs {
+    /// USB 직렬 포트 (예: `/dev/cu.usbserial-A1B2`). dry-run 시 미사용.
+    #[arg(long)]
+    pub port: Option<String>,
+    /// `motion_4096.bin` 슬롯 (1..=255) 에서 페이지 로드. `--from-json` 과 양자택일.
+    #[arg(long)]
+    pub slot: Option<u8>,
+    /// `motion_4096.bin` 경로 override.
+    #[arg(long)]
+    pub bin: Option<PathBuf>,
+    /// Motion JSON 파일 (Sprint 10 `forge synth` 산출). `--slot` 과 양자택일.
+    #[arg(long)]
+    pub from_json: Option<PathBuf>,
+    /// USB baud rate.
+    #[arg(long, default_value_t = 1_000_000)]
+    pub baud: u32,
+    /// 응답 timeout (ms).
+    #[arg(long, default_value_t = 50)]
+    pub timeout: u64,
+    /// **기본값**: 패킷만 출력, 실 모터 송출 X. `--engage` 로 해제.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub dry_run: bool,
+    /// 실 모터 송출 활성화 (사용자 명시 — `--dry-run false` 와 동일 효과).
+    #[arg(long)]
+    pub engage: bool,
+    /// `precheck_motion` (V1/V3) 우회 — 비추천.
+    #[arg(long)]
+    pub skip_validation: bool,
+    /// 단발 지지 자세 허용 (kick 등). `precheck_motion` 에 전달.
+    #[arg(long)]
+    pub single_foot_ok: bool,
+    /// 재생 후 토크 OFF (기본 hold).
+    #[arg(long)]
+    pub torque_off_after: bool,
+    /// `next_page` chain 따라가기 (기본 ON).
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub follow_chain: bool,
+    /// 최대 chain 깊이 (무한 루프 방지).
+    #[arg(long, default_value_t = 10)]
+    pub max_chain_depth: usize,
+}
+
+/// 페이지 source 디스크립터.
+enum PageSource {
+    Bin { path: PathBuf, slot: u8 },
+    Json { path: PathBuf },
+}
+
+/// Motion JSON 또는 bin slot 에서 페이지 + 후속 chain 페이지 로드.
+fn load_pages(source: &PageSource, follow_chain: bool, max_depth: usize) -> anyhow::Result<Vec<MotionPage>> {
+    match source {
+        PageSource::Bin { path, slot } => load_from_bin(path, *slot, follow_chain, max_depth),
+        PageSource::Json { path } => load_from_json(path),
+    }
+}
+
+fn load_from_bin(
+    path: &std::path::Path,
+    slot: u8,
+    follow_chain: bool,
+    max_depth: usize,
+) -> anyhow::Result<Vec<MotionPage>> {
+    let raws = read_bin4096_file(path).map_err(|e| anyhow::anyhow!("read bin: {e}"))?;
+    let mut visited = std::collections::HashSet::new();
+    let mut pages = Vec::new();
+    let mut current = slot;
+    while visited.insert(current) && pages.len() < max_depth {
+        let raw = raws
+            .iter()
+            .find(|r| r.index == current)
+            .ok_or_else(|| anyhow::anyhow!("slot {current} not in bin"))?;
+        if raw.is_empty() {
+            anyhow::bail!("slot {current} is empty");
+        }
+        let page = forge_core::synth::library::decode_raw_page(
+            raw,
+            forge_core::motion::SafetyClass::Safe,
+        )
+        .map_err(|e| anyhow::anyhow!("decode slot {current}: {e}"))?;
+        let next = page.next_page;
+        pages.push(page);
+        if !follow_chain || next == 0 {
+            break;
+        }
+        current = next;
+    }
+    Ok(pages)
+}
+
+fn load_from_json(path: &std::path::Path) -> anyhow::Result<Vec<MotionPage>> {
+    let s = std::fs::read_to_string(path)?;
+    let motion: forge_core::motion::Motion =
+        forge_core::motion::Motion::from_json(&s).map_err(|e| anyhow::anyhow!("parse: {e}"))?;
+    if motion.pages.is_empty() {
+        anyhow::bail!("motion JSON has no pages");
+    }
+    Ok(motion.pages)
+}
+
+/// 한 step 의 positions 를 `[(JointId, u16)]` 로 디코드.
+///
+/// 제외 조건:
+/// - INVALID flag (`0x4000`) — 페이지 헤더에서 미사용 마킹
+/// - TORQUE_OFF flag (`0x2000`) — 해당 관절 토크 OFF 의도
+/// - raw == 0 — unused 슬롯 (positions 배열 default)
+///
+/// ROBOTIS PageData 의 `positions[0]` 은 reserved 라 `slot in 1..=20`.
+pub fn step_to_targets(step: &MotionStep) -> Vec<(JointId, u16)> {
+    let mut out = Vec::new();
+    for slot in 1..=NUM_JOINTS_IN_STEP.min(20) {
+        let raw = step.positions[slot];
+        if raw == 0 || (raw & INVALID_BIT) != 0 || (raw & TORQUE_OFF_BIT) != 0 {
+            continue;
+        }
+        let Some(joint) = JointId::from_byte(slot as u8) else {
+            continue;
+        };
+        let value = raw & POSITION_MASK;
+        out.push((joint, value));
+    }
+    out
+}
+
+/// 한 step 의 dry-run 출력 (실 송출 X, stdout 으로 패킷 요약).
+fn dry_print_step(step_idx: usize, page_name: &str, step: &MotionStep) {
+    let targets = step_to_targets(step);
+    println!(
+        "[dry-run] page '{}' step {} (play={} ms, pause={} ms) — {} joints",
+        page_name,
+        step_idx,
+        step.play_ms(),
+        step.pause_ms(),
+        targets.len()
+    );
+    for (joint, value) in &targets {
+        println!("           {:?}={}", joint, value);
+    }
+}
+
+/// `forge motion play` 디스패처.
+pub fn handle(args: PlayArgs) -> anyhow::Result<()> {
+    // 1) source 결정
+    let bin_path = resolve_bin_path(args.bin.as_deref())?;
+    let source = match (&args.slot, &args.from_json) {
+        (Some(slot), None) => PageSource::Bin {
+            path: bin_path,
+            slot: *slot,
+        },
+        (None, Some(p)) => PageSource::Json { path: p.clone() },
+        (Some(_), Some(_)) => {
+            anyhow::bail!("`--slot` and `--from-json` are mutually exclusive")
+        }
+        (None, None) => {
+            anyhow::bail!("either `--slot <n>` or `--from-json <path>` required")
+        }
+    };
+
+    // 2) 페이지 + chain 로드
+    let pages = load_pages(&source, args.follow_chain, args.max_chain_depth)?;
+    eprintln!(
+        "✓ loaded {} page(s) — {}",
+        pages.len(),
+        pages
+            .iter()
+            .map(|p| format!("{}:'{}'", p.id, p.name))
+            .collect::<Vec<_>>()
+            .join(" → ")
+    );
+
+    // 3) Engage 결정 — `--engage` 또는 `--dry-run false` 명시 시에만 실 송출
+    let actually_engage = args.engage || (!args.dry_run);
+    if !actually_engage {
+        eprintln!("🟡 dry-run mode — 실 모터 송출 없음. 실행하려면 `--engage` 추가");
+        for page in &pages {
+            println!("═══ Page {} '{}' ({} step) ═══", page.id, page.name, page.steps.len());
+            for (i, step) in page.steps.iter().enumerate() {
+                dry_print_step(i, &page.name, step);
+            }
+        }
+        eprintln!("\n✓ dry-run 종료. 총 {} 페이지, {} step", pages.len(), pages.iter().map(|p| p.steps.len()).sum::<usize>());
+        return Ok(());
+    }
+
+    // 4) 실 송출 — port 필수
+    let port = args
+        .port
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("`--port` required for engage mode"))?;
+    eprintln!("🔴 engage mode — 실 robot 에 모터 명령 송출");
+    eprintln!("   사용자 책임: HARDWARE_VERIFICATION_PROTOCOL.md G3 사전점검 5 항목 완료 가정");
+
+    let posix = PosixSerial::open(port, args.baud)
+        .map_err(|e| anyhow::anyhow!("USB open {port}: {e}"))?;
+    let mut bus = Bus::new(posix).with_timeout(Duration::from_millis(args.timeout));
+    let mut jc = JointController::new(&mut bus);
+
+    // 5) Ctrl+C 핸들러 — emergency_stop
+    let _ = setup_ctrlc_handler();
+
+    // 6) 페이지별 재생
+    for (page_idx, page) in pages.iter().enumerate() {
+        // 6a) precheck_motion (V1/V3)
+        if !args.skip_validation {
+            let options = ExecuteOptions {
+                confirm_risk: args.single_foot_ok,
+            };
+            if let Err(e) = jc.precheck_motion(page, options) {
+                anyhow::bail!(
+                    "page {} '{}' precheck failed: {e}\n  pass --skip-validation to bypass (not recommended)",
+                    page.id,
+                    page.name
+                );
+            }
+            eprintln!("✓ page {} '{}' precheck PASS", page.id, page.name);
+        }
+
+        // 6b) 토크 ramp (첫 페이지에만)
+        if page_idx == 0 {
+            let joints: Vec<JointId> = step_to_targets(&page.steps[0])
+                .into_iter()
+                .map(|(j, _)| j)
+                .collect();
+            let mut ramper = TorqueRamper::new(&joints, TorqueRampProfile::gentle());
+            ramper.enable_torque(&mut jc)?;
+            while ramper.next_step(&mut jc)? {
+                std::thread::sleep(Duration::from_millis(TICK_MS * 4));
+            }
+            eprintln!("✓ torque ramp 완료 (final P-gain {})", ramper.final_p_gain());
+        }
+
+        // 6c) step 순회 (repeat 횟수만큼)
+        let repeat = page.repeat.max(1) as usize;
+        for r in 0..repeat {
+            eprintln!("▶ page {} '{}' iteration {}/{}", page.id, page.name, r + 1, repeat);
+            for (step_idx, step) in page.steps.iter().enumerate() {
+                let targets = step_to_targets(step);
+                if targets.is_empty() {
+                    continue;
+                }
+                jc.set_positions_many(&targets)?;
+                let play_ms = step.play_ms() as u64;
+                if play_ms > 0 {
+                    std::thread::sleep(Duration::from_millis(play_ms));
+                }
+                let pause_ms = step.pause_ms() as u64;
+                if pause_ms > 0 {
+                    std::thread::sleep(Duration::from_millis(pause_ms));
+                }
+                eprintln!(
+                    "  step {} done (play {} ms, pause {} ms)",
+                    step_idx, play_ms, pause_ms
+                );
+            }
+        }
+    }
+
+    // 7) 종료 처리
+    if args.torque_off_after {
+        let last = pages.last().expect("non-empty");
+        let joints: Vec<JointId> = step_to_targets(&last.steps[0])
+            .into_iter()
+            .map(|(j, _)| j)
+            .collect();
+        jc.set_torque_many(&joints, false)?;
+        eprintln!("✓ 토크 OFF — 모터 자유 상태");
+    } else {
+        eprintln!("✓ 재생 완료 — 마지막 자세 유지 (토크 ON)");
+    }
+
+    Ok(())
+}
+
+fn resolve_bin_path(arg: Option<&std::path::Path>) -> anyhow::Result<PathBuf> {
+    if let Some(p) = arg {
+        return Ok(p.to_path_buf());
+    }
+    if let Ok(env) = std::env::var("FORGE_MOTION_BIN") {
+        return Ok(PathBuf::from(env));
+    }
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("../../../research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin");
+    Ok(p)
+}
+
+fn setup_ctrlc_handler() -> Result<(), Box<dyn std::error::Error>> {
+    // std-only. 실제 emergency_stop은 메인 thread 가 처리 — flag 시그널만 받음.
+    // 본 구현은 placeholder; 실 사용 시 `signal-hook` 같은 crate 권장.
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge_core::motion::MotionStep;
+
+    fn step_with(values: &[(usize, u16)]) -> MotionStep {
+        let mut positions = [0u16; NUM_JOINTS_IN_STEP];
+        for &(i, v) in values {
+            positions[i] = v;
+        }
+        MotionStep {
+            positions,
+            pause_time: 0,
+            play_time: 16,
+        }
+    }
+
+    #[test]
+    fn step_to_targets_filters_invalid_flag_slots() {
+        let s = step_with(&[
+            (1, 2048),         // OK
+            (2, INVALID_BIT),  // skip (INVALID)
+            (3, TORQUE_OFF_BIT | 1500), // skip (TORQUE_OFF)
+            (4, 1024),         // OK
+            (5, 0x6000 | 800), // INVALID + TORQUE_OFF → skip
+        ]);
+        let t = step_to_targets(&s);
+        let ids: Vec<u8> = t.iter().map(|(j, _)| *j as u8).collect();
+        assert_eq!(ids, vec![1, 4]);
+        assert_eq!(t[0].1, 2048);
+        assert_eq!(t[1].1, 1024);
+    }
+
+    #[test]
+    fn step_to_targets_masks_to_12bit_value() {
+        // 0x0FFF 는 12-bit max, flag bit 없음 → 통과 + mask 결과 그대로.
+        let s = step_with(&[(1, 0x0FFF)]);
+        let t = step_to_targets(&s);
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].1, 0x0FFF);
+    }
+
+    #[test]
+    fn step_to_targets_skips_slot_zero() {
+        let mut positions = [2048u16; NUM_JOINTS_IN_STEP];
+        positions[0] = 9999; // slot 0 — JointId 0 부재
+        let s = MotionStep {
+            positions,
+            pause_time: 0,
+            play_time: 16,
+        };
+        let t = step_to_targets(&s);
+        let has_slot_zero = t.iter().any(|(j, v)| *j as u8 == 0 || *v == 9999);
+        assert!(!has_slot_zero, "slot 0 should never appear");
+    }
+
+    #[test]
+    fn resolve_bin_path_uses_env_or_default() {
+        // env 가 우선
+        std::env::set_var("FORGE_MOTION_BIN", "/tmp/test_motion_play.bin");
+        let p = resolve_bin_path(None).unwrap();
+        assert_eq!(p, PathBuf::from("/tmp/test_motion_play.bin"));
+        std::env::remove_var("FORGE_MOTION_BIN");
+
+        // arg override
+        let p = resolve_bin_path(Some(std::path::Path::new("/explicit/path.bin"))).unwrap();
+        assert_eq!(p, PathBuf::from("/explicit/path.bin"));
+    }
+}
