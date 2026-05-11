@@ -33,24 +33,22 @@
 
 ## Servo IDs (canonical)
 
-Both robots use the same ID convention from `JointData.h`:
+Both robots use the same ID convention from the official ROBOTIS [`OP2.robot`](../../research/robotis-official/ROBOTIS-OP2/op2_manager/config/OP2.robot). All **20 servos** carry contiguous IDs 1..20:
 
 ```
-1   R_SHOULDER_PITCH    11  R_HIP_YAW
-2   L_SHOULDER_PITCH    12  L_HIP_YAW
-3   R_SHOULDER_ROLL     13  R_HIP_ROLL
-4   L_SHOULDER_ROLL     14  L_HIP_ROLL
-5   R_ELBOW             15  R_HIP_PITCH
-6   L_ELBOW             16  L_HIP_PITCH
-                        17  R_KNEE
-                        18  L_KNEE
-                        19  HEAD_PAN
-                        20  HEAD_TILT
+1   R_SHOULDER_PITCH     7  R_HIP_YAW       13  R_KNEE
+2   L_SHOULDER_PITCH     8  L_HIP_YAW       14  L_KNEE
+3   R_SHOULDER_ROLL      9  R_HIP_ROLL      15  R_ANK_PITCH
+4   L_SHOULDER_ROLL     10  L_HIP_ROLL      16  L_ANK_PITCH
+5   R_ELBOW             11  R_HIP_PITCH     17  R_ANK_ROLL
+6   L_ELBOW             12  L_HIP_PITCH     18  L_ANK_ROLL
+                                            19  HEAD_PAN
+                                            20  HEAD_TILT
 ```
 
 Special IDs: **200** = sub-controller (CM-730 / CM-740), **254** = broadcast, **111/112** = right/left foot FSR.
 
-> The published `JointData.h` in some forks uses IDs 7/8 for an alternate hip-yaw label. DarwinForge ignores published prose and reads the symbol map from a vendored copy of the framework header for the version in service.
+> Some legacy OP1 firmware mirrors (`darwinop-ens` etc.) re-mapped the leg servos to IDs 11..18, leaving 7..10 unused. DarwinForge supports both layouts via `forge_core::joint::JointMap` — on connection, PING sweep auto-selects `Official` (canonical 7..20) or `LegacyOp1` (11..18 with user-supplied ankle IDs).
 
 ## Mac-side device naming
 

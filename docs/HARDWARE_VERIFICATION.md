@@ -32,12 +32,15 @@ bash scripts/smoke-test.sh     # 하드웨어 무관 스모크 5단계
 |------|------------|------|---------|
 | 2.1 | LiPo 연결 → e-stop ON → CM 전원 LED 켜짐 | 빨간색 또는 녹색 LED | LiPo 점검 / SMPS 대체 시도 |
 | 2.2 | Mac에 USB Mini-B 연결 → `forge ports` | `/dev/cu.usbserial-XXXXXX` 1개 출현 | `harness/shared/mac-driver-setup.md` §트러블슈팅 |
-| 2.3 | `forge ping --port /dev/cu.usbserial-XXXX --id 200` | `PING ID 200 OK (error_byte=0x00, ...)` | `--baud 576000` fallback 시도 |
+| 2.3 | `forge connect --port /dev/cu.usbserial-XXXX` | CM 모델 = 730, **응답 ID 20/20**, 매핑 = Official | 누락 ID 보고 시 §2.5a/b 참고 |
 | 2.4 | `forge board --port ...` | `Model: 730, Battery: ~11.x V` | board snapshot 실패 시 펌웨어 진단 (별도) |
-| 2.5 | `forge scan --port ... --range 1-20 --timeout 50` | 응답 ID 16개 (1-6, 11-20) | 빠진 ID는 daisy chain 끊김 — `harness/op1/leg-l-bus.yaml` 결선 점검 |
+| 2.5 | `forge scan --port ... --range 1-20 --timeout 50` | 응답 ID 20개 (1-6, 7-18, 19-20) | 빠진 ID는 daisy chain 끊김 — `harness/op1/leg-l-bus.yaml` 결선 점검 |
+| 2.5a | 만약 7..=10이 무응답 + 11..=18은 응답 | Legacy OP1 매핑 — `forge connect` 가 자동 알림. 발목 ID 마법사 필요 |
+| 2.5b | 만약 15..=18(발목)이 무응답 | **워크/직립 위험** — 펌웨어/케이블 점검 후 진행 |
 | 2.6 | `forge joint state --port ... --id 19` | 8필드 출력 (HEAD_PAN) | — |
+| 2.7 | `forge walk-ready --port ... --dry-run` | 20개 raw 위치 인쇄 (r_hip_pitch=1308, r_knee=3527 등) | 매핑 잘못이면 raw 값 다름 |
 
-✅ 2.1~2.6 모두 통과 → §3 진입.
+✅ 2.1~2.7 모두 통과 → §3 진입.
 
 ## 3. SwiftUI 앱 — Board / Joint Control (OP1)
 
@@ -57,18 +60,23 @@ make run    # 앱 실행
 
 ✅ 3.1~3.7 통과 → §4 진입 (또는 OP2로 §2 반복).
 
-## 4. 모션 import + 재생 준비 (OP1, 미리보기만)
+## 4. walkReady 자세 + 모션 카탈로그 (OP1)
 
 ```sh
-# 앱의 Motion Library 탭
+# 안전한 토크 ramp + 자세 보간으로 공식 walkReady 자세 적용.
+forge walk-ready --port /dev/cu.usbserial-XXXX
 ```
 
-| 단계 | UI 액션 | 기대 |
-|------|---------|------|
-| 4.1 | Motion Library → "Import .mtn" → `app/core/forge-core/tests/fixtures/sample-2page.mtn` 선택 | 좌측 리스트에 "sample-2page.mtn" 추가 |
-| 4.2 | 디테일에서 JSON ↔ .mtn 토글 | 두 보기 모두 31-슬롯 step 5개 표시 |
+| 단계 | 명령 / UI 액션 | 기대 |
+|------|--------------|------|
+| 4.0 | `forge motion catalog` | 16개 모션 표 (11 Safe + 2 Caution + 3 HighRisk), motion_4096.bin 매칭 ✓ |
+| 4.1 | `forge walk-ready --port ... --dry-run` | RHipPitch raw≈1308, RKnee raw≈3527, RAnklePitch raw≈2844 — `ini_pose.yaml` 1:1 일치 |
+| 4.2 | `forge walk-ready --port ...` (실 적용) | P_GAIN ramp 4단계 (0→8→16→32), 자세 부드럽게 이동, "둠칫" 없음, 60초 후 모터 온도 < 50 °C |
+| 4.3 | Motion Library → "Import .mtn" → `app/core/forge-core/tests/fixtures/sample-2page.mtn` | 좌측 리스트에 "sample-2page.mtn" 추가, safety 배지 |
+| 4.4 | 디테일에서 JSON ↔ .mtn 토글 | 두 보기 모두 31-슬롯 step 5개 + safety_class 필드 표시 |
+| 4.5 | HighRisk 모션 (Hand Standing 등) 실행 시도 | "HighRisk — confirm_risk=true 필요" 다이얼로그 |
 
-> 실 재생(Play)은 후속 사이클 — Sprint 4의 timeline + Sprint 5의 sync write 통합 필요.
+> 실제 walk 재생(이동/회전)은 Phase C IK + IMU loop 완성 후. 현재는 walkReady 자세까지만.
 
 ## 5. 로봇 2세대 (OP2 / CM-740) — 동일 절차 반복
 
