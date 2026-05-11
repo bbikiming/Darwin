@@ -15,7 +15,7 @@
 
 use super::SynthOp;
 use super::mirror::{FLAG_MASK, MAX_POSITION, POSITION_MASK};
-use crate::motion::{MotionPage, MotionStep};
+use crate::motion::MotionPage;
 use crate::synth::{Result, SynthError};
 
 /// 12-bit position 의 운동학적 중심점 (MX28 기준).
@@ -203,16 +203,6 @@ mod tests {
         page_12_right_kick, page_1_init, page_2_ok, page_9_walkready,
     };
 
-    // ---- Helpers ----
-
-    fn dummy_step(positions: [u16; 31]) -> MotionStep {
-        MotionStep {
-            positions,
-            pause_time: 0,
-            play_time: 32,
-        }
-    }
-
     // ---- apply_delta_12bit / apply_amplitude_scale ----
 
     #[test]
@@ -278,9 +268,9 @@ mod tests {
             "HEAD_TILT shifted by 100"
         );
         // 다른 슬롯은 그대로
-        for i in 0..31 {
+        for (i, (after, &orig)) in p.steps[1].positions.iter().zip(before.iter()).enumerate() {
             if i != 19 {
-                assert_eq!(p.steps[1].positions[i], before[i], "slot {i} should be unchanged");
+                assert_eq!(*after, orig, "slot {i} should be unchanged");
             }
         }
     }
