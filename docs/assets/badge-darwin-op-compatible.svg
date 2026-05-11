@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 380 56"
+     role="img"
+     aria-label="Works with DARwIn-OP and OP2">
+  <title>Works with DARwIn-OP / OP2</title>
+  <desc>shields.io-style compatibility badge. Indicates that this project supports the ROBOTIS DARwIn-OP and DARwIn-OP2 platforms. Not an official ROBOTIS mark.</desc>
+  <defs>
+    <clipPath id="r">
+      <rect width="380" height="56" rx="8"/>
+    </clipPath>
+    <linearGradient id="sheen" x2="0" y2="100%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.14"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect width="140" height="56" fill="#555555"/>
+    <rect x="140" width="240" height="56" fill="#2E3940"/>
+    <rect width="380" height="56" fill="url(#sheen)"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'Inter', 'Segoe UI', sans-serif"
+     fill="#ffffff"
+     font-weight="700">
+    <text x="70" y="35" text-anchor="middle" font-size="18">WORKS WITH</text>
+    <text x="260" y="35" text-anchor="middle" font-size="20">DARwIn-OP / OP2</text>
+  </g>
+</svg>

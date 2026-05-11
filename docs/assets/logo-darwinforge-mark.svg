@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 200 200"
+     preserveAspectRatio="xMidYMid meet"
+     role="img"
+     aria-label="DarwinForge">
+  <title>DarwinForge mark</title>
+  <desc>Standalone DarwinForge mark — slate hexagon with forge-spark accent. Use as app icon source, favicon, or compact branding.</desc>
+  <polygon points="100,0 175,50 175,150 100,200 25,150 25,50" fill="#2E3940"/>
+  <polygon points="175,50 175,100 130,68" fill="#E97132"/>
+</svg>
