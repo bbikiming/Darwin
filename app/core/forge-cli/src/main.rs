@@ -110,6 +110,48 @@ enum Command {
         #[arg(short, long, default_value = "found")]
         ball: String,
     },
+
+    /// 첫 연결 진단 — CM 보드 + 모터 ID sweep + JointMap 자동 감지.
+    ///
+    /// CM 모델 번호로 OP1 / OP2 판별 + ID 1..=20 sweep 으로 누락 모터 보고 +
+    /// 공식 매핑 vs LegacyOp1 fallback 자동 선택. 모터 명령은 발행 안 함.
+    Connect {
+        /// 직렬 포트.
+        #[arg(short, long)]
+        port: String,
+        /// baud rate.
+        #[arg(short, long, default_value_t = 1_000_000)]
+        baud: u32,
+        /// 각 PING 의 timeout (ms).
+        #[arg(short, long, default_value_t = 50)]
+        timeout: u64,
+    },
+
+    /// 공식 walkReady 자세로 안전하게 이동 — 토크 ramp + 자세 보간.
+    ///
+    /// `ini_pose.yaml` 의 공식 20관절 자세를 부드럽게 적용. 토크는 P_GAIN
+    /// 0→8→16→32 4단계 ramp로 깨워 "둠칫" 현상 방지. `--dry-run` 으로 실
+    /// 명령 발사 없이 발사될 SYNC_WRITE 시퀀스만 출력 가능.
+    WalkReady {
+        /// 직렬 포트 (예: /dev/cu.usbserial-A1B2).
+        #[arg(short, long)]
+        port: String,
+        /// baud rate.
+        #[arg(short, long, default_value_t = 1_000_000)]
+        baud: u32,
+        /// 자세 보간 step 수 (mov_time = step × period). 기본 60 step ≈ 480 ms.
+        #[arg(long, default_value_t = 60)]
+        interp_steps: u32,
+        /// step 사이 period (ms).
+        #[arg(long, default_value_t = 8)]
+        step_period_ms: u32,
+        /// 명령 발사 없이 시퀀스만 stdout으로 출력.
+        #[arg(long)]
+        dry_run: bool,
+        /// 매핑 종류 — "official" (기본) 또는 "legacy-op1".
+        #[arg(long, default_value = "official")]
+        joint_map: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -137,6 +179,14 @@ enum MotionAction {
     Inspect {
         /// 입력 파일.
         input: std::path::PathBuf,
+    },
+    /// 공식 ROBOTIS-OP2 카탈로그 (16개 모션 + 안전 분류) 표시.
+    ///
+    /// `motion_4096.bin` + `gui_motion.yaml` 기반 — Safe / Caution / HighRisk.
+    Catalog {
+        /// `motion_4096.bin` 경로 (기본: research/robotis-official/ 내).
+        #[arg(short, long)]
+        bin: Option<std::path::PathBuf>,
     },
 }
 
@@ -297,6 +347,28 @@ fn main() -> anyhow::Result<()> {
         Command::Walk { x, y, a, cycles } => handle_walk(x, y, a, cycles)?,
 
         Command::Strategy { ball } => handle_strategy(&ball)?,
+
+        Command::Connect {
+            port,
+            baud,
+            timeout,
+        } => handle_connect(&port, baud, timeout)?,
+
+        Command::WalkReady {
+            port,
+            baud,
+            interp_steps,
+            step_period_ms,
+            dry_run,
+            joint_map,
+        } => handle_walk_ready(
+            &port,
+            baud,
+            interp_steps,
+            step_period_ms,
+            dry_run,
+            &joint_map,
+        )?,
     }
     Ok(())
 }
@@ -426,16 +498,69 @@ fn handle_motion(action: MotionAction) -> anyhow::Result<()> {
             println!("---");
             for p in &motion.pages {
                 println!(
-                    "  page id={:3} name={:20} steps={} next={} exit={} repeat={} speed={}",
+                    "  page id={:3} name={:20} steps={} next={} exit={} repeat={} speed={} safety={:?}",
                     p.id,
                     p.name,
                     p.steps.len(),
                     p.next_page,
                     p.exit_page,
                     p.repeat,
-                    p.speed
+                    p.speed,
+                    p.safety_class,
                 );
             }
+        }
+        MotionAction::Catalog { bin } => {
+            use forge_core::motion::library::OFFICIAL_CATALOG;
+            use forge_core::motion::{parse_bin4096, Library, SafetyClass};
+
+            let bin_path = bin.unwrap_or_else(|| {
+                std::path::PathBuf::from(
+                    "research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin",
+                )
+            });
+            println!("== ROBOTIS-OP2 공식 모션 카탈로그 ==");
+            println!("  출처   : {}", bin_path.display());
+            println!("  참조   : gui_motion.yaml + motion_4096.bin (Apache 2.0)\n");
+
+            let safe_label = |c: &SafetyClass| match c {
+                SafetyClass::Safe => "Safe     ",
+                SafetyClass::Caution => "Caution  ",
+                SafetyClass::HighRisk => "HighRisk ",
+            };
+
+            println!("   ID  Name            Safety");
+            println!("   --  ----            ------");
+            for entry in OFFICIAL_CATALOG {
+                println!(
+                    "  {:>3}  {:<14}  {}",
+                    entry.id,
+                    entry.display_name,
+                    safe_label(&entry.safety),
+                );
+            }
+
+            // bin 이 있으면 매칭 검증.
+            if let Ok(bytes) = std::fs::read(&bin_path) {
+                if let Ok(raw_pages) = parse_bin4096(&bytes) {
+                    let lib = Library::with_official_catalog(&raw_pages);
+                    println!(
+                        "\n  ✓ {} 페이지가 motion_4096.bin 에서 import 됨",
+                        lib.len()
+                    );
+                } else {
+                    println!("\n  ⚠️  motion_4096.bin 파싱 실패 — 카탈로그 ID 표시만 제공");
+                }
+            } else {
+                println!(
+                    "\n  ℹ  motion_4096.bin 미발견 (--bin 으로 경로 지정) — 카탈로그 ID 표시만"
+                );
+            }
+
+            println!("\n실행 가이드:");
+            println!("  Safe     : 평지에서 안전 실행 가능.");
+            println!("  Caution  : 평지·관찰 환경에서만 (Get up 류).");
+            println!("  HighRisk : 사용자 confirmation 필수 (Kick/Hand Standing).");
         }
     }
     Ok(())
@@ -514,5 +639,179 @@ fn handle_joint(action: JointAction) -> anyhow::Result<()> {
             println!("⚠️  E-STOP triggered — all torque OFF");
         }
     }
+    Ok(())
+}
+
+fn handle_connect(port: &str, baud: u32, timeout: u64) -> anyhow::Result<()> {
+    use forge_core::joint::JointMapKind;
+
+    let p = PosixSerial::open(port, baud).map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
+    let mut bus = Bus::new(p).with_timeout(Duration::from_millis(timeout));
+
+    println!("== DarwinForge 연결 진단 ==");
+    println!("  포트  : {}", port);
+    println!("  baud  : {}", baud);
+
+    // 1) CM 보드
+    {
+        let mut cm = CmController::new(&mut bus);
+        match cm.snapshot() {
+            Ok(snap) => {
+                println!("\n[1/2] CM 보드");
+                println!(
+                    "  모델    : {} ({})",
+                    snap.model_number,
+                    snap.controller_label()
+                );
+                println!("  Version : {}", snap.version);
+                println!(
+                    "  Voltage : {:.1} V (raw {})",
+                    snap.voltage_volts(),
+                    snap.voltage_raw
+                );
+                if snap.voltage_volts() < 9.5 {
+                    println!("  ⚠️  배터리 전압 낮음 (9.5 V 이하). 충전 후 진행 권장.");
+                }
+            }
+            Err(e) => {
+                println!("\n[1/2] CM 보드 — 응답 없음 ({})", e);
+                println!("  ▷ ID 200 응답이 없습니다. 직렬 케이블 / 전원 확인.");
+            }
+        }
+    }
+
+    // 2) 모터 매핑 detect
+    {
+        let mut cm = CmController::new(&mut bus);
+        let result = cm.detect_joint_map();
+        println!("\n[2/2] 모터 ID sweep (1..=20)");
+        println!(
+            "  응답 ID  : {:?} ({}/20)",
+            result.responding_ids,
+            result.responding_ids.len()
+        );
+        if !result.missing_ids.is_empty() {
+            println!("  누락 ID  : {:?}", result.missing_ids);
+        }
+        println!("  매핑     : {:?}", result.map.kind);
+        match result.map.kind {
+            JointMapKind::Official => {
+                println!("  ✓ 공식 ROBOTIS-OP2 매핑 — `forge walk-ready` 사용 가능.");
+            }
+            JointMapKind::LegacyOp1 => {
+                println!("  ⚠️  Legacy OP1 매핑 감지. 발목 모터 ID 가 미지정 — 발목 명령은 미발행됩니다.");
+                println!("       발목 모터를 별도 마법사로 지정한 후 `--joint-map legacy-op1` 으로 사용 가능.");
+            }
+        }
+        if !result.map.supports_ankles() {
+            println!(
+                "  ⚠️  발목 4개 (RAnk Pitch/Roll, LAnk Pitch/Roll) 매핑 미정 — 안정 직립 위험."
+            );
+        }
+    }
+
+    println!("\n다음 단계 권장:");
+    println!(
+        "  forge walk-ready --port {} --dry-run    # 명령 사전 확인",
+        port
+    );
+    println!(
+        "  forge walk-ready --port {}              # 실 적용 (둠칫 없는 토크 ramp)",
+        port
+    );
+    println!("  forge motion catalog                    # 안전 카탈로그 16개 모션");
+    println!("\n비상 시: forge joint estop --port {}", port);
+    Ok(())
+}
+
+fn handle_walk_ready(
+    port: &str,
+    baud: u32,
+    interp_steps: u32,
+    step_period_ms: u32,
+    dry_run: bool,
+    joint_map_kind: &str,
+) -> anyhow::Result<()> {
+    use forge_core::joint::JointMap;
+    use forge_core::safety::{TorqueRampProfile, TorqueRamper};
+    use forge_core::walk::ini_pose::{interpolate, neutral_targets, walk_ready_targets};
+
+    let map = match joint_map_kind {
+        "official" => JointMap::official(),
+        "legacy-op1" => JointMap::legacy_op1(None),
+        other => anyhow::bail!(
+            "joint_map: 'official' 또는 'legacy-op1' 만 지원 (받음: {})",
+            other
+        ),
+    };
+
+    let ramp_profile = TorqueRampProfile::gentle();
+    let target = walk_ready_targets();
+    let start = neutral_targets();
+
+    println!("== walkReady 자세 적용 ==");
+    println!("  매핑       : {:?}", map.kind);
+    println!("  발목 지원  : {}", map.supports_ankles());
+    println!(
+        "  토크 ramp  : P_GAIN {:?} × {:?} step",
+        ramp_profile.p_gain_steps, ramp_profile.step_period
+    );
+    println!(
+        "  자세 보간  : {} step × {} ms = {} ms",
+        interp_steps,
+        step_period_ms,
+        interp_steps * step_period_ms
+    );
+    println!("  대상 자세  : ini_pose.yaml (공식 OP2 walkReady)");
+    if !map.supports_ankles() {
+        println!("  ⚠️  발목 매핑 없음 — 발목 4개 명령 생략됨. 안정 직립 위험.");
+    }
+
+    if dry_run {
+        println!("\n[DRY RUN] 실 명령 미발사. 발사될 자세 시퀀스:");
+        for (j, raw) in target {
+            println!("  {:?}\t→ raw {}", j, raw);
+        }
+        return Ok(());
+    }
+
+    let p = PosixSerial::open(port, baud).map_err(|e| anyhow::anyhow!("open {}: {}", port, e))?;
+    let mut bus = Bus::new(p);
+    let mut jc = JointController::with_map(&mut bus, map);
+
+    // 1) Torque ramp 시작 — P=0 + torque on.
+    let mut ramper = TorqueRamper::new(&JointId::ALL, ramp_profile);
+    ramper.enable_torque(&mut jc)?;
+    println!("  [1/3] 토크 깨우기 (P_GAIN=0, torque on)");
+
+    // 2) ramp P_GAIN 단계와 자세 보간을 동시 진행 — 모터 P가 올라가면서 자세도 부드럽게 이동.
+    let total_steps = interp_steps.max(ramp_profile.p_gain_steps.len() as u32);
+    for step in 0..total_steps {
+        let t = (step + 1) as f64 / total_steps as f64;
+        let blend = interpolate(&start, &target, t);
+        jc.set_positions_many(&blend)?;
+
+        // ramp P_GAIN — interp step 균등 분배.
+        if step > 0 && step as usize <= ramp_profile.p_gain_steps.len() {
+            let _ = ramper.next_step(&mut jc)?;
+        }
+
+        std::thread::sleep(Duration::from_millis(step_period_ms as u64));
+    }
+    println!("  [2/3] 자세 보간 + P_GAIN ramp 완료");
+
+    // 3) 최종 P_GAIN (32) 확실히.
+    while ramper.remaining() > 0 {
+        ramper.next_step(&mut jc)?;
+        std::thread::sleep(ramp_profile.step_period);
+    }
+    println!(
+        "  [3/3] 최종 P_GAIN={} 적용. walkReady 안정 직립.",
+        ramper.final_p_gain()
+    );
+    println!(
+        "\n안전 권장: 60초 후 모터 온도 확인. 비상 시 'forge joint estop --port {}'",
+        port
+    );
     Ok(())
 }
