@@ -68,7 +68,7 @@ public struct DarwinForgeLogo: View {
 
     private var wordmark: some View {
         HStack(spacing: 0) {
-            Text("Darwin").foregroundStyle(DarwinForgePalette.slate)
+            Text("Darwin").foregroundStyle(DarwinForgePalette.body)
             Text("Forge").foregroundStyle(DarwinForgePalette.forge)
         }
         .font(.system(size: density.fontSize, weight: .black, design: .default))
@@ -112,7 +112,7 @@ public struct DarwinForgeMark: View {
             hex.addLine(to: pt(25,  150))
             hex.addLine(to: pt(25,  50))
             hex.closeSubpath()
-            context.fill(hex, with: .color(DarwinForgePalette.slate))
+            context.fill(hex, with: .color(DarwinForgePalette.body))
 
             var spark = Path()
             spark.move(to: pt(175, 50))
@@ -127,9 +127,14 @@ public struct DarwinForgeMark: View {
 
 // MARK: - Palette
 
-/// SVG 자산과 1:1 매칭. `DFColor.slate` / `DFColor.forge`와 동일.
+/// 로고 컬러 토큰. `body` 는 배경 대비를 자동 조절(라이트=다크 슬레이트, 다크=흰색).
+/// `slate` 는 SVG 자산과 1:1 매칭되는 고정값으로 보존하되 in-app 렌더에는 `body` 사용.
 public enum DarwinForgePalette {
+    /// 로고 본문 컬러 — 시스템 textPrimary 따라 자동 적응 (대비 우선).
+    public static let body: Color = DFColor.textPrimary
+    /// SVG 자산 고정 슬레이트 (#2E3940) — 라이트 모드 README 등에서 사용.
     public static let slate = Color(red: 46/255,  green: 57/255,  blue: 64/255)
+    /// 포지 오렌지 — "Forge" 글자 + 헥사곤 스파크.
     public static let forge = Color(red: 233/255, green: 113/255, blue: 50/255)
 }
 

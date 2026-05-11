@@ -74,20 +74,8 @@ public struct RootView: View {
             dispatcher.connectionStore = store
             dispatcher.mode = store.bus != nil ? .hardware : .simulation
             store.refreshPorts()
-            // 앱 진입 시 자동 재연결 흐름:
-            //   1. UserDefaults 에 마지막 성공 endpoint 가 있으면 그것으로 즉시 시도.
-            //   2. 성공 → 마법사 안 띄움 (사용자 방해 0).
-            //   3. 실패 또는 미저장 → 마법사 자동 표시.
-            if store.bus == nil && !wizardAutoShown {
-                wizardAutoShown = true
-                Task { @MainActor in
-                    let reconnected = await store.autoReconnectIfPossible()
-                    if !reconnected, store.bus == nil {
-                        try? await Task.sleep(nanoseconds: 200_000_000)
-                        wizardOpen = true
-                    }
-                }
-            }
+            // 첫 실행 자동 연결/자동 마법사는 제거됨 — 사용자가 직접
+            // 우측 상단 "Auto Connect" 버튼 또는 마법사를 눌러서 연결.
         }
         .onReceive(store.$bus) { bus in
             dispatcher.mode = bus != nil ? .hardware : .simulation

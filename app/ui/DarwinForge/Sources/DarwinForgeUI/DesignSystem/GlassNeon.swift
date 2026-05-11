@@ -1,36 +1,26 @@
 import SwiftUI
 
-// MARK: - Neon palette
+// MARK: - Tone palette (legacy 호환)
+//
+// 본 모듈은 과거 글래스모피즘 + 네온 스타일을 제공했으나, 현재는 플랫(Flat) GUI 로
+// 통일됨. API 시그니처는 유지하여 호출 측 코드 변경 없이 자연스럽게 평탄화 표현으로
+// 전환된다. 향후 다시 글래스/네온이 필요해지면 본 파일 내부만 교체.
 
-/// 네온 톤 토큰. `DFColor`와 호환되며 글로우/하이라이트 전용.
+/// 색 토큰 (DFColor 와 호환). `electric` / `magenta` 는 일렉트릭/AI 강조에만 제한 사용.
 public enum DFNeon {
-    /// 시스템 액센트 (cool blue) — primary action.
-    public static let accent: Color = DFColor.accent
-    /// 브랜드 오렌지 — forge / motion 강조.
-    public static let forge:  Color = DFColor.forge
-    /// 빨강 — danger / E-Stop.
-    public static let danger: Color = DFColor.danger
-    /// 초록 — success / safe.
+    public static let accent:  Color = DFColor.accent
+    public static let forge:   Color = DFColor.forge
+    public static let danger:  Color = DFColor.danger
     public static let success: Color = DFColor.success
-    /// 정보 / 텔레메트리 (skyblue).
-    public static let info:   Color = DFColor.info
-    /// 일렉트릭 사이언 — 라이브 데이터 / hover 강조 (네온 시그니처).
-    public static let electric = Color(red: 0.40, green: 0.95, blue: 1.00)
-    /// 마젠타 — AI / 생성적 액션 (대화·Claude).
-    public static let magenta  = Color(red: 1.00, green: 0.30, blue: 0.85)
-    /// 라일락 — 토크/모터 시각화 (DFColor.torque alias).
-    public static let lilac:  Color = DFColor.torque
+    public static let info:    Color = DFColor.info
+    public static let electric = Color(red: 0.10, green: 0.55, blue: 0.85)
+    public static let magenta  = Color(red: 0.80, green: 0.24, blue: 0.62)
+    public static let lilac:   Color = DFColor.torque
 }
 
-// MARK: - Glass surface modifier
+// MARK: - Flat surface modifier
 
-/// 글래스모피즘 표면 — Material blur + 그라데이션 틴트 + 듀얼 보더.
-///
-/// 구성:
-///   1. `.ultraThinMaterial` 블러 layer
-///   2. (옵션) tint 그라데이션 (topLeading → bottomTrailing)
-///   3. 상단 sheen (white → clear)
-///   4. 듀얼 보더 (white 35% → 6%)
+/// 플랫 표면 — 단색 배경 + 얇은 단색 보더. blur/gradient/sheen 없음.
 public struct GlassModifier: ViewModifier {
     let radius: CGFloat
     let tint: Color?
@@ -40,83 +30,36 @@ public struct GlassModifier: ViewModifier {
     public func body(content: Content) -> some View {
         content
             .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: radius)
-                        .fill(.ultraThinMaterial)
-                    if let tint {
-                        RoundedRectangle(cornerRadius: radius)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        tint.opacity(0.22 * intensity),
-                                        tint.opacity(0.04 * intensity)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                    }
-                    RoundedRectangle(cornerRadius: radius)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.18 * intensity),
-                                    Color.white.opacity(0)
-                                ],
-                                startPoint: .top,
-                                endPoint: .center
-                            )
-                        )
-                }
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(tint?.opacity(0.06 * intensity) ?? DFColor.card)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: radius)
                     .stroke(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.38 * strokeAlpha),
-                                Color.white.opacity(0.06 * strokeAlpha)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 0.7
+                        (tint ?? DFColor.textSecondary).opacity(0.18 * strokeAlpha),
+                        lineWidth: 0.5
                     )
             )
             .clipShape(RoundedRectangle(cornerRadius: radius))
     }
 }
 
-// MARK: - Neon glow modifier
-
-/// 네온 외광 — 듀얼 colored shadow + (옵션) 호흡 펄스.
+/// 플랫 모드에서는 외광을 사용하지 않는다 — modifier 는 no-op 으로 유지.
 public struct NeonGlowModifier: ViewModifier {
     let color: Color
     let radius: CGFloat
     let intensity: CGFloat
     let pulsing: Bool
 
-    @State private var pulse: CGFloat = 1.0
-
     public func body(content: Content) -> some View {
         content
-            .shadow(color: color.opacity(0.55 * intensity * pulse),
-                    radius: radius * pulse, x: 0, y: 0)
-            .shadow(color: color.opacity(0.35 * intensity * pulse),
-                    radius: (radius * 0.5) * pulse, x: 0, y: 0)
-            .onAppear {
-                guard pulsing else { return }
-                withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
-                    pulse = 1.18
-                }
-            }
     }
 }
 
-// MARK: - Public modifier API
+// MARK: - Public modifier API (시그니처 유지)
 
 public extension View {
-    /// 글래스 표면을 적용한다. tint 가 nil 이면 중립 (system material 만).
+    /// 플랫 표면을 적용한다 (구 글래스 API 와 동일 시그니처).
     func glass(radius: CGFloat = DFRadius.md,
                tint: Color? = nil,
                intensity: Double = 1.0,
@@ -125,7 +68,7 @@ public extension View {
                                intensity: intensity, strokeAlpha: strokeAlpha))
     }
 
-    /// 네온 외광 — hover/active 강조용. pulsing 시 호흡 애니메이션.
+    /// 플랫 모드에서는 no-op (호출 측 호환성 유지).
     func neonGlow(_ color: Color,
                   radius: CGFloat = 12,
                   intensity: CGFloat = 0.7,
@@ -134,66 +77,21 @@ public extension View {
                                   intensity: intensity, pulsing: pulsing))
     }
 
-    /// ScrollView 컨테이너에 상하 그라데이션 페이드 + 측면 네온 액센트.
-    /// `accent` 가 nil 이면 액센트 라인 없음 (페이드만).
+    /// 스크롤 컨테이너 — 플랫 모드에서는 시각 효과 없음 (호환용).
     func glassScroll(accent: Color? = nil,
                      fadeHeight: CGFloat = 18,
                      edgeColor: Color = DFColor.canvas) -> some View {
         self
-            .overlay(alignment: .top) {
-                LinearGradient(
-                    colors: [edgeColor, edgeColor.opacity(0)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: fadeHeight)
-                .allowsHitTesting(false)
-            }
-            .overlay(alignment: .bottom) {
-                LinearGradient(
-                    colors: [edgeColor.opacity(0), edgeColor],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: fadeHeight)
-                .allowsHitTesting(false)
-            }
-            .overlay(alignment: .leading) {
-                if let accent {
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    accent.opacity(0),
-                                    accent.opacity(0.55),
-                                    accent.opacity(0)
-                                ],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 1.5)
-                        .blur(radius: 0.4)
-                        .allowsHitTesting(false)
-                }
-            }
     }
 }
 
-// MARK: - GlassNeonButtonStyle
+// MARK: - Flat button style (API 시그니처 유지)
 
-/// 글래스 + 네온 결합 버튼 스타일.
-///
-/// 사용:
-///   ```swift
-///   Button("연결") { ... }
-///       .buttonStyle(.glassNeon(tint: DFColor.accent))
-///   ```
-///
-/// 두 종류:
-///   - `prominent: true`  — 채워진 글래스 (primary action). 색 그라데이션 위에 sheen.
-///   - `prominent: false` — 투명 글래스 (secondary). hover 시 색 채도 상승.
+/// 단색 채움 + 얇은 보더 + hover 시 미세 톤 변화. 그라데이션/sheen/외광 없음.
 public struct GlassNeonButtonStyle: ButtonStyle {
     public let tint: Color
     public let prominent: Bool
-    public let glow: Bool
+    public let glow: Bool             // 무시됨 (플랫)
     public let height: CGFloat
     public let radius: CGFloat
 
@@ -201,7 +99,7 @@ public struct GlassNeonButtonStyle: ButtonStyle {
                 prominent: Bool = true,
                 glow: Bool = true,
                 height: CGFloat = DFSize.buttonHMedium,
-                radius: CGFloat = DFRadius.md) {
+                radius: CGFloat = DFRadius.sm) {
         self.tint = tint
         self.prominent = prominent
         self.glow = glow
@@ -210,19 +108,18 @@ public struct GlassNeonButtonStyle: ButtonStyle {
     }
 
     public func makeBody(configuration: Configuration) -> some View {
-        GlassNeonButtonContent(
+        FlatButtonContent(
             configuration: configuration,
-            tint: tint, prominent: prominent, glow: glow,
+            tint: tint, prominent: prominent,
             height: height, radius: radius
         )
     }
 }
 
-private struct GlassNeonButtonContent: View {
+private struct FlatButtonContent: View {
     let configuration: ButtonStyle.Configuration
     let tint: Color
     let prominent: Bool
-    let glow: Bool
     let height: CGFloat
     let radius: CGFloat
 
@@ -236,34 +133,14 @@ private struct GlassNeonButtonContent: View {
             .frame(minHeight: height)
             .foregroundStyle(textColor)
             .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: radius)
-                        .fill(.ultraThinMaterial)
-                    RoundedRectangle(cornerRadius: radius)
-                        .fill(fillGradient)
-                    RoundedRectangle(cornerRadius: radius)
-                        .fill(sheenGradient)
-                }
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(backgroundColor)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: radius)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(hovering ? 0.50 : 0.32),
-                                Color.white.opacity(0.08)
-                            ],
-                            startPoint: .top, endPoint: .bottom
-                        ),
-                        lineWidth: 0.7
-                    )
+                    .stroke(borderColor, lineWidth: prominent ? 0 : 0.5)
             )
             .clipShape(RoundedRectangle(cornerRadius: radius))
-            .shadow(
-                color: shadowColor,
-                radius: hovering ? 14 : 8, x: 0, y: 0
-            )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .opacity(isEnabled ? 1.0 : DFOpacity.disabled)
             .onHover { hovering = $0 }
             .animation(DFAnimation.fast, value: hovering)
@@ -274,39 +151,18 @@ private struct GlassNeonButtonContent: View {
         prominent ? .white : tint
     }
 
-    private var fillGradient: LinearGradient {
-        if prominent {
-            return LinearGradient(
-                colors: [
-                    tint.opacity(hovering ? 0.88 : 0.68),
-                    tint.opacity(hovering ? 0.58 : 0.32)
-                ],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        } else {
-            return LinearGradient(
-                colors: [
-                    tint.opacity(hovering ? 0.26 : 0.10),
-                    tint.opacity(hovering ? 0.10 : 0.02)
-                ],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
+    private var backgroundColor: Color {
+        if configuration.isPressed {
+            return prominent ? tint.opacity(0.75) : DFColor.elev2.opacity(0.8)
         }
+        if hovering {
+            return prominent ? tint.opacity(0.88) : DFColor.elev2
+        }
+        return prominent ? tint : DFColor.card
     }
 
-    private var sheenGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.white.opacity(hovering ? 0.26 : 0.16),
-                Color.clear
-            ],
-            startPoint: .top, endPoint: .center
-        )
-    }
-
-    private var shadowColor: Color {
-        guard glow, isEnabled else { return .clear }
-        return tint.opacity(hovering ? 0.55 : 0.22)
+    private var borderColor: Color {
+        prominent ? .clear : DFColor.textSecondary.opacity(0.25)
     }
 }
 
@@ -314,6 +170,7 @@ private struct GlassNeonButtonContent: View {
 
 public extension ButtonStyle where Self == GlassNeonButtonStyle {
     /// `.buttonStyle(.glassNeon())` 호출 가능하게 하는 헬퍼.
+    /// 시그니처 보존 — 내부는 플랫 구현으로 변경됨.
     static func glassNeon(tint: Color = DFColor.accent,
                           prominent: Bool = true,
                           glow: Bool = true,
@@ -323,9 +180,8 @@ public extension ButtonStyle where Self == GlassNeonButtonStyle {
     }
 }
 
-// MARK: - GlassPill — capsule 변형 (chip / toggle)
+// MARK: - Pill 변형 (toggle/chip)
 
-/// 글래스 capsule. hover 시 네온 외광.
 public struct GlassPillStyle: ButtonStyle {
     public let tint: Color
     public let active: Bool
@@ -336,11 +192,11 @@ public struct GlassPillStyle: ButtonStyle {
     }
 
     public func makeBody(configuration: Configuration) -> some View {
-        GlassPillContent(configuration: configuration, tint: tint, active: active)
+        FlatPillContent(configuration: configuration, tint: tint, active: active)
     }
 }
 
-private struct GlassPillContent: View {
+private struct FlatPillContent: View {
     let configuration: ButtonStyle.Configuration
     let tint: Color
     let active: Bool
@@ -354,31 +210,12 @@ private struct GlassPillContent: View {
             .frame(minHeight: DFSize.buttonHSmall)
             .foregroundStyle(on ? Color.white : tint)
             .background(
-                ZStack {
-                    Capsule().fill(.ultraThinMaterial)
-                    Capsule().fill(
-                        LinearGradient(
-                            colors: [
-                                tint.opacity(on ? 0.70 : 0.10),
-                                tint.opacity(on ? 0.35 : 0.02)
-                            ],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        )
-                    )
-                    Capsule().fill(
-                        LinearGradient(
-                            colors: [Color.white.opacity(on ? 0.22 : 0.10), .clear],
-                            startPoint: .top, endPoint: .center
-                        )
-                    )
-                }
+                Capsule().fill(on ? tint : tint.opacity(0.12))
             )
             .overlay(
-                Capsule().stroke(Color.white.opacity(on ? 0.45 : 0.18), lineWidth: 0.6)
+                Capsule().stroke(tint.opacity(on ? 0 : 0.25), lineWidth: 0.5)
             )
-            .shadow(color: tint.opacity(on ? 0.45 : 0.0),
-                    radius: on ? 10 : 0, x: 0, y: 0)
-            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
             .onHover { hovering = $0 }
             .animation(DFAnimation.fast, value: hovering)
             .animation(DFAnimation.fast, value: active)

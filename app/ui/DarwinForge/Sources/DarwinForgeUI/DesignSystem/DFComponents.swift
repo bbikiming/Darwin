@@ -106,31 +106,11 @@ public struct DFChip: View {
                 .font(.system(size: 10, weight: .bold,
                               design: mono ? .monospaced : .default))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(tint.opacity(0.14))
         .foregroundStyle(tint)
-        .background(
-            ZStack {
-                Capsule().fill(.ultraThinMaterial)
-                Capsule().fill(
-                    LinearGradient(
-                        colors: [tint.opacity(0.28), tint.opacity(0.08)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    )
-                )
-                Capsule().fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.15), .clear],
-                        startPoint: .top, endPoint: .center
-                    )
-                )
-            }
-        )
-        .overlay(
-            Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.5)
-        )
         .clipShape(Capsule())
-        .shadow(color: tint.opacity(0.18), radius: 4, x: 0, y: 0)
     }
 
     private var tint: Color {
@@ -276,35 +256,19 @@ public struct DFKeyboardHint: View {
     }
 
     public var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 2) {
             ForEach(keys, id: \.self) { k in
                 Text(k)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(DFColor.elev2)
                     .foregroundStyle(DFColor.textSecondary)
-                    .background(
-                        ZStack {
-                            RoundedRectangle(cornerRadius: DFRadius.xs)
-                                .fill(.ultraThinMaterial)
-                            RoundedRectangle(cornerRadius: DFRadius.xs)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            Color.white.opacity(0.18),
-                                            Color.white.opacity(0.0)
-                                        ],
-                                        startPoint: .top, endPoint: .bottom
-                                    )
-                                )
-                        }
-                    )
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                     .overlay(
                         RoundedRectangle(cornerRadius: DFRadius.xs)
-                            .stroke(Color.white.opacity(0.22), lineWidth: 0.5)
+                            .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: 0.5)
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
-                    .shadow(color: Color.black.opacity(0.10), radius: 2, x: 0, y: 1)
             }
         }
     }
@@ -355,9 +319,13 @@ public struct DFPanel<Content: View, Trailing: View, Footer: View>: View {
         .padding(DFSpace.md - 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: height)
-        .glass(radius: DFRadius.md, tint: prominent ? tint : nil, intensity: prominent ? 1.0 : 0.6)
-        .shadow(color: prominent ? tint.opacity(0.18) : Color.black.opacity(0.10),
-                radius: prominent ? 14 : 8, x: 0, y: 2)
+        .background(prominent ? tint.opacity(0.04) : DFColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.md)
+                .stroke(prominent ? tint.opacity(0.25) : DFColor.textSecondary.opacity(DFOpacity.subtle),
+                        lineWidth: prominent ? 0.8 : 0.5)
+        )
     }
 
     private var header: some View {
@@ -496,53 +464,37 @@ public struct DFPageScaffold<Content: View, Trailing: View, Footer: View>: View 
     }
 
     private var header: some View {
-        HStack(spacing: DFSpace.sm) {
-            if let icon {
-                ZStack {
-                    RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .fill(.ultraThinMaterial)
-                    RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .fill(
-                            LinearGradient(
-                                colors: [tint.opacity(0.40), tint.opacity(0.14)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing
-                            )
-                        )
-                    RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .stroke(Color.white.opacity(0.22), lineWidth: 0.6)
-                    Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(tint)
+        VStack(spacing: 0) {
+            HStack(spacing: DFSpace.sm) {
+                if let icon {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: DFRadius.sm)
+                            .fill(tint.opacity(0.14))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: icon)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(tint)
+                    }
                 }
-                .frame(width: 36, height: 36)
-                .shadow(color: tint.opacity(0.32), radius: 10, x: 0, y: 0)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(DFColor.textPrimary)
-                    .lineLimit(1)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(DFFont.caption)
-                        .foregroundStyle(DFColor.textSecondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(DFColor.textPrimary)
                         .lineLimit(1)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(DFFont.caption)
+                            .foregroundStyle(DFColor.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
+                Spacer()
+                trailing()
             }
-            Spacer()
-            trailing()
-        }
-        .padding(.horizontal, DFSpace.md)
-        .padding(.vertical, DFSpace.sm + 2)
-        .background(.regularMaterial)
-        .overlay(alignment: .bottom) {
-            // 네온 underline — 페이지마다 tint 가 다르므로 색상 변경되며 정체성 확립.
-            LinearGradient(
-                colors: [tint.opacity(0), tint.opacity(0.55), tint.opacity(0)],
-                startPoint: .leading, endPoint: .trailing
-            )
-            .frame(height: 1.2)
-            .blur(radius: 0.4)
+            .padding(.horizontal, DFSpace.md)
+            .padding(.vertical, DFSpace.sm + 2)
+            .background(DFColor.card)
+            Divider()
         }
     }
 }
