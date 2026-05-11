@@ -47,6 +47,33 @@ xed app/ui/DarwinForge/Package.swift
 cargo run -p forge-cli -- ping --port /dev/cu.usbserial-XXXX
 ```
 
+### Motion Synthesis (Sprint 9~13)
+
+기존 ROBOTIS-OP2 16 카탈로그 페이지를 reference 로 새 모션을 합성:
+
+```sh
+# 카탈로그 조회
+cargo run -p forge-cli -- synth library list
+
+# Right Kick 좌우 미러링
+cargo run -p forge-cli -- synth mirror 12 --new-id 100 --name lk_synth --out /tmp/lk.json
+
+# walkready → kick → walkready 시퀀스
+cargo run -p forge-cli -- synth sequence 9 12 9 --base-id 200 --out /tmp/routine.json
+
+# 4-stage validator 실행
+cargo run -p forge-cli -- synth validate /tmp/routine.json --single-foot-ok
+
+# 실 robot 송출 (기본 dry-run — `--engage` 로 활성)
+cargo run -p forge-cli -- motion play --slot 100 --bin path/to/motion_4096.bin
+```
+
+명세: [`docs/prd/motion-synthesis-v1.md`](docs/prd/motion-synthesis-v1.md) · [`docs/reports/SPRINT_9_10_12_REPORT.md`](docs/reports/SPRINT_9_10_12_REPORT.md) · [`docs/reports/SPRINT_13_REPORT.md`](docs/reports/SPRINT_13_REPORT.md) · [`docs/HARDWARE_VERIFICATION_PROTOCOL.md`](docs/HARDWARE_VERIFICATION_PROTOCOL.md)
+
+### Claude Code 통합 (Sprint 12)
+
+`.claude/commands/synth.md` + `.claude/agents/motion-composer.md` + `.claude/settings.json` 로 Claude Code 에서 `/synth <자연어>` 슬래시로 호출. MCP 서버 `forge-mcp-synth` (11 tools) 자동 spawn.
+
 ## 디렉토리 구조
 
 ```

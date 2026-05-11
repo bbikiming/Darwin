@@ -95,3 +95,60 @@
 
 - Sprint 1 ~ 3 완성 + Sprint 4 골격 + Sprint 5/6 데이터 모델 = "고퀄리티 MVP".
 - Mac에서 OP1/OP2를 USB로 연결, 모터 ID 스캔, 한 관절 슬라이더 제어, `.mtn` 모션 임포트·재생까지 가능한 상태.
+
+---
+
+## 확장 Sprint (Sprint 7+, 2026-05)
+
+### Sprint 7 — SwiftUI Studio 본 구현 (완료, 2026-05-10)
+3D 미러 뷰 + 타임라인 에디터 + 명령 팔레트 + 실기기 즉시 적용.
+
+### Sprint 8 — V2 Production Hardening (완료, 2026-05-10)
+P0 패치 8개: slider gating / diff-based apply / USB drop watchdog / STL fallback / Menu commands.
+
+### Phase A/B/D — 안전 기반 + 모션 카탈로그 (완료, 2026-05-11)
+20-DOF + JointMap + walkReady + 토크 ramp + motion_4096.bin 파서 + 16 OFFICIAL_CATALOG + 5종 self-collision 룰.
+
+### Sprint 9 — Motion Synthesis Core (완료, 2026-05-12)
+PRD-001 기반:
+- 6 합성 연산자: Sequence / Layer / Morph / Mutate / Mirror / Procedural
+- 4-stage validator: JointLimit / Velocity / SelfCollision / StaticStability
+- PageLibrary + 자동 메타데이터 + Provenance Manifest
+- 공식 motion_4096.bin 6 페이지 byte-preserving fixture
+- Mirror ground truth: page 12 ↔ 13 (mean abs diff < 600 raw)
+- Integration: 10 end-to-end scenarios, +188 tests (73 → 261)
+
+### Sprint 10 — CLI & MCP (완료, 2026-05-12)
+- `forge synth` 11 서브명령 + `forge-mcp-synth` 신규 crate (11 MCP tools, stdio JSON-RPC)
+- Validator V2 calibration — ROBOTIS 16 페이지 측정 (p99=4.74, max=10.26 raw/ms) → 2-tier (WARN 5.2 / FAIL 11.3)
+- 안전 게이트: validator FAIL → commit 거부, 자동 백업
+
+### Sprint 11 — SwiftUI Synth Palette (Pending RootView 통합)
+3-pane standalone view 작성 완료 (Library / Canvas / Inspector + SynthBridge). 다른 worktree GUI 와 머지 조율 후 `Section.synth` 통합.
+
+### Sprint 12 — Claude Code Integration (완료, 2026-05-12)
+- `.claude/commands/synth.md` 슬래시 (`/synth <자연어>`)
+- `.claude/agents/motion-composer.md` opus 서브에이전트
+- `.claude/settings.json` MCP 등록 + 15 allow + 3 ask + 2 deny
+- 안전 4-layer (slash / subagent / settings / MCP server)
+
+### Sprint 13 — `forge motion play` (완료, 2026-05-12)
+실 robot SYNC_WRITE 송출:
+- 기본 `--dry-run`, `--engage` 명시 시에만 실 송출
+- `precheck_motion` 자동 (V1 + V3), `TorqueRamper` gentle
+- HARDWARE_VERIFICATION_PROTOCOL.md G3 단계 자동화
+
+## 확장 MVP (Sprint 13 시점)
+
+- Sprint 1~13 완성 (Sprint 11 SwiftUI 통합 제외).
+- `forge synth` 로 자연어 / CLI 합성 + validate + MCP 노출.
+- `forge motion play --engage` 로 실 robot 송출 (사용자 supervised).
+- **306 Rust tests / 70 Swift tests / 14 ADR / 16 신규 문서**.
+
+## 후속 (Sprint 14+, 미확정)
+
+- realtime monitoring + interactive abort + Ctrl+C emergency_stop (signal-hook)
+- MCP server 에 `motion_play` tool 추가
+- SwiftUI Synth Palette RootView 통합 (`Section.synth`)
+- 실 robot 측정 기반 V1 JointLimit calibration (PRD §17.4)
+- ROS2 bridge 와 e-Manual web 통합
