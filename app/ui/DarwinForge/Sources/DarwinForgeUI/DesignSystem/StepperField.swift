@@ -170,13 +170,16 @@ public struct StepperField: View {
         set(value + actualStep * direction, commit: true)
     }
 
+    /// 로컬에서 즉시 value/draft 둘 다 갱신.
+    ///
+    /// **중요**: `value = snapped` 후에 `value` 를 다시 읽으면 stale (binding 의
+    /// get 클로저가 부모의 옛 캡처값 반환) — 부모 re-render 는 함수 return 후에
+    /// 발생. 따라서 항상 *로컬 snapped* 를 draft 에 반영해야 한다.
     private func set(_ newValue: Double, commit doCommit: Bool) {
         let clamped = min(max(newValue, range.lowerBound), range.upperBound)
         let snapped = (clamped / step).rounded() * step
         value = snapped
-        if !focused {
-            draft = format(snapped)
-        }
+        draft = format(snapped)   // focused 와 무관하게 항상 갱신 (사용자 입력 보존)
         if doCommit {
             onCommit?(snapped)
         }
@@ -191,12 +194,13 @@ public struct StepperField: View {
             .replacingOccurrences(of: "°", with: "")
             .replacingOccurrences(of: " ", with: "")
         guard let parsed = Double(cleaned) else {
-            // 파싱 실패 → 마지막 valid 값으로 복원.
+            // 파싱 실패 → 마지막 valid 값으로 복원 (value 미변경이므로 stale 위험 없음).
             draft = format(value)
             return
         }
+        // set() 안에서 draft 갱신까지 끝남 — 여기서 다시 `draft = format(value)`
+        // 하면 stale binding.get 으로 사용자 입력을 덮어쓰게 됨.
         set(parsed, commit: true)
-        draft = format(value)
     }
 
     private func revert() {
