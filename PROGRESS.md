@@ -16,6 +16,9 @@
 - [x] **Sprint 4** Motion Editor 골격 (timeline + library + SwiftUI stub, 50 tests)
 - [x] **Sprint 5** Walk Engine MVP (params + engine + IMU + sim CLI, 59 tests)
 - [x] **Sprint 6** Vision & Strategy MVP (HSV blob + FSM + sim CLI, **73 tests**)
+- [x] **Phase A — 안전 기반** (2026-05-11): 20 DOF + JointMap (Official/LegacyOp1) + 부위별 한계 + walkReady (`ini_pose.yaml` 1:1) + 토크 ramp (P_GAIN 0→8→16→32) + `forge walk-ready` CLI + 명세 정정 → **106 tests**.
+- [x] **Phase B — 모션 카탈로그** (2026-05-11): `motion_4096.bin` byte-identical 파서 + `SafetyClass {Safe, Caution, HighRisk}` + `Library::with_official_catalog` (11 Safe + 2 Caution + 3 HighRisk) + self-collision 룰 + `precheck_motion(confirm_risk)` → **125 tests**.
+- [x] **Phase D (walk 권외)** (2026-05-12): `CmController::detect_joint_map` + `forge connect` + `forge motion catalog` CLI → **127 tests**.
 
 ## 🎉 MVP 달성 (2026-05-09)
 
