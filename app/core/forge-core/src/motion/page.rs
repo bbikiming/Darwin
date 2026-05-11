@@ -44,6 +44,26 @@ impl MotionStep {
     }
 }
 
+/// 모션 안전 분류.
+///
+/// `Library::with_official_catalog` 등 import 경로에서 페이지에 부여하며,
+/// `JointController::execute_motion` 이 `HighRisk` 페이지는 사용자 confirmation
+/// 없이 실행하지 않는다. `self_collision::check_step` 검사는 모든 분류에 적용.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SafetyClass {
+    /// 평지·일반 환경에서 안전한 모션 (기본).
+    #[default]
+    Safe,
+    /// 무게중심 변화 큼 — 평지·관찰 환경에서만 권장 (Get up 등).
+    Caution,
+    /// 낙상·신체 충돌 위험. 사용자 confirmation 필수 (Kick, Hand Standing 등).
+    HighRisk,
+}
+
+fn default_safety_class() -> SafetyClass {
+    SafetyClass::Safe
+}
+
 /// 한 Page (motion sequence).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MotionPage {
@@ -65,6 +85,9 @@ pub struct MotionPage {
     pub accel: u8,
     /// 1..7 step.
     pub steps: Vec<MotionStep>,
+    /// 안전 분류 — 기본 Safe.
+    #[serde(default = "default_safety_class")]
+    pub safety_class: SafetyClass,
 }
 
 impl Default for MotionPage {
@@ -79,6 +102,7 @@ impl Default for MotionPage {
             speed: 32,
             accel: 0,
             steps: vec![MotionStep::default()],
+            safety_class: SafetyClass::Safe,
         }
     }
 }

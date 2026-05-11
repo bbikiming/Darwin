@@ -5,7 +5,9 @@
 
 ## 메모리 모델
 
-ROBOTIS DARwIn-OP framework는 **최대 256개 페이지**를 지원하며, 각 페이지는 **최대 7개 Step**. 한 Step은 **20개 관절 + 시간 + 옵션**으로 구성.
+ROBOTIS DARwIn-OP framework는 **최대 256개 페이지**를 지원하며, 각 페이지는 **최대 7개 Step**. 한 Step은 **20개 관절 (ID 1..=20, 발목 4개 포함) + 시간 + 옵션**으로 구성. `motion_4096.bin` 파일은 정확히 131 072 byte = 256 페이지 × 512 byte/페이지.
+
+> 우리 내부 `MotionStep::positions` 는 31-slot 배열을 유지(RoboPlus Action 호환). 실 사용 슬롯은 ID 1..=20에 대응되는 인덱스, 나머지는 32 767(스킵) 또는 2 048(중앙).
 
 ```
 Page 0..255 ─── 256 pages

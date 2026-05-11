@@ -1,8 +1,16 @@
-# claude-forge / DarwinForge
+<p align="left">
+  <img src="docs/assets/logo-darwinforge.svg" alt="DarwinForge" height="80" />
+</p>
+
+<p align="left">
+  <img src="docs/assets/badge-darwin-op-compatible.svg" alt="Works with DARwIn-OP / OP2" height="28" />
+</p>
 
 > macOS 전용 통합 앱: ROBOTIS DARWIN-OP (1세대 OP1 / CM-730) 와 ROBOTIS-OP2 (2세대 / CM-740) 두 대를 USB로 직접 제어하고, 모션을 설계하고, 전략을 프로그래밍한다.
 >
 > 핵심 스택: **Rust 코어 (`app/core/`) + SwiftUI UI (`app/ui/`)**. ADR-009~013 참조.
+>
+> 비공식(unofficial) 도구 — ROBOTIS와 직접 제휴 관계 없음. 자세한 브랜드 자산은 [`docs/assets/README.md`](docs/assets/README.md).
 
 ## 빠른 시작
 

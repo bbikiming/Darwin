@@ -102,6 +102,7 @@ pub fn parse_mtn(input: &str) -> Result<Motion, ParseError> {
                     speed: 32,
                     accel: 0,
                     steps: Vec::new(),
+                    safety_class: crate::motion::SafetyClass::Safe,
                 });
             }
             Some(("page_end", _)) => {

@@ -415,20 +415,10 @@ public struct RootView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: "hammer.fill")
-                        .foregroundStyle(DFColor.forge)
-                    Text("DarwinForge")
-                        .font(DFFont.title)
-                }
-                Text("다윈-OP 로봇을 위한 통합 작업실")
-                    .font(DFFont.caption)
-                    .foregroundStyle(DFColor.textSecondary)
-            }
-            .padding(.horizontal, DFSpace.md)
-            .padding(.top, DFSpace.md)
-            .padding(.bottom, DFSpace.sm)
+            DarwinForgeLogo(variant: .full, density: .standard, showsTagline: true)
+                .padding(.horizontal, DFSpace.md)
+                .padding(.top, DFSpace.md)
+                .padding(.bottom, DFSpace.sm)
 
             Divider()
 

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1240 260"
+     preserveAspectRatio="xMidYMid meet"
+     role="img"
+     aria-label="DarwinForge">
+  <title>DarwinForge</title>
+  <desc>DarwinForge wordmark: hexagonal slate mark with a forge-spark accent, paired with split-color block typography. "Darwin" in slate (#2E3940), "Forge" in forge-orange (#E97132).</desc>
+
+  <!-- Mark: slate hexagon with forge-spark -->
+  <g transform="translate(30, 30)">
+    <polygon points="100,0 175,50 175,150 100,200 25,150 25,50"
+             fill="#2E3940"/>
+    <polygon points="175,50 175,100 130,68"
+             fill="#E97132"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="270" y="195"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', 'Inter', 'Segoe UI', Roboto, 'Arial Black', sans-serif"
+        font-size="180"
+        font-weight="900"
+        letter-spacing="-6">
+    <tspan fill="#2E3940">Darwin</tspan><tspan fill="#E97132">Forge</tspan>
+  </text>
+</svg>
