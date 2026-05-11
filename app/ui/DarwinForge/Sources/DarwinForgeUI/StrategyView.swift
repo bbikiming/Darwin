@@ -49,9 +49,14 @@ public struct StrategyView: View {
         HStack {
             Text(label).frame(width: 160, alignment: .leading)
             Slider(value: value, in: range)
-            Text(String(format: format, value.wrappedValue))
-                .frame(width: 60, alignment: .trailing)
-                .fontDesign(.monospaced)
+            StepperField(
+                value: value,
+                in: range,
+                step: max((range.upperBound - range.lowerBound) / 100, 0.01),
+                format: { String(format: format, $0) },
+                width: 56
+            )
+            .frame(width: 78, alignment: .trailing)
         }
     }
 

@@ -153,9 +153,16 @@ public struct WalkLab: View {
                     engine.setCommand(x: x, y: y, a: a, enabled: enabled)
                 }
             }
-            Text(String(format: format, value.wrappedValue * displayMultiplier))
-                .font(DFFont.caption.monospaced())
-                .frame(width: 60, alignment: .trailing)
+            StepperField(
+                value: value,
+                in: range,
+                step: step,
+                bigStep: step * 10,
+                format: { String(format: format, $0 * displayMultiplier) },
+                width: 56,
+                onCommit: { _ in engine.setCommand(x: x, y: y, a: a, enabled: enabled) }
+            )
+            .frame(width: 78, alignment: .trailing)
         }
     }
 

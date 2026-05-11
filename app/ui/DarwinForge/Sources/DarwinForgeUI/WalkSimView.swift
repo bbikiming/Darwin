@@ -53,9 +53,15 @@ public struct WalkSimView: View {
         HStack {
             Text(label).frame(width: 130, alignment: .leading)
             Slider(value: value, in: range)
-            Text(String(format: "%+.3f", value.wrappedValue))
-                .frame(width: 60, alignment: .trailing)
-                .fontDesign(.monospaced)
+            StepperField(
+                value: value,
+                in: range,
+                step: 0.01,
+                bigStep: 0.1,
+                format: { String(format: "%+.3f", $0) },
+                width: 56
+            )
+            .frame(width: 78, alignment: .trailing)
         }
     }
 

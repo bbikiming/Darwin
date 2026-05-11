@@ -178,9 +178,18 @@ public struct PoseInspector: View {
             )
 
             VStack(alignment: .trailing, spacing: 0) {
-                Text("\(Int(degree))°")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(limitNear ? DFColor.warning : DFColor.textPrimary)
+                StepperField(
+                    value: Binding(
+                        get: { Double(degree) },
+                        set: { newDeg in update(joint: j, degrees: newDeg, commit: false) }
+                    ),
+                    in: limits,
+                    step: 1,
+                    bigStep: 10,
+                    unit: "°",
+                    tint: limitNear ? DFColor.warning : nil,
+                    onCommit: { newDeg in update(joint: j, degrees: newDeg, commit: true) }
+                )
                 if limitNear {
                     Text("한계 가까움")
                         .font(.system(size: 9))
@@ -191,7 +200,7 @@ public struct PoseInspector: View {
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
-            .frame(width: 68, alignment: .trailing)
+            .frame(width: 84, alignment: .trailing)
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 4)
