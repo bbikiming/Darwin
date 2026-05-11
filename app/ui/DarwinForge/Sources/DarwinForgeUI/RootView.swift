@@ -108,27 +108,44 @@ public struct RootView: View {
     /// macOS Button 의 자동 chrome (이중 테두리) 방지.
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // 좌측 상태 pill 그룹 — 단일 ToolbarItem 으로 묶어 spacing/padding 정확 통제.
+        // 디자인 ref: Apple HIG 8pt 그리드 + Linear 미묘 보더 (design-system-references.md §1·§Apple).
         ToolbarItem(placement: .principal) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 connectionToolbarPill
                 batteryToolbarPill
                 temperatureToolbarPill
                 torqueToolbarPill
             }
+            .padding(.horizontal, DFSpace.sm)   // toolbar 경계와 첫/마지막 pill 사이 호흡.
         }
-        ToolbarItemGroup(placement: .primaryAction) {
-            // 빠른 연결 CTA — 미연결 시 강조, 연결 시 [연결 해제] 로 전환.
-            quickConnectCTA
-            Button {
-                paletteOpen = true
-            } label: {
-                Image(systemName: "command")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DFColor.textSecondary)
+        // 우측 액션 그룹 — 단일 ToolbarItem 으로 묶어 macOS 자동 배치(타이트) 회피.
+        ToolbarItem(placement: .primaryAction) {
+            HStack(spacing: 10) {
+                quickConnectCTA
+                paletteShortcutPill
             }
-            .buttonStyle(.plain)
-            .help("명령 팔레트 (⌘K)")
+            .padding(.trailing, DFSpace.xs)
         }
+    }
+
+    /// ⌘K 팔레트 단축키 — 상태 pill 들과 동일 chrome 으로 통일.
+    private var paletteShortcutPill: some View {
+        Button {
+            paletteOpen = true
+        } label: {
+            statusPill(active: false, tint: DFColor.accent) {
+                HStack(spacing: 3) {
+                    Image(systemName: "command")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("K")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(DFColor.textSecondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .help("명령 팔레트 (⌘K)")
     }
 
     /// CTA 액션 — Task로 감싸 메인 스레드 block 회피. connect()의 boardSnapshot 동기 호출이
@@ -154,7 +171,7 @@ public struct RootView: View {
                     .font(.system(size: 12, weight: .semibold))
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 5)
+            .padding(.vertical, 6)
             .foregroundStyle(.white)
             .background(
                 LinearGradient(
@@ -194,7 +211,7 @@ public struct RootView: View {
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 5)
+                .padding(.vertical, 6)
                 .foregroundStyle(.white)
                 .background(DFColor.danger)
                 .clipShape(Capsule())
@@ -211,7 +228,7 @@ public struct RootView: View {
                     .lineLimit(1)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 5)
+            .padding(.vertical, 6)
             .foregroundStyle(.white)
             .background(DFColor.warning)
             .clipShape(Capsule())
@@ -227,7 +244,7 @@ public struct RootView: View {
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 5)
+                .padding(.vertical, 6)
                 .foregroundStyle(DFColor.danger)
                 .background(DFColor.danger.opacity(0.12))
                 .clipShape(Capsule())
@@ -241,14 +258,15 @@ public struct RootView: View {
     // MARK: - Toolbar style helpers
 
     /// 데이터 유무에 따른 시각 강조 — 있으면 활성 색, 없으면 dim.
+    /// 디자인 ref: Apple HIG 8pt 그리드 + Linear 미묘 보더 (테두리 12% 알파).
     private func statusPill<Content: View>(
         active: Bool,
         tint: Color,
         @ViewBuilder content: () -> Content
     ) -> some View {
         content()
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 12)   // breathing room: 좌우 내부 패딩 (10→12).
+            .padding(.vertical, 6)      // 세로 내부 패딩 (5→6) — 컨텐츠 높이 ~24pt.
             .background(active ? tint.opacity(0.14) : DFColor.textSecondary.opacity(0.06))
             .clipShape(Capsule())
             .overlay(
