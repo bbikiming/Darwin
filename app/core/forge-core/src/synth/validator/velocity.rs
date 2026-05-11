@@ -25,11 +25,21 @@ const FLAG_INVALID: u16 = 0x4000;
 const FLAG_TORQUE_OFF: u16 = 0x2000;
 const POSITION_MASK: u16 = 0x0FFF;
 
-/// `raw_change / ms` 임계. MX-28 max 의 약 75%.
+/// `raw_change / ms` 보수적 임계 — 이 값 초과는 WARN.
 ///
-/// max_moving_speed = 1023 raw ≈ 504°/s ≈ 5727 raw_pos/s ≈ 5.7 raw/ms.
-/// 75% → 4.3 raw/ms.
-pub const MAX_RAW_PER_MS: f64 = 4.3;
+/// ROBOTIS-OP2 motion_4096.bin 의 16 OFFICIAL_CATALOG 페이지에서 측정한
+/// 99th percentile (4.74 raw/ms) × 1.1 = **5.2 raw/ms**. 일반 모션 (Stand Up,
+/// Yes, walkready 등) 은 이 임계 아래.
+///
+/// 측정: docs/reports/SPRINT_9_10_12_REPORT.md §"Validator calibration".
+pub const WARN_RAW_PER_MS: f64 = 5.2;
+
+/// `raw_change / ms` 절대 한계 — 이 값 초과는 FAIL.
+///
+/// ROBOTIS 페이지 max (10.26 raw/ms, page 12 right kick R_ANKLE_PITCH) × 1.1
+/// = **11.3 raw/ms**. MX-28 max_moving_speed (raw 1023 ≈ 5.7 raw/ms 평균) 의
+/// peak burst 한계. ROBOTIS 공식 페이지는 모두 통과.
+pub const MAX_RAW_PER_MS: f64 = 11.3;
 
 /// V2 — Velocity / Acceleration validator.
 #[derive(Debug, Default)]
@@ -45,7 +55,8 @@ impl Validator for VelocityValidator {
             return Ok(ValidatorReport::Pass(self.stage()));
         }
 
-        let mut violations: Vec<String> = Vec::new();
+        let mut warn_violations: Vec<String> = Vec::new();
+        let mut fail_violations: Vec<String> = Vec::new();
 
         for win in page.steps.windows(2) {
             let a = &win[0];
@@ -72,27 +83,43 @@ impl Validator for VelocityValidator {
                 let delta = (bv_pos - av_pos).abs() as f64;
                 let speed = delta / play_ms;
                 if speed > MAX_RAW_PER_MS {
-                    violations.push(format!(
-                        "joint slot {} {:.2} raw/ms > {:.2} max",
+                    fail_violations.push(format!(
+                        "joint slot {} {:.2} raw/ms > {:.2} HARD max",
                         i, speed, MAX_RAW_PER_MS
+                    ));
+                } else if speed > WARN_RAW_PER_MS {
+                    warn_violations.push(format!(
+                        "joint slot {} {:.2} raw/ms > {:.2} warn",
+                        i, speed, WARN_RAW_PER_MS
                     ));
                 }
             }
         }
 
-        if violations.is_empty() {
-            Ok(ValidatorReport::Pass(self.stage()))
-        } else {
-            let summary = if violations.len() > 3 {
+        if !fail_violations.is_empty() {
+            let summary = if fail_violations.len() > 3 {
                 format!(
-                    "{} velocity violations, first 3: {}",
-                    violations.len(),
-                    violations[..3].join("; ")
+                    "{} hard-violations, first 3: {}",
+                    fail_violations.len(),
+                    fail_violations[..3].join("; ")
                 )
             } else {
-                violations.join("; ")
+                fail_violations.join("; ")
             };
             Ok(ValidatorReport::Fail(self.stage(), summary))
+        } else if !warn_violations.is_empty() {
+            let summary = if warn_violations.len() > 3 {
+                format!(
+                    "{} warn-violations, first 3: {}",
+                    warn_violations.len(),
+                    warn_violations[..3].join("; ")
+                )
+            } else {
+                warn_violations.join("; ")
+            };
+            Ok(ValidatorReport::Warn(self.stage(), summary))
+        } else {
+            Ok(ValidatorReport::Pass(self.stage()))
         }
     }
 }

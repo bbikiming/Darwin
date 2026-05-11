@@ -1,0 +1,192 @@
+# ROBOTIS-OP2 공식 모션 카탈로그 — sidecar 메타데이터.
+#
+# 출처:
+#   - 페이지 데이터: DARwIn-OP_ROBOTIS_v1.6.0/Data/motion_4096.bin
+#   - 사용자 노출 모션: ROBOTIS-OP2/op2_gui_demo/config/gui_motion.yaml (16개)
+#   - 데모 호출 매핑: DARwIn-OP_ROBOTIS_v1.6.0/Linux/project/demo/{StatusCheck,VisionMode}.cpp
+#
+# 형식: PRD-001 §7.2 (motion-synthesis-v1.md).
+# 머지 후 `synth::library::PageLibrary::from_official_bin` 이 자동 적용 예정.
+
+[meta]
+version = 1
+source = "ROBOTIS-OP2 motion_4096.bin + gui_motion.yaml"
+total_pages = 16
+schema = "motion-synthesis-v1 §7.2"
+
+[page.1]
+display_name = "Stand Up"
+raw_name = "init"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["pose", "anchor", "demo"]
+body_regions = ["UpperBody", "LowerBody", "Head"]
+duration_ms = 2000     # sum((pause + time) × 8 ms) for 2 step(s)
+# mirror_pair = (none)
+single_foot_ok = true
+description = "기본 standing pose. init step 1 ≈ walkready, ROBOTIS demo 의 모든 모드 anchor."
+
+[page.2]
+display_name = "Yes"
+raw_name = "ok"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["gesture", "head", "demo"]
+body_regions = ["Head"]
+duration_ms = 2600     # sum((pause + time) × 8 ms) for 5 step(s)
+# mirror_pair = (none)
+single_foot_ok = true
+description = "고개 끄덕임 — 긍정. mp3 'Yes.mp3' 와 동기."
+
+[page.3]
+display_name = "No"
+raw_name = "no"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["gesture", "head", "demo"]
+body_regions = ["Head"]
+duration_ms = 2600     # sum((pause + time) × 8 ms) for 5 step(s)
+# mirror_pair = (none)
+single_foot_ok = true
+description = "고개 좌우 흔들기 — 부정. mp3 'No.mp3'."
+
+[page.4]
+display_name = "Thank You"
+raw_name = "hi"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["gesture", "greeting", "upper_body"]
+body_regions = ["UpperBody", "Head"]
+duration_ms = 3600     # sum((pause + time) × 8 ms) for 4 step(s)
+# mirror_pair = (none)
+single_foot_ok = true
+description = "오른손 인사 + 머리 약간 기울임. VisionMode RED 감지 시 호출."
+
+[page.9]
+display_name = "Walk Ready"
+raw_name = "walkready"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["pose", "anchor", "locomotion"]
+body_regions = ["LowerBody", "Head"]
+duration_ms = 1000     # sum((pause + time) × 8 ms) for 1 step(s)
+# mirror_pair = (none)
+single_foot_ok = true
+description = "보행 준비 자세. SoccerMode 시작 anchor. compliance idx 3,4 = 119 로 어깨 부드러움."
+
+[page.10]
+display_name = "Get Up (Front)"
+raw_name = "f up"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Caution"
+tags = ["recovery", "balance_critical"]
+body_regions = ["UpperBody", "LowerBody"]
+duration_ms = 3200     # sum((pause + time) × 8 ms) for 5 step(s)
+# mirror_pair = (none)
+single_foot_ok = false
+description = "앞쪽 낙상에서 복구 (5 step). gyro fallen detection 자동 트리거. 평지 권장."
+
+[page.11]
+display_name = "Get Up (Back)"
+raw_name = "b up"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Caution"
+tags = ["recovery", "balance_critical"]
+body_regions = ["UpperBody", "LowerBody"]
+duration_ms = 4200     # sum((pause + time) × 8 ms) for 6 step(s)
+# mirror_pair = (none)
+single_foot_ok = false
+description = "뒤쪽 낙상에서 복구 (6 step). gyro fallen detection."
+
+[page.12]
+display_name = "Right Kick"
+raw_name = "rk"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "HighRisk"
+tags = ["soccer", "kick", "right", "balance_critical"]
+body_regions = ["LowerBody"]
+duration_ms = 1664     # sum((pause + time) × 8 ms) for 7 step(s)
+mirror_pair = 13
+single_foot_ok = false
+description = "오른발 킥 — 단발 지지. step 0/5/6 walkready anchor, step 1~4 실제 kick, step 3 impact (pause 18 = 144 ms hold). compliance idx 15,16 = 68 로 발목 단단."
+
+[page.13]
+display_name = "Left Kick"
+raw_name = "lk"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "HighRisk"
+tags = ["soccer", "kick", "left", "balance_critical"]
+body_regions = ["LowerBody"]
+duration_ms = 1664     # sum((pause + time) × 8 ms) for 7 step(s)
+mirror_pair = 12
+single_foot_ok = false
+description = "왼발 킥 — page 12 의 좌우 대칭 페어. ROBOTIS 가 손으로 미세 조정 — mirror algorithm 의 ground truth (mean abs diff < 600 raw 검증)."
+
+[page.15]
+display_name = "Sit Down"
+raw_name = "sit down"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["posture", "idle", "demo"]
+body_regions = ["UpperBody", "LowerBody"]
+duration_ms = 1000     # sum((pause + time) × 8 ms) for 1 step(s)
+# mirror_pair = (none)
+single_foot_ok = true
+description = "단일 step sit pose. ReadyMode idle anchor. mp3 'Sit down.mp3' 와 동기."
+
+[page.17]
+display_name = "Hand Standing"
+raw_name = "mul1"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "HighRisk"
+tags = ["acrobatics", "balance_critical"]
+body_regions = ["UpperBody", "LowerBody"]
+duration_ms = 7000     # sum((pause + time) × 8 ms) for 7 step(s)  # chain: next → page 18
+# mirror_pair = (none)
+single_foot_ok = false
+description = "물구나무 시작 (page 17 mul1 → 18 mul2 → 19 mul3, chain). 평지 + 사용자 supervision 필수."
+
+[page.23]
+display_name = "Yes Go!"
+raw_name = "d1"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["gesture", "demo"]
+body_regions = ["UpperBody"]
+duration_ms = 3000     # sum((pause + time) × 8 ms) for 4 step(s)
+# mirror_pair = (none)
+single_foot_ok = true
+description = "긍정 + 출발 제스처. speed=21 으로 약간 느림. mp3 'Yes go.mp3'."
+
+[page.24]
+display_name = "Wow!"
+raw_name = "d2"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["gesture", "demo"]
+body_regions = ["UpperBody", "Head"]
+duration_ms = 3600     # sum((pause + time) × 8 ms) for 5 step(s)  # chain: next → page 25
+# mirror_pair = (none)
+single_foot_ok = true
+description = "감탄 — page 24 d2 → 25 d2 chain. VisionMode BLUE 감지."
+
+[page.27]
+display_name = "Oops"
+raw_name = "d3"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["gesture", "demo"]
+body_regions = ["UpperBody", "Head"]
+duration_ms = 3200     # sum((pause + time) × 8 ms) for 5 step(s)
+# mirror_pair = (none)
+single_foot_ok = true
+description = "실수 표현. VisionMode RGB 모두 감지."
+
+[page.38]
+display_name = "Bye Bye"
+raw_name = "d2"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["gesture", "greeting", "demo"]
+body_regions = ["UpperBody"]
+duration_ms = 3600     # sum((pause + time) × 8 ms) for 5 step(s)  # chain: next → page 39
+# mirror_pair = (none)
+single_foot_ok = true
+description = "손 흔들기 — page 38 d2 → 39 d2 chain. VisionMode RED+YELLOW."
+
+[page.54]
+display_name = "Clap Please"
+raw_name = "int"        # ROBOTIS PAGEHEADER name[14]
+safety_class = "Safe"
+tags = ["gesture", "demo"]
+body_regions = ["UpperBody"]
+duration_ms = 2000     # sum((pause + time) × 8 ms) for 2 step(s)  # chain: next → page 55
+# mirror_pair = (none)
+single_foot_ok = true
+description = "박수 요청 — page 54 int → 55 → 56 → 58 chain. VisionMode RED+BLUE."
+

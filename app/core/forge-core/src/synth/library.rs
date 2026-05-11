@@ -33,13 +33,17 @@ use crate::motion::{
 use super::error::{Result, SynthError};
 use super::metadata::{BodyRegion, PageMetadata, Tag};
 
+// PAGEHEADER offsets — ROBOTIS `Framework/include/Action.h` line 41-59 정의 그대로.
+// name[14]=0..13, reserved1=14, repeat=15, schedule=16, reserved2[3]=17..19,
+// stepnum=20, reserved3=21, speed=22, reserved4=23, accel=24, next=25, exit=26,
+// reserved5[4]=27..30, checksum=31, slope[31]=32..62, reserved6=63.
 const HEADER_OFFSET_REPEAT: usize = 15;
-const HEADER_OFFSET_STEPNUM: usize = 19;
-const HEADER_OFFSET_SPEED: usize = 21;
-const HEADER_OFFSET_ACCEL: usize = 23;
-const HEADER_OFFSET_NEXT: usize = 24;
-const HEADER_OFFSET_EXIT: usize = 25;
-const HEADER_OFFSET_SLOPE: usize = 28;
+const HEADER_OFFSET_STEPNUM: usize = 20;
+const HEADER_OFFSET_SPEED: usize = 22;
+const HEADER_OFFSET_ACCEL: usize = 24;
+const HEADER_OFFSET_NEXT: usize = 25;
+const HEADER_OFFSET_EXIT: usize = 26;
+const HEADER_OFFSET_SLOPE: usize = 32;
 const HEADER_SIZE: usize = 64;
 const STEP_SIZE: usize = 64;
 const MAX_STEPS: usize = 7;

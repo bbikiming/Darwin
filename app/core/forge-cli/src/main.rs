@@ -2,6 +2,9 @@
 //!
 //! Sprint 1: ping/scan 실 작동.
 
+mod motion_play;
+mod synth;
+
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
@@ -280,6 +283,13 @@ enum Command {
         #[arg(long, default_value = "official")]
         joint_map: String,
     },
+
+    /// Motion Synthesis — `library`, `sequence`, `layer`, `morph`, `mutate`,
+    /// `mirror`, `procedural`, `validate`, `commit`, `simulate`. (Sprint 10)
+    Synth {
+        #[command(subcommand)]
+        action: synth::SynthCmd,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -308,6 +318,12 @@ enum MotionAction {
         /// 입력 파일.
         input: std::path::PathBuf,
     },
+    /// **Sprint 13** — 모션 페이지를 실 robot 에 송출 (기본 dry-run).
+    ///
+    /// `--from-json <path>` 또는 `--slot <n>` 으로 페이지 source 지정.
+    /// 기본은 `--dry-run` (패킷 출력만). 실 송출은 `--engage` 명시 필요.
+    /// HARDWARE_VERIFICATION_PROTOCOL.md G3 단계 — 사용자 사전점검 필수.
+    Play(motion_play::PlayArgs),
     /// 공식 ROBOTIS-OP2 카탈로그 (16개 모션 + 안전 분류) 표시.
     ///
     /// `motion_4096.bin` + `gui_motion.yaml` 기반 — Safe / Caution / HighRisk.
@@ -502,6 +518,8 @@ fn main() -> anyhow::Result<()> {
             dry_run,
             &joint_map,
         )?,
+
+        Command::Synth { action } => synth::handle(action)?,
     }
     Ok(())
 }
@@ -818,6 +836,7 @@ fn handle_motion(action: MotionAction) -> anyhow::Result<()> {
                 );
             }
         }
+        MotionAction::Play(args) => motion_play::handle(args)?,
         MotionAction::Catalog { bin } => {
             use forge_core::motion::library::OFFICIAL_CATALOG;
             use forge_core::motion::{parse_bin4096, Library, SafetyClass};
