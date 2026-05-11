@@ -25,6 +25,7 @@ pub mod dynamixel;
 pub mod error;
 pub mod joint;
 pub mod motion;
+pub mod safety;
 pub mod serial;
 pub mod strategy;
 pub mod vision;
