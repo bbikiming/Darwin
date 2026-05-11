@@ -54,9 +54,9 @@ public struct StrategyView: View {
                 in: range,
                 step: max((range.upperBound - range.lowerBound) / 100, 0.01),
                 format: { String(format: format, $0) },
-                width: 56
+                fieldWidth: 50
             )
-            .frame(width: 78, alignment: .trailing)
+            .frame(width: 110, alignment: .trailing)
         }
     }
 

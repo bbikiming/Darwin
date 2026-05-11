@@ -59,9 +59,9 @@ public struct WalkSimView: View {
                 step: 0.01,
                 bigStep: 0.1,
                 format: { String(format: "%+.3f", $0) },
-                width: 56
+                fieldWidth: 50
             )
-            .frame(width: 78, alignment: .trailing)
+            .frame(width: 110, alignment: .trailing)
         }
     }
 

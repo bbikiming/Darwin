@@ -159,10 +159,10 @@ public struct WalkLab: View {
                 step: step,
                 bigStep: step * 10,
                 format: { String(format: format, $0 * displayMultiplier) },
-                width: 56,
+                fieldWidth: 50,
                 onCommit: { _ in engine.setCommand(x: x, y: y, a: a, enabled: enabled) }
             )
-            .frame(width: 78, alignment: .trailing)
+            .frame(width: 110, alignment: .trailing)
         }
     }
 

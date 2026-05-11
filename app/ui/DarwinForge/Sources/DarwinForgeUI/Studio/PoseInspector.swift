@@ -177,7 +177,7 @@ public struct PoseInspector: View {
                 }
             )
 
-            VStack(alignment: .trailing, spacing: 0) {
+            VStack(alignment: .trailing, spacing: 2) {
                 StepperField(
                     value: Binding(
                         get: { Double(degree) },
@@ -188,6 +188,7 @@ public struct PoseInspector: View {
                     bigStep: 10,
                     unit: "°",
                     tint: limitNear ? DFColor.warning : nil,
+                    fieldWidth: 36,
                     onCommit: { newDeg in update(joint: j, degrees: newDeg, commit: true) }
                 )
                 if limitNear {
@@ -200,7 +201,7 @@ public struct PoseInspector: View {
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
-            .frame(width: 84, alignment: .trailing)
+            .frame(width: 110, alignment: .trailing)
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 4)
