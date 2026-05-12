@@ -202,30 +202,33 @@ public struct SafetyBandedSlider: View {
     /// 단방향: 좌(min) → 우(max). bidirectional: range 가 ±인 경우 0 이 중앙.
     @ViewBuilder
     private func bandsTrack(width: CGFloat, height: CGFloat) -> some View {
-        let safeColor = DFColor.success.opacity(0.55)
-        let cautionColor = DFColor.warning.opacity(0.65)
-        let dangerColor = DFColor.danger.opacity(0.65)
-        let span = range.upperBound - range.lowerBound
-
-        // 각 픽셀 (steps=20) 의 중심값을 평가해 색을 결정 → HStack 으로 stack.
         let steps = 20
+        let stepWidth = width / CGFloat(steps)
         HStack(spacing: 0) {
             ForEach(0..<steps, id: \.self) { i in
-                let valAtPixel = range.lowerBound + (Double(i) + 0.5) / Double(steps) * span
-                let testVal = bidirectional ? abs(valAtPixel) : valAtPixel
-                let color: Color
-                if bands.safeRange.contains(testVal) {
-                    color = safeColor
-                } else if bands.cautionRange.contains(testVal) {
-                    color = cautionColor
-                } else {
-                    color = dangerColor
-                }
-                Rectangle().fill(color)
-                    .frame(width: width / CGFloat(steps), height: height)
+                Rectangle()
+                    .fill(bandColor(forStep: i, of: steps))
+                    .frame(width: stepWidth, height: height)
             }
         }
         .frame(height: height)
+    }
+
+    /// 한 픽셀(=step) 의 중심값이 어느 band 에 속하는지 결정. 본 helper 는
+    /// `bandsTrack` 의 ViewBuilder 표현식을 단순화해 SwiftUI 타입 체커가
+    /// 폭주하지 않도록 분리. (단일 표현 내 ForEach + Range.contains + 다중
+    /// 분기 + Color 결합 시 type-check 타임아웃 발생.)
+    private func bandColor(forStep i: Int, of steps: Int) -> Color {
+        let span = range.upperBound - range.lowerBound
+        let valAtPixel = range.lowerBound + (Double(i) + 0.5) / Double(steps) * span
+        let testVal = bidirectional ? abs(valAtPixel) : valAtPixel
+        if bands.safeRange.contains(testVal) {
+            return DFColor.success.opacity(0.55)
+        } else if bands.cautionRange.contains(testVal) {
+            return DFColor.warning.opacity(0.65)
+        } else {
+            return DFColor.danger.opacity(0.65)
+        }
     }
 }
 

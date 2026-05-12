@@ -163,16 +163,34 @@ public struct WalkLabView: View {
             }
 
             HStack(spacing: 12) {
-                FootTrailCanvas(trail: session.footTrail,
-                                leftFoot: session.leftFoot,
-                                rightFoot: session.rightFoot)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Hero: 3D 모델 — pose 는 walkReady, footTrace 는 좌측 발 자취.
+                // 구 WalkLab.swift 의 RobotScene3D wiring 패턴 재사용.
+                RobotScene3D(
+                    pose: .walkReady,
+                    footTrace: session.footTrail.map { $0.left }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: 0.5)
+                )
 
-                VStack(spacing: 8) {
+                // 사이드 패널: 2D 발자취 (top-down) + IMU 게이지 2개.
+                VStack(spacing: 10) {
+                    FootTrailCanvas(trail: session.footTrail,
+                                    leftFoot: session.leftFoot,
+                                    rightFoot: session.rightFoot)
+                        .frame(height: 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: 0.5)
+                        )
                     IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
                     IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
                 }
-                .frame(width: 160)
+                .frame(width: 240)
             }
 
             footTargetsCard

@@ -627,7 +627,7 @@ public struct RootView: View {
         case .motion:
             MotionStudioView()
         case .walk:
-            WalkLab()
+            WalkLabView()
         case .conversation:
             ConversationView(commander: commander, dispatcher: dispatcher)
         case .remote:
@@ -643,7 +643,7 @@ public struct RootView: View {
         case .board:    ExpertDashboard()
         case .joints:   JointControlView()
         case .motion:   MotionLibraryView()
-        case .walk:     WalkSimView()
+        case .walk:     WalkLabView()
         case .strategy: StrategyView()
         }
     }
