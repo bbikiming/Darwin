@@ -329,4 +329,98 @@ mod tests {
         let p2: WalkPreset = serde_json::from_str(&s).unwrap();
         assert_eq!(p, p2);
     }
+
+    /// **D6 회귀** — 모든 프리셋의 sim 결과 발 위치가 `WalkParams` 의 안전 box
+    /// 안에 들어감을 보장. WalkLab sim 의 footTrail 가 절대 골반 좌표계 ±10 cm /
+    /// 발 들기 ≤ foot_height 안임을 한 사이클 분량으로 검증.
+    ///
+    /// 실 IK 가 구현되면 본 테스트는 IK 의 발 위치 → 관절각 변환 후 JointLimits
+    /// 회귀로 대체된다 (BLOCKER C3 해결 후).
+    #[test]
+    fn all_presets_sim_foot_within_walkparams_box() {
+        use crate::walk::{WalkEngine, WalkParams};
+        use std::time::Duration;
+        let params = WalkParams::default();
+        // 한 사이클 안전 박스
+        let max_x_amp = 0.05; // V1_DESIGN 슬라이더 최대치
+        let max_y_amp = 0.03;
+        let z_floor = -params.z_offset - 1e-6; // 직립 시 z = -z_offset
+        let z_ceil = -params.z_offset + params.foot_height + 1e-6;
+
+        for preset in WalkPreset::ALL {
+            let mut e = WalkEngine::new();
+            let cmd = preset.command();
+            e.command = cmd;
+            e.set_period_ms(preset.period_ms() as f64);
+
+            // 한 사이클 + 여유 = period × 1.2 / 50 ms ticks
+            let ticks = ((preset.period_ms() as f64) * 1.2 / 50.0).ceil() as usize;
+            let mut max_x = 0.0f64;
+            let mut max_y = 0.0f64;
+            let mut max_z = f64::MIN;
+            let mut min_z = f64::MAX;
+            for _ in 0..ticks {
+                e.tick(Duration::from_millis(50));
+                let f = e.foot_targets();
+                max_x = max_x.max(f.left[0].abs().max(f.right[0].abs()));
+                max_y = max_y.max(f.left[1].abs().max(f.right[1].abs()));
+                max_z = max_z.max(f.left[2].max(f.right[2]));
+                min_z = min_z.min(f.left[2].min(f.right[2]));
+            }
+
+            assert!(
+                max_x <= params.x_offset.abs() + max_x_amp + 1e-6,
+                "{preset:?} max_x {max_x} exceeds x_offset+amp box"
+            );
+            assert!(
+                max_y <= params.y_offset.abs() + max_y_amp + 1e-6,
+                "{preset:?} max_y {max_y} exceeds y_offset+amp box"
+            );
+            assert!(
+                max_z <= z_ceil,
+                "{preset:?} max_z {max_z} exceeds foot_height ceiling {z_ceil}"
+            );
+            assert!(
+                min_z >= z_floor - params.foot_height,
+                "{preset:?} min_z {min_z} below floor margin"
+            );
+        }
+    }
+
+    /// **D6 회귀** — 슬라이더 풀-스윙 (x ±0.05 / y ±0.03 / a ±0.3 / period 400~800)
+    /// 으로도 sim 결과가 안전 박스 안. 즉 advanced 모드 사용자도 sim 가 깨지지 않음.
+    #[test]
+    fn full_slider_range_sim_stays_bounded() {
+        use crate::walk::{WalkEngine, WalkParams, WalkCommand};
+        use std::time::Duration;
+        let params = WalkParams::default();
+        let cases = [
+            (0.05, 0.03, 0.3, 400.0),
+            (-0.05, -0.03, -0.3, 800.0),
+            (0.0, 0.0, 0.0, 600.0),
+        ];
+        for (x, y, a, period) in cases {
+            let mut e = WalkEngine::new();
+            e.command = WalkCommand {
+                x_amplitude: x,
+                y_amplitude: y,
+                a_amplitude: a,
+                enabled: true,
+            };
+            e.set_period_ms(period);
+            let ticks = (period * 1.2 / 50.0).ceil() as usize;
+            for _ in 0..ticks {
+                e.tick(Duration::from_millis(50));
+                let f = e.foot_targets();
+                let z_ceil = -params.z_offset + params.foot_height + 1e-6;
+                assert!(
+                    f.left[2] <= z_ceil && f.right[2] <= z_ceil,
+                    "x={x} y={y} a={a} period={period}: foot z over ceiling"
+                );
+                // x/y 는 amplitude 이내
+                assert!(f.left[0].abs() <= params.x_offset.abs() + x.abs() + 1e-6);
+                assert!(f.left[1].abs() <= params.y_offset.abs() + y.abs() + 1e-6);
+            }
+        }
+    }
 }

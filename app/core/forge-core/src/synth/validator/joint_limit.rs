@@ -127,4 +127,65 @@ mod tests {
         p.steps[0].positions[JointId::RKnee as usize] = FLAG_INVALID | 0;
         assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
     }
+
+    /// **D3 회귀** — 가장 극단 자세인 page 12 right_kick step 3 (R_HipPitch −78°,
+    /// R_AnklePitch −56°, R_AnkleRoll −27°) 가 모든 `JointLimits` 안에 들어감을
+    /// explicit 하게 보장. 이전 BLOCKER H3 의 "page 12 가 V1 FAIL 한다"는 주장은
+    /// off-by-one 정정(C1) 후 더 이상 성립하지 않는다.
+    ///
+    /// 각 step 의 가장 작은 마진을 stderr 로 출력해 후속 limit 보정의 기준 데이터로
+    /// 사용한다.
+    #[test]
+    fn page_12_right_kick_passes_v1_with_margins() {
+        use crate::synth::test_fixtures::page_12_right_kick;
+        let v = JointLimitValidator;
+        let p = page_12_right_kick();
+        let report = v.validate(&p).expect("v1");
+        assert!(
+            !report.is_fail(),
+            "page 12 right kick must pass V1, got {report:?}"
+        );
+
+        // 각 관절의 가장 작은 마진 (raw) 을 산정.
+        let mut worst_margin: i32 = i32::MAX;
+        let mut worst_joint: Option<JointId> = None;
+        for (step_idx, step) in p.steps.iter().enumerate() {
+            for slot in 1..=20usize {
+                let raw = step.positions[slot];
+                if raw == SKIP_MARKER
+                    || (raw & FLAG_INVALID) != 0
+                    || (raw & FLAG_TORQUE_OFF) != 0
+                {
+                    continue;
+                }
+                let Some(joint) = JointId::from_byte(slot as u8) else {
+                    continue;
+                };
+                let limits = JointLimits::for_joint(joint);
+                let v = (raw & POSITION_MASK) as i32;
+                let lo_margin = v - limits.position_min as i32;
+                let hi_margin = limits.position_max as i32 - v;
+                let m = lo_margin.min(hi_margin);
+                if m < worst_margin {
+                    worst_margin = m;
+                    worst_joint = Some(joint);
+                }
+                assert!(
+                    m >= 0,
+                    "step {step_idx} {joint:?} raw={v} margin={m} (limits {}~{})",
+                    limits.position_min,
+                    limits.position_max
+                );
+            }
+        }
+        // 실측 worst margin = 53 raw (~4.66°) at HeadTilt step 3 (kick 중 공을 보려
+        // 머리 40.3° 아래로 향함, 한계 ±45°). 4° 이상이면 안전 마진 확보.
+        eprintln!(
+            "page 12 worst margin: {worst_margin} raw on {worst_joint:?}"
+        );
+        assert!(
+            worst_margin >= 45,
+            "page 12 worst margin {worst_margin} raw is below 4° safety margin"
+        );
+    }
 }
