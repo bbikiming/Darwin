@@ -218,11 +218,72 @@ Motion JSON 의 페이지를 실 robot 에 SYNC_WRITE 로 송출. **기본 dry-r
 | ADR | 14 (ADR-014 Motion Synthesis Architecture 추가) |
 | PRD | 1 (PRD-001 Motion Synthesis v1) |
 
+## Sprint 14 — MotionPlayer 라이브러리 추출 (2026-05-12)
+
+`forge-cli/src/motion_play.rs` 의 재생 로직을 `forge-core::motion::player` 라이브러리로 추출.
+FFI 공개 후 Swift 에서 논블로킹 호출 가능.
+
+### 신규 모듈
+- `forge-core/src/motion/player.rs` — `MotionPlayer` + `CancelHandle` (Arc<AtomicBool>) + `step_to_targets` + 8ms tick `interruptible_sleep`
+- `forge-core/src/motion/mod.rs` — `pub use player::{step_to_targets, CancelHandle, MotionPlayer}`
+
+### FFI 추가 (`forge-ffi/src/lib.rs`)
+- `fc_motion_play_slot` — 슬롯 재생 (blocking; Swift는 `Task.detached` 호출)
+- `fc_motion_play_cancel` — 즉시 취소 (CancelHandle 설정)
+- `fc_motion_play_is_running` — 재생 중 여부 조회
+- `FcBus` 구조체에 `motion_cancel: Option<CancelHandle>` + `motion_playing: AtomicBool` 추가
+
+### 검증
+- 7 unit tests (player 모듈) + 4 FFI 통합 tests: null handle / idle is_running=0 / cancel ok / missing bin error
+- 전체 workspace: **342 passed; 0 failed** (306 → 342)
+- clippy GREEN
+
+## Sprint 15 — Remote Pilot v1.0 UI scaffold (2026-05-12)
+
+PRD §4 teleop v3 "단일 설계 + 단계별 활성화" 전략 구현. 20 개 SwiftUI/Swift 파일 신규·수정.
+
+### 신규 Swift 파일 (14개)
+| 파일 | 설명 |
+|------|------|
+| `ForgeCore/Bus.swift` (+) | `motionPlaySlot`, `motionPlayCancel`, `isMotionPlaying` Bus 확장 |
+| `ForgeCore/BusActor.swift` (+) | BusActor delegating 메서드 (private bus 우회 불필요) |
+| `ForgeCore/MotionCatalog.swift` (신규) | 16 공식 페이지 카탈로그 + actionBarMain/More 슬롯 배열 |
+| `Remote/PilotFeatureFlags.swift` (신규) | 단계별 활성화 매트릭스 (v1.0/1.1/1.5/v2) |
+| `Remote/TeleopChannel.swift` (신규) | `@MainActor ObservableObject` — arm/disarm/sendMotion/emergencyStop |
+| `Remote/PilotSafetyGate.swift` (신규) | 4-layer 안전 게이트 (L0 E-Stop / L1 ARM / L2 HighRisk confirm / L3 deadman) |
+| `Remote/ComingSoonOverlay.swift` (신규) | `.comingSoon(stage:)` ViewModifier — 배지 + sheet |
+| `Remote/PilotArmSlider.swift` (신규) | 80% 드래그 임계 ARM 슬라이더 |
+| `Remote/PilotActionBar.swift` (신규) | 7 버튼 Action Bar + 진행 링 + HighRisk confirm |
+| `Remote/PilotModePicker.swift` (신규) | Manual / Ball-Follow (v1.1 Coming Soon) |
+| `Remote/PilotDpad.swift` (신규) | 7-zone D-pad (v1.0 sim only — BLOCKER C3) + WASD 단축키 |
+| `Remote/PilotSpeedGauge.swift` (신규) | 210→330° 호 게이지 + 4-segment WalkPhase 바 |
+| `Remote/PilotCameraView.swift` (신규) | 카메라 플레이스홀더 (v1.5 Coming Soon) |
+| `Remote/PilotHudStrip.swift` (신규) | 전압·온도·세션 타이머·E-Stop HUD |
+| `Remote/RemotePilotView.swift` (신규) | 360px 좌 / fill 우 레이아웃 통합 뷰 |
+
+### 수정 파일
+- `RootView.swift` — `case pilot` 섹션 추가 (⌘8, gamecontroller.fill)
+
+### 안전 제약 (불변)
+- `motion_4096.bin` byte-identical — 1 byte 도 수정 금지
+- page 12/13 (HighRisk) confirm 우회 절대 금지
+- `emergencyStop` ⌘⇧. 항상 활성, 절대 disable 금지
+- **BLOCKER C3**: `dpadRealMotor = false` — D-pad 실 모터 송출 코드 경로 없음
+
+### 통계
+- 변경 파일: 20 (2080 LOC 추가)
+- Rust tests: 342 / 342 (변화 없음, Swift 전용)
+- PR #4 draft: `feat(teleop): Sprint 15 v1.0 — Remote Pilot scaffold`
+
 ## 다음 단계 (사용자 결정)
 
-1. **Sprint 11 — SwiftUI Synth Palette** (Pending — 다른 worktree GUI 작업 조율 후)
-2. **Validator calibration** — V1/V2 임계 보정 (PRD §17.4 후속, 실 robot 데이터 필요)
-3. **실기기 검증** — Mac에서 USB 연결 → Studio 자동 연결 → 슬라이더 → 모션 재생까지 E2E
-4. **P1 (1주)**: Sync_Write FFI 노출 (16관절 1패킷 ≈ 12 ms), walking IK + 실 모터 발행 토글
-5. **P2 (2주)**: AVFoundation 카메라 → forge-core::vision 라이브, SQLite persistence
-6. **PR #1 ready for review 전환** — 문서 + 코드 리뷰
+1. **Swift build 검증** — Mac에서 `bash scripts/build-mac.sh -u --swift` 실행 (Linux 불가)
+2. **HIL 시나리오 1-4** (실기기 필요):
+   - ARM 슬라이더 → walkready auto-call (3D 뷰 자세 변화)
+   - "감사 인사" → 3.6s 진행 링 + 실 모터
+   - "오른발 차기" → HighRisk confirm → 1.7s 킥
+   - 킥 중 ⌘⇧. → 즉시 토크 OFF
+3. **Sprint 16 v1.1**: `CmController::read_imu()` + ComplementaryFilter + HeadTracker PID + FallRecoveryCoordinator
+4. **Sprint 11 — SwiftUI Synth Palette** (Pending — 다른 worktree GUI 작업 조율 후)
+5. **Validator calibration** — V1/V2 임계 보정 (실 robot 데이터 필요)
+6. **PR #4 ready for review 전환** — Swift build GREEN 확인 후
