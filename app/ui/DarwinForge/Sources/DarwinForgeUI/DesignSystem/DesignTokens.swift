@@ -51,19 +51,56 @@ public enum DFFont {
     public static let mono = Font.system(size: 12, weight: .regular, design: .monospaced)
 }
 
-/// 스페이싱 — 8pt 그리드.
+/// 스페이싱 — Apple HIG 4pt 그리드 (8pt semantic + 4pt interstitial).
+///
+/// # 사용 규칙
+/// 1. 매직 넘버 금지 — 모든 padding/spacing 은 본 토큰 또는 `DFSize.pillPadding*` 사용.
+/// 2. semantic (`xs/sm/md/lg`) 우선 — component 의 호흡 의도 표현.
+/// 3. interstitial (`xs2/sm2/sm3/md2`) 보조 — 정확한 픽셀 정합이 필요한 곳.
+/// 4. raw 0.5/1/2 micro 단위는 border / pixel-perfect 정렬에 한해 허용 — 주석 필수.
+///
+/// # 명명 컨벤션
+/// `xs` < `xs2` < `sm` < `sm2` < `sm3` < `md` < `md2` < `lg` < `xl` < `xxl`
+/// 숫자 접미사 (`xs2 = 6`) = "xs(4) 보다 큰 첫 interstitial".
 public enum DFSpace {
+    public static let none: CGFloat = 0
+    /// 1pt — pixel-perfect alignment.
+    public static let micro: CGFloat = 1
+    /// 4pt — tight grouping (icon ↔ label).
     public static let xs: CGFloat = 4
+    /// 6pt — pill vertical padding, 조밀 그룹.
+    public static let xs2: CGFloat = 6
+    /// 8pt — standard inner spacing (button padding, card inner).
     public static let sm: CGFloat = 8
+    /// 10pt — inline gap (toolbar pill 사이).
+    public static let sm2: CGFloat = 10
+    /// 12pt — pill horizontal padding, 작은 카드 패딩.
+    public static let sm3: CGFloat = 12
+    /// 16pt — section padding (sidebar 좌·우, card 내부 큰).
     public static let md: CGFloat = 16
+    /// 20pt — generous spacing (모달 내부, 큰 카드).
+    public static let md2: CGFloat = 20
+    /// 24pt — section breathing (페이지 외곽).
     public static let lg: CGFloat = 24
+    /// 32pt — hero spacing.
     public static let xl: CGFloat = 32
+    /// 48pt — big hero spacing.
     public static let xxl: CGFloat = 48
 }
 
 /// 코너 라운드 — Apple HIG + Linear/Vercel Geist 스케일.
+///
+/// # 사용 규칙
+/// - `xs2 (6)` = 버튼 / pill / 작은 인디케이터.
+/// - `sm (8)` = 표준 카드.
+/// - `md (12)` = 큰 카드 / 패널.
+/// - `lg (16)` = 모달 / sheet.
+/// - `full` = capsule (height 의 절반 이상).
 public enum DFRadius {
+    public static let none: CGFloat = 0
     public static let xs: CGFloat = 4
+    /// 6pt — 버튼 / pill / 작은 indicator (이전 raw 6 통일).
+    public static let xs2: CGFloat = 6
     public static let sm: CGFloat = 8
     public static let md: CGFloat = 12
     public static let lg: CGFloat = 16
@@ -71,19 +108,57 @@ public enum DFRadius {
     public static let full: CGFloat = 999
 }
 
-/// E-Stop 버튼 사이즈 (ISO 13850 권장 머쉬룸 헤드 ≥40mm — 디지털 환산 56pt).
+/// 컴포넌트 표준 크기 — 버튼 / 입력 / 인디케이터 / 패널.
+///
+/// # 사용 규칙
+/// - **모든 component 는 본 토큰에서 시작**. 직접 `.frame(width: 5)` 같은 raw 금지.
+/// - `pillH / pillPaddingH / pillPaddingV` = toolbar / status pill 표준.
+/// - 새 컴포넌트가 기존 토큰과 안 맞으면 본 enum 에 추가 (코드에 분산 금지).
 public enum DFSize {
+    /// E-Stop 버튼 (ISO 13850 권장 머쉬룸 헤드 ≥40mm — 디지털 환산 56pt).
     public static let estop: CGFloat = 56
     public static let toolbarIcon: CGFloat = 22
     public static let badgeMin: CGFloat = 28
+
+    // MARK: 버튼
     /// 버튼 표준 높이 — small / medium / large.
     public static let buttonHSmall: CGFloat = 24
     public static let buttonHMedium: CGFloat = 30
     public static let buttonHLarge: CGFloat = 40
+
+    // MARK: 입력 / 칩
     /// 입력 필드 표준 높이.
     public static let inputH: CGFloat = 30
     /// 칩 표준 높이.
     public static let chipH: CGFloat = 22
+
+    // MARK: Pill (toolbar / status pill 표준)
+    /// pill 컨텐츠 높이 = 24pt (호흡 포함 외곽 ≈ 36pt).
+    public static let pillH: CGFloat = 24
+    /// pill 좌·우 패딩 (이전 raw 12 통일).
+    public static let pillPaddingH: CGFloat = DFSpace.sm3   // 12
+    /// pill 상·하 패딩 (이전 raw 6 통일).
+    public static let pillPaddingV: CGFloat = DFSpace.xs2   // 6
+
+    // MARK: Indicators (status dot / load tile / phase pixel)
+    /// 5pt — 작은 grid indicator (load tile dot).
+    public static let indicatorXs: CGFloat = 5
+    /// 8pt — connection / status circle.
+    public static let indicatorSm: CGFloat = 8
+    /// 12pt — larger badge dot.
+    public static let indicatorMd: CGFloat = 12
+
+    // MARK: Sidebar / Panel widths
+    /// 사이드바 collapsed 상태 폭.
+    public static let sidebarCollapsedW: CGFloat = 28
+    /// 보조 사이드바 (torque load 등) 표준 폭.
+    public static let secondarySidebarW: CGFloat = 158
+
+    // MARK: Stroke / divider widths
+    /// 일반 border (Apple HIG 0.5pt).
+    public static let borderHairline: CGFloat = 0.5
+    /// 강조 border (focus / selected).
+    public static let borderStrong: CGFloat = 1
 }
 
 /// Elevation — Material Design 영감 + macOS 톤다운 그림자 단계.
@@ -140,6 +215,46 @@ public extension View {
         self
             .opacity(disabled ? DFOpacity.disabled : 1)
             .allowsHitTesting(!disabled)
+    }
+
+    /// Pill 표준 패딩 — 12pt / 6pt (toolbar pill / status pill).
+    ///
+    /// 사용:
+    /// ```swift
+    /// Text("연결됨").dfPillPadding()  // .padding(.horizontal, 12).padding(.vertical, 6)
+    /// ```
+    func dfPillPadding() -> some View {
+        self
+            .padding(.horizontal, DFSize.pillPaddingH)
+            .padding(.vertical, DFSize.pillPaddingV)
+    }
+
+    /// 표준 pill chrome — pill 패딩 + capsule clip + 0.5pt subtle 보더 + tint 배경 opacity.
+    ///
+    /// active = true 일 때 tint.opacity(0.14) 배경 + tint.opacity(0.35) 보더,
+    /// active = false 면 secondary background + 더 흐린 보더.
+    /// 디자인 ref: Apple HIG 8pt 그리드 + Linear 미묘 보더 (테두리 12% 알파).
+    func dfPill(active: Bool, tint: Color) -> some View {
+        self
+            .dfPillPadding()
+            .background(active ? tint.opacity(0.14) : DFColor.textSecondary.opacity(DFOpacity.ghost))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(
+                    active ? tint.opacity(DFOpacity.strong) : DFColor.textSecondary.opacity(DFOpacity.subtle),
+                    lineWidth: DFSize.borderHairline
+                )
+            )
+    }
+
+    /// 표준 카드 외곽선 — RoundedRectangle + 0.5pt subtle 보더.
+    /// dfCard 안 쓰는 곳 (e.g. clipped 안 한 카드) 에서 사용.
+    func dfCardBorder(radius: CGFloat = DFRadius.sm) -> some View {
+        self.overlay(
+            RoundedRectangle(cornerRadius: radius)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
+                        lineWidth: DFSize.borderHairline)
+        )
     }
 }
 

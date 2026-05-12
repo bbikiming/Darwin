@@ -182,8 +182,7 @@ public struct RootView: View {
                 Text(label)
                     .font(.system(size: 12, weight: .semibold))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .dfPillPadding()
             .foregroundStyle(.white)
             .background(
                 LinearGradient(
@@ -192,7 +191,7 @@ public struct RootView: View {
                 )
             )
             .clipShape(Capsule())
-            .shadow(color: tint.opacity(0.35), radius: 4, y: 1)
+            .shadow(color: tint.opacity(DFOpacity.strong), radius: DFSpace.xs, y: DFSpace.micro)
         }
         .buttonStyle(.plain)
         .help("이더넷 직결 192.168.123.1:5530 으로 즉시 연결")
@@ -222,12 +221,11 @@ public struct RootView: View {
                     Text("재시도")
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .dfPillPadding()
                 .foregroundStyle(.white)
                 .background(DFColor.danger)
                 .clipShape(Capsule())
-                .shadow(color: DFColor.danger.opacity(0.35), radius: 4, y: 1)
+                .shadow(color: DFColor.danger.opacity(DFOpacity.strong), radius: DFSpace.xs, y: DFSpace.micro)
             }
             .buttonStyle(.plain)
             .help("이전 시도 실패: \(msg) — 클릭 시 재시도")
@@ -239,8 +237,7 @@ public struct RootView: View {
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .dfPillPadding()
             .foregroundStyle(.white)
             .background(DFColor.warning)
             .clipShape(Capsule())
@@ -255,12 +252,11 @@ public struct RootView: View {
                     Text("연결 해제")
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .dfPillPadding()
                 .foregroundStyle(DFColor.danger)
-                .background(DFColor.danger.opacity(0.12))
+                .background(DFColor.danger.opacity(DFOpacity.subtle))
                 .clipShape(Capsule())
-                .overlay(Capsule().stroke(DFColor.danger.opacity(0.35), lineWidth: 0.5))
+                .overlay(Capsule().stroke(DFColor.danger.opacity(DFOpacity.strong), lineWidth: DFSize.borderHairline))
             }
             .buttonStyle(.plain)
             .help("로봇과의 연결을 종료합니다")
@@ -270,23 +266,13 @@ public struct RootView: View {
     // MARK: - Toolbar style helpers
 
     /// 데이터 유무에 따른 시각 강조 — 있으면 활성 색, 없으면 dim.
-    /// 디자인 ref: Apple HIG 8pt 그리드 + Linear 미묘 보더 (테두리 12% 알파).
+    /// 디자인 토큰 일원화: `DFSize.pillPaddingH/V` + `dfPill(active:tint:)` 사용.
     private func statusPill<Content: View>(
         active: Bool,
         tint: Color,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        content()
-            .padding(.horizontal, 12)   // breathing room: 좌우 내부 패딩 (10→12).
-            .padding(.vertical, 6)      // 세로 내부 패딩 (5→6) — 컨텐츠 높이 ~24pt.
-            .background(active ? tint.opacity(0.14) : DFColor.textSecondary.opacity(0.06))
-            .clipShape(Capsule())
-            .overlay(
-                Capsule().stroke(
-                    active ? tint.opacity(0.35) : DFColor.textSecondary.opacity(0.18),
-                    lineWidth: 0.5
-                )
-            )
+        content().dfPill(active: active, tint: tint)
     }
 
     private var isConnectedNow: Bool {
@@ -301,10 +287,10 @@ public struct RootView: View {
             dashboardOpen = true
         } label: {
             statusPill(active: isConnectedNow, tint: connectionStatusTint) {
-                HStack(spacing: 6) {
+                HStack(spacing: DFSpace.xs2) {
                     Circle()
                         .fill(connectionStatusTint)
-                        .frame(width: 8, height: 8)
+                        .frame(width: DFSize.indicatorSm, height: DFSize.indicatorSm)
                         .shadow(color: connectionStatusTint.opacity(0.7),
                                 radius: isConnectedNow ? 3 : 0)
                     Text(toolbarConnectionLabel)
@@ -314,7 +300,7 @@ public struct RootView: View {
                     if isConnectedNow {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(connectionStatusTint.opacity(0.6))
+                            .foregroundStyle(connectionStatusTint.opacity(DFOpacity.dim))
                     }
                 }
             }
