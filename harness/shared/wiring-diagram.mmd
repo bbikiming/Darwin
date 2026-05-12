@@ -1,0 +1,42 @@
+%% Wiring diagram — Mac ↔ External SMPS ↔ Robot ↔ U2D2(option)
+%% Render with: https://mermaid.live/ or VS Code Mermaid plugin
+%% Source: harness/shared/cable-specs.md, ADR-006 / ADR-007 / ADR-008
+
+flowchart LR
+    classDef external  fill:#fef3c7,stroke:#92400e,color:#000
+    classDef robot     fill:#dbeafe,stroke:#1e3a8a,color:#000
+    classDef power     fill:#fee2e2,stroke:#991b1b,color:#000
+    classDef estop     fill:#fecaca,stroke:#7f1d1d,color:#000,stroke-width:3px
+
+    Mac["Mac (Apple Silicon)"]:::external
+    SMPS["12V 5A SMPS<br/>Mean Well GST60A12-P1J"]:::power
+    LiPo["LiPo 11.1V 1300mAh<br/>Tattu 3S 25C"]:::power
+    EStop["E-Stop SPDT toggle<br/>red lockout, 5A inline"]:::estop
+
+    USBhub["(NO USB hub)"]:::external
+
+    subgraph Robot["DARwIn-OP / OP2 (CM-730 / CM-740)"]
+        direction TB
+        DCJack[DC jack 5.5x2.5]
+        Battery[Battery Deans T]
+        SubCtrl["Sub-Controller<br/>STM32F103RE @ 72MHz"]:::robot
+        DXLBus["Dynamixel TTL bus<br/>1 Mbps half-duplex"]:::robot
+        Servos["20× MX-28T<br/>(IDs 1..6, 11..20)"]:::robot
+        FSR["FSR 111/112<br/>(optional)"]:::robot
+        Cam["USB Camera<br/>Logitech C905"]:::robot
+        DCJack -.-> SubCtrl
+        Battery -.-> SubCtrl
+        SubCtrl --> DXLBus
+        DXLBus --> Servos
+        DXLBus --> FSR
+        SubCtrl -.-> Cam
+    end
+
+    Mac -- "USB Mini-B<br/>2m double-shielded<br/>ferrite at host" --> SubCtrl
+    SMPS -- "DC 5.5x2.5<br/>2m" --> DCJack
+    LiPo -- "+ → toggle → CM<br/>− → CM" --> EStop
+    EStop -- "11.1V" --> Battery
+
+    Mac -. "(option B)<br/>U2D2 dongle<br/>USB-C → 3-pin TTL" .-> DXLBus
+
+    Mac --x USBhub

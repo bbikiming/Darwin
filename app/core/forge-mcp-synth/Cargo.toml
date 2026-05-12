@@ -1,0 +1,23 @@
+[package]
+name = "forge-mcp-synth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "MCP server exposing Motion Synthesis tools to Claude / agents (stdio JSON-RPC)."
+
+[[bin]]
+name = "forge-mcp-synth"
+path = "src/main.rs"
+
+[lib]
+name = "forge_mcp_synth"
+path = "src/lib.rs"
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true

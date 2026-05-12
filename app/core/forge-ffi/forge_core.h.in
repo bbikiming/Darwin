@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: Apache-2.0
+// DarwinForge — auto-generated C bindings for forge-core.
+// Do not edit by hand. Regenerate with `scripts/build-mac.sh`.
+
+
+#ifndef FORGE_CORE_H
+#define FORGE_CORE_H
+
+#pragma once
+
+/* WARNING: GENERATED FILE — edit forge-ffi/src/lib.rs and rerun build. */
+
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+/*
+ 성공.
+ */
+#define FC_OK 0
+
+/*
+ 일반 에러.
+ */
+#define FC_ERR_GENERIC -1
+
+/*
+ 파라미터가 잘못됨.
+ */
+#define FC_ERR_INVALID -2
+
+/*
+ 직렬 포트 I/O 에러.
+ */
+#define FC_ERR_IO -3
+
+/*
+ 응답 timeout.
+ */
+#define FC_ERR_TIMEOUT -4
+
+/*
+ 코덱 에러.
+ */
+#define FC_ERR_CODEC -5
+
+/*
+ 디바이스 응답 없음.
+ */
+#define FC_ERR_DEVICE_NOT_FOUND -6
+
+/*
+ panic 보호 — Rust 코드가 panic.
+ */
+#define FC_ERR_PANIC -99
+
+/*
+ Bus 핸들. PosixSerial 또는 LoopbackBus를 감쌈.
+ */
+typedef struct fc_bus fc_bus;
+
+/*
+ 새 walk 엔진 핸들.
+ */
+typedef struct fc_walk fc_walk;
+
+/*
+ CM-730/740 보드 스냅샷 (FFI struct).
+ */
+typedef struct fc_board_snapshot {
+  /*
+   모델 번호 (730 또는 740 추정).
+   */
+  uint16_t model_number;
+  /*
+   펌웨어 version.
+   */
+  uint8_t version;
+  /*
+   배터리 raw (0.1 V 단위).
+   */
+  uint8_t voltage_raw;
+  /*
+   버튼 비트.
+   */
+  uint8_t button;
+} fc_board_snapshot;
+
+/*
+ 한 관절의 실시간 상태 (FFI struct).
+ */
+typedef struct fc_joint_state {
+  /*
+   관절 raw ID (1..6, 11..20).
+   */
+  uint8_t id;
+  /*
+   0/1.
+   */
+  uint8_t torque_enabled;
+  /*
+   goal position (0..4095).
+   */
+  uint16_t goal_position;
+  /*
+   현재 position.
+   */
+  uint16_t present_position;
+  /*
+   현재 speed raw.
+   */
+  uint16_t present_speed;
+  /*
+   현재 load raw.
+   */
+  uint16_t present_load;
+  /*
+   전압 raw (0.1 V).
+   */
+  uint8_t present_voltage;
+  /*
+   온도 °C.
+   */
+  uint8_t present_temperature;
+} fc_joint_state;
+
+/*
+ 워크 시뮬레이션 결과 한 시점.
+ */
+typedef struct fc_foot_targets {
+  /*
+   elapsed_ms.
+   */
+  double elapsed_ms;
+  /*
+   0=Phase0, 1=Phase1, 2=Phase2, 3=Phase3.
+   */
+  uint8_t phase;
+  /*
+   left x/y/z + right x/y/z.
+   */
+  double feet[6];
+} fc_foot_targets;
+
+/*
+ FFI blob 결과.
+ */
+typedef struct fc_blob_result {
+  /*
+   매칭 픽셀 수.
+   */
+  uint32_t pixel_count;
+  /*
+   centroid x.
+   */
+  float centroid_x;
+  /*
+   centroid y.
+   */
+  float centroid_y;
+} fc_blob_result;
+
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+
+/*
+ `fc_*` 함수가 반환한 문자열 해제.
+ */
+void fc_string_free(char *s);
+
+/*
+ forge-core 버전 (Cargo.toml). 호출자가 fc_string_free.
+ */
+char *fc_version(void);
+
+/*
+ 사용 가능한 USB 직렬 포트 경로를 줄바꿈 구분 문자열로 반환. (호출자가 free)
+
+ 실패 시 nullptr 반환 (out_err에 에러코드 set).
+ */
+char *fc_serial_list_ports(int *out_err);
+
+/*
+ 직렬 포트 open 후 Bus 생성. 실패 시 nullptr.
+ */
+struct fc_bus *fc_bus_open(const char *port_path, uint32_t baud, uint32_t timeout_ms, int *out_err);
+
+/*
+ Bus 핸들 해제.
+ */
+void fc_bus_close(struct fc_bus *handle);
+
+/*
+ 한 ID에 PING. OK/에러코드.
+ */
+int fc_bus_ping(struct fc_bus *handle, uint8_t id);
+
+/*
+ 범위 lo..=hi 스캔. 응답한 ID를 줄바꿈 구분 문자열로 반환 (호출자가 free).
+ */
+char *fc_bus_scan(struct fc_bus *handle, uint8_t lo, uint8_t hi, int *out_err);
+
+/*
+ CM 보드 스냅샷 read.
+ */
+int fc_bus_board_snapshot(struct fc_bus *handle, struct fc_board_snapshot *out);
+
+/*
+ CM Dynamixel 전원 게이트.
+ */
+int fc_bus_set_dxl_power(struct fc_bus *handle, int on);
+
+/*
+ 한 관절 토크 enable/disable.
+ */
+int fc_joint_set_torque(struct fc_bus *handle, uint8_t raw_id, int enable);
+
+/*
+ 한 관절 goal position 설정. 안전 한계로 clamp.
+ */
+int fc_joint_set_position(struct fc_bus *handle,
+                          uint8_t raw_id,
+                          uint16_t position,
+                          uint16_t *out_clamped);
+
+/*
+ 한 관절 상태 read.
+ */
+int fc_joint_read_state(struct fc_bus *handle, uint8_t raw_id, struct fc_joint_state *out);
+
+/*
+ 모든 관절 토크 OFF (소프트 e-stop).
+ */
+int fc_emergency_stop(struct fc_bus *handle);
+
+/*
+ `.mtn` 텍스트 → JSON 문자열. 호출자가 fc_string_free.
+ */
+char *fc_motion_mtn_to_json(const char *mtn_text, const char *generation, int *out_err);
+
+/*
+ JSON → `.mtn` 텍스트. 호출자가 fc_string_free.
+ */
+char *fc_motion_json_to_mtn(const char *json_text, int *out_err);
+
+/*
+ 워크 엔진 생성.
+ */
+struct fc_walk *fc_walk_new(void);
+
+/*
+ 워크 엔진 해제.
+ */
+void fc_walk_free(struct fc_walk *h);
+
+/*
+ 명령 설정.
+ */
+int fc_walk_set_command(struct fc_walk *h, double x, double y, double a, int enable);
+
+/*
+ dt_ms 만큼 진행 후 발 궤적 sample.
+ */
+int fc_walk_tick(struct fc_walk *h, uint32_t dt_ms, struct fc_foot_targets *out);
+
+/*
+ strategy FSM 한 step. state는 0..4 (Idle/LookingForBall/Approaching/Kicking/Cooldown).
+ 입력: ball_pixel_count, since_kick_ms, abort.
+ 반환: 다음 state.
+ */
+uint8_t fc_strategy_step(uint8_t state,
+                         uint32_t ball_pixel_count,
+                         uint32_t since_kick_ms,
+                         int abort);
+
+/*
+ RGBA 버퍼에서 ROBOCUP_BALL HSV 범위로 blob 검출.
+
+ `pixels`는 `width * height * 4` 바이트. 모자라면 FC_ERR_INVALID.
+ */
+int fc_vision_detect_ball(const uint8_t *pixels,
+                          uint32_t pixel_count,
+                          uint32_t width,
+                          uint32_t height,
+                          struct fc_blob_result *out);
+
+#ifdef __cplusplus
+}  // extern "C"
+#endif  // __cplusplus
+
+#endif  /* FORGE_CORE_H */

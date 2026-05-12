@@ -1,0 +1,24 @@
+[package]
+name = "forge-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Headless CLI for DarwinForge — ping, scan, motion, walk."
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# `serve` subcommand의 USB↔TCP bridge에서 직접 사용 (forge-core의 PosixSerial은
+# Read/Write 추상이 없어, raw byte pump를 위해 serialport을 직접 다룸).
+serialport = { version = "4.7", default-features = false }
+# Bonjour/mDNS 자동 광고. 같은 네트워크의 클라이언트가 `_forge._tcp`로 발견.
+mdns-sd = "0.13"

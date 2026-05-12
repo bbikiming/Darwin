@@ -1,0 +1,75 @@
+# DARwIn-OP 1st-gen left-leg Dynamixel bus harness.
+# Render with: scripts/render_wireviz.sh
+#
+# Conductor labels follow the project convention from
+# `docs/harness/data-model.md`:  "W### BODY.JOINT.FUNCTION"
+#
+# Servo IDs follow Framework/include/JointData.h.
+metadata:
+  title: "Darwin-1G — Left Leg Bus (LL_BUS)"
+  description: >
+    Daisy-chained Dynamixel TTL bus from CM-730 to the four left-leg
+    MX-28T servos. All conductors are 24 AWG TPE inside a PET braid
+    sleeve. Dynamic bend window 60 mm at the hip-yaw service loop.
+  ipc_class: 2
+  drawing_revision: A
+  installed_at: 2026-05-09
+
+connectors:
+  CM730_J1:
+    type: ROBOTIS 3-pin TTL
+    pinlabels: [GND, VDD, DATA]
+    notes: CM-730 leg port
+  ID12_HipYaw:
+    type: ROBOTIS 3-pin TTL
+    pincount: 3
+    notes: L_HIP_YAW (Dynamixel ID 12)
+  ID14_HipRoll:
+    type: ROBOTIS 3-pin TTL
+    pincount: 3
+    notes: L_HIP_ROLL (Dynamixel ID 14)
+  ID16_HipPitch:
+    type: ROBOTIS 3-pin TTL
+    pincount: 3
+    notes: L_HIP_PITCH (Dynamixel ID 16)
+  ID18_Knee:
+    type: ROBOTIS 3-pin TTL
+    pincount: 3
+    notes: L_KNEE (Dynamixel ID 18)
+
+cables:
+  W101_LL_HIPY:
+    gauge: 24 AWG
+    length: 90 mm
+    color_code: DIN
+    wirecount: 3
+    show_equiv: false
+  W102_LL_HIPR:
+    gauge: 24 AWG
+    length: 60 mm
+    color_code: DIN
+    wirecount: 3
+  W103_LL_HIPP:
+    gauge: 24 AWG
+    length: 60 mm
+    color_code: DIN
+    wirecount: 3
+  W104_LL_KNEE:
+    gauge: 24 AWG
+    length: 110 mm
+    color_code: DIN
+    wirecount: 3
+
+connections:
+  - - CM730_J1: [1, 2, 3]
+    - W101_LL_HIPY: [1, 2, 3]
+    - ID12_HipYaw: [1, 2, 3]
+  - - ID12_HipYaw: [1, 2, 3]
+    - W102_LL_HIPR: [1, 2, 3]
+    - ID14_HipRoll: [1, 2, 3]
+  - - ID14_HipRoll: [1, 2, 3]
+    - W103_LL_HIPP: [1, 2, 3]
+    - ID16_HipPitch: [1, 2, 3]
+  - - ID16_HipPitch: [1, 2, 3]
+    - W104_LL_KNEE: [1, 2, 3]
+    - ID18_Knee: [1, 2, 3]
