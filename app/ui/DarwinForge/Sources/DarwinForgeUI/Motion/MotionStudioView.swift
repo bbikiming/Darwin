@@ -647,6 +647,9 @@ public struct MotionStudioView: View {
         )
 
         // ── 5. 앉기 — Hip pitch + Knee. 양쪽 부호가 반대인 점 유의 (mirror axis).
+        // ROBOTIS-OP2 공식 convention: rKnee +굽힘 / lKnee -굽힘 (page 9 ±53° 와 동일 부호).
+        // 종전 코드는 lKnee 도 +90° 로 잘못 적었음 → 좌측 무릎이 hardware limit 쪽으로 휘는
+        // 위험. CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE 에 따라 -90° 로 수정.
         let sit = MotionPage(
             id: 204, name: "앉기",
             steps: [
@@ -655,7 +658,7 @@ public struct MotionStudioView: View {
                     .rHipPitch: Kinematics.raw(fromDegrees: -45),
                     .lHipPitch: Kinematics.raw(fromDegrees: 45),
                     .rKnee:     Kinematics.raw(fromDegrees: 90),
-                    .lKnee:     Kinematics.raw(fromDegrees: 90)
+                    .lKnee:     Kinematics.raw(fromDegrees: -90)
                 ]), playMs: 800, pauseMs: 200),
                 .from(pose: .walkReady, playMs: 800, pauseMs: 0)
             ]

@@ -38,17 +38,26 @@ public enum Kinematics {
 // MARK: - JointID 각도 확장
 
 extension JointID {
-    /// 보수적 각도 한계 (도) — ROBOTIS-OP2 e-Manual + DARwIn-OP framework JointData.h 기반.
+    /// 관절별 안전 각도 한계 (도) — **좌·우 대칭 signed range**.
+    ///
+    /// 출처: `docs/architecture/joint-conventions.md` + `forge-core::joint::state::JointLimits`.
+    /// 공식 ROBOTIS-OP2 `motion_4096.bin` page 9 / `ini_pose.yaml` 의 좌측 관절 부호
+    /// (`lElbow ≈ -29°`, `lKnee ≈ -53° / -130°`, `lAnklePitch ≈ -30° / -70°`) 가 자연스럽게
+    /// 통과하도록 mirror joint 들을 대칭 범위로 정의. 종전엔 `0...150` 처럼 단방향이어서
+    /// 좌측 음수 값이 `RobotPose.with()` 의 자동 clamp 로 0° 근처로 잘렸다.
+    ///
+    /// get-up page (10/11) 의 hip pitch ±100° 까지의 확장은 Rust `JointLimits` 와 함께
+    /// 별도 P1 작업에서 처리 (Swift 만 독자적으로 ±110° 로 넓히지 말 것).
     public var degreeLimits: ClosedRange<Double> {
         switch self {
         case .rShoulderPitch, .lShoulderPitch: return -180...180
         case .rShoulderRoll, .lShoulderRoll:    return -90...90
-        case .rElbow, .lElbow:                   return 0...150
+        case .rElbow, .lElbow:                   return -150...150
         case .rHipYaw, .lHipYaw:                 return -90...90
         case .rHipRoll, .lHipRoll:               return -45...45
-        case .rHipPitch, .lHipPitch:             return -90...60
-        case .rKnee, .lKnee:                     return 0...150
-        case .rAnklePitch, .lAnklePitch:         return -75...90
+        case .rHipPitch, .lHipPitch:             return -90...90
+        case .rKnee, .lKnee:                     return -150...150
+        case .rAnklePitch, .lAnklePitch:         return -90...90
         case .rAnkleRoll, .lAnkleRoll:           return -45...45
         case .headPan:                           return -90...90
         case .headTilt:                          return -45...45
@@ -135,17 +144,23 @@ extension JointID {
         }
     }
 
-    /// 거울 시 부호 반전이 필요한가 (yaw/roll 축은 좌우 대칭이므로 부호 반전).
+    /// 거울 시 중심(2048) 기준 반사(reflect)가 필요한가.
+    ///
+    /// 공식 ROBOTIS-OP2 `motion_4096.bin` page 9 기준으로 모든 좌·우 pair (pitch / roll /
+    /// yaw 무관) 는 중심 반사 관계다. 예: `rKnee +53° ↔ lKnee -53°`, `rElbow +29° ↔
+    /// lElbow -29°`, `rHipPitch -36° ↔ lHipPitch +36°`. `headPan` 도 좌우 방향이라 반사.
+    /// 유일한 예외는 `headTilt` — 위/아래 단축이라 좌우 미러로 부호가 바뀌지 않는다.
+    ///
+    /// 종전엔 yaw/roll 만 반전하도록 되어 있어 knee / elbow / hipPitch / anklePitch /
+    /// shoulderPitch 의 좌우 미러가 raw 그대로 복사돼 `PoseInspector` mirror mode 에서
+    /// 우측 +50° 가 좌측 +50° 로 들어가는 부호 오류가 있었다. Rust `synth/ops/mirror.rs`
+    /// 는 이미 모든 pair 를 reflect 한다 — Swift 도 같은 기준으로 통일.
     public var mirrorSignFlip: Bool {
         switch self {
-        case .rShoulderRoll, .lShoulderRoll,
-             .rHipYaw, .lHipYaw,
-             .rHipRoll, .lHipRoll,
-             .rAnkleRoll, .lAnkleRoll,
-             .headPan:
-            return true
-        default:
+        case .headTilt:
             return false
+        default:
+            return true
         }
     }
 }

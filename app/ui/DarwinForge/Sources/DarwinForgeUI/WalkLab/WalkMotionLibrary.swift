@@ -75,21 +75,6 @@ public enum WalkMotionLibrary {
 
     // MARK: - 보행 자세 빌더
 
-    /// `RobotPose.with` 의 `JointID.rawLimits` clamp 우회 — direct dict mutation.
-    ///
-    /// 사유: `JointID.degreeLimits` (Kinematics.swift) 는 좌·우 mirror 비대칭을 표현하지
-    /// 못해 일부 mirror joint 의 `rawLimits` 이 `walkReady` 의 raw 값을 포함하지 못한다.
-    /// 예: `walkReady.lKnee = 1443` 인데 `lKnee.rawLimits = 2048...3755` (→ clamp 시 2048
-    /// 으로 변형되어 왼다리가 펴짐 → 뒤로 넘어짐 위험). `.with` 가 자동 clamp 하므로
-    /// 보행 자세 합성에는 부적합. 본 helper 는 raw 값을 직접 대입해 clamp 우회.
-    /// `Bus.setPosition` 호출 시 `UInt16(clamping:)` 만 적용되므로 hardware 안전.
-    /// 별도 PR 로 `JointID.degreeLimits` 을 mirror-aware 로 정통 fix 예정.
-    private static func mutate(_ base: RobotPose, _ updates: [JointID: Int]) -> RobotPose {
-        var dict = base.positions
-        for (joint, raw) in updates { dict[joint] = raw }
-        return RobotPose(positions: dict)
-    }
-
     /// `walkReady` 에서 출발하는 안전한 발 들기 자세.
     /// `liftDeg` = 무릎 추가 굽힘 (°). 25° 이하 권장 — 한쪽 발 지지 시 균형 한계.
     /// `side`: `.right` = 오른발 들기, `.left` = 왼발 들기.
@@ -97,7 +82,7 @@ public enum WalkMotionLibrary {
         let deg = liftDeg.clamped(to: 5.0...30.0)
         switch side {
         case .right:
-            return mutate(.walkReady, [
+            return RobotPose.walkReady.with([
                 // 오른발 들기 — 무릎 추가 굽힘 + hip pitch 살짝 더 굽힘 + ankle 보정.
                 .rHipPitch:   Kinematics.raw(fromDegrees: -36 - deg * 0.4),  // walkReady -36° → 더 굽힘.
                 .rKnee:       Kinematics.raw(fromDegrees: 53 + deg),         // walkReady 53° → +deg.
@@ -113,7 +98,7 @@ public enum WalkMotionLibrary {
                 .lHipRoll:    Kinematics.raw(fromDegrees: -0.4 + 2.5)
             ])
         case .left:
-            return mutate(.walkReady, [
+            return RobotPose.walkReady.with([
                 // mirror of right.
                 .lHipPitch:   Kinematics.raw(fromDegrees: 36 + deg * 0.4),
                 .lKnee:       Kinematics.raw(fromDegrees: -53 - deg),
@@ -135,7 +120,7 @@ public enum WalkMotionLibrary {
         let lift = liftFoot(side: side, liftDeg: liftDeg)
         switch side {
         case .right:
-            return mutate(lift, [
+            return lift.with([
                 // 오른 hip pitch 를 더 굽혀서 (음수 방향) 앞으로 swing.
                 .rHipPitch: Kinematics.raw(fromDegrees: -36 - liftDeg * 0.4 - swingDeg),
                 // 무릎 살짝 펴 (착지 준비) — knee 가 lift 시 53+deg 였던 걸 줄임.
@@ -145,7 +130,7 @@ public enum WalkMotionLibrary {
                 .rShoulderPitch: Kinematics.raw(fromDegrees: -48 + swingDeg * 0.7)
             ])
         case .left:
-            return mutate(lift, [
+            return lift.with([
                 .lHipPitch: Kinematics.raw(fromDegrees: 36 + liftDeg * 0.4 + swingDeg),
                 .lKnee:     Kinematics.raw(fromDegrees: -53 - liftDeg * 0.5),
                 .rShoulderPitch: Kinematics.raw(fromDegrees: -48 - swingDeg * 0.7),
@@ -248,16 +233,16 @@ public enum WalkMotionLibrary {
         let rightYaw = direction == .left ? -yawDeg :  yawDeg
 
         // walkReady 에 yaw 만 적용한 anchor.
-        let yawAnchor = mutate(.walkReady, [
+        let yawAnchor = RobotPose.walkReady.with([
             .lHipYaw: Kinematics.raw(fromDegrees: leftYaw),
             .rHipYaw: Kinematics.raw(fromDegrees: rightYaw)
         ])
         // R lift + yaw.
-        let rLift = mutate(liftFoot(side: .right, liftDeg: liftDeg), [
+        let rLift = liftFoot(side: .right, liftDeg: liftDeg).with([
             .lHipYaw: Kinematics.raw(fromDegrees: leftYaw),
             .rHipYaw: Kinematics.raw(fromDegrees: rightYaw)
         ])
-        let lLift = mutate(liftFoot(side: .left, liftDeg: liftDeg), [
+        let lLift = liftFoot(side: .left, liftDeg: liftDeg).with([
             .lHipYaw: Kinematics.raw(fromDegrees: leftYaw),
             .rHipYaw: Kinematics.raw(fromDegrees: rightYaw)
         ])
