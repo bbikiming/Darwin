@@ -21,11 +21,15 @@ public struct TransportBar: View {
     @Binding public var sendToHardware: Bool
     public let isDirty: Bool
     public let executingOnRobot: Bool
+    public let canUndo: Bool
+    public let canRedo: Bool
     public let onPlay: () -> Void
     public let onAddStep: () -> Void
     public let onCapture: () -> Void
     public let onRunOnRobot: () -> Void
     public let onSave: () -> Void
+    public let onUndo: () -> Void
+    public let onRedo: () -> Void
 
     public init(
         player: MotionPlayer,
@@ -35,11 +39,15 @@ public struct TransportBar: View {
         sendToHardware: Binding<Bool>,
         isDirty: Bool,
         executingOnRobot: Bool,
+        canUndo: Bool,
+        canRedo: Bool,
         onPlay: @escaping () -> Void,
         onAddStep: @escaping () -> Void,
         onCapture: @escaping () -> Void,
         onRunOnRobot: @escaping () -> Void,
-        onSave: @escaping () -> Void
+        onSave: @escaping () -> Void,
+        onUndo: @escaping () -> Void,
+        onRedo: @escaping () -> Void
     ) {
         self.player = player
         self.totalDurationMs = totalDurationMs
@@ -48,11 +56,15 @@ public struct TransportBar: View {
         self._sendToHardware = sendToHardware
         self.isDirty = isDirty
         self.executingOnRobot = executingOnRobot
+        self.canUndo = canUndo
+        self.canRedo = canRedo
         self.onPlay = onPlay
         self.onAddStep = onAddStep
         self.onCapture = onCapture
         self.onRunOnRobot = onRunOnRobot
         self.onSave = onSave
+        self.onUndo = onUndo
+        self.onRedo = onRedo
     }
 
     // MARK: - Body
@@ -60,6 +72,8 @@ public struct TransportBar: View {
     public var body: some View {
         HStack(spacing: DFSpace.md) {
             transportCluster
+            Divider().frame(height: DFSize.iconLg)
+            undoRedoCluster
             Divider().frame(height: DFSize.iconLg)
             loopSpeedCluster
             Divider().frame(height: DFSize.iconLg)
@@ -173,6 +187,52 @@ public struct TransportBar: View {
                 )
         }
         .buttonStyle(.plain)
+        .help(help)
+    }
+
+    // MARK: - 1.5 Undo / Redo cluster
+
+    /// Adobe / Apple 표준 위치 — Transport 다음, 편집 동작용.
+    /// 단축키 ⌘Z / ⌘⇧Z 는 MotionStudioView 의 hidden Button 에서 등록.
+    private var undoRedoCluster: some View {
+        HStack(spacing: DFSpace.xs) {
+            editButton(
+                icon: "arrow.uturn.backward",
+                help: "되돌리기 (⌘Z)",
+                enabled: canUndo,
+                action: onUndo
+            )
+            editButton(
+                icon: "arrow.uturn.forward",
+                help: "다시 앞으로 (⌘⇧Z)",
+                enabled: canRedo,
+                action: onRedo
+            )
+        }
+    }
+
+    /// 편집 도구용 작은 아이콘 버튼 — undo / redo / copy / paste / split 공통 스타일.
+    private func editButton(
+        icon: String,
+        help: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: DFFontSize.s12, weight: .semibold))
+                .foregroundStyle(enabled ? DFColor.textPrimary : DFColor.textSecondary.opacity(DFOpacity.disabled))
+                .frame(width: DFSize.iconMd2, height: DFSize.iconMd2)
+                .background(DFColor.elev2)
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DFRadius.xs2)
+                        .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
+                                lineWidth: DFSize.borderHairline)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
         .help(help)
     }
 

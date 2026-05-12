@@ -41,6 +41,17 @@ public struct MotionStudioView: View {
     /// 호버한 페이지 idx — `⋯` 메뉴 버튼 표시용.
     @State private var hoveredPageIdx: Int? = nil
 
+    // MARK: - Undo / Redo / clipboard
+
+    /// 변경 history — 모든 mutation 직전 `pushUndoSnapshot()` 이 motion 을 push.
+    /// 50 개 제한 — 너무 깊으면 메모리 폭발.
+    @State private var undoStack: [MotionDoc] = []
+    @State private var redoStack: [MotionDoc] = []
+    /// 키프레임 복사 — selected step 의 byte-exact copy.
+    @State private var copiedStep: MotionStep? = nil
+    /// 최대 undo depth.
+    private let maxUndoDepth: Int = 50
+
     public init() {}
 
     public var body: some View {
@@ -93,6 +104,32 @@ public struct MotionStudioView: View {
                 Task { await applyToHardware(newPose) }
             }
         }
+        // Hidden keyboard shortcuts — TextField focus 시 macOS 가 first responder 처리,
+        // 그 외에는 우리의 키프레임 동작. ⌘C/V 같은 표준 단축키 자연 우선순위.
+        .background(motionEditShortcuts)
+    }
+
+    /// MotionStudio 전용 키프레임 단축키. opacity 0 + 0×0 frame 으로 hidden.
+    @ViewBuilder
+    private var motionEditShortcuts: some View {
+        ZStack {
+            Button("Undo") { undo() }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!canUndo)
+            Button("Redo") { redo() }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!canRedo)
+            Button("Copy keyframe") { copySelectedStep() }
+                .keyboardShortcut("c", modifiers: .command)
+            Button("Paste keyframe") { pasteStep() }
+                .keyboardShortcut("v", modifiers: .command)
+                .disabled(copiedStep == nil)
+            Button("Split keyframe") { splitSelectedStep() }
+                .keyboardShortcut("k", modifiers: .command)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .allowsHitTesting(false)
     }
 
     // MARK: - AI Motion Builder
@@ -469,11 +506,15 @@ public struct MotionStudioView: View {
             sendToHardware: $sendToHardware,
             isDirty: isDirty,
             executingOnRobot: executingOnRobot,
+            canUndo: canUndo,
+            canRedo: canRedo,
             onPlay: { startPlayback() },
             onAddStep: { addStepFromCurrentPose() },
             onCapture: { captureFromTelemetry() },
             onRunOnRobot: { runCurrentPageOnRobot() },
-            onSave: { saveDocAs() }
+            onSave: { saveDocAs() },
+            onUndo: { undo() },
+            onRedo: { redo() }
         )
     }
 
@@ -539,6 +580,35 @@ public struct MotionStudioView: View {
 
             Spacer()
 
+            // 키프레임 편집 클러스터 — Copy / Paste / Split (단축키 ⌘C / ⌘V / ⌘K).
+            HStack(spacing: DFSpace.micro2) {
+                keyframeIconButton(
+                    icon: "doc.on.doc",
+                    help: "키프레임 복사 (⌘C)",
+                    tint: DFColor.accent,
+                    enabled: true,
+                    action: { copySelectedStep() }
+                )
+                keyframeIconButton(
+                    icon: "doc.on.clipboard",
+                    help: copiedStep == nil
+                        ? "먼저 키프레임을 복사하세요"
+                        : "복사한 키프레임 붙여넣기 (⌘V)",
+                    tint: DFColor.accent,
+                    enabled: copiedStep != nil,
+                    action: { pasteStep() }
+                )
+                keyframeIconButton(
+                    icon: "scissors",
+                    help: "키프레임 쪼개기 (⌘K) — 중간 자세로 두 단계 분할",
+                    tint: DFColor.forge,
+                    enabled: (page.steps[safe: selectedStep]?.playMs ?? 0) >= 16,
+                    action: { splitSelectedStep() }
+                )
+            }
+
+            Divider().frame(height: DFSize.iconMd2)
+
             Button(role: .destructive) {
                 removeSelectedStep()
             } label: {
@@ -554,6 +624,34 @@ public struct MotionStudioView: View {
         .padding(.vertical, DFSpace.xs2)
         .background(DFColor.elev2.opacity(DFOpacity.dim))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    /// 키프레임 편집 아이콘 버튼 — Copy / Paste / Split 공통 스타일.
+    private func keyframeIconButton(
+        icon: String,
+        help: String,
+        tint: Color,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: DFFontSize.s11, weight: .semibold))
+                .foregroundStyle(enabled ? tint : DFColor.textSecondary.opacity(DFOpacity.disabled))
+                .frame(width: DFSize.iconMd, height: DFSize.iconMd)
+                .background(enabled ? tint.opacity(DFOpacity.subtle) : DFColor.elev2)
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DFRadius.xs2)
+                        .stroke(
+                            enabled ? tint.opacity(DFOpacity.strong) : DFColor.textSecondary.opacity(DFOpacity.subtle),
+                            lineWidth: DFSize.borderHairline
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(help)
     }
 
     /// 키프레임 시간 stepper — 라벨 + 값 (mono) + Stepper +/-. 변경 시 onChange 콜.
@@ -600,6 +698,7 @@ public struct MotionStudioView: View {
         let stepCount = motion.pages[selectedPageIdx].steps.count
         guard selectedStep >= 0, selectedStep < stepCount else { return }
         var step = motion.pages[selectedPageIdx].steps[selectedStep]
+        let oldStep = step
         if let newPlay = playMs {
             // playMs / pauseMs 모두 raw (×8 ms) 로 저장 — 8 단위 quantize.
             let quantized = max(0, (newPlay / 8) * 8)
@@ -609,6 +708,8 @@ public struct MotionStudioView: View {
             let quantized = max(0, (newPause / 8) * 8)
             step.pauseTime = UInt8(clamping: quantized / 8)
         }
+        guard step != oldStep else { return }   // 무의미한 변경 skip (undo 폭주 방지).
+        pushUndoSnapshot()
         motion.pages[selectedPageIdx].steps[selectedStep] = step
         markDirty()
         // Player 에 변경 반영 — 재생 중이면 다음 tick 부터 적용.
@@ -703,17 +804,22 @@ public struct MotionStudioView: View {
         guard var page = currentPage,
               selectedStep < page.steps.count else { return }
         let oldStep = page.steps[selectedStep]
-        page.steps[selectedStep] = MotionStep.from(
+        // 자세만 변경 — pose 의 byte-level 비교로 무의미 변경 skip (undo 폭주 방지).
+        let newStep = MotionStep.from(
             pose: stagedPose,
             playMs: oldStep.playMs,
             pauseMs: oldStep.pauseMs
         )
+        guard newStep != oldStep else { return }
+        pushUndoSnapshot()
+        page.steps[selectedStep] = newStep
         motion.pages[selectedPageIdx] = page
         markDirty()
     }
 
     private func addStepFromCurrentPose() {
         guard var page = currentPage else { return }
+        pushUndoSnapshot()
         let step = MotionStep.from(pose: stagedPose, playMs: 256, pauseMs: 0)
         page.steps.append(step)
         motion.pages[selectedPageIdx] = page
@@ -723,6 +829,7 @@ public struct MotionStudioView: View {
 
     private func removeSelectedStep() {
         guard var page = currentPage, page.steps.count > 1 else { return }
+        pushUndoSnapshot()
         page.steps.remove(at: selectedStep)
         if selectedStep >= page.steps.count { selectedStep = page.steps.count - 1 }
         motion.pages[selectedPageIdx] = page
@@ -731,6 +838,7 @@ public struct MotionStudioView: View {
     }
 
     private func addPage() {
+        pushUndoSnapshot()
         let nextId = (motion.pages.map { $0.id }.max() ?? 0) + 1
         let newPage = MotionPage(id: nextId, name: "새 동작 \(nextId)",
                                  steps: [.from(pose: .walkReady, playMs: 256, pauseMs: 0)])
@@ -745,6 +853,7 @@ public struct MotionStudioView: View {
     /// 페이지 복제 — 같은 step 시퀀스, 새 ID, "<name> 복사본" suffix.
     private func duplicatePage(at idx: Int) {
         guard idx >= 0, idx < motion.pages.count else { return }
+        pushUndoSnapshot()
         let src = motion.pages[idx]
         let nextId = (motion.pages.map { $0.id }.max() ?? 0) + 1
         let copyName = src.name.isEmpty ? "동작 \(src.id) 복사본" : "\(src.name) 복사본"
@@ -770,6 +879,7 @@ public struct MotionStudioView: View {
     /// 페이지 삭제 — 1 개 미만으로 줄지 않도록 보호.
     private func deletePage(at idx: Int) {
         guard motion.pages.count > 1, idx >= 0, idx < motion.pages.count else { return }
+        pushUndoSnapshot()
         motion.pages.remove(at: idx)
         selectedPageIdx = max(0, min(selectedPageIdx, motion.pages.count - 1))
         selectedStep = 0
@@ -781,7 +891,8 @@ public struct MotionStudioView: View {
     private func renamePage(at idx: Int, to newName: String) {
         guard idx >= 0, idx < motion.pages.count else { return }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, motion.pages[idx].name != trimmed else { return }
+        pushUndoSnapshot()
         motion.pages[idx].name = trimmed
         markDirty()
     }
@@ -824,6 +935,117 @@ public struct MotionStudioView: View {
 
     /// motion doc 변경 시 dirty flag set — UI 의 저장 버튼 활성화.
     private func markDirty() { isDirty = true }
+
+    // MARK: - Undo / Redo
+
+    /// 모든 mutation 함수 시작에 호출 — 현재 motion 을 undo stack 에 push.
+    /// 50 개 초과 시 가장 오래된 항목 drop. redo stack 은 invalidate (새 분기).
+    private func pushUndoSnapshot() {
+        undoStack.append(motion)
+        if undoStack.count > maxUndoDepth { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
+    /// ⌘Z — 마지막 변경 되돌리기. 변경 없으면 noop.
+    private func undo() {
+        guard let prev = undoStack.popLast() else { return }
+        redoStack.append(motion)
+        motion = prev
+        // 인덱스 안전 보정 — pages / steps 가 줄어들 수 있음.
+        selectedPageIdx = min(selectedPageIdx, max(0, motion.pages.count - 1))
+        if selectedPageIdx >= 0, selectedPageIdx < motion.pages.count {
+            selectedStep = min(selectedStep, max(0, motion.pages[selectedPageIdx].steps.count - 1))
+        } else {
+            selectedStep = 0
+        }
+        applySelectedStepToPose()
+        isDirty = true
+    }
+
+    /// ⌘⇧Z — 되돌린 변경을 다시 앞으로.
+    private func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(motion)
+        motion = next
+        selectedPageIdx = min(selectedPageIdx, max(0, motion.pages.count - 1))
+        if selectedPageIdx >= 0, selectedPageIdx < motion.pages.count {
+            selectedStep = min(selectedStep, max(0, motion.pages[selectedPageIdx].steps.count - 1))
+        } else {
+            selectedStep = 0
+        }
+        applySelectedStepToPose()
+        isDirty = true
+    }
+
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    // MARK: - Copy / Paste / Split (키프레임)
+
+    /// ⌘C — 현재 선택 step 을 클립보드 (in-memory `copiedStep`) 로.
+    /// 다른 동작에 paste 가능. 시스템 클립보드 (NSPasteboard) 와는 별개 —
+    /// 사용자가 TextField focus 시 ⌘C 는 텍스트 복사가 우선이라 충돌 없음.
+    private func copySelectedStep() {
+        guard let page = currentPage,
+              selectedStep >= 0, selectedStep < page.steps.count else { return }
+        copiedStep = page.steps[selectedStep]
+    }
+
+    /// ⌘V — 복사된 step 을 현재 위치 *다음에* 삽입. 자동으로 새 step 선택.
+    private func pasteStep() {
+        guard let step = copiedStep,
+              var page = currentPage else { return }
+        pushUndoSnapshot()
+        let insertAt = min(page.steps.count, max(0, selectedStep + 1))
+        page.steps.insert(step, at: insertAt)
+        motion.pages[selectedPageIdx] = page
+        selectedStep = insertAt
+        markDirty()
+        applySelectedStepToPose()
+    }
+
+    /// ⌘K — 현재 선택 step 을 두 개로 분할.
+    ///
+    /// 동작:
+    ///   1. 이전 step (또는 walkReady) → 현재 step 의 자세를 0.5 lerp 한 *중간 자세*.
+    ///   2. playMs 의 절반을 첫 step 에 부여, 중간 자세 step 으로 변환.
+    ///   3. 남은 절반 playMs + 원래 자세 + 원래 pauseMs 를 두 번째 step 으로.
+    ///   4. 후반부 (원래 자세) 자동 선택 — split 후에도 사용자 의도 유지.
+    private func splitSelectedStep() {
+        guard var page = currentPage,
+              selectedStep >= 0, selectedStep < page.steps.count else { return }
+        let original = page.steps[selectedStep]
+        // playMs 가 16ms 미만이면 분할 무의미 (8ms × 2 단위).
+        guard original.playMs >= 16 else { return }
+        pushUndoSnapshot()
+
+        // 이전 자세 — selectedStep > 0 면 이전 step 의 toPose(), 아니면 walkReady.
+        let prevPose: RobotPose = selectedStep > 0
+            ? page.steps[selectedStep - 1].toPose()
+            : .walkReady
+        let curPose = original.toPose()
+        let midPose = prevPose.lerp(to: curPose, t: 0.5)
+
+        // 8ms quantize. playMs/2 → /16 × 8 단위 (.mtn raw quantize).
+        let halfPlay = (original.playMs / 16) * 8
+        let remainPlay = original.playMs - halfPlay
+
+        let firstHalf = MotionStep.from(pose: midPose,
+                                         playMs: halfPlay,
+                                         pauseMs: 0)
+        var secondHalf = original
+        secondHalf.playTime = UInt8(clamping: remainPlay / 8)
+        // pauseTime 은 원래 step 의 것 유지.
+
+        page.steps[selectedStep] = firstHalf
+        page.steps.insert(secondHalf, at: selectedStep + 1)
+        motion.pages[selectedPageIdx] = page
+
+        // 후반부 (원본 자세) 자동 선택.
+        selectedStep += 1
+        markDirty()
+        applySelectedStepToPose()
+    }
 
     private func captureFromTelemetry() {
         guard let bus = store.bus else { return }
