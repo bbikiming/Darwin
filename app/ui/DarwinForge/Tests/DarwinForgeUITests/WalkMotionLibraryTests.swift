@@ -91,6 +91,9 @@ final class WalkMotionLibraryTests: XCTestCase {
         // CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE 이후: 모든 step 의 모든 관절 raw 가
         // `JointID.rawLimits` (좌·우 대칭 signed range) 내에 있어야 함. 종전엔 mirror
         // 비대칭으로 hardware limit 검증만 가능했으나 limit 수정 후 software limit 으로 격상.
+        //
+        // 단독으로는 `.with()` 가 이미 clamp 하므로 "의도된 raw 가 limits 안인가" 는
+        // 검증하지 못함 (자기 충족). 직접 검증은 `testLiftStepPreservesIntendedRaw...` 가 담당.
         let nonIdle: [WalkLabPreset] = [.march, .slowWalk, .normalWalk,
                                          .fastWalk, .jog, .turnLeft, .turnRight]
         for preset in nonIdle {
@@ -107,6 +110,68 @@ final class WalkMotionLibraryTests: XCTestCase {
                 }
             }
         }
+    }
+
+    // MARK: - .with() clamp 직접 검증 (Codex P2 보강)
+
+    /// Codex 의 P2 지적: `testAllPosesWithinSoftwareLimits` 만으로는 `.with()` 가 이미 clamp
+    /// 하므로 "원래 의도한 raw 가 limit 안" 인지 검증 불가 (자기 충족). 본 테스트는 합성 step
+    /// 의 raw 가 `Kinematics.raw(fromDegrees:)` 의 원본 계산과 일치하는지 직접 비교한다 —
+    /// `.with()` 의 clamp 가 발생했다면 두 값이 달라질 것이므로 false positive 차단.
+    ///
+    /// march step 1 = `liftFoot(.right, liftDeg: 18)` — 좌발이 지지, mirror joint 의 raw 가
+    /// 종전 단방향 `0...150` limits 에서는 잘렸을 자리.
+    func testLiftStepPreservesIntendedRawWithoutClamp() {
+        guard let march = WalkMotionLibrary.page(for: .march) else {
+            XCTFail("march page missing"); return
+        }
+        let liftDeg: Double = 18  // march 의 내부 상수와 일치.
+        let liftR = march.steps[1].toPose()
+
+        // liftFoot(.right) 의 의도된 lKnee = raw(-53 + liftDeg*0.4) ≈ raw(-45.8°).
+        // 종전 lKnee.rawLimits=2048...3755 에서는 1527 → 2048 로 clamp (=왼다리 펴짐).
+        let expectedLKnee = Kinematics.raw(fromDegrees: -53 + liftDeg * 0.4)
+        XCTAssertEqual(liftR.raw(.lKnee), expectedLKnee,
+            "march lift R 의 lKnee raw=\(liftR.raw(.lKnee)) 가 의도 \(expectedLKnee) 와 일치 (clamp 없음)")
+
+        // 의도된 lAnklePitch = raw(-30 + liftDeg*0.3) ≈ raw(-24.6°).
+        let expectedLAnkle = Kinematics.raw(fromDegrees: -30 + liftDeg * 0.3)
+        XCTAssertEqual(liftR.raw(.lAnklePitch), expectedLAnkle,
+            "march lift R 의 lAnklePitch 가 의도값 보존 (clamp 없음)")
+
+        // 의도된 lHipPitch = raw(36 - liftDeg*0.2) = raw(32.4°). 항상 양수라 종전에도 OK 였음.
+        let expectedLHip = Kinematics.raw(fromDegrees: 36 - liftDeg * 0.2)
+        XCTAssertEqual(liftR.raw(.lHipPitch), expectedLHip)
+    }
+
+    /// march step 3 = `liftFoot(.left, liftDeg: 18)` — 우 발 지지, 좌 발 들기.
+    /// 들린 좌 발의 lKnee 는 walkReady (-53°) 보다 더 음수로 — 가장 종전 clamp 위험 컸음.
+    func testLeftLiftStepPreservesLeftKneeNegative() {
+        guard let march = WalkMotionLibrary.page(for: .march) else {
+            XCTFail("march page missing"); return
+        }
+        let liftDeg: Double = 18
+        let liftL = march.steps[3].toPose()
+
+        // liftFoot(.left) 의 lKnee = raw(-53 - liftDeg) ≈ raw(-71°).
+        // 종전 0...150 limits → 1228 (-71° raw) 는 lKnee.rawLimits=2048...3755 밖 → 2048 로 clamp.
+        let expectedLKnee = Kinematics.raw(fromDegrees: -53 - liftDeg)
+        XCTAssertEqual(liftL.raw(.lKnee), expectedLKnee,
+            "march lift L 의 lKnee raw=\(liftL.raw(.lKnee)) 가 의도 -71° (\(expectedLKnee)) 와 일치 — clamp 없음")
+
+        // 우 지지 다리 의도값 — clamp 영향 없는 양수 영역이지만 회귀 보호용.
+        let expectedRKnee = Kinematics.raw(fromDegrees: 53 - liftDeg * 0.4)
+        XCTAssertEqual(liftL.raw(.rKnee), expectedRKnee)
+    }
+
+    /// OfficialCatalogReference 의 sitDown / leftKick 도 동일 회귀 — 의도값 유지 검증.
+    /// (`WalkMotionLibrary` 와 같은 `.with()` 경로를 쓰므로 같은 위험.)
+    func testOfficialCatalogSitDownPreservesNegativeLKnee() {
+        let page = OfficialCatalogReference.sitDown(id: 15)
+        let sit = page.steps[1].toPose()  // sit step.
+        let expected = Kinematics.raw(fromDegrees: -105)
+        XCTAssertEqual(sit.raw(.lKnee), expected,
+            "sitDown.lKnee=\(sit.raw(.lKnee)) 가 의도 -105° (\(expected)) 와 일치")
     }
 
     func testStepDeltaFromWalkReadyIsBounded() {
