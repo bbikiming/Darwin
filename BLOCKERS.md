@@ -20,8 +20,8 @@
 | # | 위치 | 이슈 | 액션 |
 |---|------|------|------|
 | **H1** | `safety::self_collision` | docstring 5종 룰 / 코드 4종 (hip + knee 결합 룰 미구현) | 5번째 룰 구현 + 단위 테스트 |
-| **H2** | `synth::validator::velocity` | WARN 5.2 / FAIL 11.3 raw/ms 임계는 주석에 "ROBOTIS 16 페이지 calibration" 명시, 그러나 실제 calibration **스크립트 / 데이터 파일이 리포에 없음**. HVP는 "측정 완료"라 주장하나 추적 불가 | calibration 스크립트 + raw 데이터를 `tests/fixtures/`에 commit |
-| **H3** | `joint::state::JointLimits` | ROBOTIS Page 12 right kick 자체를 V1 joint_limit validator가 FAIL시킴 (integration test 가 자인) — 한계가 너무 보수적 | Page 12 통과하도록 한계 완화 (단, 검증 후) |
+| ~~**H2**~~ | ~~`synth::validator::velocity`~~ | ~~calibration 데이터 부재~~ | ✅ **2026-05-12 해결** — `tests/fixtures/velocity_calibration.json` (1100 sample) 생성, `examples/calibrate_velocity` 자동화, p99×1.1=5.21≈상수 5.2 일치 검증. |
+| ~~**H3**~~ | ~~`joint::state::JointLimits`~~ | ~~"Page 12 가 V1 FAIL"~~ | ✅ **2026-05-12 해결** — off-by-one(C1) 정정 후 page 12 V1 PASS 확인. `page_12_right_kick_passes_v1_with_margins` 회귀 테스트 + 마진 53 raw (HeadTilt 4.66°) 측정값 명시. |
 | **H4** | `synth::ops::procedural::Bezier` | 표준 cubic Bezier 아님 — y만 사용, x 무시 | 표준화 또는 docstring에 "scalar curve, x 무시" 명시 |
 | **H5** | `synth::ops::mirror::mirror_page` | name involution 깨짐 — `mirror(mirror(p)).name ≠ p.name` | 두 번 mirror 시 원본 name 복원 로직 |
 
@@ -31,7 +31,7 @@
 |---|------|------|
 | M1 | `walk::imu::ComplementaryFilter` | α=0.98 출처 / 학술 인용 없음 |
 | M2 | `walk::ini_pose::WALK_READY_MOV_STEPS=750` | derived constant인데 도출 식 미노출 |
-| M3 | `safety::torque_ramp [0,8,16,32]` | ROBOTIS 원본에 없는 자체 추가. 안전 근거 부재 |
+| ~~M3~~ | ~~`safety::torque_ramp [0,8,16,32]`~~ | ~~안전 근거 부재~~ | ✅ **2026-05-12 해결** — `safety::torque_ramp` 모듈 docstring 에 "Provenance" 절 추가 (왜 0, 8, 16, 32 / 4 단계 / 200 ms × 4 = 800 ms 인지). 실 모터 실측은 G3 게이트 후. |
 | M4 | `synth::validator::static_stability::MAX_HIP_PITCH_DIFF_RAW=1700` | margin 정량화 부족 |
 | M5 | `synth::library::OFFICIAL_CATALOG` | ROBOTIS 원본 오타 vs 정정 여부 모호 |
 | M6 | `docs/motion-format/page-format.md` | `> TODO: verify` 가 page-catalog-motion4096.md 와 충돌 |
@@ -74,3 +74,32 @@
 - "현재 구현 vs 명세 매트릭스" 표 추가 (보행 주기 ✓ / 발 궤적 △ / 골반 보상 ✗ / 팔 swing ✗ / IK ✗ / IMU balance ✗ / 모터 송출 ✗).
 - Walk Lab UI (`WalkLabView`) 디테일 영역 상단에 **"Sim only — 실 IK 미구현 (BLOCKER C3)"** 정보 배너.
 - 부수: Walk Lab 의 IMU/온도 시뮬 모델 추가 (`updateSimIMU` / `updateSimThermal`) — L3 (|roll/pitch|>30°) / L4 (60°C) 자동정지 게이트 실제 동작 검증 경로 확보.
+
+### 2026-05-12 — 데이터·모터 값 적정성 점검 (Mac 빌드 전 완성도 향상)
+
+**A: D3 + D6 — 회귀 테스트**
+
+- `synth::validator::joint_limit::page_12_right_kick_passes_v1_with_margins` — 가장 극단 자세인 page 12 right kick 의 V1 PASS + per-joint 마진 산정 + 최소 마진 53 raw (HeadTilt 4.66°) lock-in. BLOCKER H3 의 "page 12 가 FAIL 한다"는 주장 무효 검증.
+- `walk::preset::all_presets_sim_foot_within_walkparams_box` — 8개 프리셋 sim 결과의 발 위치가 `WalkParams.foot_height` 안임을 한 사이클 분량으로 검증.
+- `walk::preset::full_slider_range_sim_stays_bounded` — advanced 모드 슬라이더 풀-스윙 (x ±0.05 / y ±0.03 / a ±0.3 / period 400~800) 도 sim 범위 내.
+
+**B: D1 — fixture 4건 추가 + 디코더**
+
+- `examples/decode_motion <page_id>` — `motion_4096.bin` byte-preserving 디코더 + Rust source 출력. page 1 init 와 byte-exact 매칭 검증.
+- 신규 fixture: `page_3_no` (head shake), `page_4_hi` (waving — gui 라벨 "Thank you"), `page_10_get_up_front` (Caution recovery, knee 0x0c5e=3166), `page_15_sit_down` (deep squat, knee 0x0db9=3513).
+- 회귀 테스트 5건: 디코더 byte-exact + 각 fixture 별 motion 특성 invariant.
+- Catalog fixture coverage: 5/16 → **9/16**.
+
+**C: D2 + D5 — Provenance docstring**
+
+- `JointLimits::for_joint` — 11 관절별 ±한계 결정 근거 표 (walkReady·kick 마진 실측 기반) + ROBOTIS dxl_init.yaml 의 "Dynamixel 레벨 무제한" 사실 명시.
+- `safety::torque_ramp` — `[0, 8, 16, 32]` × 200 ms × 4 단계 = 800 ms ramp 결정 근거 (각 P-gain 단계의 물리적 의미).
+
+**D: D4 — Velocity calibration 데이터화**
+
+- `examples/calibrate_velocity` — 16 catalog 페이지의 1,100 step transition sample 통계 산출.
+- `tests/fixtures/velocity_calibration.json` — overall p50/p90/p95/p99/max + per-joint max + per-page 상세.
+- 측정 결과 (p99=4.74, max=10.26 raw/ms) 가 기존 상수 `WARN_RAW_PER_MS=5.2` / `MAX_RAW_PER_MS=11.3` 와 ±0.1 이내 일치 검증 (`thresholds_match_calibration_fixture` 회귀).
+- BLOCKER H2 (calibration 데이터 미공개) → 해결.
+
+검증: `cargo test --workspace` 329 tests (forge-core 292 + forge-cli 10 + forge-mcp-synth 30 + 기타) 통과.
