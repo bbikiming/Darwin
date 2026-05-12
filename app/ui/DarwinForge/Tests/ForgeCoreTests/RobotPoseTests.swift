@@ -51,13 +51,17 @@ final class RobotPoseTests: XCTestCase {
     }
 
     func testMirrorSwapsSides() {
+        // CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE: mirrorSignFlip 이 모든 좌·우 pair (pitch 포함)
+        // 에 적용된다. center 기준 r=1500, l=2500 → mirror 결과는 reflect 후 swap.
+        //   r 입장: src=lShoulderPitch=2500 → 4096-2500 = 1596.
+        //   l 입장: src=rShoulderPitch=1500 → 4096-1500 = 2596.
         let p = RobotPose.center.with([
             .rShoulderPitch: 1500,
             .lShoulderPitch: 2500
         ])
         let m = p.mirrored()
-        XCTAssertEqual(m.raw(.rShoulderPitch), 2500)
-        XCTAssertEqual(m.raw(.lShoulderPitch), 1500)
+        XCTAssertEqual(m.raw(.rShoulderPitch), 1596)
+        XCTAssertEqual(m.raw(.lShoulderPitch), 2596)
     }
 
     func testMirrorYawFlipSign() {
@@ -65,6 +69,54 @@ final class RobotPoseTests: XCTestCase {
         let p = RobotPose.center.with(.headPan, raw: 2200)
         let m = p.mirrored()
         XCTAssertEqual(m.raw(.headPan), 1896)
+    }
+
+    // MARK: - 음수 좌측 관절 / mirror 회귀 (CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE)
+
+    /// 종전 단방향 `0...150` 한계에서는 lElbow / lKnee / lAnklePitch 의 공식 음수 값이
+    /// `RobotPose.with()` 의 clamp 로 0° 근처로 잘렸다. signed limits 적용 후엔 음수가
+    /// 그대로 유지돼야 한다. 출처: `ini_pose.yaml` + motion_4096 GUI catalog 관측.
+    func testWithPreservesOfficialNegativeMirrorJoints() {
+        let p = RobotPose.walkReady.with([
+            .lElbow:      Kinematics.raw(fromDegrees: -70),
+            .lKnee:       Kinematics.raw(fromDegrees: -130),
+            .lAnklePitch: Kinematics.raw(fromDegrees: -70),
+            .rElbow:      Kinematics.raw(fromDegrees: -90)
+        ])
+        XCTAssertLessThan(p.degrees(.lElbow), -69,
+            "lElbow 가 -70° 근처로 유지돼야 함 (clamp 되면 0° 쪽으로 점프)")
+        XCTAssertLessThan(p.degrees(.lKnee), -129,
+            "lKnee 가 -130° 근처로 유지돼야 함")
+        XCTAssertLessThan(p.degrees(.lAnklePitch), -69,
+            "lAnklePitch 가 -70° 근처로 유지돼야 함")
+        XCTAssertLessThan(p.degrees(.rElbow), -89,
+            "rElbow 도 음수가 유지돼야 함 (공식 catalog 관측 r_el min ≈ -94.7°)")
+    }
+
+    /// 공식 motion_4096 page 9 의 좌·우 mirror 관계가 `RobotPose.mirrored()` 에서
+    /// 유지되는지. 종전엔 `mirrorSignFlip` 이 pitch 계열에 false 였어서 raw 가 그대로
+    /// 복사됐다 — `PoseInspector` mirror mode 에서 우측 +50° 가 좌측 +50° 로 들어가는
+    /// 부호 오류의 원인.
+    func testMirrorWalkReadyKeepsOfficialSignedPairs() {
+        let wr = RobotPose.walkReady
+        let mirrored = wr.mirrored()
+        // reflect 공식: raw' = 4096 - raw. rawLimits clamp 으로 ±2 raw 오차 가능.
+        func close(_ a: Int, _ b: Int, tol: Int = 2) -> Bool { abs(a - b) <= tol }
+
+        XCTAssertTrue(close(mirrored.raw(.lKnee), 4096 - wr.raw(.rKnee)),
+            "mirrored.lKnee=\(mirrored.raw(.lKnee)) ≈ 4096-wr.rKnee=\(4096 - wr.raw(.rKnee))")
+        XCTAssertTrue(close(mirrored.raw(.rKnee), 4096 - wr.raw(.lKnee)))
+        XCTAssertTrue(close(mirrored.raw(.lElbow), 4096 - wr.raw(.rElbow)))
+        XCTAssertTrue(close(mirrored.raw(.rElbow), 4096 - wr.raw(.lElbow)))
+        XCTAssertTrue(close(mirrored.raw(.lAnklePitch), 4096 - wr.raw(.rAnklePitch)))
+        XCTAssertTrue(close(mirrored.raw(.rAnklePitch), 4096 - wr.raw(.lAnklePitch)))
+        XCTAssertTrue(close(mirrored.raw(.lHipPitch), 4096 - wr.raw(.rHipPitch)))
+        XCTAssertTrue(close(mirrored.raw(.rHipPitch), 4096 - wr.raw(.lHipPitch)))
+        XCTAssertTrue(close(mirrored.raw(.lShoulderPitch), 4096 - wr.raw(.rShoulderPitch)))
+        XCTAssertTrue(close(mirrored.raw(.rShoulderPitch), 4096 - wr.raw(.lShoulderPitch)))
+
+        // headTilt 는 단축 (위/아래) 이라 반사하지 않음 — 부호 유지.
+        XCTAssertEqual(mirrored.raw(.headTilt), wr.raw(.headTilt))
     }
 
     func testCodableRoundTrip() throws {

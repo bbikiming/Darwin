@@ -48,11 +48,13 @@ public enum ReferenceMotionLibrary {
         ))
         id += 1
 
-        // 111 → wk_arms: 팔만 ±15°. 다리 정지 — 비-다리 servo command path 확인.
-        let armsBend = RobotPose.walkReady.with([
-            .lShoulderPitch: Kinematics.raw(fromDegrees: 35),   // -10° from +45
-            .rElbow:         Kinematics.raw(fromDegrees: 35),   // +15° from +20
-            .lElbow:         Kinematics.raw(fromDegrees: -35)   // -15° from -20
+        // 111 → wk_arms: 팔만 흔들기. 현재 walkReady 의 어깨/팔꿈치 기준 delta.
+        // CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE: walkReady 절대값은 page 9 raw 이며 미래에
+        // 바뀔 수 있어 delta helper 로 표현. 종전엔 옛 walkReady 기준 절대각 35°/-35° 였음.
+        let armsBend = deltaPose([
+            .lShoulderPitch: -10,   // 좌 어깨 약간 안쪽으로
+            .rElbow:         +15,   // 우 팔꿈치 더 굽힘
+            .lElbow:         -15    // 좌 팔꿈치 더 굽힘 (mirror)
         ])
         pages.append(MotionPage(
             id: id, name: "보행 테스트 2 — 팔만 흔들기 (다리 정지)",
@@ -64,16 +66,16 @@ public enum ReferenceMotionLibrary {
         ))
         id += 1
 
-        // 112 → wk_knee: 3° 조정 squat. hip/knee/ankle 6 관절. 토르소 수직 유지.
-        // walkReady 의 hipPitch -8/+8, knee +16/-16, anklePitch -7/+7 에서
-        // 각각 ∓1.5, ±3, ±1.5 만큼 변화 (양 다리 좌우 대칭 유지).
-        let squat3 = RobotPose.walkReady.with([
-            .rHipPitch:    Kinematics.raw(fromDegrees: -9.5),
-            .lHipPitch:    Kinematics.raw(fromDegrees:  9.5),
-            .rKnee:        Kinematics.raw(fromDegrees: 19.0),
-            .lKnee:        Kinematics.raw(fromDegrees: -19.0),
-            .rAnklePitch:  Kinematics.raw(fromDegrees: -5.5),
-            .lAnklePitch:  Kinematics.raw(fromDegrees:  5.5)
+        // 112 → wk_knee: walkReady 기준 추가 3° 굽힘. 좌·우 mirror 쌍 유지.
+        // 종전엔 옛 walkReady (hipPitch ±8 / knee ±16 / ankle ±7) 의 절대값을 그대로 적어
+        // 새 page 9 walkReady (±36 / ±53 / ±30) 에선 거의 직립 자세로 펴지는 결과가 되었음.
+        let squat3 = deltaPose([
+            .rHipPitch:    -1.5,   // 우: 추가 굽힘 (음수 방향)
+            .lHipPitch:    +1.5,   // 좌: mirror — 추가 굽힘 (양수 방향)
+            .rKnee:        +3.0,   // 우: 더 깊은 굽힘
+            .lKnee:        -3.0,   // 좌: mirror
+            .rAnklePitch:  +1.5,   // 우: 발끝 살짝 더 위로 (CoM 보정)
+            .lAnklePitch:  -1.5    // 좌: mirror
         ])
         pages.append(MotionPage(
             id: id, name: "보행 테스트 3 — 무릎 3° 굽힘 (조정 squat)",
@@ -86,9 +88,9 @@ public enum ReferenceMotionLibrary {
         id += 1
 
         // 113 → wk_hip_r: 양 hip_roll +2.5°. 발 고정, 토르소 우측 sway.
-        let hipR = RobotPose.walkReady.with([
-            .rHipRoll: Kinematics.raw(fromDegrees:  2.5),
-            .lHipRoll: Kinematics.raw(fromDegrees:  2.5)
+        let hipR = deltaPose([
+            .rHipRoll: +2.5,
+            .lHipRoll: +2.5
         ])
         pages.append(MotionPage(
             id: id, name: "보행 테스트 4 — 우측 hip sway (발 고정)",
@@ -101,9 +103,9 @@ public enum ReferenceMotionLibrary {
         id += 1
 
         // 114 → wk_hip_l: 113 좌우 미러.
-        let hipL = RobotPose.walkReady.with([
-            .rHipRoll: Kinematics.raw(fromDegrees: -2.5),
-            .lHipRoll: Kinematics.raw(fromDegrees: -2.5)
+        let hipL = deltaPose([
+            .rHipRoll: -2.5,
+            .lHipRoll: -2.5
         ])
         pages.append(MotionPage(
             id: id, name: "보행 테스트 5 — 좌측 hip sway (발 고정)",
@@ -116,17 +118,18 @@ public enum ReferenceMotionLibrary {
         id += 1
 
         // 115 → wk_lean_pitch: ±2° pitch. NimbRo `lean_fb_gain` 의 IMU 피드백 baseline.
-        let leanFwd = RobotPose.walkReady.with([
-            .rHipPitch:   Kinematics.raw(fromDegrees: -10),  // -2° from -8
-            .lHipPitch:   Kinematics.raw(fromDegrees:  10),
-            .rAnklePitch: Kinematics.raw(fromDegrees: -5),   // +2° from -7
-            .lAnklePitch: Kinematics.raw(fromDegrees:  5)
+        // walkReady 의 page 9 deep squat 기준에서 ±2° 만큼 앞·뒤 기울기 추가.
+        let leanFwd = deltaPose([
+            .rHipPitch:   -2.0,   // 더 앞으로 굽힘
+            .lHipPitch:   +2.0,   // mirror
+            .rAnklePitch: +2.0,   // 발끝 더 위 (CoM 앞으로)
+            .lAnklePitch: -2.0    // mirror
         ])
-        let leanBack = RobotPose.walkReady.with([
-            .rHipPitch:   Kinematics.raw(fromDegrees: -6),   // +2° from -8
-            .lHipPitch:   Kinematics.raw(fromDegrees:  6),
-            .rAnklePitch: Kinematics.raw(fromDegrees: -9),   // -2° from -7
-            .lAnklePitch: Kinematics.raw(fromDegrees:  9)
+        let leanBack = deltaPose([
+            .rHipPitch:   +2.0,   // 덜 굽힘 (위로)
+            .lHipPitch:   -2.0,   // mirror
+            .rAnklePitch: -2.0,   // 발끝 덜 위 (CoM 뒤로)
+            .lAnklePitch: +2.0    // mirror
         ])
         pages.append(MotionPage(
             id: id, name: "보행 테스트 6 — 앞뒤 lean ±2° (IMU baseline)",
@@ -141,6 +144,22 @@ public enum ReferenceMotionLibrary {
         id += 1
 
         return pages
+    }
+
+    /// `RobotPose.walkReady` 의 현재 raw 값에서 각 관절에 delta(°) 를 더한 새 pose.
+    ///
+    /// 옛 코드들이 walkReady 의 절대각을 직접 적어 page 9 raw 변경 (Sprint 16 hotfix v3)
+    /// 후 의미가 깨졌던 부분을 회피한다 — 미래에 walkReady 가 다시 갱신돼도 delta 의미가
+    /// 보존된다. CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE 권고 패턴.
+    ///
+    /// 좌·우 mirror joint 의 delta 부호는 페어로 반대 (예: `rKnee +3 / lKnee -3`) 가 자연스러움.
+    private static func deltaPose(_ deltas: [JointID: Double]) -> RobotPose {
+        var dict = RobotPose.walkReady.positions
+        for (joint, delta) in deltas {
+            let base = RobotPose.walkReady.degrees(joint)
+            dict[joint] = Kinematics.raw(fromDegrees: base + delta)
+        }
+        return RobotPose(positions: dict)
     }
 
     // MARK: - 2. Ergonomic 케어 (책상 사용자 통증 시나리오)

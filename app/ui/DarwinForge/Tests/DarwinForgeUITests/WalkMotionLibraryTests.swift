@@ -87,17 +87,12 @@ final class WalkMotionLibraryTests: XCTestCase {
 
     // MARK: - 안전 검증 (2)
 
-    func testAllPosesWithinHardwareLimits() {
-        // 모든 step 의 모든 관절 raw 가 Dynamixel hardware 한계 (0...4095) 내에 있어야 함.
-        //
-        // 참고 — `JointID.degreeLimits` (`Kinematics.swift:42`) 은 좌·우 mirror 비대칭을
-        // 표현하지 못해 `lKnee` 같은 음수-굽힘 관절의 `rawLimits` 이 `walkReady` 자체와
-        // 모순된다 (e.g. `walkReady.lKnee=1443`, `lKnee.rawLimits=2048...3755`). 이는
-        // 본 PR 의 범위를 벗어나는 기존 이슈 — 별도 PR (Kinematics mirror-aware limits)
-        // 으로 fix 예정. 본 테스트는 hardware-level 안전만 검증.
+    func testAllPosesWithinSoftwareLimits() {
+        // CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE 이후: 모든 step 의 모든 관절 raw 가
+        // `JointID.rawLimits` (좌·우 대칭 signed range) 내에 있어야 함. 종전엔 mirror
+        // 비대칭으로 hardware limit 검증만 가능했으나 limit 수정 후 software limit 으로 격상.
         let nonIdle: [WalkLabPreset] = [.march, .slowWalk, .normalWalk,
                                          .fastWalk, .jog, .turnLeft, .turnRight]
-        let hardwareRange = 0...4095
         for preset in nonIdle {
             guard let page = WalkMotionLibrary.page(for: preset) else {
                 XCTFail("\(preset.rawValue) page missing"); continue
@@ -106,8 +101,9 @@ final class WalkMotionLibraryTests: XCTestCase {
                 let pose = step.toPose()
                 for joint in JointID.allCases {
                     let raw = pose.raw(joint)
-                    XCTAssertTrue(hardwareRange.contains(raw),
-                        "\(preset.rawValue) step \(idx) joint \(joint.name): raw=\(raw) outside hardware range \(hardwareRange)")
+                    let limits = joint.rawLimits
+                    XCTAssertTrue(limits.contains(raw),
+                        "\(preset.rawValue) step \(idx) joint \(joint.name): raw=\(raw) outside software \(limits)")
                 }
             }
         }
