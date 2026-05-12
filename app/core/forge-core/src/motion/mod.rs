@@ -7,6 +7,7 @@ pub mod library;
 pub mod page;
 pub mod parser;
 pub mod timeline;
+pub mod walkready;
 pub mod writer;
 
 pub use bin4096::{parse_bin4096, read_bin4096_file, write_bin4096, RawPage, FILE_SIZE_BYTES};
@@ -14,4 +15,7 @@ pub use library::{Library, MotionId, MotionRecord, OfficialCatalogEntry, OFFICIA
 pub use page::{Motion, MotionPage, MotionStep, SafetyClass, NUM_JOINTS_IN_STEP};
 pub use parser::{parse_mtn, ParseError};
 pub use timeline::{interpolate, sample_at_ms, Easing};
+pub use walkready::{
+    is_walkready_anchor, rms_distance_from_walkready, walkready_step, WALKREADY_RAW,
+};
 pub use writer::write_mtn;

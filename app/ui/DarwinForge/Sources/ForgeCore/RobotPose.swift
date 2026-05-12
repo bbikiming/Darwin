@@ -18,41 +18,60 @@ public struct RobotPose: Sendable, Equatable, Codable {
         return RobotPose(positions: dict)
     }()
 
-    /// "준비 자세" — ROBOTIS DARwIn-OP framework `JointData::Initialize()` 정확값.
+    /// **ROBOTIS 공식 walkready** — `motion_4096.bin` 의 page 9 step 0 그대로.
     ///
-    /// 출처: github.com/ROBOTIS-GIT/DARwIn-OP-Framework/Linux/project/walking_tuner +
-    /// JointData.cpp. (4096 step / 360° = 11.378 raw per degree).
+    /// 깊은 squat 자세: hip pitch ±36° / knee ±53° / ankle pitch ±30°.
+    /// 무릎을 크게 굽혀 무게중심(CoM) 을 양 발 위에 정확히 정렬한다.
     ///
-    /// 안전 검증됨 — RoboCup 2014+ 경기 + 수천 시간 동작 데이터.
+    /// # 변경 이력 (사용자 안전 보고 기반)
+    ///
+    /// 1. **초기 (Sprint 10)**: ROBOTIS `JointData::Initialize()` 의
+    ///    hip±8 / knee±16 / ankle∓7 작은 각도 사용 → 무릎 굽힘이 부족해
+    ///    충격 흡수 안 됨 + ankle 비대칭으로 뒤쪽 lean → **뒤로 넘어짐**.
+    /// 2. **Sprint 15 hotfix**: 하체 모두 0° (T-pose 직립) 으로 변경 → 막대
+    ///    처럼 직립이라 균형 잡으면 안 넘어지지만 충격 흡수 능력 0,
+    ///    무거운 robot 이라 약간만 흔들려도 **뒤로 넘어짐**. 사용자 추가 보고.
+    /// 3. **현재 (Sprint 16)**: ROBOTIS 공식 page 9 step 0 의 raw 값 그대로
+    ///    채택. hip±36° 의 deep squat 으로 무릎이 충격 흡수 + ankle 보정으로
+    ///    CoM 정확히 발 위. 측정된 R+L mirror sum ≈ 4096 ± 79 — 완벽 대칭.
+    ///
+    /// # 좌표계
+    ///
+    /// - hip_pitch 음수 (R) / 양수 (L) = 앞으로 굽힘 (squat 시작).
+    /// - knee 양수 (R) / 음수 (L) = 무릎 굽힘.
+    /// - ankle_pitch 양수 (R) / 음수 (L) = 발끝 위로 (hip squat 의 무게중심 보정).
+    ///
+    /// 대안: `idle` 자세 (모든 다리 0°) 는 정비 스탠드 거치 / 진단용. 실 robot
+    /// 거동 시는 반드시 `walkReady` 사용.
     public static let walkReady: RobotPose = {
-        // ROBOTIS framework 표준 각도 (°). 부호: 오른쪽 음수, 왼쪽 양수 (좌우 대칭).
-        let degrees: [JointID: Double] = [
-            .rShoulderPitch: -45,   // 팔 살짝 앞 (자연 직립)
-            .lShoulderPitch: +45,
-            .rShoulderRoll:  -17,   // 어깨 살짝 벌림
-            .lShoulderRoll:  +17,
-            .rElbow:         +20,   // 팔꿈치 살짝 굽힘
-            .lElbow:         -20,
-            .rHipYaw:          0,
-            .lHipYaw:          0,
-            .rHipRoll:         0,
-            .lHipRoll:         0,
-            .rHipPitch:       -8,   // 살짝 굽힘 — walk start posture
-            .lHipPitch:       +8,
-            .rKnee:          +16,   // 무릎 굽힘
-            .lKnee:           -16,
-            .rAnklePitch:     -7,   // 발 평면 보상
-            .lAnklePitch:     +7,
-            .rAnkleRoll:       0,
-            .lAnkleRoll:       0,
-            .headPan:          0,
-            .headTilt:         0
+        // ROBOTIS motion_4096.bin page 9 step 0 의 raw 값을 직접 사용.
+        // raw → degree 변환 시 약간의 반올림이 있어 raw 그대로가 가장 정확.
+        // Mirror 검증: R+L sum (4015~4096, walkReady 의 정의값과 일치).
+        let raw: [JointID: Int] = [
+            // 상체 — ROBOTIS 공식 mirror 패턴 유지.
+            .rShoulderPitch: 1498,   // ≈ -48° 자연 직립
+            .lShoulderPitch: 2518,   // ≈ +41°
+            .rShoulderRoll:  1845,   // ≈ -18° 어깨 살짝 벌림
+            .lShoulderRoll:  2248,   // ≈ +18°
+            .rElbow:         2381,   // ≈ +29° 팔꿈치 굽힘
+            .lElbow:         1712,   // ≈ -29°
+            // 하체 — **ROBOTIS 공식 deep squat** (CoM 안정 핵심).
+            .rHipYaw:        2048,   // 0° (정면)
+            .lHipYaw:        2048,
+            .rHipRoll:       2052,   // ≈ +0.4°
+            .lHipRoll:       2044,   // ≈ -0.4°
+            .rHipPitch:      1637,   // ≈ -36° 다리 앞으로 굽힘 (squat 시작)
+            .lHipPitch:      2459,   // ≈ +36° (mirror)
+            .rKnee:          2653,   // ≈ +53° 무릎 깊게 굽힘 (충격 흡수)
+            .lKnee:          1443,   // ≈ -53° (mirror)
+            .rAnklePitch:    2389,   // ≈ +30° 발끝 위로 (CoM 보정)
+            .lAnklePitch:    1707,   // ≈ -30° (mirror)
+            .rAnkleRoll:     2057,   // ≈ +0.8°
+            .lAnkleRoll:     2039,   // ≈ -0.8°
+            .headPan:        2048,   // 0° 정면
+            .headTilt:       2161,   // ≈ +10° 약간 위 (시선)
         ]
-        var map: [JointID: Int] = [:]
-        for (j, d) in degrees {
-            map[j] = Kinematics.raw(fromDegrees: d)
-        }
-        return RobotPose(positions: map)
+        return RobotPose(positions: raw)
     }()
 
     /// 다윈 자연 직립 자세 — 양팔 옆구리, 다리 직립, 머리 정면.
