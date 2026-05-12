@@ -585,14 +585,17 @@ public struct MotionStudioView: View {
     public static func starterPages() -> [MotionPage] {
         // ── 1. 기본 자세 — 워크랩과 동일 walkReady (ROBOTIS standing posture).
         //    "여기서 시작" 의미. 다른 페이지에서 비상시 복귀할 안전 자세이기도 함.
+        // ID 정책: ROBOTIS 공식 1-54 (실 slot 일치), prebundled 200+,
+        // ReferenceMotionLibrary 110+ (walk_test=110-115, ergonomic=120-125,
+        // greeting=130-134, social=140-143). 모든 ID unique.
         let idle = MotionPage(
-            id: 1, name: "기본 자세",
+            id: 200, name: "기본 자세",
             steps: [.from(pose: .walkReady, playMs: 800, pauseMs: 200)]
         )
 
         // ── 2. T-자세 — 진단/캘리브레이션 표준.
         let tPose = MotionPage(
-            id: 2, name: "T 자세 (진단)",
+            id: 201, name: "T 자세 (진단)",
             steps: [
                 .from(pose: .walkReady, playMs: 300, pauseMs: 0),
                 .from(pose: .tPose,     playMs: 800, pauseMs: 400),
@@ -602,7 +605,7 @@ public struct MotionStudioView: View {
 
         // ── 3. 인사 — 머리 끄덕임으로 부드럽게 표현.
         let bow = MotionPage(
-            id: 3, name: "인사",
+            id: 202, name: "인사",
             steps: [
                 .from(pose: .walkReady, playMs: 200, pauseMs: 0),
                 .from(pose: .walkReady.with([
@@ -617,7 +620,7 @@ public struct MotionStudioView: View {
 
         // ── 4. 손 흔들기 — 우측 팔만, 어깨 충돌 한계 안에서.
         let wave = MotionPage(
-            id: 4, name: "손 흔들기",
+            id: 203, name: "손 흔들기",
             steps: [
                 .from(pose: .walkReady, playMs: 200, pauseMs: 0),
                 .from(pose: .walkReady.with([
@@ -645,7 +648,7 @@ public struct MotionStudioView: View {
 
         // ── 5. 앉기 — Hip pitch + Knee. 양쪽 부호가 반대인 점 유의 (mirror axis).
         let sit = MotionPage(
-            id: 5, name: "앉기",
+            id: 204, name: "앉기",
             steps: [
                 .from(pose: .walkReady, playMs: 300, pauseMs: 0),
                 .from(pose: .walkReady.with([
@@ -666,10 +669,12 @@ public struct MotionStudioView: View {
         //     ReferenceMotionLibrary 가 분류별로 분리 — 보행 점진 테스트, ergonomic 케어,
         //     인사·작별, HROS5 소셜 패턴. 라이선스·출처 주석은 해당 파일 참고.
         //     ID 충돌 회피: existing 1..5 + 10..32 = ~32 까지 사용 → 새 페이지는 50+.
-        let walkTest = ReferenceMotionLibrary.walkProgressionPages(startId: 50)
-        let ergonomic = ReferenceMotionLibrary.ergonomicPages(startId: 60)
-        let greetings = ReferenceMotionLibrary.greetingPages(startId: 70)
-        let social = ReferenceMotionLibrary.socialPages(startId: 80)
+        // ID 110+ — ROBOTIS 공식 (1-54) 와 충돌 회피. walk_test 의 startId 110 은
+        // motions/test/walk-progression-v1.bin 의 실 slot 110-115 와 일치.
+        let walkTest = ReferenceMotionLibrary.walkProgressionPages(startId: 110)
+        let ergonomic = ReferenceMotionLibrary.ergonomicPages(startId: 120)
+        let greetings = ReferenceMotionLibrary.greetingPages(startId: 130)
+        let social = ReferenceMotionLibrary.socialPages(startId: 140)
 
         // ROBOTIS 공식 motion_4096.bin 의 16 카탈로그 (gui_motion.yaml 기준).
         // ID 1..=54 — ROBOTIS slot 과 일치. 50+ ReferenceMotionLibrary 와 충돌
@@ -713,7 +718,9 @@ public struct MotionStudioView: View {
         }
 
         var pages: [MotionPage] = []
-        var id: UInt8 = 10
+        // ID 220+ — ROBOTIS 공식 1-54 + ReferenceMotionLibrary 110-143 +
+        // prebundled 200-204 와 충돌 없음.
+        var id: UInt8 = 220
 
         // 인사 — 깊은 인사
         pages.append(single(id, "깊은 인사", "bow_60", playMs: 1000, pauseMs: 400)); id += 1

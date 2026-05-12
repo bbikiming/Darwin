@@ -47,7 +47,7 @@ public enum OfficialCatalogReference {
     /// **Page 1 — Stand Up.** ROBOTIS 기본 자세, 다른 페이지의 anchor.
     public static func standUp(id: Int) -> MotionPage {
         MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 1 — Stand Up (기본 자세)",
             steps: [
                 .from(pose: .walkReady, playMs: 2000, pauseMs: 200)
@@ -64,7 +64,7 @@ public enum OfficialCatalogReference {
             .headTilt: Kinematics.raw(fromDegrees: 0)
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 2 — Yes (긍정 끄덕임)",
             steps: [
                 .from(pose: .walkReady, playMs: 300, pauseMs: 0),
@@ -85,7 +85,7 @@ public enum OfficialCatalogReference {
             .headPan: Kinematics.raw(fromDegrees: 25)
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 3 — No (좌우 흔들기)",
             steps: [
                 .from(pose: .walkReady, playMs: 300, pauseMs: 0),
@@ -105,7 +105,7 @@ public enum OfficialCatalogReference {
             .headTilt:       Kinematics.raw(fromDegrees: 15)    // 살짝 숙임
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 4 — Thank You (감사 인사)",
             steps: [
                 .from(pose: .walkReady, playMs: 400, pauseMs: 0),
@@ -118,7 +118,7 @@ public enum OfficialCatalogReference {
     /// **Page 9 — Walk Ready.** 보행 시작 자세.
     public static func walkReadyPose(id: Int) -> MotionPage {
         MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 9 — Walk Ready (보행 시작)",
             steps: [
                 .from(pose: .walkReady, playMs: 1500, pauseMs: 200)
@@ -139,7 +139,7 @@ public enum OfficialCatalogReference {
             .lShoulderPitch: Kinematics.raw(fromDegrees: 10)
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 15 — Sit Down (앉기)",
             steps: [
                 .from(pose: .walkReady, playMs: 600, pauseMs: 0),
@@ -156,7 +156,7 @@ public enum OfficialCatalogReference {
             .rElbow:         Kinematics.raw(fromDegrees: 50)
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 23 — Yes Go (출발 신호)",
             steps: [
                 .from(pose: .walkReady, playMs: 400, pauseMs: 0),
@@ -176,7 +176,7 @@ public enum OfficialCatalogReference {
             .headTilt:       Kinematics.raw(fromDegrees: -15)    // 머리 위로
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 24 — Wow (감탄 / 만세)",
             steps: [
                 .from(pose: .walkReady, playMs: 400, pauseMs: 0),
@@ -195,7 +195,7 @@ public enum OfficialCatalogReference {
             .lElbow:         Kinematics.raw(fromDegrees: -70)
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 27 — Oops (실수 / 어깨 으쓱)",
             steps: [
                 .from(pose: .walkReady, playMs: 400, pauseMs: 0),
@@ -223,7 +223,7 @@ public enum OfficialCatalogReference {
             .rElbow:         Kinematics.raw(fromDegrees: 60)
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 38 — Bye Bye (작별 인사)",
             steps: [
                 .from(pose: .walkReady, playMs: 400, pauseMs: 0),
@@ -256,7 +256,7 @@ public enum OfficialCatalogReference {
             .lElbow:         Kinematics.raw(fromDegrees: -40)
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 54 — Clap Please (박수 요청)",
             steps: [
                 .from(pose: .walkReady, playMs: 400, pauseMs: 0),
@@ -279,7 +279,7 @@ public enum OfficialCatalogReference {
     /// 에서만 의미). UI 에서는 fallen detection 자동 트리거가 표준 진입 경로.
     public static func getUpFront(id: Int) -> MotionPage {
         MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 10 — Get Up Front (앞 낙상 복구) ⚠ Caution",
             steps: [
                 .from(pose: .walkReady, playMs: 1500, pauseMs: 200)
@@ -290,7 +290,7 @@ public enum OfficialCatalogReference {
     /// **Page 11 — Get Up (Back).** 뒤쪽 낙상 복구. placeholder.
     public static func getUpBack(id: Int) -> MotionPage {
         MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 11 — Get Up Back (뒤 낙상 복구) ⚠ Caution",
             steps: [
                 .from(pose: .walkReady, playMs: 1500, pauseMs: 200)
@@ -322,7 +322,7 @@ public enum OfficialCatalogReference {
             .rAnklePitch:Kinematics.raw(fromDegrees: 0),
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 12 — Right Kick (오른발 킥) 🔴 HighRisk",
             steps: [
                 .from(pose: .walkReady, playMs: 500, pauseMs: 0),
@@ -351,7 +351,7 @@ public enum OfficialCatalogReference {
             .lAnklePitch:Kinematics.raw(fromDegrees: 0),
         ])
         return MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 13 — Left Kick (왼발 킥) 🔴 HighRisk",
             steps: [
                 .from(pose: .walkReady, playMs: 500, pauseMs: 0),
@@ -368,7 +368,7 @@ public enum OfficialCatalogReference {
     /// 실 robot 송출 절대 금지 (사용자 명시 + 안전 보장 X). UI 표시만.
     public static func handStanding(id: Int) -> MotionPage {
         MotionPage(
-            id: id,
+            id: UInt8(clamping: id),
             name: "공식 17 — Hand Standing (물구나무) 🔴 HighRisk",
             steps: [
                 .from(pose: .walkReady, playMs: 2000, pauseMs: 500)
