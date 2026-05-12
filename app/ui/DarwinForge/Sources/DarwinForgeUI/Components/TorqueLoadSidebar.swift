@@ -25,7 +25,7 @@ public struct TorqueLoadSidebar: View {
             if isOpen {
                 Divider()
                 contentPanel
-                    .frame(width: 158)
+                    .frame(width: 172)   // 158→172 — 두 자리수 ID 라벨 (ID11~ID19) 잘림 회피.
             }
         }
         .background(DFColor.canvas)
