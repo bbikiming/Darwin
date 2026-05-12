@@ -155,9 +155,17 @@ pub fn mirror_page(page: &MotionPage) -> MotionPage {
         new_compliance.swap(r_idx, l_idx);
     }
 
+    // Name involution — 이미 `_mirror` 접미사면 제거 (이중 적용 시 원본 복원).
+    // BLOCKER H5 정정.
+    let base = page.name.trim_end_matches('\0').trim();
+    let new_name = match base.strip_suffix("_mirror") {
+        Some(original) => original.to_string(),
+        None => format!("{}_mirror", base),
+    };
+
     MotionPage {
         id: page.id,
-        name: format!("{}_mirror", page.name.trim_end_matches('\0').trim()),
+        name: new_name,
         compliance: new_compliance,
         next_page: page.next_page,
         exit_page: page.exit_page,
@@ -309,6 +317,24 @@ mod tests {
         let p = page_12_right_kick();
         let m = mirror_page(&p);
         assert_eq!(m.name, "rk_mirror");
+    }
+
+    /// **BLOCKER H5 회귀** — name involution. `mirror(mirror(p)).name == p.name`.
+    /// 이중 적용 시 "_mirror_mirror" 가 아니라 원본 name 복원.
+    #[test]
+    fn mirror_name_is_involutive() {
+        let p = page_12_right_kick();
+        let m1 = mirror_page(&p);
+        assert_eq!(m1.name, "rk_mirror");
+        let m2 = mirror_page(&m1);
+        assert_eq!(m2.name, "rk", "mirror(mirror(p)).name should equal p.name");
+
+        // 직접 _mirror 가 들어있지 않은 이름은 첫 적용에 접미사 부여.
+        let p2 = page_1_init();
+        let m3 = mirror_page(&p2);
+        assert_eq!(m3.name, "init_mirror");
+        let m4 = mirror_page(&m3);
+        assert_eq!(m4.name, "init");
     }
 
     /// **Ground truth**: ROBOTIS 공식 페이지 12 (right kick) 의 좌우 반전이

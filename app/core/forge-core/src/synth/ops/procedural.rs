@@ -7,7 +7,7 @@
 //! - `Linear`: 직선 보간
 //! - `EaseInOut`: smoothstep
 //! - `Sine`: phase + omega 기반 (간이; 0..1 한 주기로 정규화)
-//! - `Bezier`: 2차 베지어 (4 제어점: 0, p1, p2, 1)
+//! - `Bezier`: **scalar 큐빅 베지어** — y(x) easing 함수 (x 좌표 무시, BLOCKER H4)
 
 use super::mirror::{FLAG_MASK, POSITION_MASK};
 use super::SynthOp;
@@ -33,11 +33,20 @@ pub enum Curve {
         /// 위상 오프셋 (rad).
         phase: f32,
     },
-    /// 큐빅 베지어 — 0, p1, p2, 1 제어점.
+    /// **Scalar 큐빅 베지어** — y 만 사용, x 좌표 무시.
+    ///
+    /// 표준 cubic Bezier 는 (x(t), y(t)) 의 2D 곡선이지만, 본 구현은 motion 합성에서
+    /// 의도하는 "0..1 입력에 대한 단조 increasing easing 함수" 로 단순화:
+    /// `y(x) = 3(1-x)²x·p1.1 + 3(1-x)x²·p2.1 + x³` — p1·p2 의 `.0` (x 좌표) 은
+    /// **무시되며**, `.1` (y 좌표) 만 곡선 결정에 사용된다.
+    ///
+    /// 즉 p1=(0.0, 0.2), p2=(1.0, 0.8) 과 p1=(0.5, 0.2), p2=(0.5, 0.8) 은 동일한
+    /// 곡선을 만든다. 표준 (CSS cubic-bezier) 호환 필요 시 별도 함수로 추가 권장.
+    /// (BLOCKER H4 — 2026-05-12 명시.)
     Bezier {
-        /// 제어점 1 (t, value).
+        /// 제어점 1 — **x 무시, y 만 사용** (0.0..1.0 권장).
         p1: (f32, f32),
-        /// 제어점 2.
+        /// 제어점 2 — **x 무시, y 만 사용** (0.0..1.0 권장).
         p2: (f32, f32),
     },
 }
@@ -119,7 +128,8 @@ pub fn evaluate_curve(curve: &Curve, t: f32) -> f32 {
             (0.5 + 0.5 * (omega * x * TAU + phase).sin()).clamp(0.0, 1.0)
         }
         Curve::Bezier { p1, p2 } => {
-            // 큐빅 베지어 t-axis 직접 사용 (간이): y = 3(1-x)²x·p1.1 + 3(1-x)x²·p2.1 + x³
+            // Scalar 큐빅 베지어 — y 만 사용. p1.0, p2.0 (x 좌표) 무시.
+            // y(x) = 3(1-x)²x·p1.1 + 3(1-x)x²·p2.1 + x³
             let one_t = 1.0 - x;
             (3.0 * one_t * one_t * x * p1.1 + 3.0 * one_t * x * x * p2.1 + x * x * x)
                 .clamp(0.0, 1.0)
