@@ -671,7 +671,14 @@ public struct MotionStudioView: View {
         let greetings = ReferenceMotionLibrary.greetingPages(startId: 70)
         let social = ReferenceMotionLibrary.socialPages(startId: 80)
 
+        // ROBOTIS 공식 motion_4096.bin 의 16 카탈로그 (gui_motion.yaml 기준).
+        // ID 1..=54 — ROBOTIS slot 과 일치. 50+ ReferenceMotionLibrary 와 충돌
+        // 없음 (공식 ID 1, 2, 3, 4, 9, 10, 11, 12, 13, 15, 17, 23, 24, 27, 38, 54).
+        // 실 ROBOTIS raw 송출은 `forge motion play --slot N --bin <path>` 사용.
+        let officialCatalog = OfficialCatalogReference.allPages(startId: 1)
+
         return [idle, tPose, bow, wave, sit] + extras
+             + officialCatalog
              + walkTest + ergonomic + greetings + social
     }
 
