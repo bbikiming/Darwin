@@ -92,11 +92,7 @@ impl AnyBus {
         }
     }
 
-    fn joint_set_torque(
-        &mut self,
-        joint: JointId,
-        on: bool,
-    ) -> Result<(), forge_core::Error> {
+    fn joint_set_torque(&mut self, joint: JointId, on: bool) -> Result<(), forge_core::Error> {
         match self {
             AnyBus::Posix(b) => JointController::new(b).set_torque(joint, on),
             AnyBus::Tcp(b) => JointController::new(b).set_torque(joint, on),
@@ -338,34 +334,50 @@ enum MotionAction {
 enum JointAction {
     /// 한 관절의 goal position 설정.
     Set {
-        #[arg(short, long)] port: Option<String>,
-        #[arg(short = 'r', long)] remote: Option<String>,
-        #[arg(short, long)] id: u8,
+        #[arg(short, long)]
+        port: Option<String>,
+        #[arg(short = 'r', long)]
+        remote: Option<String>,
+        #[arg(short, long)]
+        id: u8,
         position: u16,
-        #[arg(long, default_value_t = 1_000_000)] baud: u32,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
     },
     /// 한 관절의 현재 상태 출력.
     State {
-        #[arg(short, long)] port: Option<String>,
-        #[arg(short = 'r', long)] remote: Option<String>,
-        #[arg(short, long)] id: u8,
-        #[arg(long, default_value_t = 1_000_000)] baud: u32,
+        #[arg(short, long)]
+        port: Option<String>,
+        #[arg(short = 'r', long)]
+        remote: Option<String>,
+        #[arg(short, long)]
+        id: u8,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
     },
     /// 한 관절 또는 전체 관절의 토크 enable/disable.
     Torque {
-        #[arg(short, long)] port: Option<String>,
-        #[arg(short = 'r', long)] remote: Option<String>,
+        #[arg(short, long)]
+        port: Option<String>,
+        #[arg(short = 'r', long)]
+        remote: Option<String>,
         /// "all" 또는 ID 숫자.
-        #[arg(short, long)] target: String,
+        #[arg(short, long)]
+        target: String,
         /// "on" 또는 "off".
-        #[arg(short = 'e', long)] enable: String,
-        #[arg(long, default_value_t = 1_000_000)] baud: u32,
+        #[arg(short = 'e', long)]
+        enable: String,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
     },
     /// 비상 정지 — 모든 관절 토크 OFF.
     Estop {
-        #[arg(short, long)] port: Option<String>,
-        #[arg(short = 'r', long)] remote: Option<String>,
-        #[arg(long, default_value_t = 1_000_000)] baud: u32,
+        #[arg(short, long)]
+        port: Option<String>,
+        #[arg(short = 'r', long)]
+        remote: Option<String>,
+        #[arg(long, default_value_t = 1_000_000)]
+        baud: u32,
     },
 }
 
@@ -537,8 +549,7 @@ fn handle_serve(
     use std::sync::Arc;
     use std::thread;
 
-    let listener = TcpListener::bind(bind)
-        .map_err(|e| anyhow::anyhow!("bind {}: {}", bind, e))?;
+    let listener = TcpListener::bind(bind).map_err(|e| anyhow::anyhow!("bind {}: {}", bind, e))?;
     println!(
         "▶ forge serve (USB↔TCP bridge)\n  USB    : {} @ {} baud\n  Listen : {}\n  Max    : {} concurrent",
         port, baud, bind, max_connections
@@ -615,8 +626,7 @@ fn start_mdns_advertise(
         .map_err(|e| anyhow::anyhow!("local_addr: {}", e))?;
     let port = local_addr.port();
 
-    let daemon = ServiceDaemon::new()
-        .map_err(|e| anyhow::anyhow!("ServiceDaemon::new: {}", e))?;
+    let daemon = ServiceDaemon::new().map_err(|e| anyhow::anyhow!("ServiceDaemon::new: {}", e))?;
 
     let host_name = format!("{}.local.", name);
     let service_type = "_forge._tcp.local.";
@@ -911,7 +921,12 @@ fn handle_joint(action: JointAction) -> anyhow::Result<()> {
                 joint, id, clamped, position
             );
         }
-        JointAction::State { port, remote, id, baud } => {
+        JointAction::State {
+            port,
+            remote,
+            id,
+            baud,
+        } => {
             let joint = JointId::from_byte(id)
                 .ok_or_else(|| anyhow::anyhow!("invalid JointId raw {}", id))?;
             let mut bus = AnyBus::open(port.as_deref(), remote.as_deref(), baud, 200)?;

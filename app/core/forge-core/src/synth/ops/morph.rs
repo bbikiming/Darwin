@@ -47,11 +47,7 @@ pub struct Morph;
 impl SynthOp for Morph {
     type Params = MorphParams;
 
-    fn synthesize(
-        &self,
-        inputs: &[&MotionPage],
-        params: &Self::Params,
-    ) -> Result<Vec<MotionPage>> {
+    fn synthesize(&self, inputs: &[&MotionPage], params: &Self::Params) -> Result<Vec<MotionPage>> {
         if inputs.len() != 2 {
             return Err(SynthError::Other(format!(
                 "Morph expects 2 input pages, got {}",
@@ -69,7 +65,11 @@ impl SynthOp for Morph {
 
         let mut steps = Vec::with_capacity(n);
         for i in 0..n {
-            let t = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.5 };
+            let t = if n > 1 {
+                i as f32 / (n - 1) as f32
+            } else {
+                0.5
+            };
             let alpha = match &params.ratio {
                 MorphRatio::Constant(a) => a.clamp(0.0, 1.0),
                 MorphRatio::Progressive => smoothstep(t),
@@ -213,16 +213,8 @@ mod tests {
         let mut b_pos = [2048u16; NUM_JOINTS_IN_STEP];
         a_pos[1] = 1000;
         b_pos[1] = 3000;
-        let a = page_with_steps(vec![
-            step(a_pos, 16),
-            step(a_pos, 16),
-            step(a_pos, 16),
-        ]);
-        let b = page_with_steps(vec![
-            step(b_pos, 16),
-            step(b_pos, 16),
-            step(b_pos, 16),
-        ]);
+        let a = page_with_steps(vec![step(a_pos, 16), step(a_pos, 16), step(a_pos, 16)]);
+        let b = page_with_steps(vec![step(b_pos, 16), step(b_pos, 16), step(b_pos, 16)]);
         let op = Morph;
         let out = op
             .synthesize(

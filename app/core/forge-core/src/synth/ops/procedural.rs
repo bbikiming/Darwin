@@ -70,11 +70,7 @@ pub struct Procedural;
 impl SynthOp for Procedural {
     type Params = ProceduralParams;
 
-    fn synthesize(
-        &self,
-        inputs: &[&MotionPage],
-        params: &Self::Params,
-    ) -> Result<Vec<MotionPage>> {
+    fn synthesize(&self, inputs: &[&MotionPage], params: &Self::Params) -> Result<Vec<MotionPage>> {
         if inputs.len() != 2 {
             return Err(SynthError::Other(format!(
                 "Procedural expects 2 input pages (start, end), got {}",
@@ -93,7 +89,11 @@ impl SynthOp for Procedural {
         let n = params.num_steps.clamp(1, 7) as usize;
         let mut steps = Vec::with_capacity(n);
         for i in 0..n {
-            let t = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.5 };
+            let t = if n > 1 {
+                i as f32 / (n - 1) as f32
+            } else {
+                0.5
+            };
             let alpha = evaluate_curve(&params.curve, t);
             let blended = blend_step(a, b, alpha, params.play_time);
             steps.push(blended);
@@ -121,9 +121,7 @@ pub fn evaluate_curve(curve: &Curve, t: f32) -> f32 {
         Curve::Bezier { p1, p2 } => {
             // 큐빅 베지어 t-axis 직접 사용 (간이): y = 3(1-x)²x·p1.1 + 3(1-x)x²·p2.1 + x³
             let one_t = 1.0 - x;
-            (3.0 * one_t * one_t * x * p1.1
-                + 3.0 * one_t * x * x * p2.1
-                + x * x * x)
+            (3.0 * one_t * one_t * x * p1.1 + 3.0 * one_t * x * x * p2.1 + x * x * x)
                 .clamp(0.0, 1.0)
         }
     }
@@ -243,9 +241,7 @@ mod tests {
     fn procedural_requires_two_inputs() {
         let op = Procedural;
         let p = page_with_step_value(1, 1000);
-        assert!(op
-            .synthesize(&[&p], &ProceduralParams::default())
-            .is_err());
+        assert!(op.synthesize(&[&p], &ProceduralParams::default()).is_err());
     }
 
     #[test]

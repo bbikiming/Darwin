@@ -61,15 +61,15 @@ pub enum MirrorMode {
 ///
 /// 위 운동학 분석 표를 그대로 표현.
 pub const MIRROR_PAIRS: &[(u8, u8, MirrorMode)] = &[
-    (1, 2, MirrorMode::SwapReflect),  // SHOULDER_PITCH
-    (3, 4, MirrorMode::SwapReflect),  // SHOULDER_ROLL
-    (5, 6, MirrorMode::Swap),         // ELBOW
-    (7, 8, MirrorMode::SwapReflect),  // HIP_YAW
-    (9, 10, MirrorMode::SwapReflect), // HIP_ROLL
-    (11, 12, MirrorMode::Swap),       // HIP_PITCH
-    (13, 14, MirrorMode::Swap),       // KNEE
-    (15, 16, MirrorMode::Swap),       // ANKLE_PITCH
-    (17, 18, MirrorMode::SwapReflect),// ANKLE_ROLL
+    (1, 2, MirrorMode::SwapReflect),   // SHOULDER_PITCH
+    (3, 4, MirrorMode::SwapReflect),   // SHOULDER_ROLL
+    (5, 6, MirrorMode::Swap),          // ELBOW
+    (7, 8, MirrorMode::SwapReflect),   // HIP_YAW
+    (9, 10, MirrorMode::SwapReflect),  // HIP_ROLL
+    (11, 12, MirrorMode::Swap),        // HIP_PITCH
+    (13, 14, MirrorMode::Swap),        // KNEE
+    (15, 16, MirrorMode::Swap),        // ANKLE_PITCH
+    (17, 18, MirrorMode::SwapReflect), // ANKLE_ROLL
 ];
 
 /// HEAD_PAN — 자기 자리에서 12-bit 중심 반전.
@@ -169,11 +169,7 @@ pub struct Mirror;
 impl SynthOp for Mirror {
     type Params = MirrorParams;
 
-    fn synthesize(
-        &self,
-        inputs: &[&MotionPage],
-        params: &Self::Params,
-    ) -> Result<Vec<MotionPage>> {
+    fn synthesize(&self, inputs: &[&MotionPage], params: &Self::Params) -> Result<Vec<MotionPage>> {
         if inputs.is_empty() {
             return Err(crate::synth::SynthError::Other(
                 "Mirror requires exactly 1 input page".to_string(),

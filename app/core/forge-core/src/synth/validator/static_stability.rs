@@ -138,10 +138,7 @@ mod tests {
         // r=2000, l=2100 → diff 100 << threshold
         let v = StaticStabilityValidator::default();
         let p = page_with_hip_pitch(2000, 2100);
-        assert!(matches!(
-            v.validate(&p).unwrap(),
-            ValidatorReport::Pass(_)
-        ));
+        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
     }
 
     #[test]
@@ -162,19 +159,13 @@ mod tests {
         let v = StaticStabilityValidator::with_metadata(meta);
         // 매우 비대칭이지만 single_foot_ok=true 이라 통과
         let p = page_with_hip_pitch(200, 3900);
-        assert!(matches!(
-            v.validate(&p).unwrap(),
-            ValidatorReport::Pass(_)
-        ));
+        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
     }
 
     #[test]
     fn skip_marker_is_ignored() {
         let v = StaticStabilityValidator::default();
         let p = page_with_hip_pitch(SKIP_MARKER, 3900);
-        assert!(matches!(
-            v.validate(&p).unwrap(),
-            ValidatorReport::Pass(_)
-        ));
+        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
     }
 }

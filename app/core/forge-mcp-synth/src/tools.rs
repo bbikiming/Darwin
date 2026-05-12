@@ -339,43 +339,44 @@ fn motion_to_json(motion: &Motion) -> Result<String, ToolError> {
 fn tool_library_search(args: &Value, engine: &Engine) -> Result<String, ToolError> {
     let tag = get_opt_str(args, "tag");
     let safety = get_opt_str(args, "safety");
-    engine.with_library(|lib| {
-        let mut ids = if let Some(t) = &tag {
-            lib.by_tag(&Tag(t.clone()))
-        } else if let Some(s) = &safety {
-            match parse_safety(s) {
-                Ok(sc) => lib.by_safety(sc),
-                Err(_) => Vec::new(),
-            }
-        } else {
-            lib.ids()
-        };
-        ids.sort_unstable();
+    engine
+        .with_library(|lib| {
+            let mut ids = if let Some(t) = &tag {
+                lib.by_tag(&Tag(t.clone()))
+            } else if let Some(s) = &safety {
+                match parse_safety(s) {
+                    Ok(sc) => lib.by_safety(sc),
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                lib.ids()
+            };
+            ids.sort_unstable();
 
-        let mut output = String::new();
-        output.push_str(&format!("# {} pages\n\n", ids.len()));
-        for id in ids {
-            let page = lib.get(id).expect("listed");
-            let meta = lib.metadata(id);
-            let display = meta
-                .and_then(|m| m.display_name.clone())
-                .unwrap_or_default();
-            let tags: Vec<String> = meta
-                .map(|m| m.tags.iter().map(|t| t.0.clone()).collect())
-                .unwrap_or_default();
-            output.push_str(&format!(
-                "- **{}**  `{}`  steps={}  safety={:?}  display=\"{}\"  tags=[{}]\n",
-                id,
-                page.name,
-                page.steps.len(),
-                page.safety_class,
-                display,
-                tags.join(", ")
-            ));
-        }
-        output
-    })
-    .map_err(ToolError::from)
+            let mut output = String::new();
+            output.push_str(&format!("# {} pages\n\n", ids.len()));
+            for id in ids {
+                let page = lib.get(id).expect("listed");
+                let meta = lib.metadata(id);
+                let display = meta
+                    .and_then(|m| m.display_name.clone())
+                    .unwrap_or_default();
+                let tags: Vec<String> = meta
+                    .map(|m| m.tags.iter().map(|t| t.0.clone()).collect())
+                    .unwrap_or_default();
+                output.push_str(&format!(
+                    "- **{}**  `{}`  steps={}  safety={:?}  display=\"{}\"  tags=[{}]\n",
+                    id,
+                    page.name,
+                    page.steps.len(),
+                    page.safety_class,
+                    display,
+                    tags.join(", ")
+                ));
+            }
+            output
+        })
+        .map_err(ToolError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -530,8 +531,7 @@ fn tool_synth_mutate(args: &Value, engine: &Engine) -> Result<String, ToolError>
     }
     if mutations.is_empty() {
         return Err(ToolError::BadArg(
-            "at least one of time_scale/speed_scale/amplitude/repeat/joint_offsets required"
-                .into(),
+            "at least one of time_scale/speed_scale/amplitude/repeat/joint_offsets required".into(),
         ));
     }
     let new_id = get_opt_u8(args, "new_id").unwrap_or(100);
@@ -609,10 +609,7 @@ fn tool_synth_procedural(args: &Value, engine: &Engine) -> Result<String, ToolEr
 // Tool 9: validate
 // ---------------------------------------------------------------------------
 
-fn validators_pipeline(
-    page: &MotionPage,
-    single_foot_ok: bool,
-) -> [ValidatorReport; 4] {
+fn validators_pipeline(page: &MotionPage, single_foot_ok: bool) -> [ValidatorReport; 4] {
     let v1 = JointLimitValidator;
     let v2 = VelocityValidator;
     let v3 = SelfCollisionValidator;
@@ -1025,12 +1022,7 @@ mod tests {
         }
         // page 1 init (2 step) ↔ page 9 walkready (1 step)
         // morph 은 min(steps) = 1 step 결과.
-        let out = call_tool(
-            "synth_morph",
-            &json!({"a": 1, "b": 9, "ratio": 0.5}),
-            &e,
-        )
-        .unwrap();
+        let out = call_tool("synth_morph", &json!({"a": 1, "b": 9, "ratio": 0.5}), &e).unwrap();
         let motion: Motion = Motion::from_json(&out).unwrap();
         assert_eq!(motion.pages.len(), 1);
         assert_eq!(motion.pages[0].steps.len(), 1);

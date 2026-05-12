@@ -26,9 +26,7 @@ use std::path::Path;
 
 use crate::motion::bin4096::{read_bin4096_file, RawPage, PAGE_SIZE_BYTES};
 use crate::motion::page::NUM_JOINTS_IN_STEP;
-use crate::motion::{
-    MotionPage, MotionStep, OfficialCatalogEntry, SafetyClass, OFFICIAL_CATALOG,
-};
+use crate::motion::{MotionPage, MotionStep, OfficialCatalogEntry, SafetyClass, OFFICIAL_CATALOG};
 
 use super::error::{Result, SynthError};
 use super::metadata::{BodyRegion, PageMetadata, Tag};
@@ -212,8 +210,7 @@ impl PageLibrary {
     /// - S9-2c: `SafetyClass` → `PageMetadata.single_foot_ok` 등
     /// - S9-2d: 검색용 in-memory 저장 (`self.pages`, `self.metadata`)
     pub fn from_official_bin(path: &Path) -> Result<Self> {
-        let raw_pages =
-            read_bin4096_file(path).map_err(|e| SynthError::Decode(e.to_string()))?;
+        let raw_pages = read_bin4096_file(path).map_err(|e| SynthError::Decode(e.to_string()))?;
         let mut lib = Self::new();
         for entry in OFFICIAL_CATALOG {
             let Some(raw) = raw_pages.iter().find(|p| p.index as u16 == entry.id) else {

@@ -392,10 +392,7 @@ mod tests {
 
     #[test]
     fn file_round_trip() {
-        let tmp = std::env::temp_dir().join(format!(
-            "manifest_test_{}.json",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("manifest_test_{}.json", std::process::id()));
         let m = Manifest::new(104, "file_test", "layer").with_input(&page_1_init());
         m.write_to_path(&tmp).expect("write");
         let loaded = Manifest::read_from_path(&tmp).expect("read");

@@ -37,10 +37,7 @@ impl Validator for JointLimitValidator {
                 let raw = step.positions[i];
 
                 // SKIP / INVALID / TORQUE_OFF 제외
-                if raw == SKIP_MARKER
-                    || (raw & FLAG_INVALID) != 0
-                    || (raw & FLAG_TORQUE_OFF) != 0
-                {
+                if raw == SKIP_MARKER || (raw & FLAG_INVALID) != 0 || (raw & FLAG_TORQUE_OFF) != 0 {
                     continue;
                 }
 
@@ -100,10 +97,7 @@ mod tests {
     fn neutral_page_passes() {
         let v = JointLimitValidator;
         let p = neutral_page();
-        assert!(matches!(
-            v.validate(&p).unwrap(),
-            ValidatorReport::Pass(_)
-        ));
+        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
     }
 
     #[test]
@@ -122,10 +116,7 @@ mod tests {
         let mut p = neutral_page();
         // SKIP marker should not trigger out-of-range
         p.steps[0].positions[JointId::RKnee as usize] = SKIP_MARKER;
-        assert!(matches!(
-            v.validate(&p).unwrap(),
-            ValidatorReport::Pass(_)
-        ));
+        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
     }
 
     #[test]
@@ -134,9 +125,6 @@ mod tests {
         let mut p = neutral_page();
         // Set INVALID flag bit + a value that would otherwise fail
         p.steps[0].positions[JointId::RKnee as usize] = FLAG_INVALID | 0;
-        assert!(matches!(
-            v.validate(&p).unwrap(),
-            ValidatorReport::Pass(_)
-        ));
+        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
     }
 }

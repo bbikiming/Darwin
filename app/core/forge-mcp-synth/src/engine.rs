@@ -57,15 +57,9 @@ impl Engine {
     /// `with_library(|lib| ...)` 패턴으로 호출 — `MutexGuard` 라이프타임을
     /// 호출자에 노출하지 않고 closure 안에서만 빌림.
     pub fn with_library<R>(&self, f: impl FnOnce(&PageLibrary) -> R) -> Result<R, EngineError> {
-        let mut guard = self
-            .library
-            .lock()
-            .map_err(|_| EngineError::Poisoned)?;
+        let mut guard = self.library.lock().map_err(|_| EngineError::Poisoned)?;
         if guard.is_none() {
-            let path = self
-                .bin_path
-                .as_ref()
-                .ok_or(EngineError::NoBinConfigured)?;
+            let path = self.bin_path.as_ref().ok_or(EngineError::NoBinConfigured)?;
             if !path.exists() {
                 return Err(EngineError::BinNotFound(path.clone()));
             }
@@ -79,20 +73,14 @@ impl Engine {
 
     /// 라이브러리 강제 reload — 디스크 변경 후 호출.
     pub fn reload(&self) -> Result<(), EngineError> {
-        let mut guard = self
-            .library
-            .lock()
-            .map_err(|_| EngineError::Poisoned)?;
+        let mut guard = self.library.lock().map_err(|_| EngineError::Poisoned)?;
         *guard = None;
         Ok(())
     }
 
     /// `bin_path` 가 존재하는지 확인.
     pub fn bin_exists(&self) -> bool {
-        self.bin_path
-            .as_ref()
-            .map(|p| p.exists())
-            .unwrap_or(false)
+        self.bin_path.as_ref().map(|p| p.exists()).unwrap_or(false)
     }
 }
 

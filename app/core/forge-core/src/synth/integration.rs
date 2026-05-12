@@ -509,7 +509,11 @@ mod tests {
                 .expect("mirror");
 
             // step 수 보존
-            assert_eq!(twice[0].steps.len(), page.steps.len(), "page {id} step count");
+            assert_eq!(
+                twice[0].steps.len(),
+                page.steps.len(),
+                "page {id} step count"
+            );
             // 모든 step 의 positions 가 원본과 일치 (involution).
             for (a, b) in page.steps.iter().zip(twice[0].steps.iter()) {
                 assert_eq!(

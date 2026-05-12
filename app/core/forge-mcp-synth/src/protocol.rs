@@ -211,7 +211,11 @@ mod tests {
         };
         let resp = handle_request(&req, &test_engine());
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
-        assert!(tools.len() >= 11, "expected >= 11 tools, got {}", tools.len());
+        assert!(
+            tools.len() >= 11,
+            "expected >= 11 tools, got {}",
+            tools.len()
+        );
         let names: Vec<String> = tools
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
@@ -229,7 +233,10 @@ mod tests {
             "commit",
             "preview",
         ] {
-            assert!(names.contains(&required.to_string()), "missing tool: {required}");
+            assert!(
+                names.contains(&required.to_string()),
+                "missing tool: {required}"
+            );
         }
     }
 

@@ -207,9 +207,7 @@ pub unsafe extern "C" fn fc_bus_open_tcp(
             return ptr::null_mut();
         }
     };
-    match catch_unwind(|| {
-        TcpBus::connect(addr, Duration::from_millis(connect_timeout_ms as u64))
-    }) {
+    match catch_unwind(|| TcpBus::connect(addr, Duration::from_millis(connect_timeout_ms as u64))) {
         Ok(Ok(p)) => {
             let bus = Bus::new(p).with_timeout(Duration::from_millis(io_timeout_ms as u64));
             if !out_err.is_null() {
@@ -374,7 +372,9 @@ pub unsafe extern "C" fn fc_bus_board_snapshot(
             let mut cm = CmController::new(b);
             match cm.snapshot() {
                 Ok(s) => {
-                    unsafe { *out = s.into(); }
+                    unsafe {
+                        *out = s.into();
+                    }
                     FC_OK
                 }
                 Err(e) => err_code(&e),
@@ -547,7 +547,9 @@ pub unsafe extern "C" fn fc_joint_set_moving_speed(
     safe_call(|| {
         let bus = &mut *handle;
         fn run<P: forge_core::serial::SerialPort>(
-            b: &mut Bus<P>, joint: JointId, speed: u16,
+            b: &mut Bus<P>,
+            joint: JointId,
+            speed: u16,
         ) -> Result<(), forge_core::Error> {
             let low = (speed & 0xFF) as u8;
             let high = ((speed >> 8) & 0xFF) as u8;

@@ -30,8 +30,7 @@ impl TcpBus {
             .next()
             .ok_or_else(|| Error::Other(format!("no address for {}", addr)))?;
 
-        let stream = TcpStream::connect_timeout(&sock_addr, connect_timeout)
-            .map_err(Error::Io)?;
+        let stream = TcpStream::connect_timeout(&sock_addr, connect_timeout).map_err(Error::Io)?;
         // Dynamixel은 작은 패킷의 ping-pong이라 nodelay가 latency에 결정적.
         let _ = stream.set_nodelay(true);
         Ok(Self {
@@ -143,7 +142,8 @@ mod tests {
         let mut bus = TcpBus::connect(&addr.to_string(), Duration::from_millis(500)).unwrap();
         bus.write_all(&[0xAA, 0xBB, 0xCC, 0xDD]).unwrap();
         let mut buf = [0u8; 4];
-        bus.read_exact(&mut buf, Duration::from_millis(500)).unwrap();
+        bus.read_exact(&mut buf, Duration::from_millis(500))
+            .unwrap();
         assert_eq!(buf, [0xAA, 0xBB, 0xCC, 0xDD]);
         h.join().ok();
     }

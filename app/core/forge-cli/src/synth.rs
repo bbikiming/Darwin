@@ -261,7 +261,14 @@ pub fn handle(cmd: SynthCmd) -> anyhow::Result<()> {
             name,
             bin,
             out,
-        } => handle_sequence(&ids, transition_ms, base_id, name, bin.as_deref(), out.as_deref()),
+        } => handle_sequence(
+            &ids,
+            transition_ms,
+            base_id,
+            name,
+            bin.as_deref(),
+            out.as_deref(),
+        ),
         SynthCmd::Layer {
             upper,
             lower,
@@ -404,8 +411,8 @@ fn write_motion_pages(pages: Vec<MotionPage>, out: Option<&std::path::Path>) -> 
 fn read_motion_pages(path: &std::path::Path) -> anyhow::Result<Vec<MotionPage>> {
     let s = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("read {}: {}", path.display(), e))?;
-    let motion: Motion = Motion::from_json(&s)
-        .map_err(|e| anyhow::anyhow!("parse motion JSON: {}", e))?;
+    let motion: Motion =
+        Motion::from_json(&s).map_err(|e| anyhow::anyhow!("parse motion JSON: {}", e))?;
     if motion.pages.is_empty() {
         anyhow::bail!("page JSON has no pages");
     }
@@ -485,7 +492,9 @@ fn handle_library(action: LibraryAction) -> anyhow::Result<()> {
             for id in ids {
                 let page = lib.get(id).expect("listed id");
                 let meta = lib.metadata(id);
-                let display = meta.and_then(|m| m.display_name.clone()).unwrap_or_default();
+                let display = meta
+                    .and_then(|m| m.display_name.clone())
+                    .unwrap_or_default();
                 let tags: String = meta
                     .map(|m| {
                         m.tags
@@ -754,10 +763,14 @@ fn handle_validate(page_path: &std::path::Path, single_foot_ok: bool) -> anyhow:
         };
         let v4 = StaticStabilityValidator::with_metadata(meta);
         let reports = [
-            v1.validate(page).map_err(|e| anyhow::anyhow!("v1: {}", e))?,
-            v2.validate(page).map_err(|e| anyhow::anyhow!("v2: {}", e))?,
-            v3.validate(page).map_err(|e| anyhow::anyhow!("v3: {}", e))?,
-            v4.validate(page).map_err(|e| anyhow::anyhow!("v4: {}", e))?,
+            v1.validate(page)
+                .map_err(|e| anyhow::anyhow!("v1: {}", e))?,
+            v2.validate(page)
+                .map_err(|e| anyhow::anyhow!("v2: {}", e))?,
+            v3.validate(page)
+                .map_err(|e| anyhow::anyhow!("v3: {}", e))?,
+            v4.validate(page)
+                .map_err(|e| anyhow::anyhow!("v4: {}", e))?,
         ];
         for r in &reports {
             let stage = format!("{:?}", r.stage());
@@ -829,10 +842,7 @@ fn handle_commit(
     let mut data = std::fs::read(&bin_path)?;
     let offset = (slot as usize) * 512;
     if offset + 512 > data.len() {
-        anyhow::bail!(
-            "bin file size {} too small for slot {slot}",
-            data.len()
-        );
+        anyhow::bail!("bin file size {} too small for slot {slot}", data.len());
     }
     data[offset..offset + 512].copy_from_slice(&bytes);
     std::fs::write(&bin_path, data)?;
@@ -844,7 +854,8 @@ fn handle_commit(
     );
 
     // Manifest sidecar 생성
-    let manifest = Manifest::new(slot as u16, pages[0].name.clone(), "commit").with_input(&pages[0]);
+    let manifest =
+        Manifest::new(slot as u16, pages[0].name.clone(), "commit").with_input(&pages[0]);
     let manifest_path = bin_path.with_extension(format!("slot{slot}.manifest.json"));
     let json = manifest
         .to_json_pretty()
@@ -931,9 +942,7 @@ fn simulate_ascii(pages: &[MotionPage]) -> anyhow::Result<()> {
             let play_ms = step.play_ms() as u32;
             let pause_ms = step.pause_ms() as u32;
             elapsed_ms += play_ms + pause_ms;
-            println!(
-                "  step {i}: t+{elapsed_ms:>5}ms  play={play_ms:>4}ms  pause={pause_ms:>4}ms"
-            );
+            println!("  step {i}: t+{elapsed_ms:>5}ms  play={play_ms:>4}ms  pause={pause_ms:>4}ms");
             // 핵심 4 관절 표시 (어깨, 골반, 무릎, 발목)
             let head_tilt = step.positions[19] & 0x0FFF;
             let r_shoulder = step.positions[0] & 0x0FFF;
@@ -995,8 +1004,14 @@ mod tests {
 
     #[test]
     fn parse_curve_resolves_named_variants() {
-        assert!(matches!(parse_curve("linear", 1.0, 0.0).unwrap(), Curve::Linear));
-        assert!(matches!(parse_curve("ease", 1.0, 0.0).unwrap(), Curve::EaseInOut));
+        assert!(matches!(
+            parse_curve("linear", 1.0, 0.0).unwrap(),
+            Curve::Linear
+        ));
+        assert!(matches!(
+            parse_curve("ease", 1.0, 0.0).unwrap(),
+            Curve::EaseInOut
+        ));
         assert!(matches!(
             parse_curve("sine", 2.0, 0.5).unwrap(),
             Curve::Sine {
@@ -1004,7 +1019,10 @@ mod tests {
                 phase: 0.5
             }
         ));
-        assert!(matches!(parse_curve("bezier", 1.0, 0.0).unwrap(), Curve::Bezier { .. }));
+        assert!(matches!(
+            parse_curve("bezier", 1.0, 0.0).unwrap(),
+            Curve::Bezier { .. }
+        ));
         assert!(parse_curve("unknown", 1.0, 0.0).is_err());
     }
 

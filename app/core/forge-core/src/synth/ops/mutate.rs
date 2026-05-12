@@ -13,8 +13,8 @@
 //! 모든 변형은 **byte-preserving** — 상위 플래그 (`0x4000`/`0x2000`) 보존.
 //! 결정론적 — 같은 입력 + 같은 mutation list = 같은 출력.
 
-use super::SynthOp;
 use super::mirror::{FLAG_MASK, MAX_POSITION, POSITION_MASK};
+use super::SynthOp;
 use crate::motion::MotionPage;
 use crate::synth::{Result, SynthError};
 
@@ -165,11 +165,7 @@ pub struct Mutate;
 impl SynthOp for Mutate {
     type Params = MutateParams;
 
-    fn synthesize(
-        &self,
-        inputs: &[&MotionPage],
-        params: &Self::Params,
-    ) -> Result<Vec<MotionPage>> {
+    fn synthesize(&self, inputs: &[&MotionPage], params: &Self::Params) -> Result<Vec<MotionPage>> {
         if inputs.is_empty() {
             return Err(SynthError::Other(
                 "Mutate requires exactly 1 input page".to_string(),
@@ -278,9 +274,21 @@ mod tests {
     #[test]
     fn joint_offset_invalid_id_errors() {
         let mut p = page_1_init();
-        let r = apply_mutation(&mut p, &Mutation::JointOffset { joint_id: 0, delta: 0 });
+        let r = apply_mutation(
+            &mut p,
+            &Mutation::JointOffset {
+                joint_id: 0,
+                delta: 0,
+            },
+        );
         assert!(r.is_err());
-        let r = apply_mutation(&mut p, &Mutation::JointOffset { joint_id: 21, delta: 0 });
+        let r = apply_mutation(
+            &mut p,
+            &Mutation::JointOffset {
+                joint_id: 21,
+                delta: 0,
+            },
+        );
         assert!(r.is_err());
     }
 

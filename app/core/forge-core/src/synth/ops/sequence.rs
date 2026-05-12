@@ -22,8 +22,8 @@
 //! 자동으로 `[7-step 페이지 A] -- next=B --> [n-step 페이지 B]` chain 으로 변환.
 //! 각 페이지의 ID 는 `MutateParams.base_id` + offset 으로 할당.
 
-use super::SynthOp;
 use super::mirror::{FLAG_MASK, POSITION_MASK};
+use super::SynthOp;
 use crate::motion::page::NUM_JOINTS_IN_STEP;
 use crate::motion::{MotionPage, MotionStep};
 use crate::synth::{Result, SynthError};
@@ -68,7 +68,7 @@ fn blend_position(a: u16, b: u16) -> u16 {
     let b_invalid = b_flags & INVALID_BIT != 0;
 
     match (a_invalid, b_invalid) {
-        (true, true) => a, // 둘 다 INVALID → 그대로
+        (true, true) => a,  // 둘 다 INVALID → 그대로
         (true, false) => b, // a 만 INVALID → b 사용 (보간 생략)
         (false, true) => a, // b 만 INVALID → a 사용
         (false, false) => {
@@ -148,11 +148,13 @@ fn split_into_pages(
     }
     let total_steps = steps.len();
     let total_pages = total_steps.div_ceil(MAX_STEPS_PER_PAGE);
-    let last_id = (base_id as usize).checked_add(total_pages - 1).ok_or_else(|| {
-        SynthError::Other(format!(
-            "Sequence: chain of {total_pages} pages exceeds u8 page ID range"
-        ))
-    })?;
+    let last_id = (base_id as usize)
+        .checked_add(total_pages - 1)
+        .ok_or_else(|| {
+            SynthError::Other(format!(
+                "Sequence: chain of {total_pages} pages exceeds u8 page ID range"
+            ))
+        })?;
     if last_id > 255 {
         return Err(SynthError::Other(format!(
             "Sequence: chain extends to id {last_id} > 255"
@@ -202,11 +204,7 @@ pub struct Sequence;
 impl SynthOp for Sequence {
     type Params = SequenceParams;
 
-    fn synthesize(
-        &self,
-        inputs: &[&MotionPage],
-        params: &Self::Params,
-    ) -> Result<Vec<MotionPage>> {
+    fn synthesize(&self, inputs: &[&MotionPage], params: &Self::Params) -> Result<Vec<MotionPage>> {
         let steps = flatten_steps(inputs, params.transition_ms)?;
         let name = params.new_name.clone().unwrap_or_else(|| {
             inputs
@@ -297,7 +295,7 @@ mod tests {
     #[test]
     fn flatten_two_pages_with_transition_inserts_one_bridge() {
         let a = page_1_init(); // 2 step
-        let b = page_2_ok();   // 5 step
+        let b = page_2_ok(); // 5 step
         let steps = flatten_steps(&[&a, &b], 800).expect("flatten");
         // 2 + 1 bridge + 5 = 8 step
         assert_eq!(steps.len(), 8);
@@ -309,16 +307,16 @@ mod tests {
     #[test]
     fn flatten_two_pages_with_zero_transition_omits_bridge() {
         let a = page_1_init(); // 2 step
-        let b = page_2_ok();   // 5 step
+        let b = page_2_ok(); // 5 step
         let steps = flatten_steps(&[&a, &b], 0).expect("flatten");
         assert_eq!(steps.len(), 7); // bridge 없음
     }
 
     #[test]
     fn flatten_three_pages_inserts_two_bridges() {
-        let a = page_1_init();        // 2
-        let b = page_9_walkready();    // 1
-        let c = page_16_stand_up();    // 1
+        let a = page_1_init(); // 2
+        let b = page_9_walkready(); // 1
+        let c = page_16_stand_up(); // 1
         let steps = flatten_steps(&[&a, &b, &c], 800).expect("flatten");
         // 2 + 1 + 1 + 1 + 1 = 6
         assert_eq!(steps.len(), 6);
@@ -341,7 +339,8 @@ mod tests {
                 play_time: 16,
             })
             .collect();
-        let pages = split_into_pages(steps, 100, "test".to_string(), &page_1_init()).expect("split");
+        let pages =
+            split_into_pages(steps, 100, "test".to_string(), &page_1_init()).expect("split");
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].id, 100);
         assert_eq!(pages[0].next_page, 0);
@@ -357,7 +356,8 @@ mod tests {
                 play_time: 16,
             })
             .collect();
-        let pages = split_into_pages(steps, 100, "long".to_string(), &page_1_init()).expect("split");
+        let pages =
+            split_into_pages(steps, 100, "long".to_string(), &page_1_init()).expect("split");
         assert_eq!(pages.len(), 2);
         assert_eq!(pages[0].id, 100);
         assert_eq!(pages[0].next_page, 101);
@@ -401,9 +401,9 @@ mod tests {
 
     #[test]
     fn sequence_two_pages_with_bridge_chains_pages_when_overflow() {
-        let a = page_2_ok();         // 5 step
+        let a = page_2_ok(); // 5 step
         let b = page_12_right_kick(); // 7 step
-        // 5 + 1 bridge + 7 = 13 step → 2 페이지 (7 + 6)
+                                      // 5 + 1 bridge + 7 = 13 step → 2 페이지 (7 + 6)
         let op = Sequence;
         let params = SequenceParams {
             transition_ms: 800,
@@ -447,7 +447,10 @@ mod tests {
         };
         let out = op.synthesize(&[&a, &b], &params).expect("synth");
         for page in &out {
-            assert_eq!(page.safety_class, a.safety_class, "HighRisk inherited from first input");
+            assert_eq!(
+                page.safety_class, a.safety_class,
+                "HighRisk inherited from first input"
+            );
             assert_eq!(page.speed, a.speed);
             assert_eq!(page.accel, a.accel);
         }

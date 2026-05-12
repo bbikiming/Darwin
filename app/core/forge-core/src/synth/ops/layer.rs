@@ -70,11 +70,7 @@ pub struct Layer;
 impl SynthOp for Layer {
     type Params = LayerParams;
 
-    fn synthesize(
-        &self,
-        inputs: &[&MotionPage],
-        params: &Self::Params,
-    ) -> Result<Vec<MotionPage>> {
+    fn synthesize(&self, inputs: &[&MotionPage], params: &Self::Params) -> Result<Vec<MotionPage>> {
         if inputs.len() != 3 {
             return Err(SynthError::Other(format!(
                 "Layer expects exactly 3 input pages [upper, lower, head]; got {}",
@@ -250,7 +246,10 @@ mod tests {
             head: Some(&head),
         };
         let out = layer_pages(&inputs, &LayerParams::default()).unwrap();
-        assert_eq!(out.steps[0].positions[JointId::RShoulderPitch as usize], 1500);
+        assert_eq!(
+            out.steps[0].positions[JointId::RShoulderPitch as usize],
+            1500
+        );
         assert_eq!(out.steps[0].positions[JointId::RKnee as usize], 3500);
         assert_eq!(out.steps[0].positions[JointId::HeadPan as usize], 3000);
     }
@@ -265,7 +264,10 @@ mod tests {
         };
         let out = layer_pages(&inputs, &LayerParams::default()).unwrap();
         // upper slot 은 fallback 으로 2048 또는 lower 의 값 → 여기선 lower 가 upper 슬롯에서 2048
-        assert_eq!(out.steps[0].positions[JointId::RShoulderPitch as usize], 2048);
+        assert_eq!(
+            out.steps[0].positions[JointId::RShoulderPitch as usize],
+            2048
+        );
         assert_eq!(out.steps[0].positions[JointId::RKnee as usize], 3500);
     }
 
@@ -273,9 +275,7 @@ mod tests {
     fn layer_synth_op_requires_three_inputs() {
         let op = Layer;
         let p = page_for_region(0, 0);
-        assert!(op
-            .synthesize(&[&p], &LayerParams::default())
-            .is_err());
+        assert!(op.synthesize(&[&p], &LayerParams::default()).is_err());
     }
 
     #[test]
@@ -298,6 +298,9 @@ mod tests {
         .unwrap();
         assert_eq!(out.steps.len(), 5);
         // 5번째 step 도 동일 hold
-        assert_eq!(out.steps[4].positions[JointId::RShoulderPitch as usize], 1500);
+        assert_eq!(
+            out.steps[4].positions[JointId::RShoulderPitch as usize],
+            1500
+        );
     }
 }

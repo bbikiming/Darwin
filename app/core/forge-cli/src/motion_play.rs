@@ -18,13 +18,11 @@ use std::time::Duration;
 
 use clap::Args;
 use forge_core::control::{ExecuteOptions, JointController};
+use forge_core::dynamixel::Bus;
 use forge_core::joint::JointId;
-use forge_core::motion::{
-    bin4096::read_bin4096_file, MotionPage, MotionStep, NUM_JOINTS_IN_STEP,
-};
+use forge_core::motion::{bin4096::read_bin4096_file, MotionPage, MotionStep, NUM_JOINTS_IN_STEP};
 use forge_core::safety::torque_ramp::{TorqueRampProfile, TorqueRamper};
 use forge_core::serial::PosixSerial;
-use forge_core::dynamixel::Bus;
 
 /// MX-28 position 의 12-bit value 마스크.
 const POSITION_MASK: u16 = 0x0FFF;
@@ -85,7 +83,11 @@ enum PageSource {
 }
 
 /// Motion JSON 또는 bin slot 에서 페이지 + 후속 chain 페이지 로드.
-fn load_pages(source: &PageSource, follow_chain: bool, max_depth: usize) -> anyhow::Result<Vec<MotionPage>> {
+fn load_pages(
+    source: &PageSource,
+    follow_chain: bool,
+    max_depth: usize,
+) -> anyhow::Result<Vec<MotionPage>> {
     match source {
         PageSource::Bin { path, slot } => load_from_bin(path, *slot, follow_chain, max_depth),
         PageSource::Json { path } => load_from_json(path),
@@ -110,11 +112,9 @@ fn load_from_bin(
         if raw.is_empty() {
             anyhow::bail!("slot {current} is empty");
         }
-        let page = forge_core::synth::library::decode_raw_page(
-            raw,
-            forge_core::motion::SafetyClass::Safe,
-        )
-        .map_err(|e| anyhow::anyhow!("decode slot {current}: {e}"))?;
+        let page =
+            forge_core::synth::library::decode_raw_page(raw, forge_core::motion::SafetyClass::Safe)
+                .map_err(|e| anyhow::anyhow!("decode slot {current}: {e}"))?;
         let next = page.next_page;
         pages.push(page);
         if !follow_chain || next == 0 {
@@ -210,12 +210,21 @@ pub fn handle(args: PlayArgs) -> anyhow::Result<()> {
     if !actually_engage {
         eprintln!("🟡 dry-run mode — 실 모터 송출 없음. 실행하려면 `--engage` 추가");
         for page in &pages {
-            println!("═══ Page {} '{}' ({} step) ═══", page.id, page.name, page.steps.len());
+            println!(
+                "═══ Page {} '{}' ({} step) ═══",
+                page.id,
+                page.name,
+                page.steps.len()
+            );
             for (i, step) in page.steps.iter().enumerate() {
                 dry_print_step(i, &page.name, step);
             }
         }
-        eprintln!("\n✓ dry-run 종료. 총 {} 페이지, {} step", pages.len(), pages.iter().map(|p| p.steps.len()).sum::<usize>());
+        eprintln!(
+            "\n✓ dry-run 종료. 총 {} 페이지, {} step",
+            pages.len(),
+            pages.iter().map(|p| p.steps.len()).sum::<usize>()
+        );
         return Ok(());
     }
 
@@ -227,8 +236,8 @@ pub fn handle(args: PlayArgs) -> anyhow::Result<()> {
     eprintln!("🔴 engage mode — 실 robot 에 모터 명령 송출");
     eprintln!("   사용자 책임: HARDWARE_VERIFICATION_PROTOCOL.md G3 사전점검 5 항목 완료 가정");
 
-    let posix = PosixSerial::open(port, args.baud)
-        .map_err(|e| anyhow::anyhow!("USB open {port}: {e}"))?;
+    let posix =
+        PosixSerial::open(port, args.baud).map_err(|e| anyhow::anyhow!("USB open {port}: {e}"))?;
     let mut bus = Bus::new(posix).with_timeout(Duration::from_millis(args.timeout));
     let mut jc = JointController::new(&mut bus);
 
@@ -263,13 +272,22 @@ pub fn handle(args: PlayArgs) -> anyhow::Result<()> {
             while ramper.next_step(&mut jc)? {
                 std::thread::sleep(Duration::from_millis(TICK_MS * 4));
             }
-            eprintln!("✓ torque ramp 완료 (final P-gain {})", ramper.final_p_gain());
+            eprintln!(
+                "✓ torque ramp 완료 (final P-gain {})",
+                ramper.final_p_gain()
+            );
         }
 
         // 6c) step 순회 (repeat 횟수만큼)
         let repeat = page.repeat.max(1) as usize;
         for r in 0..repeat {
-            eprintln!("▶ page {} '{}' iteration {}/{}", page.id, page.name, r + 1, repeat);
+            eprintln!(
+                "▶ page {} '{}' iteration {}/{}",
+                page.id,
+                page.name,
+                r + 1,
+                repeat
+            );
             for (step_idx, step) in page.steps.iter().enumerate() {
                 let targets = step_to_targets(step);
                 if targets.is_empty() {
@@ -346,11 +364,11 @@ mod tests {
     #[test]
     fn step_to_targets_filters_invalid_flag_slots() {
         let s = step_with(&[
-            (1, 2048),         // OK
-            (2, INVALID_BIT),  // skip (INVALID)
+            (1, 2048),                  // OK
+            (2, INVALID_BIT),           // skip (INVALID)
             (3, TORQUE_OFF_BIT | 1500), // skip (TORQUE_OFF)
-            (4, 1024),         // OK
-            (5, 0x6000 | 800), // INVALID + TORQUE_OFF → skip
+            (4, 1024),                  // OK
+            (5, 0x6000 | 800),          // INVALID + TORQUE_OFF → skip
         ]);
         let t = step_to_targets(&s);
         let ids: Vec<u8> = t.iter().map(|(j, _)| *j as u8).collect();
