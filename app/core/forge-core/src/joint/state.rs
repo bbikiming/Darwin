@@ -91,10 +91,34 @@ impl JointLimits {
         }
     }
 
-    /// 부위별 공식 권장 한계. `joint-conventions.md` + `ini_pose.yaml` 수용.
+    /// 부위별 공식 권장 한계.
     ///
-    /// 좌·우 회전 방향이 부호 반전인 관절(knee, elbow 등)도 양방향 동일한
-    /// 한계로 단순화 — 양쪽 동작이 모두 통과해야 하므로 절댓값 기준 max.
+    /// # Provenance — 한계 결정 근거 (2026-05-12 정리)
+    ///
+    /// ROBOTIS-OP2 의 `op2_manager/config/dxl_init.yaml` 은 **모든 20관절** 의
+    /// Dynamixel CW/CCW angle limit 을 `0` / `4095` (full range) 로 설정한다 —
+    /// 즉 Dynamixel 펌웨어 레벨에서 절대 한계는 없다. 본 함수의 per-joint 한계는
+    /// **소프트웨어-사이드 추가 가드** 로, 다음 데이터를 기준으로 보정 (수치는 모두
+    /// 절댓값, 좌·우 반전 관절은 양쪽 동일 한계):
+    ///
+    /// | 관절 | 한계 | 근거 |
+    /// |------|------|------|
+    /// | SHOULDER_PITCH | ±180° | MX-28 기계 자유도 풀 (`hand-stand` 등 극단 모션 수용) |
+    /// | SHOULDER_ROLL  | ±90°  | walkReady 20° + T-자세 90° 한계 |
+    /// | ELBOW          | ±150° | walkReady 30° + 손 흔들기 ±90° 마진 60° |
+    /// | HIP_YAW        | ±90°  | 회전 ±60° + 안전 마진 30° |
+    /// | HIP_ROLL       | ±45°  | DSP 시 좌우 흔들림 최대 ~20° + 마진 |
+    /// | HIP_PITCH      | ±90°  | walkReady -65° + kick step 3 = -78° 통과 (마진 12°) |
+    /// | KNEE           | ±150° | walkReady 130° + Get Up Front 무릎 98° + sit down 127° 통과 |
+    /// | ANKLE_PITCH    | ±90°  | walkReady 70° + kick -56° 통과 |
+    /// | ANKLE_ROLL     | ±45°  | balance compensation ±27° + 마진 |
+    /// | HEAD_PAN       | ±90°  | 시야 회전 |
+    /// | HEAD_TILT      | ±45°  | kick step 3 = 40° 통과 (마진 5°, 가장 빠듯) |
+    ///
+    /// `synth::validator::joint_limit::page_12_right_kick_passes_v1_with_margins`
+    /// 회귀 테스트가 위 마진을 lock-in 한다 — 본 함수 값 변경 시 테스트 갱신 필요.
+    ///
+    /// MX-28 기준 1 raw = 360°/4096 ≈ 0.0879° (`degrees_to_position`).
     pub fn for_joint(joint: JointId) -> Self {
         match joint {
             // 어깨 pitch: walkReady r=-48°, l=48° + 손 흔들기 등 ±180° 가능.
