@@ -80,6 +80,19 @@ impl WalkEngine {
         }
     }
 
+    /// 보행 주기 (ms) 갱신. 사이클 진행 중에 호출되면 다음 wrap 시점에 반영된다.
+    ///
+    /// 200~1500 ms 범위로 clamp. 0 이하는 무시.
+    pub fn set_period_ms(&mut self, period_ms: f64) {
+        if !period_ms.is_finite() || period_ms <= 0.0 {
+            return;
+        }
+        self.params.period_time_ms = period_ms.clamp(200.0, 1500.0);
+        if self.elapsed_ms > self.params.period_time_ms {
+            self.elapsed_ms %= self.params.period_time_ms;
+        }
+    }
+
     /// 시간 진행.
     pub fn tick(&mut self, dt: Duration) {
         if !self.command.enabled {
@@ -182,6 +195,34 @@ mod tests {
         e.tick(Duration::from_millis(600)); // 1 cycle 정확히
                                             // 600 ms 도달 시 wrap
         assert!(e.elapsed_ms < 1.0);
+    }
+
+    #[test]
+    fn set_period_ms_updates_params_and_clamps() {
+        let mut e = WalkEngine::new();
+        e.set_period_ms(480.0);
+        assert!((e.params.period_time_ms - 480.0).abs() < 1e-9);
+
+        // 하한
+        e.set_period_ms(50.0);
+        assert!((e.params.period_time_ms - 200.0).abs() < 1e-9);
+        // 상한
+        e.set_period_ms(5000.0);
+        assert!((e.params.period_time_ms - 1500.0).abs() < 1e-9);
+        // 무효 입력 무시
+        e.set_period_ms(-1.0);
+        e.set_period_ms(f64::NAN);
+        assert!((e.params.period_time_ms - 1500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn set_period_ms_rewraps_elapsed_when_shrinking() {
+        let mut e = WalkEngine::new();
+        e.command.enabled = true;
+        e.tick(Duration::from_millis(550));
+        // 600 ms 기준 elapsed=550. 주기를 400 으로 줄이면 elapsed 가 wrap 되어야 함.
+        e.set_period_ms(400.0);
+        assert!(e.elapsed_ms < 400.0);
     }
 
     #[test]

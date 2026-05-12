@@ -1,9 +1,33 @@
 # Walking Engine — DARwIn-OP / OP2 워킹 엔진 명세
 
-> Sprint 5 `forge-core::walk` Rust 포팅의 명세. 1차 출처는
+> **현재 상태 (2026-05-12)**: 본 문서는 **목표 명세** 이며 코드는 아직 일치하지 않습니다.
+> `forge-core::walk::engine` 은 현재 **MVP sin파 stub** 으로, 좌우 발 궤적을
+> 위상차 sin 함수로 생성할 뿐 실 IK·골반 보상·IMU balance feedback 모두
+> 미구현입니다. 실 모터 송출은 아래 명세 1~4 가 완전히 구현된 이후로 보류
+> (BLOCKER C3 참고).
+>
+> Sprint 5 `forge-core::walk` Rust 포팅의 **목표** 명세. 1차 출처는
 > `research/robotis-official/ROBOTIS-OP2/op2_walking_module/`.
 >
 > 알고리즘 출처: Ha et al. (RoMeLa) ZMP 기반 워킹.
+
+## 현재 구현 vs 명세 매트릭스
+
+| 항목 | 명세 (이 문서) | 현재 (`walk::engine`) |
+|---|---|---|
+| 보행 주기 / phase 분할 | period_time + dsp_ratio + phase1/2/3 | ✓ 구현됨 (`WalkParams`, `phase()`) |
+| 보행 주기 동적 갱신 | preset 별 변경 | ✓ `set_period_ms()` (Walk Lab) |
+| 발 궤적 sin 합 | x/y/z 사인 + 위상 PI | △ 부분 구현 — 단순 sin, swing 보정 없음 |
+| 골반 pelvis_offset 보상 | 명세됨 | ✗ 미구현 |
+| 팔 swing | arm_swing_gain 비례 | ✗ 미구현 |
+| 역기구학 (IK) | 12 다리 관절 closed-form | ✗ 미구현 — `foot_targets()` 까지만 |
+| IMU balance feedback | hip-roll/knee/ankle gain | ✗ 미구현 |
+| 모터 송출 | SYNC_WRITE 20관절 | ✗ 미구현 |
+
+Walk Lab (`DarwinForgeUI/WalkLab/`) UI 는 위 stub 위에서 시뮬레이션만 수행하며,
+발 자취 / IMU 게이지 / 모터 온도 모두 sim 모델
+(`WalkLabSession::updateSimIMU` / `updateSimThermal`). 실 IMU·온도 폴링은
+`walk::engine` 의 IK + 실 모터 통신 경로가 완성된 후에 wire 한다.
 
 ## 알고리즘 개요
 

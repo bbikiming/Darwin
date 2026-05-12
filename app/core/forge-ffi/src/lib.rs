@@ -766,6 +766,16 @@ pub unsafe extern "C" fn fc_walk_set_command(
     FC_OK
 }
 
+/// 보행 주기 (ms) 갱신. 200..=1500 범위로 clamp.
+#[no_mangle]
+pub unsafe extern "C" fn fc_walk_set_period_ms(h: *mut FcWalk, period_ms: f64) -> c_int {
+    if h.is_null() {
+        return FC_ERR_INVALID;
+    }
+    (*h).engine.set_period_ms(period_ms);
+    FC_OK
+}
+
 /// dt_ms 만큼 진행 후 발 궤적 sample.
 #[no_mangle]
 pub unsafe extern "C" fn fc_walk_tick(

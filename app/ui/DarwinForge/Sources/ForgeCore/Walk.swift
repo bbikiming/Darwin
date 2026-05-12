@@ -43,6 +43,11 @@ public final class WalkEngine: @unchecked Sendable {
         _ = fc_walk_set_command(handle, x, y, a, enabled ? 1 : 0)
     }
 
+    /// 보행 주기 갱신 (ms). 200..=1500 으로 clamp.
+    public func setPeriodMs(_ periodMs: Double) {
+        _ = fc_walk_set_period_ms(handle, periodMs)
+    }
+
     /// dt만큼 진행 후 발 궤적 sample.
     public func tick(dtMs: UInt32) -> FootTargets {
         var out = fc_foot_targets()

@@ -11,9 +11,9 @@
 
 | # | 위치 | 이슈 | 영향 | 액션 |
 |---|------|------|------|------|
-| **C1** | `app/core/forge-core/src/synth/ops/mirror.rs` | `positions[ID-1]` off-by-one — 다른 모든 모듈은 `positions[i] = ID i` 규약 (slot 0 unused) | walkready/kick 페이지 mirror 시 R_SHOULDER_PITCH 가 INVALID flag(0x4000)로 손상 → 실 motor 송출 시 unpredictable | 인덱싱 수정 + byte-exact 회귀 테스트 (motion_4096.bin page 9 fixture) |
-| **C2** | `app/core/forge-core/src/synth/library.rs::infer_body_regions` | 동일 off-by-one (`let id = (i+1)`) | UpperBody/LowerBody/Head 자동 메타데이터 한 칸 어긋남 → `Layer` 합성 시 잘못된 부위 결합 | 인덱싱 수정 + 단위 테스트 |
-| **C3** | `app/core/forge-core/src/walk/engine.rs` ↔ `docs/architecture/walking-engine.md` | 코드 docstring은 "MVP, 단순 sin파 stub" 솔직히 적었으나 walking-engine.md는 "ROBOTIS 1:1 포팅"이라 광고. 실제로는 `op2_walking_module.cpp::computeLegAngle` 13× wSin + IK와 알고리즘이 완전 다름 | 사용자가 walking-engine.md 보고 production-ready로 오해 가능 | walking-engine.md를 "현재 MVP stub" 으로 정정 + 실제 IK 구현 Sprint X 명시 |
+| ~~**C1**~~ | ~~`app/core/forge-core/src/synth/ops/mirror.rs`~~ | ~~off-by-one~~ | ~~mirror 깨짐~~ | ✅ **2026-05-12 해결** (인덱싱 + MIRROR_PAIRS 모드 정정, 회귀 테스트 추가). 아래 "해결" 섹션 참고. |
+| ~~**C2**~~ | ~~`app/core/forge-core/src/synth/library.rs::infer_body_regions`~~ | ~~동일 off-by-one~~ | ~~Layer 합성 결합 어긋남~~ | ✅ **2026-05-12 해결** (ID 1..=20 직접 순회). `mutate.rs::JointOffset` 같은 패턴도 함께 정정. |
+| ~~**C3**~~ | ~~`docs/architecture/walking-engine.md`~~ | ~~"ROBOTIS 1:1 포팅"이라 광고하나 stub~~ | ~~production-ready 오해 가능~~ | ✅ **2026-05-12 해결** (헤더 정정 + 구현 매트릭스 추가, Walk Lab UI 에 "Sim only" 배너). |
 
 ## 🟠 High — 1주 이내 (안전·정확성 영향)
 
@@ -57,4 +57,20 @@
 
 ## 해결 (Resolved)
 
-(없음 — 아직)
+### 2026-05-12 — C1 / C2 / C3 정리
+
+**C1 + C2 (mirror.rs / library.rs / mutate.rs off-by-one)**
+
+- `MotionStep::positions[i]` ↔ `JointId i` 규약 명시 (slot 0 미사용, 1..=20 관절, 21..=30 reserved).
+- `synth/ops/mirror.rs` — `(id - 1) as usize` → `id as usize` 로 정정. `MIRROR_PAIRS` 모드도 page 12 walkready anchor 의 R+L 합계(≈4096) 재검증 결과 **모두 SwapReflect** 로 통일 (이전 "Swap only" 분류는 잘못된 인덱싱으로 인한 잘못된 페어 매칭의 부산물).
+- `synth/library.rs::infer_body_regions` — `for i in 0..N { let id = i+1 }` → `for id in 1..=20 { let i = id as usize }`.
+- `synth/ops/mutate.rs::JointOffset` — 같은 패턴 발견·정정.
+- 회귀 테스트 추가: `mirror_of_rk_legs_approximate_lk_tightly` — page 12 → page 13 다리 mirror 의 mean abs diff < 200 raw (~4.4°). `mirror_of_rk_approximates_lk` 임계도 600 → 500 으로 강화.
+- 검증: `cargo test -p forge-core` 276/276 통과.
+
+**C3 (walking-engine.md 광고-구현 모순)**
+
+- `docs/architecture/walking-engine.md` 상단에 **"현재 상태"** 블록 추가 — 현재 코드는 MVP sin 파 stub 임을 명시.
+- "현재 구현 vs 명세 매트릭스" 표 추가 (보행 주기 ✓ / 발 궤적 △ / 골반 보상 ✗ / 팔 swing ✗ / IK ✗ / IMU balance ✗ / 모터 송출 ✗).
+- Walk Lab UI (`WalkLabView`) 디테일 영역 상단에 **"Sim only — 실 IK 미구현 (BLOCKER C3)"** 정보 배너.
+- 부수: Walk Lab 의 IMU/온도 시뮬 모델 추가 (`updateSimIMU` / `updateSimThermal`) — L3 (|roll/pitch|>30°) / L4 (60°C) 자동정지 게이트 실제 동작 검증 경로 확보.

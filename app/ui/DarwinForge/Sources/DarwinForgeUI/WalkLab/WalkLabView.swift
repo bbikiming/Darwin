@@ -110,6 +110,10 @@ public struct WalkLabView: View {
             sliderRow("주기", value: $session.customPeriodMs, range: 400...800, format: "%.0f ms")
         }
         .padding(.horizontal, 8)
+        .onChange(of: session.customX) { _, _ in session.syncCommandToEngine() }
+        .onChange(of: session.customY) { _, _ in session.syncCommandToEngine() }
+        .onChange(of: session.customA) { _, _ in session.syncCommandToEngine() }
+        .onChange(of: session.customPeriodMs) { _, _ in session.syncCommandToEngine() }
     }
 
     private func sliderRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, format: String) -> some View {
@@ -163,6 +167,8 @@ public struct WalkLabView: View {
 
     private var detail: some View {
         VStack(spacing: 12) {
+            simOnlyNotice
+
             if session.balanceLost {
                 banner(systemImage: "exclamationmark.triangle.fill",
                        message: "균형 잃음 감지 — 자동 정지됨",
@@ -192,6 +198,30 @@ public struct WalkLabView: View {
             actionBar
         }
         .padding(16)
+    }
+
+    /// Sim only 알림 — walk::engine 이 sin파 stub 이라 실 IK 미구현 (BLOCKER C3).
+    private var simOnlyNotice: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Sim only — 실 IK 미구현")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("발 자취·IMU·온도는 시뮬레이션 모델. 실 모터 송출 전 walk::engine 의 IK 완성 필요. (BLOCKER C3)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.blue.opacity(0.10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func banner(systemImage: String, message: String, tint: Color) -> some View {
@@ -233,6 +263,13 @@ public struct WalkLabView: View {
                 Text(fmt3(session.rightFoot))
                     .font(.system(size: 12, design: .monospaced))
             }
+            Divider().frame(height: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Temp").font(.caption).foregroundStyle(.secondary)
+                Text(String(format: "%.1f°C", session.maxMotorTemp))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(tempColor)
+            }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text("Elapsed").font(.caption).foregroundStyle(.secondary)
@@ -243,6 +280,14 @@ public struct WalkLabView: View {
         .padding(10)
         .background(Color(NSColor.controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var tempColor: Color {
+        let t = session.maxMotorTemp
+        if t >= 60 { return .red }
+        if t >= 50 { return .orange }
+        if t >= 45 { return .yellow }
+        return .secondary
     }
 
     private var actionBar: some View {
