@@ -202,15 +202,26 @@ public struct WalkLabView: View {
         .padding(16)
     }
 
-    /// 시뮬 vs 실 송출 경계 안내. 슬라이더는 sim, 자세 전환은 실 로봇 송출.
+    /// 시뮬 vs 실 송출 경계 안내. 프리셋 보행 = 실 송출(v1.1+), 슬라이더 보폭 = 시뮬.
     private var simOnlyNotice: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "info.circle.fill")
-                .foregroundStyle(.blue)
+        let walking = session.isRobotWalking
+        let connected = store.bus != nil
+        let title: String = {
+            if walking { return "🤖 보행 cycle 송출 중 — 실 로봇 동작" }
+            if connected && session.cradleConfirmed {
+                return "프리셋 보행 = 실 송출 활성 · 슬라이더 = 시뮬"
+            }
+            return "프리셋 보행 = 실 송출 (연결 + cradle 후) · 슬라이더 = 시뮬"
+        }()
+        let detail = "프리셋(제자리·천천히·보통·빠르게·달리기·좌/우회전)은 WalkMotionLibrary 의 합성 step 시퀀스를 모터에 직접 송출합니다. 슬라이더(보폭/측면/회전/주기) 는 walk::engine 의 실 IK 완성 전까지 sim only (BLOCKER C3) — 발 자취·IMU·온도는 시뮬 모델."
+        let tint: Color = walking ? .green : .blue
+        return HStack(spacing: 8) {
+            Image(systemName: walking ? "figure.walk.motion" : "info.circle.fill")
+                .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 1) {
-                Text("자세 전환 = 실 송출 · 보행 모션 = 시뮬")
+                Text(title)
                     .font(.system(size: 12, weight: .semibold))
-                Text("프리셋 시작/정지·“walk_ready 송출” 은 실 로봇에 자세 전송 (연결 + cradle 확인 시). 슬라이더 보폭/측면/회전 명령은 walk::engine 의 실 IK 완성 전까지 sim only (BLOCKER C3) — 발 자취·IMU·온도는 시뮬 모델.")
+                Text(detail)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -218,10 +229,10 @@ public struct WalkLabView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.blue.opacity(0.10))
+        .background(tint.opacity(0.10))
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                .stroke(tint.opacity(0.3), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }

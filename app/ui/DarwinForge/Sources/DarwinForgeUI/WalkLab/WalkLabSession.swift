@@ -4,14 +4,15 @@ import SwiftUI
 
 /// Walk Lab 의 ObservableObject — 현재 프리셋 / 고급 슬라이더 / 시뮬 결과 / 안전 상태.
 ///
-/// 시뮬 vs 실 송출:
-///   - 슬라이더 (보폭/측면/회전/주기) → sim only. walk::engine 의 실 IK 가 v1.5
-///     에서 완성된 후 실 보행 송출 (BLOCKER C3).
-///   - 프리셋 start/stop → bus 연결 + cradle 확인 시 정적 자세 송출:
-///       · start → walkReady (정적 직립, T-pose 하체)
-///       · stop → walkReady 자세 유지 (직립 상태)
-///       · emergencyStop → ConnectionStore.emergencyStop (토크 OFF)
+/// 시뮬 vs 실 송출 (Sprint 16+):
+///   - **프리셋 보행 cycle 실 송출 활성**: `WalkMotionLibrary.page(for:)` 로 합성한
+///     step 시퀀스를 `runWalkCycle` Task 가 `Bus.setPosition` 으로 직접 송출.
+///     bus 연결 + cradleConfirmed + (highRisk → riskAck) 조건 모두 만족 시.
+///   - 슬라이더 (보폭/측면/회전/주기) → 여전히 sim only. walk::engine 의 실 IK 가
+///     완성될 때 까지 슬라이더 값은 `WalkEngine` 시뮬 영향만 (BLOCKER C3).
+///   - 시뮬 50ms tick (foot trail / IMU / 온도) 는 기존대로 simTimer 가 갱신.
 ///   - `attach(store:)` 호출 전이면 송출 skip (테스트 / preview / 연결 전).
+///   - emergencyStop / 균형 손실 / 온도 임계 시 walkCycleTask 즉시 cancel + walkReady 복귀.
 @MainActor
 public final class WalkLabSession: ObservableObject {
     // MARK: - 사용자 입력
@@ -69,6 +70,8 @@ public final class WalkLabSession: ObservableObject {
     private weak var store: ConnectionStore?
     /// 마지막 송출 상태 — UI 토스트용.
     @Published public private(set) var lastRobotEvent: String?
+    /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
+    @Published public private(set) var isRobotWalking: Bool = false
 
     /// SwiftUI 한계 우회 — `.onAppear` 에서 env 가 도착하면 호출.
     public func attach(store: ConnectionStore) {
@@ -81,6 +84,8 @@ public final class WalkLabSession: ObservableObject {
     private var startTime: Date?
     /// Sim IMU 본체 흔들림 위상 (rad). tick 마다 ω·dt 누적.
     private var simSwayPhase: Double = 0
+    /// 실 보행 cycle Task — start(preset) 시 시작, stop / emergency 시 cancel.
+    private var walkCycleTask: Task<Void, Never>?
 
     /// Sim 한 tick 의 dt (s). 50 ms.
     private let tickDtSec: Double = 0.05
@@ -158,9 +163,9 @@ public final class WalkLabSession: ObservableObject {
             }
         }
 
-        // 실 로봇 송출 — bus 연결 + cradle 확인 시 walkReady 정적 자세로.
-        // 슬라이더(보폭/측면 등) 는 v1.5 IK 완성까지 sim only — 자세만 송출.
-        sendRobotPose(.walkReady, eventLabel: "보행 자세 송출 — \(preset.label)")
+        // 실 보행 cycle 송출 — bus 연결 + cradle 확인 시 WalkMotionLibrary 의
+        // 합성 step 시퀀스를 직접 모터에 전송. preset 종료 / cancel 시 walkReady 복귀.
+        startWalkCycle(preset)
     }
 
     /// 진행 중 sim 에 현재 슬라이더/프리셋 값을 재밀어넣는다.
@@ -171,7 +176,7 @@ public final class WalkLabSession: ObservableObject {
         engine.setPeriodMs(effectivePeriodMs)
     }
 
-    /// 정지 — 시뮬 멈춤, 기록 누적, 실 로봇은 walkReady 정적 자세 유지.
+    /// 정지 — 시뮬 멈춤, 기록 누적, 실 보행 cycle cancel + walkReady 복귀.
     public func stop() {
         simTimer?.invalidate()
         simTimer = nil
@@ -189,16 +194,21 @@ public final class WalkLabSession: ObservableObject {
         current = .idle
         // sway 도 zero 로 디케이 — 다음 tick 에서 매끄럽게 감소.
 
-        // 실 로봇 — walkReady 정적 자세 유지 (서있는 상태). 진행 중이었을 때만 송출.
+        // 실 보행 cycle cancel — Task 내부에서 walkReady 복귀 후 종료.
         if wasRunning {
-            sendRobotPose(.walkReady, eventLabel: "정지 — 직립 자세 유지")
+            cancelWalkCycle(eventLabel: "정지 — 직립 자세 복귀")
         }
     }
 
     /// 비상 정지 — Stop + risk reset + 실 로봇 토크 OFF.
     public func emergencyStop() {
-        // 시뮬 정지 — stop() 안에서 자세 송출이 일어나면 위험. 토크 OFF 먼저.
+        // 1. 보행 cycle 즉시 cancel — 모터 송출 중지.
+        walkCycleTask?.cancel()
+        walkCycleTask = nil
+        isRobotWalking = false
+        // 2. 토크 OFF — 토크 OFF 가 들어가야 임의 모터 명령 잔여를 무력화.
         store?.emergencyStop()
+        // 3. 시뮬 정지.
         simTimer?.invalidate()
         simTimer = nil
         engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
@@ -224,6 +234,108 @@ public final class WalkLabSession: ObservableObject {
         lastRobotEvent = "🤖 \(eventLabel)"
         Task { @MainActor in
             await store.applyPoseSmoothly(pose)
+        }
+    }
+
+    // MARK: - 실 보행 cycle 송출 (Sprint 16+)
+
+    /// `WalkMotionLibrary` 의 합성 step 시퀀스를 모터에 직접 송출 시작.
+    /// bus 미연결 / cradle 미확인 / preset 송출 미정의 시 skip (시뮬만 유지).
+    /// 이전 task 가 있으면 cancel + 완료 대기 후 새 cycle 시작 — preset 전환 race 방지.
+    private func startWalkCycle(_ preset: WalkLabPreset) {
+        guard let store = store, let bus = store.bus else {
+            lastRobotEvent = "ℹ️ 시뮬 모드 — 로봇 미연결 (\(preset.label))"
+            return
+        }
+        guard cradleConfirmed else {
+            lastRobotEvent = "⚠️ cradle 미확인 — 실 송출 차단 (\(preset.label))"
+            return
+        }
+        guard let page = WalkMotionLibrary.page(for: preset) else {
+            // idle 등 — 합성 페이지 없음. 정적 walkReady 만 송출.
+            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(preset.label)")
+            return
+        }
+
+        // 이전 task 가 있으면 cancel — 새 task 가 prev?.value 로 완료 대기.
+        let prev = walkCycleTask
+        prev?.cancel()
+        isRobotWalking = true
+        lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(preset.label)"
+        let maxDurationSec = preset.maxDurationSec
+        let presetLabel = preset.label
+
+        walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
+            // 이전 cycle 이 walkReady 복귀까지 마치도록 대기 — 동시 IO 방지.
+            await prev?.value
+            await Self.runWalkCycle(bus: bus, page: page, maxDurationSec: maxDurationSec)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.isRobotWalking = false
+                self.lastRobotEvent = "✅ 보행 cycle 종료 — walkReady 복귀 (\(presetLabel))"
+            }
+        }
+    }
+
+    /// 보행 cycle cancel + walkReady 안전 복귀. stop / emergency / preset 전환 시 호출.
+    /// task 가 자체적으로 walkReady 복귀를 수행하지만, cancel 응답 지연을 보장하기 위해
+    /// `sendRobotPose` 로 명시 송출 (applyPoseSmoothly 의 검증된 분할/부하 watchdog 경로).
+    private func cancelWalkCycle(eventLabel: String) {
+        guard let task = walkCycleTask else { return }
+        task.cancel()
+        walkCycleTask = nil
+        isRobotWalking = false
+        sendRobotPose(.walkReady, eventLabel: eventLabel)
+    }
+
+    /// 보행 cycle 실제 송출 루프 — `Task.detached` 내부 실행.
+    /// preset.maxDurationSec 도달 또는 `Task.cancel()` 시 종료. 종료 직전 walkReady 복귀.
+    ///
+    /// 설계:
+    /// - moving speed 1회만 설정 (매 step 호출 안 함 — 패킷 절약).
+    /// - 변경된 관절만 setPosition — `RobotPose.changedJoints(from:)` 사용.
+    /// - playMs + pauseMs 동안 모터의 trapezoidal motion 자체 보간을 신뢰 → 그 후 다음 step.
+    /// - Task.detached 이므로 main thread block 없음. ConnectionStore polling 과 IO 경합 가능,
+    ///   그러나 setPosition 한 번 ≈ 3ms 라 200ms tick 영향 미미.
+    private static func runWalkCycle(bus: Bus, page: MotionPage, maxDurationSec: Int) async {
+        // 1. cycle 시작 — moving speed 1회 설정. RoboPlus 기본 32 ≈ 60 rpm 의 4배 — 빠른 보행 대응.
+        let cycleSpeed: UInt16 = 256
+        for joint in JointID.allCases {
+            _ = try? bus.setMovingSpeed(joint, speed: cycleSpeed)
+        }
+
+        // 2. step loop. walkReady 가 항상 prev — 변경된 관절만 차분 송출.
+        var previous: RobotPose = .walkReady
+        let endDate: Date? = maxDurationSec > 0
+            ? Date().addingTimeInterval(TimeInterval(maxDurationSec))
+            : nil
+
+        cycleLoop: while !Task.isCancelled {
+            for step in page.steps {
+                if Task.isCancelled { break cycleLoop }
+                if let end = endDate, Date() >= end { break cycleLoop }
+
+                let target = step.toPose()
+                let changed = target.changedJoints(from: previous)
+                for joint in changed {
+                    let rawVal = UInt16(clamping: target.raw(joint))
+                    _ = try? bus.setPosition(joint, raw: rawVal)
+                }
+                previous = target
+
+                // playMs + pauseMs 동안 모터 trapezoidal motion 자체 보간 + pause.
+                let totalMs = max(80, step.playMs + step.pauseMs)
+                let ns = UInt64(totalMs) * 1_000_000
+                try? await Task.sleep(nanoseconds: ns)
+            }
+        }
+
+        // 3. 종료 정리 — walkReady 안전 복귀. cancel 후에도 동기 호출이라 잔여 명령 잔여 없음.
+        let walkReady = RobotPose.walkReady
+        let changedFinal = walkReady.changedJoints(from: previous)
+        for joint in changedFinal {
+            let rawVal = UInt16(clamping: walkReady.raw(joint))
+            _ = try? bus.setPosition(joint, raw: rawVal)
         }
     }
 
