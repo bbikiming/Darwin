@@ -27,6 +27,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Self.configureWindow(w)
             }
         }
+
+        // 첫 실행 시 자동 maximize — 모니터 visibleFrame 가득 채움 (메뉴바/Dock 영역 제외).
+        // 사용자가 매번 zoom 버튼을 누르지 않아도 큰 화면에서 자동으로 펼쳐짐.
+        // 명시적 fullscreen (메뉴바도 hide) 은 ⌃⌘F 또는 녹색 신호등.
+        DispatchQueue.main.async { [weak self] in
+            self?.maximizeMainWindow()
+        }
+    }
+
+    /// 메인 윈도우를 모니터 visibleFrame 가득 채움 (zoom = maximize).
+    /// 시스템 환경설정의 "Dock / Menu Bar" 영역 자동 회피.
+    func maximizeMainWindow() {
+        guard let w = NSApp.windows.first(where: { $0.isVisible }) else { return }
+        guard let screen = w.screen ?? NSScreen.main else { return }
+        let target = screen.visibleFrame
+        w.setFrame(target, display: true, animate: true)
     }
 
     /// 윈도우 fullscreen + zoom 동작 활성화.
@@ -68,10 +84,13 @@ struct DarwinForgeApp: App {
                 // **maxWidth/maxHeight = .infinity**: 사용자가 윈도우를 확장하거나 fullscreen
                 // 진입 시 콘텐츠가 화면 가득 채움. 종전엔 max 누락으로 idealWidth(1440) 에서 막힘.
                 .frame(
-                    minWidth: 1024, idealWidth: 1440, maxWidth: .infinity,
-                    minHeight: 640, idealHeight: 880, maxHeight: .infinity
+                    minWidth: 1024, idealWidth: 1600, maxWidth: .infinity,
+                    minHeight: 640, idealHeight: 1000, maxHeight: .infinity
                 )
         }
+        // 첫 실행 윈도우 크기 — 큰 모니터 우선. AppDelegate.maximizeMainWindow 가
+        // didFinishLaunching 직후 visibleFrame 으로 추가 확장 (UX: 즉시 큰 캔버스).
+        .defaultSize(width: 1600, height: 1000)
         // `.contentSize` → minSize 이상 / 사용자 / fullscreen 모두 자유 resize.
         // 종전 `.contentMinSize` 는 max 없으면 ideal 에 머무는 케이스가 있었음.
         .windowResizability(.contentSize)
@@ -135,6 +154,17 @@ struct DarwinForgeApp: App {
                     NSApp.keyWindow?.toggleFullScreen(nil)
                 }
                 .keyboardShortcut("f", modifiers: [.control, .command])
+
+                // 창 최대화 (zoom) — 모니터 visibleFrame 가득 (메뉴바/Dock 자동 회피).
+                // fullscreen 과 다름: 메뉴바 / Dock 은 보이고 윈도우만 확장.
+                Button("창 최대화") {
+                    if let w = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) {
+                        if let screen = w.screen ?? NSScreen.main {
+                            w.setFrame(screen.visibleFrame, display: true, animate: true)
+                        }
+                    }
+                }
+                .keyboardShortcut("m", modifiers: [.control, .command])
             }
 
             CommandMenu("로봇") {
