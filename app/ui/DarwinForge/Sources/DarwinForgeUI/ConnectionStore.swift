@@ -271,8 +271,21 @@ public final class ConnectionStore: ObservableObject {
     }
 
     /// 연결 해제 — 사용자 명시 호출. 자동 재연결도 취소.
+    ///
+    /// CRITIC P1-B (race fix): 복구 중 사용자가 disconnect 누르면 복구 task 의 5 초
+    /// settling 루프가 끝까지 돌고 `finalizeRecoveryState` 가 `guard let bus` early-return
+    /// 으로 플래그 안 해제 → `isRecovering=true` 잔류 → 버튼 영구 disabled. disconnect
+    /// 가 복구 관련 flag 도 동기 리셋해야 함.
     public func disconnect() {
         cancelReconnect()
+        // 복구 진행 중이면 task 에 cancel 신호 + 플래그 즉시 해제.
+        if isRecovering || isInRecoveryPath {
+            isMovingPoseCancelled = true
+            isRecovering = false
+            isInRecoveryPath = false
+        }
+        // 진행 중 자세 적용이 있었으면 cancel.
+        if isMovingPose { isMovingPoseCancelled = true }
         lastSuccessfulEndpoint = nil   // 명시적 disconnect는 자동 재연결 후보 제거.
         stopTelemetry()
         bus = nil
@@ -484,6 +497,312 @@ public final class ConnectionStore: ObservableObject {
             try bus.emergencyStop()
         } catch {
             status = .error("e-stop 실패: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - 로봇 복구 (E-stop 이후 액추에이터 재활성)
+
+    /// 복구 진행 여부 — UI 가 spinner 로 표시.
+    @Published public private(set) var isRecovering: Bool = false
+
+    /// 마지막 복구 결과 메시지 — 토스트 표시 + 자동 dismiss.
+    @Published public private(set) var lastRecoveryResult: String?
+
+    /// 복구 결과 유형 — 토스트 색 결정.
+    public enum RecoveryOutcome: Equatable, Sendable {
+        case success
+        case failure
+        case notConnected
+    }
+
+    @Published public private(set) var lastRecoveryOutcome: RecoveryOutcome?
+
+    /// 복구 경로 진행 중 플래그 — applyPoseSmoothly 의 SafeMotion.verify /
+    /// lastSafetyEvent 쓰기를 우회하기 위한 가드. 다른 UI 코드는 이 플래그를 안 봐도 됨.
+    private var isInRecoveryPath: Bool = false
+
+    /// E-stop 후 액추에이터 복구 — 사이드바 "로봇 복구" 버튼이 호출.
+    ///
+    /// 시퀀스 (Apple-style 안전 우선):
+    ///   1. 버스 연결 확인 — 미연결 시 즉시 안내.
+    ///   2. CRITIC P1-D: cradle 거치 확인 — `cradleConfirmed = false` 시 거부.
+    ///      단발 다리 균형 변화로 fall 위험이라 정비 스탠드 거치가 필수.
+    ///   3. CM dxl_power = 1 (E-stop 이 전원 차단까지 안 가지만 방어적 ON).
+    ///   4. 모든 20개 관절 torque ON — SYNC_WRITE 1 회.
+    ///   5. 내부 상태 리셋 (isMovingPoseCancelled / consecutiveBusFailures / lastSafetyEvent).
+    ///   6. **`walkReady` 자세 (ROBOTIS deep squat) 로 매우 천천히 이동** — SafeMotion.verify 우회.
+    ///      CRITIC P1-C: 종전엔 `.idle` (T-pose 직립) 으로 갔으나 이는 Sprint 16 hotfix v2 에서
+    ///      "뒤로 넘어짐" 보고된 자세. v3 부터 walkReady = ROBOTIS deep squat 으로 변경됐고
+    ///      복구 target 도 동일하게 deep squat 으로 통일 — 검증된 균형 자세.
+    ///   7. 결과 토스트 + outcome 발행.
+    ///
+    /// 작업 진행 중에는 isRecovering = true → 버튼이 자동 disabled + spinner.
+    /// 복구 경로 동안 lastSafetyEvent 는 절대 작성되지 않음 ("관절 안전 가이드" 미노출).
+    ///
+    /// `cradleConfirmed`: 호출자 (RootView / WalkLab) 가 정비 스탠드 거치를 사용자에게
+    /// 명시 확인받았다는 신호. 기본값 false — 사용자가 명시적으로 cradle 확인하지 않은
+    /// 호출은 자동 거부 (P1-D).
+    public func recoverFromEStop(cradleConfirmed: Bool = false) async {
+        guard !isRecovering else { return }  // 중복 호출 차단.
+
+        guard let bus = bus else {
+            await MainActor.run {
+                self.lastRecoveryOutcome = .notConnected
+                self.lastRecoveryResult = "연결 안 됨 — 연결 마법사를 먼저 사용하세요"
+            }
+            scheduleResultDismiss()
+            return
+        }
+
+        // CRITIC P1-D: cradle 거치 확인 게이트. 다리 자세 변화로 fall 위험이므로 거치 필수.
+        guard cradleConfirmed else {
+            await MainActor.run {
+                self.lastRecoveryOutcome = .failure
+                self.lastRecoveryResult = "정비 스탠드 거치 확인이 필요합니다 — 복구 중 다리 자세가 변경됩니다"
+            }
+            scheduleResultDismiss()
+            return
+        }
+
+        await MainActor.run {
+            self.isRecovering = true
+            self.isInRecoveryPath = true
+            // E-stop 직후 남아 있던 안전 이벤트 표시를 먼저 깨끗하게.
+            self.lastSafetyEvent = nil
+        }
+        // 에러 경로용 fallback — 정상 경로에서는 끝부분의 finalizeRecoveryState 가 동기 정리.
+        defer {
+            Task { @MainActor in
+                if self.isRecovering {
+                    self.isRecovering = false
+                    self.isInRecoveryPath = false
+                }
+            }
+        }
+
+        // [1] CM dxl_power ON — E-stop 후 일관성 보장.
+        do {
+            try bus.setDxlPower(true)
+        } catch {
+            await MainActor.run {
+                self.lastRecoveryOutcome = .failure
+                self.lastRecoveryResult = "Dynamixel 전원 ON 실패 — \(error.localizedDescription)"
+            }
+            scheduleResultDismiss()
+            return
+        }
+
+        // 짧은 정착 — CM 보드 power-up.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+
+        // [2] 모든 관절 torque ON. SYNC_WRITE 한 패킷 — 실패 시 한 번 더 재시도.
+        var torqueErr: Error?
+        for attempt in 0..<2 {
+            do {
+                for j in JointID.allCases {
+                    try bus.setTorque(j, enable: true)
+                }
+                torqueErr = nil
+                break
+            } catch {
+                torqueErr = error
+                if attempt < 1 { try? await Task.sleep(nanoseconds: 150_000_000) }
+            }
+        }
+        if let err = torqueErr {
+            await MainActor.run {
+                self.lastRecoveryOutcome = .failure
+                self.lastRecoveryResult = "관절 토크 ON 실패 — \(err.localizedDescription)"
+            }
+            scheduleResultDismiss()
+            return
+        }
+
+        // [3] 내부 상태 리셋 — 사용자가 다시 동작을 보낼 수 있도록.
+        await MainActor.run {
+            self.isMovingPoseCancelled = false
+            self.consecutiveBusFailures = 0
+            self.lastSafetyEvent = nil
+        }
+
+        // 토크 안정화 — 명령된 위치(현재 위치)로 모터 정착.
+        try? await Task.sleep(nanoseconds: 400_000_000)
+
+        // [4] walkReady (ROBOTIS deep squat) 로 매우 천천히 이동 — verify 우회 + 단일-shot + 5 초 정착.
+        //     CRITIC P1-C: 종전엔 `.idle` 이었으나 hotfix v2 "뒤로 넘어짐" 자세와 동일했음.
+        //     walkReady 는 hip ±36° / knee ±53° / ankle ±30° 의 검증된 균형 자세.
+        let diag = await applyPoseSlowlyForRecovery(.walkReady)
+
+        // [5] 후속 메뉴들이 정상 동작하도록 모든 상태 + 하드웨어 레지스터 리셋.
+        await finalizeRecoveryState()
+
+        await MainActor.run {
+            self.lastSafetyEvent = nil
+            if diag.reached {
+                self.lastRecoveryOutcome = .success
+                self.lastRecoveryResult = "복구 완료 — 기본 자세 + 토크 ON + 모든 메뉴 동작 가능"
+            } else if diag.cancelledByUser {
+                self.lastRecoveryOutcome = .failure
+                self.lastRecoveryResult = "복구 취소됨 — 다시 시도하세요"
+            } else if !diag.summary.isEmpty {
+                // 통신 실패 진단 표시 — 사용자가 USB / 전원 점검 가능.
+                self.lastRecoveryOutcome = .failure
+                self.lastRecoveryResult = "복구 실패 — \(diag.summary). USB / 전원 / 모터 ID 확인"
+            } else {
+                self.lastRecoveryOutcome = .failure
+                self.lastRecoveryResult = "복구 부분 완료 — 토크 ON 됐지만 일부 모터 응답 없음"
+            }
+        }
+        scheduleResultDismiss()
+    }
+
+    /// 복구 완료 후 호출 — 후속 메뉴 모두가 정상 동작하도록 상태 + 하드웨어 리셋.
+    ///
+    /// **리셋 항목**:
+    ///   1. (하드웨어) 모든 관절 `moving_speed = 0` — Dynamixel 공장 default. JointControl /
+    ///      MotionStudio / Teach 등 setMovingSpeed 안 부르는 callers 의 동작 속도 정상화.
+    ///   2. (Swift state) `isMovingPose`, `isMovingPoseCancelled`, `lastSafetyEvent`,
+    ///      `consecutiveBusFailures`, `isRecovering`, `isInRecoveryPath` 모두 깨끗하게.
+    ///   3. (텔레메트리) 한 번 fresh poll — applyPoseSmoothly 의 load watchdog 이 stale 값으로
+    ///      false-positive trip 하지 않도록 갱신.
+    ///   4. (정착) 400 ms 대기 — Dynamixel 의 present_load 노이즈 안정화.
+    private func finalizeRecoveryState() async {
+        guard let bus = bus else { return }
+
+        // [a] moving_speed = 0 (factory default) — Dynamixel 내부 throttle 해제.
+        //     이후 callers 가 setMovingSpeed 명시적으로 호출 안 해도 정상 속도로 동작.
+        for j in JointID.allCases {
+            try? bus.setMovingSpeed(j, speed: 0)
+        }
+
+        // [b] Swift state 동기 리셋 — defer 의 비동기 Task 보다 먼저 확정.
+        await MainActor.run {
+            self.isMovingPose = false
+            self.isMovingPoseCancelled = false
+            self.lastSafetyEvent = nil
+            self.consecutiveBusFailures = 0
+            self.isRecovering = false
+            self.isInRecoveryPath = false
+        }
+
+        // [c] 정착 대기 — 모터 load 측정 노이즈 안정화. 이후 applyPoseSmoothly 의
+        //     SafeMotion.verify 가 stale load 로 false-positive 거부 안 하도록.
+        try? await Task.sleep(nanoseconds: 400_000_000)
+
+        // [d] 텔레메트리 1 회 fresh refresh — UI 와 verify 가 최신 load / voltage 사용.
+        await MainActor.run {
+            for j in JointID.allCases {
+                self.refreshJointState(j)
+            }
+        }
+    }
+
+    /// 복구 결과 (자세 변경 성공/실패 + 진단 문자열).
+    public struct RecoveryDiagnostics: Equatable, Sendable {
+        public let reached: Bool
+        public let speedWriteFailures: Int
+        public let positionWriteFailures: Int
+        public let cancelledByUser: Bool
+        public var summary: String {
+            var bits: [String] = []
+            if speedWriteFailures > 0 {
+                bits.append("속도쓰기 실패 \(speedWriteFailures)/\(JointID.allCases.count)")
+            }
+            if positionWriteFailures > 0 {
+                bits.append("위치쓰기 실패 \(positionWriteFailures)/\(JointID.allCases.count)")
+            }
+            if cancelledByUser { bits.append("사용자 취소") }
+            return bits.joined(separator: " · ")
+        }
+    }
+
+    /// 복구 전용 매우 느린 자세 적용 — SafeMotion.verify **우회**.
+    ///
+    /// **단순화된 단일-shot 방식** (이전 16-step interpolation 은 moving_speed 와
+    /// 충돌해 모터가 따라잡지 못함):
+    ///   1. 모든 관절 `moving_speed = 80` (~9 s per 360° — 안전하지만 시각적으로 명확).
+    ///   2. 모든 관절에 `goal_position = target` **한 번만** 송출. Dynamixel 의 내부
+    ///      trapezoidal motion controller 가 자체적으로 부드럽게 가속/감속.
+    ///   3. 5 초 정착 대기 (250 ms × 20). 그 동안 isMovingPoseCancelled 가 true 되면 즉시 종료.
+    ///   4. 모든 setMovingSpeed / setPosition 호출 결과를 **카운트** — 실패 수 진단 토스트 표시.
+    ///   5. lastSafetyEvent 는 **절대 작성하지 않음**.
+    private func applyPoseSlowlyForRecovery(_ target: RobotPose) async -> RecoveryDiagnostics {
+        guard let bus = bus else {
+            return RecoveryDiagnostics(
+                reached: false,
+                speedWriteFailures: 0,
+                positionWriteFailures: 0,
+                cancelledByUser: false
+            )
+        }
+
+        await MainActor.run {
+            self.isMovingPose = true
+            self.isMovingPoseCancelled = false
+        }
+        defer {
+            Task { @MainActor in self.isMovingPose = false }
+        }
+
+        var speedFailures = 0
+        var posFailures = 0
+
+        // [1] moving_speed = 80 — ~9 s per 360°. 충분히 느려서 안전, 충분히 빨라서 시각적으로
+        //     자세 변화가 명확히 보임. 40 은 너무 느려 사용자가 "동작 안 한다" 고 느꼈음.
+        let recoverySpeed: UInt16 = 80
+        for j in JointID.allCases {
+            do { try bus.setMovingSpeed(j, speed: recoverySpeed) }
+            catch { speedFailures += 1 }
+        }
+
+        // 모터가 새 speed 를 적용할 짧은 시간.
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // [2] 목표 위치 한 번에 송출 — Dynamixel 의 내부 controller 가 부드럽게 이동.
+        for j in JointID.allCases {
+            let raw = UInt16(clamping: target.positions[j] ?? 2048)
+            do { _ = try bus.setPosition(j, raw: raw) }
+            catch { posFailures += 1 }
+        }
+
+        // 모든 쓰기가 실패하면 즉시 보고 — 버스 다운.
+        if speedFailures == JointID.allCases.count || posFailures == JointID.allCases.count {
+            return RecoveryDiagnostics(
+                reached: false,
+                speedWriteFailures: speedFailures,
+                positionWriteFailures: posFailures,
+                cancelledByUser: false
+            )
+        }
+
+        // [3] 5 초 동안 모터 물리 도달 대기 — 250 ms × 20 = 5 s.
+        //     중간에 사용자가 E-stop 다시 누르거나 disconnect 하면 즉시 종료.
+        for _ in 0..<20 {
+            if isMovingPoseCancelled {
+                return RecoveryDiagnostics(
+                    reached: false,
+                    speedWriteFailures: speedFailures,
+                    positionWriteFailures: posFailures,
+                    cancelledByUser: true
+                )
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+
+        return RecoveryDiagnostics(
+            reached: speedFailures == 0 && posFailures == 0,
+            speedWriteFailures: speedFailures,
+            positionWriteFailures: posFailures,
+            cancelledByUser: false
+        )
+    }
+
+    /// 4 초 후 토스트 자동 해제.
+    private func scheduleResultDismiss() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            self?.lastRecoveryResult = nil
+            self?.lastRecoveryOutcome = nil
         }
     }
 

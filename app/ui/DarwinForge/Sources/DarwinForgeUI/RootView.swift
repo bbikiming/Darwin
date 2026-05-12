@@ -24,6 +24,7 @@ public struct RootView: View {
     @State private var wizardOpen: Bool = false
     @State private var wizardAutoShown: Bool = false
     @State private var dashboardOpen: Bool = false
+    @State private var showRecoveryConfirm: Bool = false
 
     public init() {
         let d = IntentDispatcher()
@@ -62,9 +63,13 @@ public struct RootView: View {
                     if dashboardOpen {
                         dashboardOverlay
                     }
+                    recoveryToastOverlay
                 }
             }
-            .navigationSplitViewStyle(.automatic)
+            // `.balanced` — 좁은 윈도우에서도 사이드바 자동 collapse 안 함.
+            // 사용자가 실수로 사이드바 토글 버튼을 눌러도 ⌘⌃S 또는 메뉴
+            // "보기 → 사이드바 표시"로 복구 가능.
+            .navigationSplitViewStyle(.balanced)
             .background(DFColor.canvas)
             .toolbar { toolbarContent }
             .environment(\.dfWindowWidth, geo.size.width)
@@ -94,6 +99,10 @@ public struct RootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .dfEmergencyStop)) { _ in
             store.emergencyStop()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .dfShowSidebar)) { _ in
+            // ⌘⌃S 또는 메뉴 → 사이드바 강제 표시 (실수로 collapse 했을 때 복구).
+            withAnimation { columnVisibility = .all }
         }
         .environmentObject(store)
         .environmentObject(dispatcher)
@@ -482,6 +491,9 @@ public struct RootView: View {
             .padding(.bottom, 8)
             .help("연결 안내 화면 열기 — USB / 네트워크 / 자동 검색")
 
+            // 로봇 복구 — E-stop 이후 액추에이터 재활성 + 기본 자세로 매우 천천히 이동.
+            recoveryButton
+
             // E-Stop big button
             Button {
                 store.emergencyStop()
@@ -517,6 +529,126 @@ public struct RootView: View {
             .padding(.horizontal, DFSpace.md)
             .padding(.bottom, DFSpace.sm)
 
+        }
+    }
+
+    // MARK: - 로봇 복구 버튼 (사이드바)
+
+    /// E-stop 후 액추에이터 복구 — 녹색 버튼.
+    /// 활성 조건: bus 연결됨 + 진행 중 아님. 클릭 시 confirm alert → recoverFromEStop().
+    private var recoveryButton: some View {
+        let busAvailable = store.bus != nil
+        let inProgress = store.isRecovering
+        let enabled = busAvailable && !inProgress
+
+        return Button {
+            // 확인 다이얼로그 — cradle 거치 안내.
+            showRecoveryConfirm = true
+        } label: {
+            HStack(spacing: 8) {
+                Group {
+                    if inProgress {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "arrow.clockwise.heart.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                }
+                .frame(width: 18, height: 18)
+                Text(inProgress ? "복구 중…" : "로봇 복구")
+                    .font(DFFont.bodyEmph)
+                Spacer()
+                if !inProgress && busAvailable {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.85))
+                } else if !busAvailable {
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .padding(.horizontal, DFSpace.md)
+            .background(
+                LinearGradient(
+                    colors: enabled
+                        ? [DFColor.success, DFColor.success.opacity(0.85)]
+                        : [DFColor.success.opacity(0.45), DFColor.success.opacity(0.30)],
+                    startPoint: .leading, endPoint: .trailing
+                )
+            )
+            .foregroundStyle(.white)
+            .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+            .shadow(color: DFColor.success.opacity(enabled ? 0.35 : 0.0), radius: 4, y: 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(busAvailable
+              ? "긴급 정지 후 액추에이터 토크 ON + walkReady 자세로 매우 천천히 이동 (정비 스탠드 거치 필수)"
+              : "연결 후 사용 가능 — 먼저 연결 마법사로 연결하세요")
+        .padding(.horizontal, DFSpace.sm)
+        .padding(.bottom, 8)
+        .alert("로봇 복구",
+               isPresented: $showRecoveryConfirm) {
+            Button("취소", role: .cancel) {}
+            Button("정비 스탠드 거치됨 — 복구 시작") {
+                // 사용자가 명시적으로 거치를 확인한 행위 → cradleConfirmed: true.
+                Task { await store.recoverFromEStop(cradleConfirmed: true) }
+            }
+        } message: {
+            Text("긴급 정지 이후 모든 관절에 토크를 다시 켜고 walkReady 자세 (ROBOTIS 공식 deep squat — 검증된 균형 자세) 로 매우 천천히 이동합니다.\n\n⚠️ 정비 스탠드 거치 필수 — 복구 중 다리 자세가 변경되며 거치 없이 진행하면 fall 위험.\n\n• 안전 검증 우회 (부하/전압 거부 없이 실행)\n• moving_speed = 80 + 5 초 정착")
+        }
+    }
+
+    /// 복구 결과 토스트 — 4 초 후 자동 dismiss. 상단 중앙.
+    @ViewBuilder
+    private var recoveryToastOverlay: some View {
+        if let msg = store.lastRecoveryResult, let outcome = store.lastRecoveryOutcome {
+            VStack {
+                HStack(spacing: 8) {
+                    Image(systemName: recoveryToastIcon(outcome))
+                        .foregroundStyle(recoveryToastTint(outcome))
+                    Text(msg)
+                        .font(DFFont.bodyEmph)
+                        .foregroundStyle(DFColor.textPrimary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DFRadius.md)
+                        .stroke(recoveryToastTint(outcome).opacity(0.45), lineWidth: 0.8)
+                )
+                .shadow(color: Color.black.opacity(0.15), radius: 8, y: 2)
+                .padding(.top, 56)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: msg)
+        }
+    }
+
+    private func recoveryToastIcon(_ o: ConnectionStore.RecoveryOutcome) -> String {
+        switch o {
+        case .success:      return "checkmark.circle.fill"
+        case .failure:      return "exclamationmark.triangle.fill"
+        case .notConnected: return "wifi.slash"
+        }
+    }
+
+    private func recoveryToastTint(_ o: ConnectionStore.RecoveryOutcome) -> Color {
+        switch o {
+        case .success:      return DFColor.success
+        case .failure:      return DFColor.danger
+        case .notConnected: return DFColor.warning
         }
     }
 
@@ -891,6 +1023,7 @@ extension Notification.Name {
     public static let dfOpenPalette   = Notification.Name("DarwinForge.OpenPalette")
     public static let dfAutoConnect   = Notification.Name("DarwinForge.AutoConnect")
     public static let dfEmergencyStop = Notification.Name("DarwinForge.EmergencyStop")
+    public static let dfShowSidebar   = Notification.Name("DarwinForge.ShowSidebar")
 
     /// 티칭 모드 → Studio 로 자세 전달. object 는 RobotPose.
     public static let dfTransferPoseToStudio = Notification.Name("DarwinForge.TransferPoseToStudio")
