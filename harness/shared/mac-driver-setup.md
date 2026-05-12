@@ -89,3 +89,34 @@ macOS Sequoia(15.x) 기준 USB-Serial 디바이스는 sandbox app에서는 접�
 - Apple Developer — USB-Serial in macOS
 - FTDI Chip — VCP driver guide
 - NUbots OP2 Restoration Guide (Mac 측 셋업 사례)
+
+---
+
+## 이더넷 경로 (★ Sprint 9-13 신규)
+
+### 필요 부품
+- USB-C → Gigabit Ethernet 어댑터 (Anker A8312 또는 Apple MJ1M2AM/A)
+- CAT 5e/6 패치 케이블, 2 m, 차폐
+
+### macOS 측 IP 설정
+시스템 설정 → 네트워크 → 새 어댑터:
+```
+IPv4 구성: 수동
+IP 주소:   192.168.123.2 (또는 .3, .4 ...)
+서브넷:    255.255.255.0
+라우터:    (비워둠 — 직결 시)
+```
+
+### 검증
+```sh
+ping -c 3 192.168.123.1                          # 로봇 응답
+nc -zv 192.168.123.1 5530                        # forge server 포트 열림
+forge connect --tcp 192.168.123.1:5530           # 실 연결
+```
+
+### 트러블슈팅
+- ping 실패: 케이블 / 어댑터 / 로봇 PC `forge server` 데몬 점검
+- 포트 닫힘: 로봇 PC에서 `forge server --bind 0.0.0.0:5530` 시작
+- 다중 로봇: TP-Link TL-SG105 스위치 + 각 로봇 다른 IP (.1 / .2)
+
+→ 통합 가이드: [`../../docs/harness/v2-mac-ui-handoff.md`](../../docs/harness/v2-mac-ui-handoff.md)

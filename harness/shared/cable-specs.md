@@ -88,3 +88,27 @@ LiPo + ── 인라인 SPDT 토글 ── CM Vin
 - ROBOTIS DARwIn-OP Wiring Manual
 - `docs/harness/engineering-foundations.md` §4 ROBOTIS-specific 섹션
 - NUbots OP2 Restoration Guide
+
+### 옵션 C: 이더넷 TCP (★ Sprint 9-13 신규)
+
+```
+Mac USB-C ── USB-C → Ethernet 어댑터 ── CAT 5e/6 ──┐
+                                                    │ 192.168.123.X
+                                                    │
+                                  DARwIn-OP onboard PC ── forge server 데몬
+                                  (192.168.123.1, TCP 5530)
+```
+
+**사양:**
+- 어댑터: USB-C → Gigabit Ethernet (Anker A8312 또는 Apple MJ1M2AM/A)
+- 케이블: CAT 5e, 2 m, 차폐 (1 Gbps 충분)
+- 라우터: 선택 (시연용 무선 라우터에 192.168.123.X 서브넷 설정)
+- 포트: TCP 5530 (forge server 기본값)
+
+**장점:** 케이블 텐션 0, 무선 라우터 경유 가능, 다중 로봇 동시 연결 (E3 스위치).
+**단점:** 로봇 onboard PC에 `forge server` 데몬 사전 설치 + IP 설정 필요 (별도 가이드).
+
+**UI**: `RootView::quickConnectCTA` — 우측 상단 ⚡ "이더넷 직결" CTA 1차.
+**CLI**: `forge connect --tcp 192.168.123.1:5530`
+
+→ 자세한 갭 분석 + Mac UI 구현 핸드오프: [`../../docs/harness/v2-mac-ui-handoff.md`](../../docs/harness/v2-mac-ui-handoff.md)
