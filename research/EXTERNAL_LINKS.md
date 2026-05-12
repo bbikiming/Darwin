@@ -1,6 +1,8 @@
 # research/EXTERNAL_LINKS.md
 
-> 다운로드하지 않고 링크만 보존하는 외부 자료. 최종 갱신 2026-05-09.
+> 다운로드하지 않고 링크만 보존하는 외부 자료. 최종 갱신 2026-05-12.
+>
+> **클론 보존된 커뮤니티 저장소**는 [`research/community/INDEX.md`](community/INDEX.md) 참고.
 
 ## ROBOTIS e-Manual (1차 출처)
 
@@ -56,6 +58,23 @@
 ## 위키
 
 - DARwIn-OP — https://en.wikipedia.org/wiki/DARwIn-OP
+
+## 커뮤니티 OP/OP2 모션·보행 자료 (클론 보존)
+
+| 출처 | URL |
+|------|-----|
+| NimbRo-OP — Bonn AIS | https://github.com/NimbRo/nimbro-op |
+| NimbRo-OP 프로젝트 페이지 | http://nimbro.net/OP |
+| HROS5-Framework — Interbotix | https://github.com/Interbotix/HROS5-Framework |
+| HROS5 Wiki | https://github.com/Interbotix/HROS5-Framework/wiki |
+| darwinop-ens / darwin-op | https://github.com/darwinop-ens/darwin-op |
+| darwinop-ens — Installation guide | https://github.com/darwinop-ens/darwin-op/wiki/Installation-guide |
+| darwinop-ens — Hack guide | https://github.com/darwinop-ens/darwin-op/wiki/Hack-guide |
+| darwinop-ens / simulink (미클론) | https://github.com/darwinop-ens/simulink |
+| darwinop-ens / kinematics (미클론) | https://github.com/darwinop-ens/kinematics |
+| robot_personal_assistant_op2 | https://github.com/PersonalAssistantGradProject/robot_personal_assistant_op2 |
+| 동 — Project Documentation PDF | https://github.com/PersonalAssistantGradProject/robot_personal_assistant_op2/blob/main/Project%20Documentation.pdf |
+| 동 — Demo Video | https://youtu.be/yJ2NVAMxFx4 |
 
 ## 비디오
 

@@ -1,0 +1,41 @@
+From ccb77ca78e03e94fd8d8e847866db348afd9ef0a Mon Sep 17 00:00:00 2001
+From: sebastian <sebastian>
+Date: Fri, 12 Oct 2012 12:35:40 +0200
+Subject: [PATCH 25/25] demo: mark ball position with blue rectangle
+
+---
+ Linux/project/demo/main.cpp |   18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/Linux/project/demo/main.cpp b/Linux/project/demo/main.cpp
+index 94d790b..77330a0 100644
+--- a/Linux/project/demo/main.cpp
++++ b/Linux/project/demo/main.cpp
+@@ -247,6 +247,24 @@ int main(void)
+             }
+         }
+ 
++        if(!isnan(ball_pos.X) && !isnan(ball_pos.Y))
++        {
++            const int RECTSIZE = 10;
++            for(int x = ball_pos.X - RECTSIZE/2; x < ball_pos.X + RECTSIZE/2; ++x)
++            {
++                for(int y = ball_pos.Y - RECTSIZE/2; y < ball_pos.Y + RECTSIZE/2; ++y)
++                {
++                    if(x < 0 || x >= rgb_output->m_Width || y < 0 || y >= rgb_output->m_Height)
++                        continue;
++
++                    int off = y * rgb_output->m_WidthStep + x * rgb_output->m_PixelSize;
++                    rgb_output->m_ImageData[off + 0] = 0;
++                    rgb_output->m_ImageData[off + 1] = 0;
++                    rgb_output->m_ImageData[off + 2] = 255;
++                }
++            }
++        }
++
+         streamer->send_image(rgb_output);
+ 
+         if(StatusCheck::m_is_started == 0)
+-- 
+1.7.10.4
+
