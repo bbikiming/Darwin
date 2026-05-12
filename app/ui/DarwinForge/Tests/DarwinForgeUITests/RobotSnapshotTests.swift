@@ -51,9 +51,10 @@ final class RobotSnapshotTests: XCTestCase {
 
     @MainActor
     func testWavingPose() {
-        // 손 흔드는 자세 — 우측 어깨 들고 팔꿈치 굽힘
+        // 손 흔드는 자세 — 우측 어깨 들고 팔꿈치 굽힘.
+        // URDF-consistent 부호 (2026-05-13 hotfix): rShoulderPitch 양수 = 팔 앞·위로.
         let waving = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
             .rShoulderRoll:  Kinematics.raw(fromDegrees:   30),
             .rElbow:         Kinematics.raw(fromDegrees:   80)
         ])

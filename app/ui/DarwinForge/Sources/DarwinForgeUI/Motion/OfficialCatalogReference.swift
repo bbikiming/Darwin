@@ -100,7 +100,7 @@ public enum OfficialCatalogReference {
     /// **Page 4 — Thank You.** 오른팔 앞으로 인사 + 머리 살짝 숙임.
     public static func thankYou(id: Int) -> MotionPage {
         let bow = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -75),  // 오른팔 더 앞으로
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +75),  // 오른팔 더 앞으로
             .rElbow:         Kinematics.raw(fromDegrees: 35),
             .headTilt:       Kinematics.raw(fromDegrees: 15)    // 살짝 숙임
         ])
@@ -135,8 +135,8 @@ public enum OfficialCatalogReference {
             .lKnee:       Kinematics.raw(fromDegrees: -105),
             .rAnklePitch: Kinematics.raw(fromDegrees: 60),    // 발끝 위로 보정
             .lAnklePitch: Kinematics.raw(fromDegrees: -60),
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -10),
-            .lShoulderPitch: Kinematics.raw(fromDegrees: 10)
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +10),
+            .lShoulderPitch: Kinematics.raw(fromDegrees: -10)
         ])
         return MotionPage(
             id: UInt8(clamping: id),
@@ -152,7 +152,7 @@ public enum OfficialCatalogReference {
     /// **Page 23 — Yes Go.** 오른팔 앞으로 swing — "출발" 신호.
     public static func yesGo(id: Int) -> MotionPage {
         let swing = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -90),  // 팔 수평
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +90),  // 팔 수평
             .rElbow:         Kinematics.raw(fromDegrees: 50)
         ])
         return MotionPage(
@@ -169,8 +169,8 @@ public enum OfficialCatalogReference {
     /// **Page 24 — Wow.** 양팔 위로 만세 + 머리 위로.
     public static func wow(id: Int) -> MotionPage {
         let cheer = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -150),  // 팔 위로
-            .lShoulderPitch: Kinematics.raw(fromDegrees: 150),
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +150),  // 팔 위로
+            .lShoulderPitch: Kinematics.raw(fromDegrees: -150),
             .rElbow:         Kinematics.raw(fromDegrees: 10),
             .lElbow:         Kinematics.raw(fromDegrees: -10),
             .headTilt:       Kinematics.raw(fromDegrees: -15)    // 머리 위로
@@ -208,17 +208,17 @@ public enum OfficialCatalogReference {
     /// **Page 38 — Bye Bye.** 오른손 좌우로 흔들기.
     public static func byeBye(id: Int) -> MotionPage {
         let waveUp = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -120),  // 팔 위로
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +120),  // 팔 위로
             .rShoulderRoll:  Kinematics.raw(fromDegrees: -30),
             .rElbow:         Kinematics.raw(fromDegrees: 60)
         ])
         let waveLeft = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
             .rShoulderRoll:  Kinematics.raw(fromDegrees: -10),
             .rElbow:         Kinematics.raw(fromDegrees: 60)
         ])
         let waveRight = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
             .rShoulderRoll:  Kinematics.raw(fromDegrees: -50),
             .rElbow:         Kinematics.raw(fromDegrees: 60)
         ])
@@ -240,16 +240,16 @@ public enum OfficialCatalogReference {
     /// **Page 54 — Clap Please.** 양팔 박수 자세 (앞으로 모음).
     public static func clapPlease(id: Int) -> MotionPage {
         let apart = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -90),
-            .lShoulderPitch: Kinematics.raw(fromDegrees: 90),
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +90),
+            .lShoulderPitch: Kinematics.raw(fromDegrees: -90),
             .rShoulderRoll:  Kinematics.raw(fromDegrees: -40),
             .lShoulderRoll:  Kinematics.raw(fromDegrees: 40),
             .rElbow:         Kinematics.raw(fromDegrees: 40),
             .lElbow:         Kinematics.raw(fromDegrees: -40)
         ])
         let together = RobotPose.walkReady.with([
-            .rShoulderPitch: Kinematics.raw(fromDegrees: -90),
-            .lShoulderPitch: Kinematics.raw(fromDegrees: 90),
+            .rShoulderPitch: Kinematics.raw(fromDegrees: +90),
+            .lShoulderPitch: Kinematics.raw(fromDegrees: -90),
             .rShoulderRoll:  Kinematics.raw(fromDegrees: -5),
             .lShoulderRoll:  Kinematics.raw(fromDegrees: 5),
             .rElbow:         Kinematics.raw(fromDegrees: 40),

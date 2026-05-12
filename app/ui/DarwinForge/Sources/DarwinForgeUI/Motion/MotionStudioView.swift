@@ -1160,21 +1160,21 @@ extension MotionStudioView {
             steps: [
                 .from(pose: .walkReady, playMs: 200, pauseMs: 0),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
                     .rElbow:         Kinematics.raw(fromDegrees: 90)
                 ]), playMs: 500, pauseMs: 0),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
                     .rElbow:         Kinematics.raw(fromDegrees: 30),
                     .rShoulderRoll:  Kinematics.raw(fromDegrees: 30)
                 ]), playMs: 250, pauseMs: 0),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
                     .rElbow:         Kinematics.raw(fromDegrees: 90),
                     .rShoulderRoll:  Kinematics.raw(fromDegrees: 0)
                 ]), playMs: 250, pauseMs: 0),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
                     .rElbow:         Kinematics.raw(fromDegrees: 30),
                     .rShoulderRoll:  Kinematics.raw(fromDegrees: 30)
                 ]), playMs: 250, pauseMs: 0),

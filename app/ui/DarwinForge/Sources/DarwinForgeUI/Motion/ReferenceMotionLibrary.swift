@@ -52,7 +52,7 @@ public enum ReferenceMotionLibrary {
         // CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE: walkReady 절대값은 page 9 raw 이며 미래에
         // 바뀔 수 있어 delta helper 로 표현. 종전엔 옛 walkReady 기준 절대각 35°/-35° 였음.
         let armsBend = deltaPose([
-            .lShoulderPitch: -10,   // 좌 어깨 약간 안쪽으로
+            .lShoulderPitch: +10,   // 좌 어깨 약간 안쪽으로
             .rElbow:         +15,   // 우 팔꿈치 더 굽힘
             .lElbow:         -15    // 좌 팔꿈치 더 굽힘 (mirror)
         ])
@@ -303,12 +303,12 @@ public enum ReferenceMotionLibrary {
             steps: [
                 .from(pose: .walkReady, playMs: 300, pauseMs: 0),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -30),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +30),
                     .rElbow:         Kinematics.raw(fromDegrees:  60),
                     .headTilt:       Kinematics.raw(fromDegrees:  15)
                 ]), playMs: 500, pauseMs: 200),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -30),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +30),
                     .rElbow:         Kinematics.raw(fromDegrees:  60),
                     .headTilt:       Kinematics.raw(fromDegrees: -10)
                 ]), playMs: 400, pauseMs: 200),
@@ -379,19 +379,19 @@ public enum ReferenceMotionLibrary {
             steps: [
                 .from(pose: .walkReady, playMs: 300, pauseMs: 0),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
                     .rShoulderRoll:  Kinematics.raw(fromDegrees: -40),
                     .rElbow:         Kinematics.raw(fromDegrees: 100),
                     .headTilt:       Kinematics.raw(fromDegrees:  15)
                 ]), playMs: 600, pauseMs: 300),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
                     .rShoulderRoll:  Kinematics.raw(fromDegrees: -50),
                     .rElbow:         Kinematics.raw(fromDegrees: 110),
                     .headTilt:       Kinematics.raw(fromDegrees:  15)
                 ]), playMs: 300, pauseMs: 0),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -120),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +120),
                     .rShoulderRoll:  Kinematics.raw(fromDegrees: -40),
                     .rElbow:         Kinematics.raw(fromDegrees: 100),
                     .headTilt:       Kinematics.raw(fromDegrees:  15)
@@ -426,15 +426,15 @@ public enum ReferenceMotionLibrary {
             steps: [
                 .from(pose: .walkReady, playMs: 300, pauseMs: 0),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -60),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +60),
                     .rElbow:         Kinematics.raw(fromDegrees:  70)
                 ]), playMs: 400, pauseMs: 100),
                 .from(pose: .walkReady.with([
-                    .lShoulderPitch: Kinematics.raw(fromDegrees:  60),
+                    .lShoulderPitch: Kinematics.raw(fromDegrees:  -60),
                     .lElbow:         Kinematics.raw(fromDegrees: -70)
                 ]), playMs: 400, pauseMs: 100),
                 .from(pose: .walkReady.with([
-                    .rShoulderPitch: Kinematics.raw(fromDegrees: -60),
+                    .rShoulderPitch: Kinematics.raw(fromDegrees: +60),
                     .rElbow:         Kinematics.raw(fromDegrees:  70)
                 ]), playMs: 400, pauseMs: 100),
                 .from(pose: .walkReady, playMs: 500, pauseMs: 0)
