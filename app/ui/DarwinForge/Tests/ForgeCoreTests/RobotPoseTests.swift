@@ -52,23 +52,23 @@ final class RobotPoseTests: XCTestCase {
 
     func testMirrorSwapsSides() {
         // CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE: mirrorSignFlip 이 모든 좌·우 pair (pitch 포함)
-        // 에 적용된다. center 기준 r=1500, l=2500 → mirror 결과는 reflect 후 swap.
-        //   r 입장: src=lShoulderPitch=2500 → 4096-2500 = 1596.
-        //   l 입장: src=rShoulderPitch=1500 → 4096-1500 = 2596.
+        // 에 적용된다. Rust 정합을 위해 12-bit MAX_POSITION reflect (4095 - raw) 사용.
+        //   r 입장: src=lShoulderPitch=2500 → 4095-2500 = 1595.
+        //   l 입장: src=rShoulderPitch=1500 → 4095-1500 = 2595.
         let p = RobotPose.center.with([
             .rShoulderPitch: 1500,
             .lShoulderPitch: 2500
         ])
         let m = p.mirrored()
-        XCTAssertEqual(m.raw(.rShoulderPitch), 1596)
-        XCTAssertEqual(m.raw(.lShoulderPitch), 2596)
+        XCTAssertEqual(m.raw(.rShoulderPitch), 1595)
+        XCTAssertEqual(m.raw(.lShoulderPitch), 2595)
     }
 
     func testMirrorYawFlipSign() {
-        // headPan 2200 → mirror should flip to 4096-2200 = 1896.
+        // headPan 2200 → mirror should reflect to 4095-2200 = 1895 (Rust reflect_12bit 와 동일).
         let p = RobotPose.center.with(.headPan, raw: 2200)
         let m = p.mirrored()
-        XCTAssertEqual(m.raw(.headPan), 1896)
+        XCTAssertEqual(m.raw(.headPan), 1895)
     }
 
     // MARK: - 음수 좌측 관절 / mirror 회귀 (CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE)
@@ -100,23 +100,38 @@ final class RobotPoseTests: XCTestCase {
     func testMirrorWalkReadyKeepsOfficialSignedPairs() {
         let wr = RobotPose.walkReady
         let mirrored = wr.mirrored()
-        // reflect 공식: raw' = 4096 - raw. rawLimits clamp 으로 ±2 raw 오차 가능.
+        // reflect 공식: raw' = 4095 - raw (Rust 정합). rawLimits clamp 으로 ±2 raw 오차 가능.
         func close(_ a: Int, _ b: Int, tol: Int = 2) -> Bool { abs(a - b) <= tol }
 
-        XCTAssertTrue(close(mirrored.raw(.lKnee), 4096 - wr.raw(.rKnee)),
-            "mirrored.lKnee=\(mirrored.raw(.lKnee)) ≈ 4096-wr.rKnee=\(4096 - wr.raw(.rKnee))")
-        XCTAssertTrue(close(mirrored.raw(.rKnee), 4096 - wr.raw(.lKnee)))
-        XCTAssertTrue(close(mirrored.raw(.lElbow), 4096 - wr.raw(.rElbow)))
-        XCTAssertTrue(close(mirrored.raw(.rElbow), 4096 - wr.raw(.lElbow)))
-        XCTAssertTrue(close(mirrored.raw(.lAnklePitch), 4096 - wr.raw(.rAnklePitch)))
-        XCTAssertTrue(close(mirrored.raw(.rAnklePitch), 4096 - wr.raw(.lAnklePitch)))
-        XCTAssertTrue(close(mirrored.raw(.lHipPitch), 4096 - wr.raw(.rHipPitch)))
-        XCTAssertTrue(close(mirrored.raw(.rHipPitch), 4096 - wr.raw(.lHipPitch)))
-        XCTAssertTrue(close(mirrored.raw(.lShoulderPitch), 4096 - wr.raw(.rShoulderPitch)))
-        XCTAssertTrue(close(mirrored.raw(.rShoulderPitch), 4096 - wr.raw(.lShoulderPitch)))
+        XCTAssertTrue(close(mirrored.raw(.lKnee), 4095 - wr.raw(.rKnee)),
+            "mirrored.lKnee=\(mirrored.raw(.lKnee)) ≈ 4095-wr.rKnee=\(4095 - wr.raw(.rKnee))")
+        XCTAssertTrue(close(mirrored.raw(.rKnee), 4095 - wr.raw(.lKnee)))
+        XCTAssertTrue(close(mirrored.raw(.lElbow), 4095 - wr.raw(.rElbow)))
+        XCTAssertTrue(close(mirrored.raw(.rElbow), 4095 - wr.raw(.lElbow)))
+        XCTAssertTrue(close(mirrored.raw(.lAnklePitch), 4095 - wr.raw(.rAnklePitch)))
+        XCTAssertTrue(close(mirrored.raw(.rAnklePitch), 4095 - wr.raw(.lAnklePitch)))
+        XCTAssertTrue(close(mirrored.raw(.lHipPitch), 4095 - wr.raw(.rHipPitch)))
+        XCTAssertTrue(close(mirrored.raw(.rHipPitch), 4095 - wr.raw(.lHipPitch)))
+        XCTAssertTrue(close(mirrored.raw(.lShoulderPitch), 4095 - wr.raw(.rShoulderPitch)))
+        XCTAssertTrue(close(mirrored.raw(.rShoulderPitch), 4095 - wr.raw(.lShoulderPitch)))
 
         // headTilt 는 단축 (위/아래) 이라 반사하지 않음 — 부호 유지.
         XCTAssertEqual(mirrored.raw(.headTilt), wr.raw(.headTilt))
+    }
+
+    /// walkReady 는 ROBOTIS 공식 캘리브레이션 잔차 (특히 shoulder_pitch R+L=4016, ~7° 잔차)
+    /// 때문에 mirror 가 identity 아님. 이것이 "의도된 비대칭" 임을 lock-in — 향후 누군가
+    /// walkReady raw 를 좌·우 완벽 대칭으로 강제하면 ROBOTIS 공식과 어긋남.
+    func testWalkReadyMirrorIsNotIdentity() {
+        let wr = RobotPose.walkReady
+        let mirrored = wr.mirrored()
+        XCTAssertNotEqual(mirrored, wr,
+            "walkReady 가 좌·우 완벽 대칭이면 ROBOTIS 공식 캘리브레이션 잔차가 손실됨")
+        // 잔차의 주 원인 — shoulder_pitch.
+        // wr.rShoulderPitch=1498 → mirror.lShoulderPitch=4095-1498=2597.
+        // wr.lShoulderPitch=2518 (≠2597) → ~80 raw (7°) 잔차.
+        XCTAssertNotEqual(mirrored.raw(.lShoulderPitch), wr.raw(.lShoulderPitch),
+            "shoulder_pitch 잔차가 mirror 에서 노출되어야 함")
     }
 
     func testCodableRoundTrip() throws {
