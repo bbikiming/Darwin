@@ -203,11 +203,47 @@ Motion JSON 의 페이지를 실 robot 에 SYNC_WRITE 로 송출. **기본 dry-r
 - 임계 보정: WARN 5.2 / FAIL 11.3 (2-tier)
 - kick routine 결과: FAIL → **WARN** (정상 ROBOTIS 동작 인정)
 
-## 통계 (Sprint 13 시점)
+## PR #2 + PR #3 머지 (2026-05-12, c85e9ef)
+
+PR #2 (Remote Teleop v1 PRD) + PR #3 (커뮤니티 모션 DB + Walk Lab 슬라이더 고도화)
++ post-merge handoff v2 머지 (fast-forward, 충돌 0).
+
+### PR #3 산출물 (Swift 측, Mac 빌드 필요)
+- `ForgeCore/WalkStabilityPredictor.swift` (267줄) — 휴리스틱 evaluate + recommendedCaps
+- `WalkLab/Components/SafetyBandedSlider.swift` (285줄) — 색대역 슬라이더
+- `WalkLab/Components/AdvancedSlidersPanel.swift` (283줄) — 6 슬라이더 패널
+- `Motion/ReferenceMotionLibrary.swift` (443줄) — **19 starter 페이지**
+- `Tests/ForgeCoreTests/WalkStabilityPredictorTests.swift` (145줄) — 14 tests
+
+### PR #3 산출물 (data + scripts)
+- `motions/test/walk-progression-v1.bin` (131,072 bytes, 6 페이지) — slot 110-115
+  - `wk_hold` (자세 유지 2초) / `wk_arms` (팔만 흔들기) / `wk_knee` (3° squat)
+  - `wk_hip_r` / `wk_hip_l` (hip sway 좌우) / `wk_lean_pitch` (앞뒤 lean ±2°)
+- `scripts/research/extract_motion_pages.py` + `generate_walk_test_motion.py`
+- `docs/walk-lab/WALK_PROGRESSION_TEST.md` (230줄)
+- `docs/handoff/2026-05-12-pr3-build-and-verify.md` (Mac 빌드 7-단계)
+- `research/` — 4 외부 robot 모션 저장소 (vendor data, 약 930K 라인)
+
+### 본 worktree 검증 (Rust 측만 — Swift 는 Mac 필요)
+- ✅ `cargo build --workspace` 통과
+- ✅ `cargo test --workspace` → **331 passed; 0 failed** (306 → 331, +25)
+- ✅ `forge motion play --slot 110 --bin motions/test/walk-progression-v1.bin` dry-run 정상
+- ✅ walk-progression-v1.bin 6 페이지 byte-preserving 디코드 (handoff §1-4 명세 일치)
+- ⏳ Swift `swift test` — Mac 환경 필요 (handoff §3)
+- ⏳ Walk Lab 시각 검증 — Mac 환경 필요 (handoff §4-A~D)
+- ⏳ 실 robot 적용 — 사용자 권한 (handoff §5)
+
+### 안전 노트
+- PR #3는 Walk Lab의 6-슬라이더 안전 색대역 + 낙상 위험 점수 + smart-clamp 추가
+- **start gate 차단** — 점수 80 이상이면 보행 시작 못 함
+- "안전 한도 해제" 토글로 임계 우회 가능 (사용자 책임)
+- 실 robot 적용 전 [`docs/walk-lab/WALK_PROGRESSION_TEST.md`](docs/walk-lab/WALK_PROGRESSION_TEST.md) 5 체크리스트 필수
+
+## 통계 (PR #1 + #2 + #3 머지 후)
 
 | 항목 | 값 |
 |------|-----|
-| Rust workspace tests | **306 / 306 통과** |
+| Rust workspace tests | **331 / 331 통과** |
 | Rust crates | 4 (`forge-core`, `forge-cli`, `forge-ffi`, **`forge-mcp-synth`**) |
 | forge-core 모듈 | 14 (control, controller, dynamixel, joint, motion, safety, serial, strategy, **synth**, vision, walk, error, lib) |
 | forge-cli 서브명령 | 13 + motion::play (ports / ping / scan / board / list-joints / joint / motion[import/export/inspect/catalog/**play**] / walk / strategy / serve / connect / walk-ready / **synth**) |
