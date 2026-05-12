@@ -1,372 +1,438 @@
-# PRD — Remote Pilot v1: 원격 조종 스튜디오 (공식 ROBOTIS 데모 충실 버전)
+# PRD — Remote Pilot v1: 원격 조종 스튜디오 (단일 설계 + 단계별 활성화)
 
-> **상태**: Design Frozen v2 — 구현 준비 완료
-> **작성일**: 2026-05-12 (초안 v1) / **갱신**: 2026-05-12 (v2 — 공식 자료 audit 반영)
-> **대상 스프린트**: Sprint 15 (`forge-core::teleop` + `RemotePilotView`) — **7일**
-> **선행 의존**: Sprint 1 Bus · Sprint 5 Walk · Sprint 6 Vision/Strategy · Sprint 8 Safety · Phase B Catalog · Phase D connect
-> **공식 출처**: ROBOTIS-OP2 `op2_walking_module` · `motion_4096.bin` (256 페이지) · `BallFollower.cpp` 표준 알고리즘 · `StatusCheck.cpp` (자동 복구) · `VisionMode.cpp` (페이지 매핑) · `Action.h` (PAGEHEADER 포맷)
-> **연관 문서**: `docs/prd/teleop-v1-audit.md` (충실도 점검)
-
----
-
-## 0. 핵심 원칙 — "공식 데모는 완벽하다, 그대로 실행한다"
-
-본 PRD 의 절대 원칙:
-
-1. **`motion_4096.bin` 페이지 데이터는 단 1 byte 도 수정하지 않는다.** ROBOTIS 가 손으로 튜닝한 모션이며, byte-identical round-trip 검증 완료 (Phase B).
-2. **페이지 ID, raw_name, mp3 동기, duration_ms 는 공식 카탈로그를 그대로 따른다.** UI 라벨은 sidecar `display_name` 채택.
-3. **공식 BallFollower 알고리즘**: head 가 1차 추적자, walk 가 head 각도를 따라간다.
-4. **공식 StatusCheck 자동 복구**: 자이로 fall detection → page 10/11 자동 트리거.
-5. **공식 walking_param_ 인터페이스**: `x_move_amplitude`, `y_move_amplitude`, `a_move_amplitude` + PHASE0..3 의 의미를 1:1 유지.
+> **상태**: Design Frozen v3 — 구현 준비 완료
+> **작성일**: 2026-05-12 (초안 → audit → reality-check → 본 v3 최종)
+> **전략**: 옵션 A 의 설계 일관성 + 옵션 B 의 점진 검증 = **"한 번 설계, 단계별 활성화"**
+> **대상 스프린트**: Sprint 15 (v1.0) → Sprint 16 (v1.1) → Sprint 17 (v1.5) → Sprint 18+ (v2)
+> **연관 문서**:
+> - `docs/prd/teleop-v1-audit.md` (공식 자료 충실도 점검)
+> - `docs/prd/teleop-v1-reality-check.md` (격차 분석 — 본 PRD 가 반영함)
 
 ---
 
-## 1. TL;DR
+## 0. 핵심 전략 — 옵션 A + B 하이브리드
 
-**다윈 로봇을 진짜 게임 컨트롤러처럼 조종하는 전용 화면 (⌘8). 공식 ROBOTIS 데모의 모션 16 페이지 + BallFollower 알고리즘을 그대로 실행할 수 있는 macOS 네이티브 GUI.** 두 모드 — (a) **수동 Pilot**: 가상 D-pad + 키보드로 X/Y/A amplitude 송출 + 7 개 데모 페이지 트리거, (b) **공 팔로우**: 공식 BallFollower 패턴 (head PID 추적 → head 각도 → walk amplitude → 좌/우 차기 자동 선택). 자이로 낙상 감지 시 page 10/11 자동 복구. 모든 페이지는 ROBOTIS sidecar `display_name` + mp3 라벨로 노출.
+### 0.1 채택한 옵션 A 의 안정 강점 (4가지)
 
----
-
-## 2. 배경 & 현황
-
-### 2.1 기존 자산
-
-| 레이어 | 모듈 | 상태 |
+| # | 강점 | 본 PRD 의 반영 |
 |---|---|---|
-| **연결** | `Bus`(USB / TCP 5530), `ConnectionStore`, watchdog | ✅ 완성 |
-| **걷기** | `WalkEngine`, `WalkPreset` 8종, `WalkSafety` | ✅ sim 완성 (실 IK = BLOCKER C3) |
-| **모션 카탈로그** | `motion_4096.bin` 16 페이지 (Phase B `Library::with_official_catalog`) | ✅ byte-identical |
-| **모션 송출** | `forge motion play --slot N --engage` | ✅ 완성 |
-| **비전** | `vision::detect_blob`, `HsvRange::ROBOCUP_BALL` | ✅ Rust 완성 |
-| **전략 FSM** | `StrategyState` 5단계 | ✅ 완성 |
-| **카메라** | `vision_demo` MJPEG `:8080` snapshot | ✅ 로봇 측 |
-| **안전** | `precheck_motion`, `TorqueRamper`, ⌘⇧. | ✅ 완성 |
-| **디자인 시스템** | `DFColor`, `DFNeon`, `DFAnimation`, `GlassNeon`, `KoreanUX` | ✅ 완성 |
+| **A1** | 설계 일관성 — 모든 컴포넌트가 같은 의도 | **단일 PRD 가 v1.0~v1.5 전 영역 명세**. UI 레이아웃·디자인 시스템·게이트·상태 머신 한 번에 동결 |
+| **A2** | 기술 부채 0 — v1.0 의 임시 코드를 v1.1 에서 제거할 일 없음 | **활성화 플래그 (`PilotFeatureFlags`) 기반** — 같은 코드, 같은 컴포넌트가 단계별로 enable 됨 |
+| **A3** | 사용자 학습 한 번 — UI 가 단계 사이 변하지 않음 | **v1.0 부터 v1.5 의 최종 화면 레이아웃**. 비활성 기능은 "준비 중" 배지 + 이유 표시 |
+| **A4** | HIL 셋업 한 번 — 테스트 인프라 동일 | **HIL 시나리오 6 개**를 단계별로 단위화. 셋업·픽스처는 v1.0 에 다 갖춤 |
 
-### 2.2 v1 (초안) 대비 v2 변경 사항 (audit 반영)
+### 0.2 보존한 옵션 B 의 안정 검증 (3가지)
 
-| 항목 | v1 (초안) | v2 (본 PRD) | 근거 |
-|---|---|---|---|
-| 모션 액션 버튼 | 4개 | **7개 + "+더 보기" 시트** | 공식 가용 페이지 활용 |
-| 모션 라벨 | "서기 (Stand)" | "기본 자세 (init)" + sidecar `display_name` | 공식 sidecar 채택 |
-| Ball-Follow | image centroid → walk | **head PID 추적 → head 각도 → walk** | 공식 BallFollower 패턴 |
-| 차기 | 항상 page 12 | **head pan 부호로 page 12/13 자동 선택** | 공식 BallFollower 패턴 |
-| 낙상 처리 | Stop 만 | **page 10/11 자동 복구** | 공식 StatusCheck.cpp |
-| 보행 anchor | 없음 | **ARM 후 walkready (page 9) 자동 호출** | 공식 SoccerMode 시작 anchor |
-| HSV 튜닝 | 하드코드 | **사용자 슬라이더 + preset 4종** | 공식 color_finder.ini 패턴 |
-| Sprint 일정 | 5일 | **7일** | 추가 작업 정산 |
-
----
-
-## 3. 목표 & 비목표
-
-### 3.1 v2 목표
-
-| # | 목표 | 측정 기준 |
+| # | 강점 | 본 PRD 의 반영 |
 |---|---|---|
-| **G1** | 게임 조종기 경험 | 처음 사용자가 3 초 안에 D-pad 발견 + 클릭 |
-| **G2** | 공식 데모 페이지 충실 재생 | 페이지 1/4/9/10/11/12/13/15/24/27/38/54 12 페이지 송출 (모두 `motion_4096.bin` byte-identical) |
-| **G3** | 공식 BallFollower 충실 재현 | head pan/tilt PID + 각도 기반 walk + 좌/우 차기 자동 |
-| **G4** | 자동 낙상 복구 | pitch > 50° 시 page 10 또는 11 자동 호출 |
-| **G5** | 4-layer 안전 게이트 | ARM / 등급 confirm / dead-man 1s / IMU·duration |
-| **G6** | 애니메이션 품질 | 모든 전환에 `DFAnimation` spring |
-| **G7** | 시뮬 미리보기 | `Bus == nil` 에서도 화면 동작 (head/walk sim) |
-| **G8** | mp3 동기 표시 | 각 액션 버튼 tooltip 에 공식 mp3 파일명 표시 |
+| **B1** | 단계별 HIL 검증 — 각 PR 가 실 로봇에서 통과 | v1.0/v1.1/v1.5 각각 HIL 시나리오 통과해야 머지 |
+| **B2** | 버그 격리 — bisect 용이 | 각 단계가 기존 검증된 모듈만 활성. 새 모듈 1~2개씩만 진입 |
+| **B3** | 하드웨어 손상 risk 최소 | v1.0 은 검증된 `precheck_motion` + `TorqueRamper` 경로만. 신규 walk/head SYNC_WRITE 는 v1.1 이후 |
 
-### 3.2 v2 비목표 (out-of-scope)
+### 0.3 단일 설계 원칙
 
-- USB 게임패드 (GameController.framework)
-- MJPEG streaming (snapshot 폴링만)
-- Goal/field 인식 (ball 만)
-- 음성 명령 (Conversation ⌘5)
-- 다중 로봇 동시 조종
-- 좌/우 패스 (page 70/71) v1 — v1.1 후보
-- 페이지 chain 자동 재생 (page 24→25, 38→39, 41..47) — v1.1 후보
+본 PRD 는 **최종 v1.5 의 UI 와 아키텍처를 한 번에 명세**. v1.0/v1.1/v1.5 는 같은 코드의 점진적 활성화이며, **UI 레이아웃·디자인 시스템·게이트 정책·상태 머신은 v1.0 부터 최종 형태**. 변하는 것은 **`PilotFeatureFlags`** 한 곳뿐:
+
+```swift
+public struct PilotFeatureFlags {
+    public var actionBarMain: Bool         // v1.0 활성
+    public var actionBarMore: Bool         // v1.5 활성
+    public var imuTelemetry: Bool          // v1.1 활성
+    public var autoRecovery: Bool          // v1.1 활성
+    public var headTracking: Bool          // v1.1 활성
+    public var ballFollow: Bool            // v1.5 활성
+    public var camera: Bool                // v1.5 활성 (mjpg-streamer 셋업 후)
+    public var hsvTuning: Bool             // v1.5 활성
+    public var bridgeNetwork: Bool         // v1.5 활성 (forge-bridge 셋업 후)
+    public var dpadRealMotor: Bool         // v2 활성 (BLOCKER C3 해결 후)
+    public var pageChain: Bool             // v1.5 활성
+    public var mp3Playback: Bool           // v2 활성 (협의 후)
+}
+```
+
+비활성 기능은 UI 에 **"준비 중" 배지** 로 표시 + tooltip 에 "어느 단계에 활성, 왜 대기 중" 명시 → 사용자가 진행 단계를 자연스럽게 이해.
 
 ---
 
-## 4. 화면 아키텍처
+## 1. 단계별 활성화 매트릭스
 
-`RemotePilotView` 세 영역:
+| 기능 | v1.0 | v1.1 | v1.5 | v2 | 활성화 조건 |
+|---|:---:|:---:|:---:|:---:|---|
+| **Action Bar 메인 7 페이지** (1·4·9·12·13·15·23) | ✅ | ✅ | ✅ | ✅ | — |
+| **Action Bar "+ 더 보기" 9 페이지** | 🔒 | 🔒 | ✅ | ✅ | UI 검증 후 |
+| **D-pad sim 미리보기** (SceneKit foot trail) | ✅ | ✅ | ✅ | ✅ | — |
+| **D-pad 실 모터 송출** | 🔒 | 🔒 | 🔒 | ✅ | **BLOCKER C3 (실 IK) 해결** |
+| **IMU 텔레메트리 표시** | 🔒 | ✅ | ✅ | ✅ | CmController::read_imu() 추가 |
+| **자동 낙상 복구** (page 10/11) | 🔒 | ✅ | ✅ | ✅ | IMU read + FallRecoveryCoordinator |
+| **Head 추적** (joint 19/20 PID) | 🔒 | ✅ | ✅ | ✅ | HeadJointController + HeadTracker |
+| **Ball-Follow 모드** (head 추적만, walk OFF) | 🔒 | ✅ | ✅ | ✅ | v1.1 의 head 추적 |
+| **Ball-Follow walk 자동 송출** | 🔒 | 🔒 | ✅(sim) | ✅(실) | sim: 즉시, 실: BLOCKER C3 후 |
+| **카메라 view** (MJPEG snapshot) | 🔒 | 🔒 | ✅ | ✅ | robot-side mjpg-streamer 셋업 |
+| **HSV 튜닝 패널** | 🔒 | 🔒 | ✅ | ✅ | 카메라 view 활성화 후 |
+| **TCP 5530 forge-bridge** | 🔒 | 🔒 | ✅ | ✅ | robot-side 데몬 셋업 + 가이드 |
+| **Page chain 자동 재생** | 🔒 | 🔒 | ✅ | ✅ | 사용자 의사 모달 검증 |
+| **mp3 동기 재생** | 🔒 | 🔒 | 🔒 | ✅ | 라이선스 결정 + robot/Mac 분기 |
+| **자동복구 ARM/deadman 우회 정책** | 🔒 | ✅ | ✅ | ✅ | 게이트 정책 명세 (§7 reality-check C8) |
+| **emergencyStop motion cancellation** | ✅ | ✅ | ✅ | ✅ | v1.0 부터 (Task.cancel + bus stop) |
+| **ARM dxl_power + torque ramp** | ✅ | ✅ | ✅ | ✅ | v1.0 부터 (안전 기초) |
+
+🔒 = 비활성. UI 에 표시되지만 "준비 중" 배지 + tooltip 으로 이유 명시.
+
+---
+
+## 2. 단계별 목표 & HIL 통과 기준
+
+### 2.1 Sprint 15 — v1.0 (3~4일)
+
+> **목표**: 사용자가 ⌘8 으로 Pilot 화면에 진입해, ARM 후 Action Bar 의 7 페이지를 실 로봇에 정확히 송출할 수 있다. D-pad 는 sim 미리보기만, 나머지 기능은 "준비 중" 배지로 노출.
+
+#### HIL 시나리오 v1.0 (4 개)
+
+| # | 시나리오 | 통과 기준 |
+|---:|---|---|
+| 1 | ⌘8 진입 → ARM 슬라이더 → walkready (page 9) 자동 호출 | walkready 자세 도달 + 토스트 "준비 완료" |
+| 2 | "감사 인사" (page 4) 클릭 | 3.6 s 진행링 + 실 모터 동작 + 토크 ramp 정상 |
+| 3 | "오른발 차기" (page 12) 클릭 → HighRisk confirm → 확인 | 1.7 s 차기 동작 + 모터 손상 없음 |
+| 4 | 차기 진행 중 ⌘⇧. (E-stop) | 즉시 모터 토크 OFF + motion task cancel + 다음 step 송출 X |
+
+#### v1.0 필수 신규 작업 (3~4일)
+
+| Day | 작업 |
+|---|---|
+| 1 | forge-core: `motion::play::MotionPlayer` 추출 (motion_play.rs → 라이브러리) + `precheck_motion` integration + Task cancellation 지원 |
+| 2 | forge-ffi: `fc_motion_play_slot(handle, slot, dry_run, confirm_risk)` + `fc_motion_play_cancel` + cbindgen 헤더 |
+| 3 | Swift: `MotionCatalog` (sidecar TOML 파싱 또는 hardcode 16 페이지) + `TeleopChannel` 기초 (ARM/Motion/Stop 만, deadman/IMU 없음) + `PilotSafetyGate` 기초 (armed 만) |
+| 4 | Swift: `RemotePilotView` 최종 UI 스캐폴드 (v1.5 레이아웃 그대로) + `PilotFeatureFlags` + 모든 컴포넌트 시각 (D-pad/카메라/HUD 등 비활성 상태로 표시) + 비활성 컴포넌트 "준비 중" 배지 + `PilotActionBar` 7 페이지 실 동작 + ARM 시퀀스 (dxl_power + TorqueRamper + walkready) + emergencyStop motion cancellation + RootView ⌘8 |
+
+### 2.2 Sprint 16 — v1.1 (3일, IMU + Head 추적)
+
+> **목표**: IMU 읽기 + 자동 낙상 복구 + Head joint 19/20 PID 추적 활성화. Ball-Follow 모드의 head 추적 부분 활성 (walk 는 여전히 OFF). 카메라 없이도 검증 가능 (BlobResult 모의 입력).
+
+#### HIL 시나리오 v1.1 (2 개)
+
+| # | 시나리오 | 통과 기준 |
+|---:|---|---|
+| 5 | cradle 비틀어 pitch 60° | 5초 내 page 10 (또는 11) 자동 호출 + 토스트 "낙상 감지" |
+| 6 | 모의 blob (Mac 측 테스트 frame) → head 추적 | head pan/tilt 가 blob 위치로 PID 수렴 (오차 < 5°, 1초 이내) |
+
+#### v1.1 필수 신규 작업 (3일)
+
+| Day | 작업 |
+|---|---|
+| 1 | forge-core: `controller::cm::CmController::read_imu() → ImuSample` 신규 + raw → rad/s, m/s² 변환 + `ComplementaryFilter` 통합 |
+| 2 | forge-core: `teleop::pid` + `teleop::head_tracker` + ffi `fc_bus_read_imu_filtered`, `fc_head_tracker_*` |
+| 3 | Swift: `HeadJointController` + `FallRecoveryCoordinator` + IMU `ConnectionStore.lastImuRoll/Pitch` 노출 + UI 활성화 토글 (`flags.imuTelemetry`, `autoRecovery`, `headTracking` ON) + PilotHudStrip 인공수평선 활성 + Mode Picker Ball-Follow 진입 시 head 추적만 작동 |
+
+### 2.3 Sprint 17 — v1.5 (5일, 카메라 + Ball-Follow + Bridge)
+
+> **목표**: robot-side mjpg-streamer + forge-bridge 셋업 가이드 + 카메라 view + HSV 튜닝 + Ball-Follow walk (sim 만, 실 모터 송출 X) + "+ 더 보기" 9 페이지.
+
+#### HIL 시나리오 v1.5 (외부 셋업 의존, sim 검증)
+
+| # | 시나리오 | 통과 기준 |
+|---:|---|---|
+| 7 | robot 측 셋업 가이드 → mjpg-streamer + forge-bridge 설치 | 카메라 view + TCP 5530 모두 동작 |
+| 8 | 카메라 view + 공 1m → Ball-Follow ON (auto-walk sim) | head 추적 + sim WalkEngine 의 발 trail 가 회전 표시 + 차기 (page 12/13 실송출) auto-kick 확인 |
+
+#### v1.5 필수 신규 작업 (5일)
+
+| Day | 작업 |
+|---|---|
+| 1 | forge-core: `teleop::ballfollow` (head 기반 walk decision + 좌/우 차기 자동) + ffi + 통합 테스트 |
+| 2 | Swift: `BallFollowEngine` + `MjpegSnapshot` + 카메라 view 활성화 (`flags.camera, ballFollow` ON) |
+| 3 | Swift: `HsvTuningPanel` 활성 + 4 preset + UserDefaults + 미리보기 (1Hz outline) |
+| 4 | Robot-side: mjpg-streamer 셋업 스크립트 + forge-bridge socat init.d 스크립트 + 한국어 가이드 (`docs/handoff/teleop-robot-setup.md`) + RemoteShell QuickAction 갱신 |
+| 5 | Swift: PilotActionBar "+ 더 보기" 시트 활성 (`flags.actionBarMore` ON) + chain 자동 재생 (`flags.pageChain` ON) + HIL 시나리오 7/8 통과 |
+
+### 2.4 Sprint 18+ — v2 (BLOCKER C3 해결 후)
+
+> **목표**: 실 IK 완성 → D-pad 실 모터 송출 + Ball-Follow walk 실 송출. **선결 조건**: ROBOTIS-OP2 `op2_walking_module` IK Rust 포팅 또는 robot-side `walk_demo` TCP 호출.
+
+이 단계의 PRD 는 v2 의 BLOCKER C3 결정 후 별도 작성.
+
+---
+
+## 3. 최종 UI 레이아웃 (v1.0 부터 그대로)
+
+v1.0 사용자가 보는 화면. v1.5 까지 레이아웃 동일, 컴포넌트만 점진 활성.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │ toolbar: ⬤ Connected V11.7 T38° ARM🔒→🔓 MODE 🕹/🎯 │ ⌘K E-STOP🔴            │
 ├───────────────────────────────────┬──────────────────────────────────────────────┤
-│ LEFT PANEL (360 px, fixed)        │ RIGHT PANEL (fill)                           │
+│ LEFT PANEL (360 px)               │ RIGHT PANEL (fill)                           │
 │                                   │ ┌──────────────────────────────────┐         │
-│ 1. ARM 슬라이더 (밀어서 잠금 해제)│ │ A. CAMERA + AR HUD               │         │
-│                                   │ │   - blob 십자선 (centroid)        │         │
-│ 2. MODE 토글 (Manual / Ball-Follow)│ │   - head 십자선 (현재 head 시선)  │         │
-│                                   │ │   - 상태 배지 + FSM dots          │         │
-│ 3. SPEED GAUGE (3색 arc)          │ │   - HSV 튜닝 슬라이더 (접힘)      │         │
+│ 1. ARM 슬라이더                   │ │ A. CAMERA + AR HUD               │         │
+│                                   │ │   v1.0/v1.1: 회색 placeholder    │         │
+│ 2. MODE 토글                      │ │     + "카메라 v1.5 활성" 배지    │         │
+│   - Manual (활성)                 │ │     + [로봇 셋업 가이드] 링크    │         │
+│   - Ball-Follow                   │ │   v1.5: MJPEG + AR overlay       │         │
+│     ↳ v1.0: "v1.1 활성" 배지      │ └──────────────────────────────────┘         │
+│     ↳ v1.1: head 추적만           │ ┌──────────────────────────────────┐         │
+│     ↳ v1.5: walk + 차기 자동      │ │ B. 3D 로봇 뷰 + foot trail (sim) │         │
+│                                   │ │   v1.0 부터 활성                  │         │
+│ 3. SPEED GAUGE (sim)              │ └──────────────────────────────────┘         │
+│   v1.0: sim 미리보기              │ ┌──────────────────────────────────┐         │
+│   v2: 실 모터 송출                │ │ C. HUD STRIP                     │         │
+│                                   │ │   v1.0: V·T·세션·E-stop          │         │
+│ 4. D-PAD                          │ │     IMU: "v1.1 활성" placeholder │         │
+│   v1.0: sim 만, "v2 활성" 라벨   │ │     자동복구: "v1.1 활성"        │         │
+│   v2: 실 모터 송출                │ │   v1.1+: IMU 인공수평선 + 자동복구토글│      │
 │                                   │ └──────────────────────────────────┘         │
-│ 4. D-PAD (7존 + Hold Ring)        │ ┌──────────────────────────────────┐         │
-│                                   │ │ B. 3D 로봇 뷰 + foot trail        │         │
-│ 5. ACTION BAR 7 버튼 + "+ 더 보기"│ │    (head 회전도 sim)              │         │
-│                                   │ └──────────────────────────────────┘         │
-│                                   │ ┌──────────────────────────────────┐         │
-│                                   │ │ C. HUD STRIP (계기판)            │         │
-│                                   │ │    배터리·온도·IMU 수평선·세션   │         │
-│                                   │ │    + "🔁 자동복구" 토글           │         │
-│                                   │ └──────────────────────────────────┘         │
+│ 5. ACTION BAR                     │                                              │
+│   v1.0: 7 메인 페이지 실 송출 ✅  │                                              │
+│   v1.5: + 더 보기 9 페이지        │                                              │
 └───────────────────────────────────┴──────────────────────────────────────────────┘
 ```
 
----
+### 3.1 "준비 중" 배지 디자인
 
-## 5. 공식 데모 모션 — Action Bar 매핑 (v2 핵심)
-
-### 5.1 v2 의 정확한 페이지 매핑 (sidecar `display_name` + mp3 + safety)
-
-**모든 페이지 데이터는 `motion_4096.bin` byte-identical. 우리는 호출만 한다.**
-
-| Order | slot | 공식 raw_name | UI 라벨 (sidecar `display_name`) | safety | mp3 동기 | duration | confirm? | 키 |
-|---:|---:|---|---|---|---|---:|---|---|
-| 1 | **1** | `init` | 기본 자세 (Stand Up) | Safe | `Stand up.mp3` | 2.0 s | × | 1 |
-| 2 | **4** | `hi` | 감사 인사 (Thank You) | Safe | `Thank you.mp3` | 3.6 s | × | 2 |
-| 3 | **15** | `sit down` | 앉기 (Sit Down) | Safe | `Sit down.mp3` | 1.0 s | × | 3 |
-| 4 | **12** | `rk` | 오른발 차기 (Right Kick) | **HighRisk** | `Right kick.mp3` | 1.7 s | ✓ | 4 |
-| 5 | **13** | `lk` | 왼발 차기 (Left Kick) | **HighRisk** | `Left kick.mp3` | 1.7 s | ✓ | 5 |
-| 6 | **9** | `walkready` | 보행 자세 (Walk Ready) | Safe | (none) | 1.0 s | × | 6 |
-| 7 | **23** | `d1` | 출발! (Yes Go) | Safe | `Yes go.mp3` | 3.0 s | × | 7 |
-
-**"+ 더 보기" 시트 (Action Bar 우측 ⋯ 버튼 → 모달):**
-
-| slot | raw_name | UI 라벨 | safety | mp3 | duration | 용도 |
-|---:|---|---|---|---|---:|---|
-| **2** | `ok` | 끄덕임 (Yes) | Safe | `Yes.mp3` | 2.6 s | 긍정 응답 |
-| **3** | `no` | 가로젓기 (No) | Safe | `No.mp3` | 2.6 s | 부정 응답 |
-| **10** | `f up` | 앞 일어서기 (Get Up Front) | Caution | (none) | 3.2 s | 수동 복구 |
-| **11** | `b up` | 뒤 일어서기 (Get Up Back) | Caution | (none) | 4.2 s | 수동 복구 |
-| **16** | `stand up` | 일어서기 (Stand Up exact) | Safe | (none) | 1.0 s | 단일 step stand |
-| **24** | `d2` | 감탄 (Wow) | Safe | `Wow.mp3` | 3.6 s | VisionMode BLUE 페이지 |
-| **27** | `d3` | 실수 (Oops) | Safe | (none) | 3.2 s | VisionMode RGB |
-| **38** | `d2` | 손 흔들기 (Bye Bye) | Safe | (none) | 3.6 s | VisionMode RED+YELLOW |
-| **54** | `int` | 박수 요청 (Clap Please) | Safe | (none) | 2.0 s | VisionMode RED+BLUE |
-
-> **모든 라벨은 `docs/motion-format/page-metadata-motion4096.toml` 의 `display_name` 필드 그대로.** UI 코드는 toml 을 빌드 타임에 Swift struct 로 generate (또는 런타임 파싱).
-
-### 5.2 Action Bar 버튼 UX
-
-7 버튼 가로 스크롤 (또는 두 줄 4+3). 각 버튼:
+비활성 컴포넌트는 회색 overlay + 우상단 작은 배지 + tap → tooltip:
 
 ```
-┌─────────────────────────┐
-│ 🦶  오른발 차기          │   ← 한국어 display_name
-│ ━━━━━━━━━━━━━━━░░░       │   ← 진행 링 (재생 중)
-│ rk · 1.7s · ⚠️           │   ← raw_name · duration · HighRisk 마크
-└─────────────────────────┘
+┌──────────────────────────────────┐
+│  ╔═════════════════════════════╗ │ ◀── 회색 overlay (opacity 0.4)
+│  ║  [컴포넌트 시각 (회색)]    ║ │
+│  ║                              ║ │
+│  ║   🔒 v1.1 활성 예정         ║ │ ◀── 중앙 배지 (DFColor.warning)
+│  ║   (탭 → 자세히)             ║ │
+│  ╚═════════════════════════════╝ │
+└──────────────────────────────────┘
 ```
 
-- **idle**: `DFColor.forge.opacity(0.12)` 배경. Safe = forge / Caution = warning / HighRisk = danger 외곽.
-- **playing**: 진행 링 (stroke 3pt) + 내부 dim + 모든 D-pad/모드토글 disable.
-- **cooldown**: 0.8 s 체크 아이콘 → fade.
-- **HighRisk** (page 12/13): 외곽 `DFColor.danger` + ⚠ 아이콘 → 클릭 시 Alert "오른발 차기를 진행할까요? cradle 거치 + 주변 빈 공간 확인".
-- **tooltip (hover 500ms)**:
-  ```
-  raw_name: rk
-  mp3 sync: Right kick.mp3
-  duration: 1.7 s (7 step × pause+time)
-  safety: HighRisk
-  source: motion_4096.bin page 12
-  ```
+탭 → sheet 모달:
+- **무엇이**: "공 자동 추적 + 자동 낙상 복구"
+- **왜 대기**: "로봇의 자이로 센서를 읽는 코드가 v1.1 에서 추가됩니다"
+- **언제**: "Sprint 16 — 약 1주 후"
+- **지금 할 수 있는 것**: "Action Bar 의 7가지 동작 + sim 미리보기"
 
-### 5.3 페이지 재생 정확성 보장
-
-- `forge motion play --slot N` 호출. `--engage` flag 로 실 모터 송출.
-- 내부적으로:
-  1. `precheck_motion(slot, confirm_risk)` — 안전 클래스 확인
-  2. `TorqueRamper` gentle (P-gain 0→8→16→32) — 모터 보호
-  3. step 별 timing 정확 (`pause + time` × 8 ms)
-  4. `INVALID_BIT_MASK` (0x4000) / `TORQUE_OFF_BIT_MASK` (0x2000) 비트 그대로 처리
-- **page chain 자동 재생** (next != 0): page 24→25, 38→39 등. v1 에서는 첫 페이지만 재생. v1.1 에서 chain 지원.
+이 패턴으로 **사용자가 v1.0 의 한계를 정직히 인지** + **v1.1/v1.5 를 자연스럽게 기대**.
 
 ---
 
-## 6. Ball-Follow — 공식 BallFollower 알고리즘 충실 재현 (v2 핵심)
+## 4. 컴포넌트 — 단일 설계 (v1.0 부터 v1.5 까지 동일 코드)
 
-### 6.1 공식 BallFollower 알고리즘 (DARwIn-OP `Linux/project/soccer/`)
+### 4.1 `PilotFeatureFlags` (`Remote/PilotFeatureFlags.swift`)
 
+```swift
+public struct PilotFeatureFlags: Sendable, Equatable {
+    public var actionBarMain: Bool
+    public var actionBarMore: Bool
+    public var imuTelemetry: Bool
+    public var autoRecovery: Bool
+    public var headTracking: Bool
+    public var ballFollow: Bool
+    public var camera: Bool
+    public var hsvTuning: Bool
+    public var bridgeNetwork: Bool
+    public var dpadRealMotor: Bool
+    public var pageChain: Bool
+    public var mp3Playback: Bool
+
+    /// v1.0 default — Action Bar 메인 만 활성, 나머지 OFF.
+    public static let v1_0: PilotFeatureFlags = .init(
+        actionBarMain: true,
+        actionBarMore: false,
+        imuTelemetry: false,
+        autoRecovery: false,
+        headTracking: false,
+        ballFollow: false,
+        camera: false,
+        hsvTuning: false,
+        bridgeNetwork: false,
+        dpadRealMotor: false,
+        pageChain: false,
+        mp3Playback: false
+    )
+
+    public static let v1_1: PilotFeatureFlags = {
+        var f = v1_0
+        f.imuTelemetry = true
+        f.autoRecovery = true
+        f.headTracking = true
+        f.ballFollow = true     // head 추적만, walk OFF (engine 내부 자체 분기)
+        return f
+    }()
+
+    public static let v1_5: PilotFeatureFlags = {
+        var f = v1_1
+        f.actionBarMore = true
+        f.camera = true
+        f.hsvTuning = true
+        f.bridgeNetwork = true
+        f.pageChain = true
+        return f
+    }()
+
+    public static let v2: PilotFeatureFlags = {
+        var f = v1_5
+        f.dpadRealMotor = true
+        return f
+    }()
+
+    /// 빌드 시점 결정 — UserDefaults override 가능 (개발자 / 베타).
+    public static let active: PilotFeatureFlags = {
+        if let raw = UserDefaults.standard.string(forKey: "df.pilot.featureLevel") {
+            switch raw {
+            case "v1.0": return .v1_0
+            case "v1.1": return .v1_1
+            case "v1.5": return .v1_5
+            case "v2":   return .v2
+            default: break
+            }
+        }
+        return .v1_0   // ← v1.0 빌드 시 default
+    }()
+}
 ```
-매 frame (~30 ms):
-  1. ColorFinder::FindColor(image, profile) → ball_x, ball_y (pixel)
-  2. Head::MoveTracking(ball_x, ball_y) — PID 로 머리가 공을 추적
-  3. pan_angle, tilt_angle = Head::GetAngle()
-  4. walk command (head 각도 기반):
-     a_move_amplitude = K_a * pan_angle
-     x_move_amplitude = K_x * (KICK_TILT_THRESHOLD - tilt_angle).max(0)
-  5. kick 결정:
-     if |pan_angle| < KICK_PAN_DEADZONE
-        AND tilt_angle > KICK_TILT_THRESHOLD
-        AND ball_size > MIN_KICK_SIZE:
-          Walking::Stop()
-          Action::Play(pan_angle > 0 ? 12 : 13)   // 좌/우 자동
+
+빌드 변경: `Active = .v1_1` 로 한 줄만 변경 → v1.1 빌드. 새 코드 작성 없이 활성화.
+
+### 4.2 `ComingSoonOverlay` (`Remote/ComingSoonOverlay.swift`)
+
+```swift
+public struct ComingSoonOverlay: ViewModifier {
+    public let stage: String           // "v1.1" / "v1.5" / "v2"
+    public let title: String           // "공 자동 추적"
+    public let why: String             // "자이로 센서 코드 v1.1 추가 예정"
+    public let when: String            // "Sprint 16 (1주 후)"
+    public let alternative: String?    // "지금: Action Bar 의 7가지"
+    @State private var showSheet = false
+
+    public func body(content: Content) -> some View {
+        ZStack {
+            content
+                .opacity(DFOpacity.disabled)
+                .allowsHitTesting(false)
+                .grayscale(0.8)
+            VStack(spacing: 6) {
+                Image(systemName: "lock.fill")
+                Text("\(stage) 활성 예정").font(DFFont.bodyEmph)
+                Text(title).font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
+                Text("탭하면 자세히").font(DFFont.caption).foregroundStyle(DFColor.accent)
+            }
+            .padding(DFSpace.md)
+            .background(DFColor.warning.opacity(0.18))
+            .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+            .onTapGesture { showSheet = true }
+        }
+        .sheet(isPresented: $showSheet) { detailSheet }
+    }
+
+    @ViewBuilder var detailSheet: some View { … }
+}
+
+public extension View {
+    func comingSoon(_ stage: String, title: String, why: String, when: String,
+                    alternative: String? = nil) -> some View { … }
+}
 ```
 
-### 6.2 우리 구현 — 4 stage closed loop
+각 비활성 컴포넌트는 이 modifier 만 붙이면 됨:
 
-```
-loop (period = 100 ms):
-
-  [Stage 1] Frame fetch
-     MjpegSnapshot.fetch(host) → Frame (RGB)
-
-  [Stage 2] Blob detect
-     detect_blob(frame, config.hsv) → BlobResult { pixel_count, centroid_x, centroid_y }
-     if !blob.found(): state = LookingForBall; head_scan(); continue
-
-  [Stage 3] Head tracking (HeadTracker PID)
-     err_x = (centroid_x - frame.w/2) / (frame.w/2)   // [-1, +1]
-     err_y = (centroid_y - frame.h/2) / (frame.h/2)
-     pan_delta_deg  = pan_pid.update(err_x, dt)       // negative err_x → 좌로 head 회전
-     tilt_delta_deg = tilt_pid.update(err_y, dt)
-     joint.set(HeadPan,  current_pan  + pan_delta_deg)
-     joint.set(HeadTilt, current_tilt + tilt_delta_deg)
-     read back current head angles
-
-  [Stage 4] Walk + Kick decision (공식 패턴)
-     pan  = head_pan_deg     // joint 19 현재 각도
-     tilt = head_tilt_deg    // joint 20 현재 각도
-
-     if |pan| < 5° AND tilt > 30° AND pixel_count > 1000:
-         state = Kicking
-         walk = Stop
-         if autoKick: Action::Play(pan > 0 ? 12 : 13)
-                       // else: 사용자에게 "차기 준비됨 - 클릭" prompt
-     else:
-         state = ApproachingBall
-         a_amp = -0.10 * (pan / 90.0)              // 머리 우측 → body 우회전
-         x_amp = 0.025 * ((30.0 - tilt) / 30.0).max(0.0)   // tilt 0° = max forward, 30°+ = 0
-         walk = WalkCommand { x_amp, y_amp: 0, a_amp, enabled: true }
-         TeleopChannel.send(walk)
+```swift
+PilotDpad(...)
+    .comingSoon("v2", title: "실 로봇 보행 조종",
+                why: "걷기 IK 알고리즘 (BLOCKER C3) 구현 후 활성화",
+                when: "BLOCKER C3 해결 후 Sprint 18+",
+                alternative: "지금: 화면의 발 trail 시뮬레이션은 동작합니다")
 ```
 
-### 6.3 LookingForBall — 능동 scan
+### 4.3 컴포넌트 활성 매트릭스
 
-공이 안 보일 때:
-- **head scan**: 좌→우→좌 sweep (pan ±45°, 1Hz)
-- 동시에 body 도 천천히 좌회전 (a_amp = 0.10, x = 0) — head 가 cover 못 한 영역 보강
-- 5 s 동안 미발견 → LOST 상태로 전환 + 자동 stop
-
-### 6.4 LOST 처리
-
-- LOST 5s 초과 → 화면 dim + "공을 찾을 수 없어요" 모달 + "수동 모드로 전환할까요?" 옵션
-
-### 6.5 v1 안전 토글
-
-| 토글 | 기본 | 효과 |
+| 컴포넌트 | 활성 조건 | v1.0 표시 |
 |---|---|---|
-| **Auto-Walk** | ON | Stage 4 의 walk command 자동 송출 |
-| **Auto-Kick** | OFF (HighRisk confirm 필수) | Kicking 상태 진입 시 자동 page 12/13. OFF 면 화면에 "차기 준비됨 - 클릭" 큰 버튼 |
-| **Auto-Recovery** | ON | 낙상 시 page 10/11 자동 — §7 |
+| `PilotArmSlider` | 항상 | 정상 동작 |
+| `PilotModePicker` | 항상 | Manual 만 선택 가능 — Ball-Follow 는 disable + comingSoon("v1.1") |
+| `PilotDpad` (sim part) | 항상 | 정상 sim 미리보기 (sceneKit foot trail) |
+| `PilotDpad` (실 모터 송출) | `flags.dpadRealMotor` | comingSoon("v2") |
+| `PilotSpeedGauge` | 항상 | sim 만 — 실 송출 비활성 |
+| `PilotActionBar` 메인 7 | `flags.actionBarMain` | 정상 동작 |
+| `PilotActionBar` + 더보기 | `flags.actionBarMore` | comingSoon("v1.5") |
+| `PilotCameraView` | `flags.camera` | comingSoon("v1.5") + [로봇 셋업 가이드] 링크 |
+| `HsvTuningPanel` | `flags.hsvTuning` | camera 와 같이 hidden |
+| `PilotHudStrip` IMU 부분 | `flags.imuTelemetry` | "IMU v1.1" placeholder |
+| `PilotHudStrip` 자동복구 토글 | `flags.autoRecovery` | comingSoon("v1.1") |
+| Network endpoint UI | `flags.bridgeNetwork` | "TCP 연결 v1.5 셋업 후" 배너 |
 
 ---
 
-## 7. 낙상 자동 복구 — 공식 StatusCheck.cpp 패턴
+## 5. v1.0 — 안전 우선 설계 (가장 작게, 가장 검증된)
 
-### 7.1 공식 패턴
+### 5.1 v1.0 의 좁은 범위
 
-```cpp
-// Linux/project/demo/StatusCheck.cpp:35-37
-if (gyroFB < -fallThreshold) Action::GetInstance()->Start(10);   // f up
-if (gyroFB > +fallThreshold) Action::GetInstance()->Start(11);   // b up
-```
+- **실 모터 송출 경로**: `forge motion play` (CLI 검증 완료) → ffi 추출 → Swift 호출
+- **검증된 안전**: `precheck_motion` + `TorqueRamper` + `emergency_stop()` 다 기존
+- **신규 코드 최소**: motion 라이브러리 추출 + ffi 5개 + Swift 컴포넌트 8개 + 한 번의 통합
 
-### 7.2 우리 게이트 분기 (PRD §8 갱신)
+### 5.2 v1.0 의 ARM 시퀀스 (최종 형태 — v1.0 부터 적용)
 
 ```
-L4a (IMU watchdog 갱신):
-
-  case |imu.pitch| > 50° AND Auto-Recovery 토글 ON:
-    Walking::Stop()
-    if pitch > 0:   Action::Play(10)   // 앞 낙상 → "앞 일어서기"
-    else:           Action::Play(11)   // 뒤 낙상 → "뒤 일어서기"
-    Show toast "낙상 감지 — 자동 복구 시작"
-
-  case |imu.pitch| > 50° AND Auto-Recovery 토글 OFF:
-    Walking::Stop()
-    Show modal: "낙상 감지 — 어느 방향?"
-       [⬆ 앞 일어서기 (page 10)]
-       [⬇ 뒤 일어서기 (page 11)]
-       [닫기]
-
-  case 25° < |imu.roll| OR 30° < |imu.pitch| ≤ 50°:
-    Walking::Stop()
-    Show toast "기울어짐 감지 — 정지"
-```
-
-### 7.3 Auto-Recovery 토글 UI
-
-HUD Strip 우측에 작은 토글:
-
-```
-[ 🔁 자동복구 ●ON ]
-```
-
-ON 기본. 비활성화 시 "수동 확인 필요 — 낙상 시 모달 표시" tooltip.
-
----
-
-## 8. ARM → walkready 자동 호출 (공식 anchor 충실)
-
-### 8.1 공식 패턴
-
-ROBOTIS SoccerMode 시작 시 `Action::Play(9)` (walkready) 호출 후 walking 시작.
-
-### 8.2 우리 ARM 시퀀스
-
-ARM 슬라이더 완료 직후 (Bus 연결됨 + cradle/clearance 확인):
-
-```
-ARM 완료
+ARM 슬라이더 drag 완료
   ↓
-[1] Toast: "보행 자세로 전환 중…"
-[2] forge motion play --slot 9 --engage   // page 9 walkready
-[3] 1초 대기 (duration_ms 까지)
-[4] Toast: "준비 완료" (success)
-[5] D-pad + Action Bar 활성화
+[1] CM 보드 dxl_power = 1 (모터 전원 ON)
+[2] 모든 관절 TorqueRamper gentle (P_GAIN 0→8→16→32, ~400ms)
+[3] Toast "보행 자세로 전환 중…"
+[4] forge motion play page 9 (walkready) — confirm_risk=false (Safe)
+[5] duration_ms (~1s) 대기 + 진행 ring
+[6] Toast "준비 완료 — 동작 버튼을 눌러보세요"
+[7] PilotActionBar 활성화 (이미 ON 이었음, opacity 정상화)
 ```
 
-ARM OFF (disarm) 시: 마지막 명령이 Walking 이면 `Stop` 송출. 별도 page 호출 없음 (사용자가 명시적으로 sit down 누르도록).
+DISARM:
+1. 진행 중인 motion task `Task.cancel()`
+2. Walking::Stop (사실상 set_command(enabled: false) — v1.0 에는 영향 X, v2 에 의미)
+3. CM dxl_power = 0 (선택 — 사용자가 sit 후 disarm 시 모터 자유)
+4. ARM 슬라이더 thumb 원위치
+
+### 5.3 v1.0 의 E-Stop (최종 형태)
+
+```swift
+public func emergencyStop() async {
+    // 1. UI 즉시 빨간 flash
+    flashRed()
+
+    // 2. 진행 중인 모든 motion task 취소
+    currentMotionTask?.cancel()
+    deadmanTask?.cancel()
+
+    // 3. Bus 토크 OFF + P_GAIN 0 (기존 `bus.emergencyStop()`)
+    try? store.bus?.emergencyStop()
+
+    // 4. 모든 상태 .Stop 으로 강제
+    currentCmd = .Stop
+    pilotSafetyGate.disarm()
+
+    // 5. 시뮬 모드로 격리 (실수 재실행 방지)
+    dispatcher.mode = .simulation
+
+    // 6. 사용자 토스트
+    toast("긴급 정지 — 모터 토크 OFF. ARM 다시 해주세요.")
+}
+```
+
+⌘⇧. 글로벌 단축키 (RootView 기존 그대로) 가 NotificationCenter 로 `TeleopChannel.emergencyStop()` 호출.
+
+### 5.4 v1.0 의 4-layer 안전 게이트 (간소화)
+
+v1.0 의 SafetyGate 는 **L0 + L1 + L2 만** (deadman/IMU 는 v1.1).
+
+```
+L0: ⌘⇧. → emergencyStop()
+L1: !armed → 명령 무시
+L2: cmd.safety == .highRisk && !confirmRisk → Alert
+```
+
+L3 (deadman) 은 Walk 명령 전용 — v1.0 은 Walk 미사용이라 OFF 자연스러움.
+L4 (IMU) 는 v1.1 활성. v1.0 에서는 "준비 중" 배지로 UI 노출.
 
 ---
 
-## 9. HSV 튜닝 UI (v2 추가)
+## 6. 디자인 시스템 — v1.0 부터 최종 형태
 
-### 9.1 카메라 view 우하단 floating panel
+기존 `DFColor`, `DFNeon`, `DFAnimation` + `KoreanUX` 그대로 사용.
 
-```
-[ 🟠 공 색상 ▾ ]
-   ├─ 주황 (RoboCup 표준)  ← 기본
-   ├─ 빨강
-   ├─ 노랑 (RoboCup 골)
-   ├─ 파랑
-   └─ 사용자 정의...
-       h_min ━━●━━━━━━━━━━━━ 0°
-       h_max ━━━━━━●━━━━━━━ 30°
-       s_min ━━━━━━━━━━●━━━ 0.50
-       v_min ━━━━━━━━━●━━━━ 0.40
-
-   [실시간 미리보기: blob 매칭 표시]
-```
-
-### 9.2 데이터 모델
-
-`BallFollowConfig.hsv: HsvRange` 를 `@Published` 로 노출. 사용자 변경 시 즉시 다음 frame 부터 반영.
-
-색 preset 4종 (`HsvRange::ROBOCUP_BALL` 외):
-- `RED_CARD` (h: 350~10 wrap, s 0.5, v 0.4)
-- `ROBOCUP_GOAL_YELLOW` (h: 40~70, s 0.4, v 0.4) — 기존
-- `BLUE_CARD` (h: 200~240, s 0.5, v 0.4)
-
-사용자 정의는 UserDefaults 저장 (`PilotHsvUserProfile`).
-
----
-
-## 10. 디자인 시스템 — Pilot 전용 토큰
-
-기존 `DFColor` / `DFNeon` / `DFAnimation` 사용 + `PilotTokens.swift` 신규.
+신규 `PilotTokens.swift` (이전 PRD v2 §10 동일):
 
 ```swift
 enum PilotColor {
@@ -382,471 +448,255 @@ enum PilotColor {
     static let stateLost      = DFColor.danger
     static let holdCharging   = DFColor.warning
     static let holdFull       = DFColor.danger
-    // v2 신규
     static let safetySafe     = DFColor.success
     static let safetyCaution  = DFColor.warning
     static let safetyHighRisk = DFColor.danger
-    static let headReticle    = DFColor.info       // head 시선 십자선 (blob 십자선과 구분)
+    static let headReticle    = DFColor.info
     static let ballReticle    = DFColor.forge
+    // v3 신규 — comingSoon 배지 색
+    static let comingSoon     = DFColor.warning
 }
 
 enum PilotAnim {
-    static let dpadPress = Animation.spring(response: 0.12, dampingFraction: 0.7)
-    static let stateChange = Animation.spring(response: 0.35, dampingFraction: 0.75)
-    static let gauge = Animation.easeOut(duration: 0.22)
-    static let motionProgress = Animation.linear
-    static let modeSwitch = Animation.easeInOut(duration: 0.30)
-    static let lockPop = Animation.spring(response: 0.25, dampingFraction: 0.5)
-    static let blobTrack = Animation.interactiveSpring(response: 0.3, dampingFraction: 0.85)
-    static let headTrack = Animation.interactiveSpring(response: 0.2, dampingFraction: 0.85)  // v2
-    static let fallRecovery = Animation.easeInOut(duration: 0.4)  // v2
+    static let dpadPress       = Animation.spring(response: 0.12, dampingFraction: 0.7)
+    static let stateChange     = Animation.spring(response: 0.35, dampingFraction: 0.75)
+    static let gauge           = Animation.easeOut(duration: 0.22)
+    static let motionProgress  = Animation.linear
+    static let modeSwitch      = Animation.easeInOut(duration: 0.30)
+    static let lockPop         = Animation.spring(response: 0.25, dampingFraction: 0.5)
+    static let blobTrack       = Animation.interactiveSpring(response: 0.3, dampingFraction: 0.85)
+    static let headTrack       = Animation.interactiveSpring(response: 0.2, dampingFraction: 0.85)
+    static let fallRecovery    = Animation.easeInOut(duration: 0.4)
+    static let flashRed        = Animation.easeOut(duration: 0.3)   // v3 신규 — E-stop flash
 }
 ```
 
 ---
 
-## 11. 컴포넌트 상세 — v2 변경 부분만
+## 7. 공식 데모 모션 — Action Bar 매핑 (v1.0 부터 완성)
 
-(D-pad, Speed Gauge, Phase Bar, HUD Strip 의 설계는 v1 그대로 — 본 PRD v1 §5.3 ~ §5.8 참조.)
+**모션 데이터는 `motion_4096.bin` byte-identical. 호출만 한다.**
 
-### 11.1 PilotArmSlider — v2 흐름
+### 7.1 Action Bar 메인 7 페이지 (v1.0 활성)
 
-ARM 완료 → spring bounce → **자동 walkready 호출** → 토스트 → D-pad fade in.
+| Order | slot | raw_name | UI 라벨 (`display_name`) | safety | mp3 | duration | confirm? | 키 |
+|---:|---:|---|---|---|---|---:|---|---|
+| 1 | **1** | `init` | 기본 자세 (Stand Up) | Safe | Stand up.mp3 | 2.0 s | × | 1 |
+| 2 | **4** | `hi` | 감사 인사 (Thank You) | Safe | Thank you.mp3 | 3.6 s | × | 2 |
+| 3 | **15** | `sit down` | 앉기 (Sit Down) | Safe | Sit down.mp3 | 1.0 s | × | 3 |
+| 4 | **12** | `rk` | 오른발 차기 (Right Kick) | **HighRisk** | Right kick.mp3 | 1.7 s | ✓ | 4 |
+| 5 | **13** | `lk` | 왼발 차기 (Left Kick) | **HighRisk** | Left kick.mp3 | 1.7 s | ✓ | 5 |
+| 6 | **9** | `walkready` | 보행 자세 (Walk Ready) | Safe | — | 1.0 s | × | 6 |
+| 7 | **23** | `d1` | 출발! (Yes Go) | Safe | Yes go.mp3 | 3.0 s | × | 7 |
 
-### 11.2 PilotActionBar — v2 7 버튼 + "+더 보기"
+### 7.2 + 더 보기 9 페이지 (v1.5 활성)
 
-기본 7 버튼은 §5.1 표 순서. 우측에 ⋯ 버튼 → 모달 시트에 9 추가 페이지. 각 버튼은 sidecar 데이터 그대로 표시.
+| slot | raw_name | UI 라벨 | safety | mp3 | duration |
+|---:|---|---|---|---|---:|
+| 2 | `ok` | 끄덕임 (Yes) | Safe | Yes.mp3 | 2.6 s |
+| 3 | `no` | 가로젓기 (No) | Safe | No.mp3 | 2.6 s |
+| 10 | `f up` | 앞 일어서기 (Get Up Front) | Caution | — | 3.2 s |
+| 11 | `b up` | 뒤 일어서기 (Get Up Back) | Caution | — | 4.2 s |
+| 16 | `stand up` | 일어서기 (Stand Up exact) | Safe | — | 1.0 s |
+| 24 | `d2` | 감탄 (Wow) | Safe | Wow.mp3 | 3.6 s |
+| 27 | `d3` | 실수 (Oops) | Safe | — | 3.2 s |
+| 38 | `d2` | 손 흔들기 (Bye Bye) | Safe | — | 3.6 s |
+| 54 | `int` | 박수 요청 (Clap Please) | Safe | — | 2.0 s |
 
-### 11.3 PilotCameraView — v2 head 십자선 추가
+> 모든 라벨은 `docs/motion-format/page-metadata-motion4096.toml` 의 `display_name` 직접 인용.
 
-```
-┌─ MJPEG frame ────────────────────────────┐
-│                                          │
-│      ╋ (head 시선 십자선, DFColor.info)  │
-│      :                                   │
-│      :  ╋ (blob 십자선, DFColor.forge)  │
-│      :                                   │
-│  [LOOKING / APPROACHING / LOCKED ON]    │
-│                                          │
-│  HSV 튜닝 panel (접힘/펼침 토글)         │
-└──────────────────────────────────────────┘
-```
+### 7.3 mp3 동기 (v2 활성)
 
-- **head 십자선**: 현재 joint 19/20 각도 → 카메라 frame 의 가상 시선 위치. PilotAnim.headTrack 으로 부드럽게 이동.
-- **blob 십자선**: detect_blob centroid. PilotAnim.blobTrack 으로 이동.
-- 두 십자선 사이의 거리 = head PID 의 추적 오차. 시각화로 사용자가 PID 튜닝 직관 가능.
-- LOCKED ON 시 두 십자선이 합쳐짐 + 외곽 ring pulse.
-
-### 11.4 PilotHudStrip — v2 자동복구 토글 추가
-
-기존 HUD strip 우측 (E-Stop 옆) 에 작은 토글 추가:
-
-```
-[ 🔁 자동복구 ●ON ]
-```
-
-- ON 기본. 토글 OFF 시 모달 안내: "낙상 시 수동 복구 필요. 정말 끄시겠어요?"
-
-### 11.5 PilotHeadView (신규 컴포넌트)
-
-3D 뷰의 head 부분을 강조하는 mini 시각화 (선택적):
-- joint 19 (HeadPan) + 20 (HeadTilt) 각도 표시
-- 그림으로 머리 회전 방향 화살표
-- 카메라 view 우상단 mini-overlay 또는 별도 패널 (사용자 선택)
+v1.0~v1.5 는 **tooltip 에 mp3 파일명 표시만** ("v2 활성" 배지 옆). 실 재생은 v2 에서 robot/Mac 분기 결정 후.
 
 ---
 
-## 12. 아키텍처 — v2 신규 컴포넌트
+## 8. Ball-Follow — v1.1 head 추적 + v1.5 walk 자동 (단일 설계)
 
-### 12.1 forge-core::teleop (Rust) v2
+### 8.1 v1.1: head 추적만
+
+- 카메라 frame 입력은 **Mac 측 테스트 frame** (UI 의 "테스트 frame 주입" 버튼) 또는 v1.5 의 실 MJPEG
+- `HeadTracker` PID 가 blob → head pan/tilt SYNC_WRITE
+- walk 명령 송출 X (`flags.ballFollowWalk = false`)
+- 사용자는 head 가 따라가는 모습 확인 + PID 튜닝 (Kp/Ki/Kd UserDefaults 슬라이더)
+
+### 8.2 v1.5: 카메라 + walk + 좌/우 차기
+
+- v1.1 의 head 추적 그대로
+- + 카메라 MJPEG (`flags.camera = true`)
+- + `BallFollowEngine.autoWalk` 활성 (sim 만, 실 모터 X — BLOCKER C3)
+- + auto_kick 토글 — page 12/13 자동 (head pan 부호 기준)
+
+### 8.3 v2: walk 실 모터 송출
+
+BLOCKER C3 해결 후 `flags.dpadRealMotor = true` + Ball-Follow walk 도 실 송출.
+
+---
+
+## 9. 안전 게이트 — 단일 정책 (모든 단계 동일)
+
+| Layer | 조건 | v1.0 | v1.1 | v1.5 | v2 |
+|---|---|:---:|:---:|:---:|:---:|
+| L0 | E-stop ⌘⇧. | ✅ | ✅ | ✅ | ✅ |
+| L1 | armed | ✅ | ✅ | ✅ | ✅ |
+| L2 | HighRisk + !confirm | ✅ | ✅ | ✅ | ✅ |
+| L3 | deadman 1s (Walk only) | — | — | ✅ (sim) | ✅ (실) |
+| L4a | IMU pitch > 50° → page 10/11 | — | ✅ | ✅ | ✅ |
+| L4b | IMU 25° < tilt < 50° → Stop | — | ✅ | ✅ | ✅ |
+| L4c | session > max_duration | — | ✅ | ✅ | ✅ |
+
+### 9.1 자동복구 exemption 정책 (reality-check C8 해결)
 
 ```
-forge-core/src/teleop/
-├── mod.rs
-├── command.rs              # TeleopCommand (v1 그대로)
-├── gate.rs                 # SafetyGate + GateReason (v1 + 낙상 복구 분기 추가)
-├── ballfollow.rs           # BallFollowConfig + decide() (v2 head 기반)
-├── head_tracker.rs         # NEW v2 — PID head tracker
-└── pid.rs                  # NEW v2 — 단순 PID 컨트롤러
-```
-
-#### 12.1.1 `HeadTracker` (신규)
-
-```rust
-pub struct HeadTracker {
-    pub pan_pid:  PidController,       // Kp=0.4, Ki=0.0, Kd=0.05 (튜닝 가능)
-    pub tilt_pid: PidController,
-    pub pan_limits_deg:  (f32, f32),   // (-90.0, 90.0)
-    pub tilt_limits_deg: (f32, f32),   // (-45.0, 45.0)
-    pub frame_size: (u32, u32),         // (320, 240) default
-}
-
-pub struct HeadDelta {
-    pub pan_delta_deg:  f32,
-    pub tilt_delta_deg: f32,
-}
-
-impl HeadTracker {
-    pub fn update(&mut self, blob: BlobResult, dt_secs: f32) -> HeadDelta { … }
-    pub fn scan(&self, t_secs: f32) -> HeadDelta { … }  // looking-for-ball sweep
-}
-```
-
-#### 12.1.2 `BallFollowConfig::decide` (v2 재작성)
-
-```rust
-pub struct BallFollowConfig {
-    pub hsv: HsvRange,                  // 동적 변경 가능
-    pub kick_tilt_threshold_deg: f32,   // 30.0
-    pub kick_pan_deadzone_deg: f32,     // 5.0
-    pub min_kick_pixel_count: u32,      // 1000
-    pub forward_amp: f64,               // 0.025
-    pub turn_amp_gain: f64,             // 0.10 / 90° = 0.00111 per deg
-    pub auto_kick: bool,                // false (HighRisk)
-}
-
-pub struct BallFollowDecision {
-    pub state: StrategyState,
-    pub walk_cmd: TeleopCommand,        // Walk(...) or Stop
-    pub head_delta: HeadDelta,          // 매 frame head 적용
-    pub kick_slot: Option<u8>,          // Some(12) or Some(13) when ready
-    pub blob: BlobResult,
-}
-
-impl BallFollowConfig {
-    pub fn decide(
-        &self,
-        frame: &Frame,
-        head_pan_deg: f32,
-        head_tilt_deg: f32,
-        head_tracker: &mut HeadTracker,
-        prev_state: StrategyState,
-    ) -> BallFollowDecision { … }
-}
-```
-
-#### 12.1.3 `SafetyGate` (v2 낙상 복구 추가)
-
-```rust
-pub enum GateReason {
-    NotArmed,
-    RiskNotConfirmed,
-    DeadmanTimeout,
-    ImuTilted { roll: f32, pitch: f32 },            // 25° < ... < 50° (정지만)
-    ImuFallen { pitch: f32, direction: FallDir },   // > 50° (자동 복구 권장)
-    SessionExpired { max_secs: u32 },
-}
-
-pub enum FallDir { Forward, Backward }
-
-impl SafetyGate {
-    pub fn fall_recovery_page(&self, dir: FallDir) -> u8 {
-        match dir { FallDir::Forward => 10, FallDir::Backward => 11 }
-    }
-}
-```
-
-### 12.2 Swift v2 컴포넌트 (v1 + 4개 신규)
-
-| 파일 | 책임 | v1/v2 |
-|---|---|:---:|
-| `PilotTokens.swift` | PilotColor + PilotAnim (v2 토큰 추가) | v1+v2 |
-| `TeleopChannel.swift` | 단일 진입점 actor | v1 |
-| `PilotSafetyGate.swift` | armed, IMU, session, **낙상 분기** | v1+v2 |
-| `BallFollowEngine.swift` | snapshot → blob → **head update** → walk decide | **v2 재작성** |
-| `MjpegSnapshot.swift` | 100ms JPEG 폴링 | v1 |
-| `HeadJointController.swift` | **NEW v2** — joint 19/20 SYNC_WRITE 헬퍼 | v2 |
-| `MotionCatalog.swift` | **NEW v2** — `page-metadata-motion4096.toml` 파싱 → Swift struct | v2 |
-| `FallRecoveryCoordinator.swift` | **NEW v2** — IMU pitch > 50° → page 10/11 자동 | v2 |
-| `HsvTuningPanel.swift` | **NEW v2** — h/s/v 슬라이더 + preset 4종 | v2 |
-| `RemotePilotView.swift` | 최상위 | v1 |
-| `PilotArmSlider.swift` | 슬라이더 + **walkready 자동 호출** | v1+v2 |
-| `PilotModePicker.swift` | 세그먼트 피커 | v1 |
-| `PilotDpad.swift` | 7존 + Hold Ring | v1 |
-| `PilotSpeedGauge.swift` | Arc + Phase | v1 |
-| `PilotActionBar.swift` | **v2 7버튼 + 더보기 시트** | v1+v2 |
-| `PilotCameraView.swift` | **v2 head 십자선 + HSV 패널 + LOCKED 합쳐짐** | v1+v2 |
-| `TargetReticle.swift` | 4 L 코너 + 중앙 점 | v1 |
-| `PilotHudStrip.swift` | **v2 자동복구 토글 추가** | v1+v2 |
-
-### 12.3 MotionCatalog (신규) — sidecar toml 의 Swift 사용
-
-```swift
-public struct MotionPageMetadata: Sendable, Codable {
-    public let slot: UInt8
-    public let rawName: String           // "rk"
-    public let displayName: String       // "Right Kick"
-    public let displayNameKo: String     // "오른발 차기" (PRD §5.1 매핑)
-    public let safetyClass: SafetyClass
-    public let durationMs: UInt32
-    public let mp3Sync: String?          // "Right kick.mp3"
-    public let bodyRegions: [BodyRegion]
-}
-
-public enum MotionCatalog {
-    /// `motion-format/page-metadata-motion4096.toml` 파싱 결과.
-    /// Sprint 15 Day 1 에 build-script 로 generate (TOMLDecoder 또는 hardcode).
-    public static let all: [MotionPageMetadata] = …
-
-    public static func find(slot: UInt8) -> MotionPageMetadata? { … }
-    public static let actionBarMain: [UInt8] = [1, 4, 15, 12, 13, 9, 23]
-    public static let actionBarMore: [UInt8] = [2, 3, 10, 11, 16, 24, 27, 38, 54]
-}
-```
-
-### 12.4 TeleopChannel v2 — Motion 분기에 mp3 동기 옵션
-
-```swift
-case .Motion(let slot, let confirm):
-    let meta = MotionCatalog.find(slot: slot)
-    guard !confirm || gate.confirmRisk else { throw GateError.riskNotConfirmed }
-    try await store.playMotionSlot(slot)
-    if let mp3 = meta?.mp3Sync, audioEnabled {
-        AudioPlayer.shared.play(mp3)   // v1.1 후보 — v1 은 옵션 OFF
-    }
-```
-
-> **v1 은 mp3 재생 비활성**. UI 에 라벨만 표시 (시각 보조). v1.1 에서 robot 측 또는 Mac 측 sync 결정.
-
-### 12.5 FallRecoveryCoordinator (신규)
-
-```swift
-@MainActor
-public final class FallRecoveryCoordinator: ObservableObject {
-    @Published public var autoRecovery: Bool = true
-    @Published public var lastRecoveryAt: Date?
-
-    private let channel: TeleopChannel
-    private let store: ConnectionStore
-
-    public func observeImu() async {
-        // ConnectionStore.$lastImuPitch 구독
-        // |pitch| > 50° + autoRecovery==true → triggerRecovery(direction)
-    }
-
-    public func triggerRecovery(_ dir: FallDir) async {
-        try? await channel.send(.Stop)
-        let slot: UInt8 = (dir == .forward) ? 10 : 11
-        try? await channel.send(.Motion(slot: slot, confirmRisk: true))
-        // confirmRisk: true 자동 — 낙상은 즉시 복구 필요
-        lastRecoveryAt = Date()
-    }
-}
-```
-
-### 12.6 HeadJointController (신규)
-
-```swift
-public final class HeadJointController {
-    private weak var bus: Bus?
-
-    /// SYNC_WRITE — joint 19 (HeadPan), 20 (HeadTilt) 동시.
-    public func write(pan deg: Float, tilt deg: Float) throws { … }
-
-    /// 현재 각도 read.
-    public func read() throws -> (panDeg: Float, tiltDeg: Float) { … }
-
-    /// 안전 범위 clamp: pan ±90°, tilt ±45°.
-    public static func clamp(pan: Float, tilt: Float) -> (Float, Float) { … }
-}
+낙상 자동복구 (page 10/11) 호출 시:
+  L0 (E-stop): 항상 적용. E-stop 누르면 복구 취소.
+  L1 (armed): UNARM 상태에서도 자동 복구 가능 — 사용자 안전.
+              단, 명시적 disarm 한 사용자에게 토스트 "복구 중 — disarm 무시됨".
+  L2 (HighRisk): page 10/11 = Caution → 무관.
+  L3 (deadman): 자동 복구는 Walk 아님 → 무관.
 ```
 
 ---
 
-## 13. 안전 게이트 v2 — 결정 트리 (낙상 복구 포함)
+## 10. 외부 의존 — 단계별 셋업 가이드
 
+### 10.1 v1.0 의존 (이미 셋업)
+
+- USB 케이블 + Mac USB-Serial 드라이버 (CH340/FTDI/SiLab)
+- ROBOTIS framework 의 `motion_4096.bin` (robot 측 `/Data/`)
+- 로봇 측 `walk_demo` 등이 ttyUSB0 점유 안 하도록 — RemoteShell `darwin-stop` QuickAction
+
+### 10.2 v1.1 의존 (신규)
+
+- CM-730/740 펌웨어 IMU 레지스터 (38~48) — 표준 펌웨어 모두 지원 ✅
+- 추가 셋업 없음 — Mac 측 코드만 추가
+
+### 10.3 v1.5 의존 (robot 측 사전 셋업 필요)
+
+신규 가이드 `docs/handoff/teleop-robot-setup.md`:
+
+```bash
+# 1. mjpg-streamer 설치 (Ubuntu 12.04~14.04 기준)
+sudo apt-get install libjpeg8-dev imagemagick
+git clone https://github.com/jacksonliam/mjpg-streamer.git
+cd mjpg-streamer/mjpg-streamer-experimental
+make
+sudo make install
+
+# 2. 부팅 시 자동 시작
+sudo cat > /etc/init.d/mjpg-streamer << 'EOF'
+#!/bin/bash
+mjpg_streamer -i "input_uvc.so -d /dev/video0 -r 320x240 -f 15" \
+              -o "output_http.so -p 8080" &
+EOF
+sudo chmod +x /etc/init.d/mjpg-streamer
+sudo update-rc.d mjpg-streamer defaults
+
+# 3. forge-bridge socat 설치
+sudo apt-get install socat
+sudo cat > /etc/init.d/forge-bridge << 'EOF'
+#!/bin/bash
+socat tcp-listen:5530,reuseaddr,fork file:/dev/ttyUSB0,raw,echo=0 &
+EOF
+sudo chmod +x /etc/init.d/forge-bridge
+sudo update-rc.d forge-bridge defaults
+
+# 4. 검증
+curl http://localhost:8080/?action=snapshot -o /tmp/test.jpg && file /tmp/test.jpg
+ss -lnt | grep :5530
 ```
-사용자 입력 / Ball-Follow 결정
-        │
-  [L0] ⌘⇧. 어디서나 → emergencyStop() 즉시. 화면 전체 빨간 flash 0.3s.
-        │
-  [L1] gate.armed == false
-        → 명령 무시. ARM 슬라이더 wiggle.
-        │
-  [L2] cmd.safety == .highRisk && !confirmRisk
-        → Alert: "위험 동작 확인" → 확인 시 재시도.
-        │
-  [L3] now - lastInputAt > 1s (deadman, Walk 명령 only)
-        → Walk(enabled: false) 자동. Hold Ring 빨간 flash.
-        │
-  [L4a] |imu.pitch| > 50° (확실히 쓰러짐):
-        if autoRecovery:
-           → Walking::Stop + Action::Play(pitch>0 ? 10 : 11)
-           → 토스트 "낙상 감지 — 자동 복구 시작"
-        else:
-           → Walking::Stop + 모달 "낙상 감지 — 어느 방향?"
-        │
-  [L4b] 25° < |imu.roll| OR 30° < |imu.pitch| ≤ 50° (위험 기울임):
-        → Walking::Stop + 토스트 "기울어짐 감지 — 정지"
-        │
-  [L4c] sessionElapsed > preset.max_duration_secs:
-        → Stop + 타이머 종료 토스트.
-        │
-  → Bus.send(cmd)   캐덴스: USB 100ms / 네트워크 200ms
-```
+
+Mac 측 RemoteShell `QuickAction` 신규 4개:
+- `mjpg-streamer-install` (실행 시 위 4단계 자동)
+- `mjpg-streamer-status` (5530/8080 확인)
+- `forge-bridge-status`
+- `vision-restart`
 
 ---
 
-## 14. 화면 상태 머신 v2
+## 11. 테스트 전략
 
-```
-            onAppear
-                │
-                ▼
-        ┌───────────────┐
-        │  SIM_READY    │  Bus == nil. 시뮬 모드.
-        └───────┬───────┘
-                │ Bus 연결
-                ▼
-        ┌───────────────┐
-        │  UNARMED      │  ARM 슬라이더 대기.
-        └───────┬───────┘
-                │ ARM 슬라이더 완료
-                ▼
-        ┌───────────────────────┐
-        │  ARMING (walkready)   │  page 9 자동 호출 중 (~1s).
-        └───────────┬───────────┘
-                    │ Motion::Done
-                    ▼
-        ┌───────────────────────┐
-        │  READY (Manual)       │◄────────────────────────────────┐
-        └──┬────────────────────┘                                 │
-           │ D-pad 눌림           Action 완료 / Recovery 완료    │
-           ▼                                          ▲           │
-    ┌────────────────┐   Action 버튼     ┌────────────┴────────┐ │
-    │ WALKING        │◄─────────────────►│  MOTION_PLAYING     │ │
-    └──┬─────────────┘                   └─────────────────────┘ │
-       │ dead-man              IMU pitch > 50°                    │
-       ▼                              │                           │
-    ┌────────────────┐                ▼                           │
-    │ STOPPING       │       ┌────────────────────┐               │
-    └────────────────┘       │ FALL_RECOVERY      │               │
-                             │ (page 10 또는 11)  │               │
-                             └────────┬───────────┘               │
-                                      │ Motion::Done              │
-                                      └───────────────────────────┘
+### 11.1 v1.0 테스트 (3~4일 안)
 
-[Ball-Follow 모드 — 별도 평행 상태 머신]
-READY → BALL_FOLLOWING (head 추적 + walk 자동)
-       ↕ blob detect 루프
-       LOOKING / APPROACHING / LOCKED_ON / KICKING(수동) / LOST
-LOST 5s → READY + 모달
-KICKING (auto_kick ON 한정) → MOTION_PLAYING(page 12 or 13) → BALL_FOLLOWING
-```
+**Rust** (목표 +14):
+- `motion::player::MotionPlayer` 추출 + cancellation 6 tests
+- `teleop::command` (기존 PRD §7.1.1) 6 tests
+- `teleop::gate` basic (L0/L1/L2 만) 2 tests
+
+**Swift** (목표 +14):
+- `MotionCatalog` (16 페이지 sidecar) 3 tests
+- `TeleopChannel` (Motion / Stop / cancel) 5 tests
+- `PilotSafetyGate` (armed 만) 2 tests
+- `PilotArmSlider` (drag 완료 → walkready 호출) 2 tests
+- `RemotePilotView` (Section.pilot 라우팅 + featureFlags 비활성 영역) 2 tests
+
+**HIL**: 시나리오 1~4 (4건)
+
+### 11.2 v1.1 테스트 (3일 안)
+
+**Rust** (+18): `teleop::pid` 4 + `teleop::head_tracker` 6 + `teleop::gate` (L4a/b/c 추가) 8
+
+**Swift** (+8): `HeadJointController` 3 + `FallRecoveryCoordinator` 3 + IMU ConnectionStore 2
+
+**HIL**: 시나리오 5~6 (2건)
+
+### 11.3 v1.5 테스트 (5일 안)
+
+**Rust** (+10): `teleop::ballfollow` v2 head 기반 10
+
+**Swift** (+12): `BallFollowEngine` 4 + `MjpegSnapshot` 2 + `HsvTuningPanel` 3 + `PilotCameraView` 3
+
+**HIL**: 시나리오 7~8 (2건, 외부 셋업 가이드 통과 후)
+
+### 11.4 누적 테스트
+
+| 단계 | Rust | Swift | 누적 Rust | 누적 Swift |
+|---|---:|---:|---:|---:|
+| 기존 | — | — | 306 | 70 |
+| v1.0 | +14 | +14 | **320** | **84** |
+| v1.1 | +18 | +8 | **338** | **92** |
+| v1.5 | +10 | +12 | **348** | **104** |
 
 ---
 
-## 15. 테스트 전략 v2
+## 12. Sprint 일정 (최종)
 
-### 15.1 Rust forge-core::teleop (목표 36+)
+| Sprint | 단계 | 기간 | 목표 | HIL |
+|---|---|---|---|---|
+| **15** | **v1.0** | **3~4일** | UI 스캐폴드 + Action Bar 메인 7 페이지 | 시나리오 1~4 |
+| 16 | v1.1 | 3일 | IMU + 자동 복구 + Head 추적 | 시나리오 5~6 |
+| 17 | v1.5 | 5일 | 카메라 + Ball-Follow walk(sim) + Bridge + 더보기 | 시나리오 7~8 |
+| 18+ | v2 | BLOCKER C3 후 | D-pad 실 모터 + Ball-Follow 실 walk | 별도 |
 
-| 파일 | 테스트 | 기준 |
-|---|---|---|
-| `command.rs` | 6 | TeleopCommand JSON / safety 매핑 |
-| `gate.rs` | **14** (v1 10 + 4 신규) | L1~L4c 차단 + 통과 + **낙상 분기 2종 (forward/backward)** |
-| `ballfollow.rs` | **10** (v1 8 + 2 신규) | head 기반 walk 결정 + 좌/우 kick 자동 선택 |
-| `head_tracker.rs` | **6** (신규) | PID 수렴 / clamp / scan sweep |
-| `pid.rs` | **4** (신규) | Kp/Ki/Kd 단위 테스트 |
+총 11일 (v1.0 ~ v1.5) + BLOCKER C3 해결 후 v2.
 
-### 15.2 Swift (목표 24+)
-
-| 컴포넌트 | 테스트 |
-|---|---|
-| `TeleopChannel` | dead-man / gate fail / motion play |
-| `PilotSafetyGate` | arm/disarm / IMU thresholds / **fall direction** |
-| `BallFollowEngine` | head loop / state transitions / auto-kick |
-| `HeadJointController` | SYNC_WRITE 시뮬 / clamp |
-| `MotionCatalog` | 16 페이지 sidecar 파싱 정확 + `actionBarMain` 7 + `actionBarMore` 9 = 16 |
-| `FallRecoveryCoordinator` | pitch > 50° → page 10/11 / autoRecovery OFF → 모달 |
-| `HsvTuningPanel` | 슬라이더 변경 → BallFollowConfig.hsv 갱신 |
-| `PilotArmSlider` | drag 완료 → walkready 호출 |
-
-### 15.3 Hardware-in-the-loop (실기기 6 시나리오)
-
-| # | 시나리오 | 통과 기준 |
-|---:|---|---|
-| 1 | ARM → walkready 자동 → D-pad 전진 1s → release | walkready 진입 확인 + 1s 내 정지 |
-| 2 | 공 1m 배치 → Ball-Follow ON | head 가 먼저 추적, 5 사이클 내 body 방향 전환 |
-| 3 | 공이 우측에 → LOCKED ON | head pan > 5° 시 page 13 (Left Kick) 자동 (auto_kick ON) |
-| 4 | cradle 비틀어 pitch 60° | page 10 (또는 11) 자동 호출 |
-| 5 | 네트워크 끊김 4s | dead-man + watchdog → .error |
-| 6 | Action Bar "감사 인사" (page 4) | duration 3.6s 동안 진행링 + raw_name "hi" tooltip 표시 |
+각 Sprint 끝마다 머지 + 별도 PR. 한 Sprint 가 망하면 그 단계만 롤백, 나머지는 그대로.
 
 ---
 
-## 16. Sprint 15 구현 단계 (v2 — 7일)
-
-| Day | 작업 | 완료 기준 |
-|---|---|---|
-| **1** | Rust: `teleop/pid.rs` + `head_tracker.rs` + `command.rs` + `gate.rs` (낙상 분기) + ffi | cargo test 30+ pass |
-| **2** | Rust: `ballfollow.rs` (v2 head 기반) + 통합 테스트 | cargo test 36+ pass |
-| **3** | Swift: `MotionCatalog` (sidecar 파싱) + `HeadJointController` + `TeleopChannel` + `PilotSafetyGate` + `BallFollowEngine` (v2) + `FallRecoveryCoordinator` | swift test 24+ pass |
-| **4** | Swift UI: `PilotArmSlider` (walkready 호출) + `PilotModePicker` + `PilotDpad` + `PilotSpeedGauge` | swift build ✓ |
-| **5** | Swift UI: `PilotActionBar` (7 + 더보기 시트) + `MotionCatalog` 표시 + tooltip | 7 페이지 송출 확인 |
-| **6** | Swift UI: `PilotCameraView` (v2 head 십자선) + `HsvTuningPanel` + `TargetReticle` + `MjpegSnapshot` + Ball-Follow E2E | Ball-Follow HUD + head 추적 |
-| **7** | `PilotHudStrip` (자동복구 토글) + `RemotePilotView` 통합 + RootView ⌘8 + 6 HIL 시나리오 검증 + 문서 | E2E 6 시나리오 통과 |
-
----
-
-## 17. 미해결 사항 (Open Questions)
+## 13. 미해결 사항
 
 | OQ | 내용 | 결정 시점 |
 |---|---|---|
-| **OQ-1** | BLOCKER C3 해결 후 슬라이더 풀-스윙 허용 범위 | Sprint 14 walk-lab 후 |
-| **OQ-2** | MJPEG snapshot → streaming 전환 | Day 6 measure 후 |
-| **OQ-3** | HSV 범위 조명 robustness — v2 의 튜닝 UI 로 부분 완화 | Day 6 실측 후 |
-| **OQ-4** | USB 게임패드 v2 지원 | v2 PRD |
-| **OQ-5** | 두 Mac 동시 연결 TCP 거버넌스 | Sprint 15 후 |
-| **OQ-6** | IMU roll/pitch ConnectionStore 노출 (CM-730/740 IMU 레지스터) | Day 1 착수 전 |
-| **OQ-7 (신규 v2)** | HeadTracker PID Kp/Ki/Kd 실측 튜닝 — frame size, motor speed 의존 | Day 6 HIL |
-| **OQ-8 (신규 v2)** | mp3 동기 — robot 측 mp3 player 사용 or Mac 측 재생? | v1.1 |
-| **OQ-9 (신규 v2)** | Page chain (24→25, 38→39) 자동 재생 | v1.1 |
+| OQ-1 | BLOCKER C3 해결 방향 (Rust IK 포팅 vs robot 측 walk_demo TCP) | Sprint 17 후 |
+| OQ-2 | mp3 동기 — robot 측 aplay vs Mac 측 AVAudioPlayer | v2 결정 |
+| OQ-3 | HeadTracker PID Kp/Ki/Kd 실측 튜닝 | v1.1 HIL 후 |
+| OQ-4 | USB 게임패드 v2+ 지원 | v2 PRD |
+| OQ-5 | 다중 Mac 동시 연결 TCP 거버넌스 | v1.5 후 |
+| OQ-6 | mjpg-streamer 라이선스 (BSD-2-Clause OK) | v1.5 진입 전 확인 |
 
 ---
 
-## 18. 부록 A — 공식 코드 매핑
+## 14. 부록 — 결정 일지
 
-| 우리 모듈 | 공식 출처 |
-|---|---|
-| `motion_4096.bin` 파서 | `Framework/include/Action.h` line 41-59 (PAGEHEADER) |
-| 모션 timing | `pause + time` × 8 ms (Action.h 명세) |
-| INVALID/TORQUE_OFF mask | `0x4000` / `0x2000` (Action.h) |
-| WalkCommand | `op2_walking_module::walking_param_::*_move_amplitude` |
-| WalkPhase | `WalkingModule::{PHASE0..3}` |
-| BallFollower 알고리즘 | `Linux/project/soccer/BallFollower.{h,cpp}` |
-| 자동 낙상 복구 | `Linux/project/demo/StatusCheck.cpp:35-37` |
-| Color filter | `Linux/include/ColorFinder.h` |
-| Head 추적 | `Linux/include/Head.h::MoveTracking` |
-| Page → mp3 매핑 | `Linux/project/tutorial/action_script/script.asc` |
-| VisionMode 페이지 매핑 | `Linux/project/demo/VisionMode.cpp` |
-| 16 페이지 sidecar | `docs/motion-format/page-metadata-motion4096.toml` |
-
-## 19. 부록 B — 라이선스 & 윤리
-
-- `motion_4096.bin` 페이지 데이터는 ROBOTIS Apache 2.0. 우리는 **읽기만**, 수정 없음.
-- ROBOTIS framework Apache 2.0 — 우리 forge-core 도 Apache 2.0.
-- BallFollower 알고리즘은 공개된 표준 패턴 (논문 + ROS 패키지 다수에서 재현). 우리는 **알고리즘만 모방**, 코드 직접 복사 없음.
-- mp3 파일 사용 시 ROBOTIS 의 별도 라이선스 확인 필요 (`Data/mp3/` directory). v1.1 결정.
+| 단계 | 결정 | 근거 |
+|---|---|---|
+| 초안 v1 | 5일 단순 PRD | 사용자 첫 요청 |
+| Audit | 5 PATCH 권고 | 공식 BallFollower / StatusCheck 검증 |
+| v2 | 10 PATCH 통합, 7일 | 공식 충실 재현 |
+| Reality-check | 11 CRITICAL + 7 MAJOR | 코드 실제와 격차 확인 |
+| **v3 (본 PRD)** | **단일 설계 + 단계별 활성화** | 옵션 A 의 일관성 + 옵션 B 의 검증 안정성 |
 
 ---
 
-## 20. v2 핵심 변경 요약 — 12개 PATCH
-
-| # | v1 | v2 | 근거 |
-|---|---|---|---|
-| 1 | slot 1 라벨 "서기" | "기본 자세 (Stand Up)" sidecar `display_name` | sidecar toml |
-| 2 | slot 4 라벨 "인사" | "감사 인사 (Thank You)" + mp3 tooltip | sidecar + script.asc |
-| 3 | Action 4 버튼 | **7 버튼 + 더보기 9 페이지 = 16** | 공식 카탈로그 16 페이지 모두 |
-| 4 | Ball-Follow centroid → walk | **head PID → 각도 → walk** | BallFollower.cpp |
-| 5 | 차기 항상 page 12 | **head pan 부호로 12/13 자동** | BallFollower.cpp |
-| 6 | 보행 anchor 없음 | **ARM 후 walkready (page 9) 자동** | SoccerMode |
-| 7 | 낙상 시 Stop 만 | **pitch > 50° → page 10/11 자동 복구** | StatusCheck.cpp |
-| 8 | HSV 하드코드 | **튜닝 UI + 4 preset + UserDefaults** | color_finder.ini |
-| 9 | mp3 무시 | **UI tooltip 에 mp3 파일명 표시** | script.asc |
-| 10 | head 미사용 | **HeadJointController + joint 19/20 PID** | Head.h |
-| 11 | 카메라 view = blob 십자선 | **+ head 시선 십자선** (PID 오차 시각화) | 신규 UX |
-| 12 | Sprint 5일 | **7일** | 추가 작업 정산 |
-
----
-
-*공식 ROBOTIS 데모는 완벽하다. 우리는 그것을 그대로 실행하고, 게임 조종기 품질의 UI 를 입힐 뿐이다.*
+*"한 번 설계하고, 단계별로 활성화한다." — v1.0 부터 사용자가 최종 화면을 보고, 비활성 기능에는 정직하게 '준비 중' 배지를 단다. 신뢰는 정직에서, 안정성은 점진에서.*
