@@ -105,7 +105,8 @@ pub fn apply_mutation(page: &mut MotionPage, mutation: &Mutation) -> Result<()> 
                     "JointOffset: invalid joint id {joint_id} (must be 1..=20)"
                 )));
             }
-            let idx = (joint_id - 1) as usize;
+            // positions[i] = JointId i (slot 0 미사용) — BLOCKER C1/C2 와 동일 규약.
+            let idx = *joint_id as usize;
             for step in page.steps.iter_mut() {
                 step.positions[idx] = apply_delta_12bit(step.positions[idx], *delta);
             }
@@ -255,9 +256,9 @@ mod tests {
             },
         )
         .expect("apply");
-        // HEAD_TILT (idx 19) 의 12-bit value 가 +100 되어야 한다.
-        let before_val = before[19] & POSITION_MASK;
-        let after_val = p.steps[1].positions[19] & POSITION_MASK;
+        // HEAD_TILT (positions[20]) 의 12-bit value 가 +100 되어야 한다.
+        let before_val = before[20] & POSITION_MASK;
+        let after_val = p.steps[1].positions[20] & POSITION_MASK;
         assert_eq!(
             after_val,
             (before_val + 100).min(MAX_POSITION),
@@ -265,7 +266,7 @@ mod tests {
         );
         // 다른 슬롯은 그대로
         for (i, (after, &orig)) in p.steps[1].positions.iter().zip(before.iter()).enumerate() {
-            if i != 19 {
+            if i != 20 {
                 assert_eq!(*after, orig, "slot {i} should be unchanged");
             }
         }

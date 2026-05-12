@@ -300,6 +300,11 @@ pub fn auto_metadata(entry: &OfficialCatalogEntry, page: &MotionPage) -> PageMet
 ///
 /// 휴리스틱: 각 joint 의 첫·마지막 step 차이가 일정 threshold 이상이면 그 부위가
 /// "활성".
+///
+/// # 인덱싱 규약
+///
+/// `positions[i]` 는 JointId `i` 와 1:1 (slot 0 미사용). 따라서 ID 1..=20 만
+/// 순회한다. (BLOCKER C2 — 2026-05-12 정정.)
 fn infer_body_regions(page: &MotionPage) -> Vec<BodyRegion> {
     if page.steps.is_empty() {
         return Vec::new();
@@ -313,12 +318,12 @@ fn infer_body_regions(page: &MotionPage) -> Vec<BodyRegion> {
 
     const THRESHOLD: i32 = 50; // raw 50 ≈ 4.4° at MX-28 4096
 
-    for i in 0..NUM_JOINTS_IN_STEP {
+    for id in 1u8..=20 {
+        let i = id as usize;
         let diff = (last.positions[i] as i32 - first.positions[i] as i32).abs();
         if diff < THRESHOLD {
             continue;
         }
-        let id = (i + 1) as u8;
         match id {
             1..=6 => upper = true,
             7..=18 => lower = true,
