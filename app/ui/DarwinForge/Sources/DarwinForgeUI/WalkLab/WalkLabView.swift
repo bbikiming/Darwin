@@ -71,7 +71,8 @@ public struct WalkLabView: View {
                         .padding(.horizontal, 8)
 
                     if session.advanced {
-                        advancedSliders
+                        AdvancedSlidersPanel(session: session)
+                            .padding(.top, 4)
                     }
                 }
                 .padding(12)
@@ -102,32 +103,8 @@ public struct WalkLabView: View {
         .padding(.vertical, 12)
     }
 
-    private var advancedSliders: some View {
-        VStack(spacing: 8) {
-            sliderRow("보폭 x", value: $session.customX, range: -0.05...0.05, format: "%+.3f m")
-            sliderRow("좌우 y", value: $session.customY, range: -0.03...0.03, format: "%+.3f m")
-            sliderRow("회전 a", value: $session.customA, range: -0.3...0.3, format: "%+.2f rad")
-            sliderRow("주기", value: $session.customPeriodMs, range: 400...800, format: "%.0f ms")
-        }
-        .padding(.horizontal, 8)
-        .onChange(of: session.customX) { _, _ in session.syncCommandToEngine() }
-        .onChange(of: session.customY) { _, _ in session.syncCommandToEngine() }
-        .onChange(of: session.customA) { _, _ in session.syncCommandToEngine() }
-        .onChange(of: session.customPeriodMs) { _, _ in session.syncCommandToEngine() }
-    }
-
-    private func sliderRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, format: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(label).font(.caption)
-                Spacer()
-                Text(String(format: format, value.wrappedValue))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Slider(value: value, in: range)
-        }
-    }
+    // 고급 슬라이더 패널은 AdvancedSlidersPanel 로 분리 (Components/AdvancedSlidersPanel.swift).
+    // 옛 sliderRow 헬퍼는 SafetyBandedSlider 로 대체.
 
     private var sessionHistory: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -177,6 +154,11 @@ public struct WalkLabView: View {
             if session.thermalAlarm {
                 banner(systemImage: "thermometer.sun.fill",
                        message: "모터 60°C 도달 — 자동 정지 + LiPo 분리 권고",
+                       tint: .red)
+            }
+            if session.advanced && session.stabilityScore.category == .critical {
+                banner(systemImage: "xmark.octagon.fill",
+                       message: "낙상 위험 점수 \(Int(session.stabilityScore.score))/100 — 시작 차단. 슬라이더 값을 줄이거나 안전 한도 해제를 끄세요.",
                        tint: .red)
             }
 
@@ -363,6 +345,10 @@ public struct WalkLabView: View {
         guard session.cradleConfirmed || preset == .idle else { return }
         if preset == .idle {
             session.stop()
+            return
+        }
+        // Advanced 모드 + critical 점수 → 사용자가 슬라이더로 직접 만든 위험 조합. 차단.
+        if session.advanced && session.stabilityScore.category == .critical {
             return
         }
         if preset.requiresRiskConfirmation && !session.riskAcknowledged {

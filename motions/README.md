@@ -14,3 +14,6 @@
 - `op2/` — OP2 전용
 - `shared/` — 양쪽에 적용 가능
 - `imported/` — 외부에서 임포트한 원본 보존
+- `external/` — 외부 커뮤니티 `motion_4096.bin` 카탈로그 (4 저장소 · 6 .bin) — [README](external/README.md)
+- `test/` — 우리가 생성한 테스트 모션
+  - [`walk-progression-v1.bin`](test/walk-progression-v1.bin) + [`.json`](test/walk-progression-v1.json) — Sprint 5 walk-engine 진입 전 검증용 6 페이지 (slot 110~115). 프로토콜: [`docs/walk-lab/WALK_PROGRESSION_TEST.md`](../docs/walk-lab/WALK_PROGRESSION_TEST.md)

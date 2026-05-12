@@ -1,6 +1,20 @@
-HumaRobotics/darwin_description 2a0c4ebc34561c2e02859d36d99e97736e11937c
-cyberbotics/webots 3d7ebe8a2a6b72fb7f72e44f73b1befea8ef209d
-cyberbotics/webots_ros2 a5a9c3f82b0056809e89c976b9e9f45137c0fd57
-bit-bots/hambot 579557ddde3c4ec725b85922872f358a7a9415f3
-Interbotix/HROS5-Framework a0640f194b89165b4a5b3ed637a19a31a8a3e339
-UPenn-RoboCup/UPennalizers 9d312ee25badc64b03c77ef468e7b70c7f58a0b4
+# research/community/_metadata/remote-heads.txt
+#
+# 각 커뮤니티 upstream 의 ls-remote HEAD 결과. Phase 1 기준.
+# 클론 보존된 항목은 commit hash 가 우리 .git 내부와 일치해야 한다.
+# 갱신: 2026-05-12
+
+# === 클론 보존된 저장소 (research/community/) ===
+PersonalAssistantGradProject/robot_personal_assistant_op2  f6cfc3a77d49f75d439c4fd1857cc56babf5711b  # 2023-11-01
+NimbRo/nimbro-op                                           5572d413eda0b53b8c4417d32efabdffff0a2904  # 2012-10-30
+darwinop-ens/darwin-op                                     fe301d0b77a9a537b4d88d2358c97864d3dd84ed  # 2015-11-23
+
+# === GPL 격리 (research/community/_gpl-isolated/) ===
+Interbotix/HROS5-Framework                                 a0640f194b89165b4a5b3ed637a19a31a8a3e339  # 2016-07-03 (archived 2021-07)
+
+# === 메타데이터만 (클론 안 함) ===
+HumaRobotics/darwin_description  2a0c4ebc34561c2e02859d36d99e97736e11937c
+cyberbotics/webots               3d7ebe8a2a6b72fb7f72e44f73b1befea8ef209d
+cyberbotics/webots_ros2          a5a9c3f82b0056809e89c976b9e9f45137c0fd57
+bit-bots/hambot                  579557ddde3c4ec725b85922872f358a7a9415f3
+UPenn-RoboCup/UPennalizers       9d312ee25badc64b03c77ef468e7b70c7f58a0b4

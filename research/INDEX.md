@@ -3,7 +3,7 @@
 > Phase 1 시드 소스 카탈로그. 컬럼: 출처 · 라이선스 · 핵심 모듈 · 적용 등급.
 > 적용 등급: ★★★ 직접 코드 참조 / ★★ 알고리즘·아키텍처 참조 / ★ 메타정보·비교 용도.
 >
-> 최종 갱신: 2026-05-09 (Phase 1)
+> 최종 갱신: 2026-05-12 (Phase 1 확장 — 커뮤니티 모션·보행 자료 4 개 클론 보존)
 
 ## ROBOTIS 공식 / 준공식
 
@@ -24,8 +24,9 @@
 
 | # | 출처 | 라이선스 | 핵심 모듈 | 적용 |
 |---|------|----------|-----------|------|
-| 11 | [darwinop-ens/darwin-op](https://github.com/darwinop-ens/darwin-op) | Apache 2.0 (upstream) | SourceForge 1세대 framework의 GitHub 미러 — 가장 깔끔 | ★★★ (Phase 2 walking·motion 분석 출처) |
-| 12 | [Interbotix/HROS5-Framework](https://github.com/Interbotix/HROS5-Framework) (HEAD `a0640f1`, **archived 2021**) | **GPL v3** | DARwIn-OP framework의 HR-OS5 파생 | ★ (참고만, **GPL 격리** — 우리 코어 임베드 금지) |
+| 11 | [darwinop-ens/darwin-op](https://github.com/darwinop-ens/darwin-op) (`fe301d0`, **클론 보존** `community/darwinop-ens-darwin-op/`) | Apache 2.0 (upstream) | SourceForge 1세대 framework의 GitHub 미러 — 가장 깔끔. **OP1 정본** | ★★★ (Sprint 5 walking·Sprint 3 motion 1차 reference) |
+| 12 | [Interbotix/HROS5-Framework](https://github.com/Interbotix/HROS5-Framework) (`a0640f1`, **archived 2021**, **클론 보존** `community/_gpl-isolated/HROS5-Framework/`) | **GPL v3** | HR-OS5 derivative + `rme` 모션 편집기 + PS3 컨트롤러 데모 + motion_src/dest 변환 페어 | ★★ (**GPL 격리** — 알고리즘·메타데이터 인용만, 코드 임포트 금지) |
+| 12.5 | [NimbRo/nimbro-op](https://github.com/NimbRo/nimbro-op) (`5572d41`, 2012, **클론 보존** `community/nimbro-op/`) | BSD-3 (SW) · CC BY-NC-SA 3.0 (CAD) | DARwIn-OP v1.5.0 + 25 patch (보행 튜닝, MotionManager torque, fall protection, AngleEstimator, UDP telemetry, mirrored ActionEditor) | ★★★ (Sprint 5 보행 알고리즘 인용, Sprint 6 fall protection) |
 | 13 | [HumaRobotics/darwin_description](https://github.com/HumaRobotics/darwin_description) (HEAD `2a0c4eb`) | BSD-2-Clause | URDF + 메시 (3D 시각화용) | ★★ (Sprint 4+ 3D pose preview) |
 | 14 | [SourceForge: darwinop](https://sourceforge.net/projects/darwinop/) | Apache 2.0 | 오리지널 DARwIn-OP framework 소스 | ★★ (`darwinop-ens` 미러로 대체) |
 
@@ -51,9 +52,22 @@
 | 25 | Hong et al. "DARwIn's Evolution" | OP1 → OP2 전환기 |
 | 26 | Hambot 논문 (Springer) | RoboCup 변형 |
 
+## OP2 라이브 모션 / 인터랙티브 시나리오
+
+| # | 출처 | 라이선스 | 핵심 모듈 | 적용 |
+|---|------|----------|-----------|------|
+| 27 | [PersonalAssistantGradProject/robot_personal_assistant_op2](https://github.com/PersonalAssistantGradProject/robot_personal_assistant_op2) (`f6cfc3a`, 2023, **클론 보존** `community/robot_personal_assistant_op2/`) | `package.xml` TODO (미선언) | OP2 실기체 ROS 노드 (얼굴/음성/posture/RL pain advice) + ergonomic 모션 페이지 100~108 + 인사 페이지 250~255 + `motion_4096.bin` | ★★ (페이지 메타·시나리오 인용. 코드 임포트는 라이선스 미선언으로 보류) |
+
+## 커뮤니티 자료 카탈로그
+
+`research/community/` 하위 4 개 클론 (HROS5 는 `_gpl-isolated/`) 의 상세 메타·핵심 파일·라이선스
+대조는 [`research/community/INDEX.md`](community/INDEX.md). 모션 파일 SHA-256·페이지 카탈로그는
+[`motions/external/MANIFEST.toml`](../motions/external/MANIFEST.toml) + [`motions/external/_pages-summary.md`](../motions/external/_pages-summary.md).
+
 ## 라이선스 비호환 격리
 
-- #12 **HROS5-Framework**: GPL v3 — 우리 Apache 2.0 코어에 임베드 금지. 알고리즘 참고만 가능, 코드 복사 금지.
+- #12 **HROS5-Framework**: GPL v3 — 우리 Apache 2.0 코어에 임베드 금지. 알고리즘 참고만 가능, 코드 복사 금지. 격리 규칙: [`research/community/_gpl-isolated/README.md`](community/_gpl-isolated/README.md).
+- #27 **robot_personal_assistant_op2**: `package.xml` 의 `<license>TODO</license>` — 사실(facts) 인용은 OK, 코드/바이너리 직접 임포트는 저자 허가 전까지 보류.
 
 ## 미해결
 

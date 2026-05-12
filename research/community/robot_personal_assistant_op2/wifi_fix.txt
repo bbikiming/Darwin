@@ -1,0 +1,7 @@
+This is a fix if you boot into Linux Mint and the wifi hotspot doesn't turn on.
+
+
+1. Enter terminal mode: boot into Linux Mint and mash ctrl & alt & F2, if it doesn't show plug then unplug the mini HDMI cable.
+2. source .bashrc
+3. nmcli nm wifi on
+4. Check using: nmcli dev status

@@ -3,7 +3,7 @@
 > 외부에서 가져온 코드·리소스의 라이선스를 누적 기록. 매 임포트마다 추가.
 > 비호환 발견 시 (예: GPL ↔ Apache 2.0 코어 결합) 즉시 격리하고 `BLOCKERS.md`에 기재.
 >
-> 최종 갱신: 2026-05-09 (Phase 1)
+> 최종 갱신: 2026-05-12 (Phase 1 확장 — 커뮤니티 모션 DB 구축으로 #9..#12 추가)
 
 ## 우리 프로젝트 라이선스
 
@@ -31,6 +31,35 @@
 | 6 | [HumaRobotics/darwin_description](https://github.com/HumaRobotics/darwin_description) | BSD-2-Clause | (메타데이터만) | ✅ | Sprint 4+ 3D pose에서 URDF 가져올 시 BSD 표기 추가 |
 | 7 | [cyberbotics/webots](https://github.com/cyberbotics/webots) | Apache 2.0 | (메타데이터만) | ✅ | 시뮬레이터, 우리 코드와 분리 실행 |
 | 8 | [ROBOTIS-GIT/ROBOTIS-OP2-Common](https://github.com/ROBOTIS-GIT/ROBOTIS-OP2-Common) | Apache 2.0 | `vendor/robotis-op2-common/` (21개 STL mesh + URDF xacro + LICENSE 원본 보존) | ✅ | Sprint 7 — SwiftUI 3D 시각화에 사용. URDF의 joint origin/axis를 코드로 옮겨 본 트리 구성. STL은 SCNGeometry로 직접 파싱(Swift 자체 구현). attribution: `vendor/robotis-op2-common/LICENSE` 원본 동봉. |
+| 9 | [darwinop-ens/darwin-op](https://github.com/darwinop-ens/darwin-op) (`fe301d0`) | Apache 2.0 (ROBOTIS upstream 상속) | `research/community/darwinop-ens-darwin-op/` (클론 보존) | ✅ | OP1 framework SourceForge GitHub 미러 — 가장 깔끔. Sprint 5 walking·Sprint 3 motion 1차 reference. ROBOTIS 저작권 라인 보존 필수. |
+| 10 | [NimbRo/nimbro-op](https://github.com/NimbRo/nimbro-op) (`5572d41`) | BSD-3-Clause (`software/`) · CC BY-NC-SA 3.0 (`hardware/CAD/`) | `research/community/nimbro-op/` (클론 보존) | ✅ (SW만) / ⚠ (CAD 비상업, ShareAlike — 코어 임베드 X) | 25-patch 의 알고리즘 인용. BSD-3 LICENSE 저작권 텍스트는 본 LICENSES.md 의 "BSD-3 누적 저작권" 절에 캡처. |
+| 11 | [Interbotix/HROS5-Framework](https://github.com/Interbotix/HROS5-Framework) (`a0640f1`) | **GPL v3** | `research/community/_gpl-isolated/HROS5-Framework/` (격리 보존) | **❌ (격리)** | 코드 임포트 절대 금지. 알고리즘·페이지 헤더 메타데이터 (사실) 인용만 OK. 격리 규칙 → `research/community/_gpl-isolated/README.md`. |
+| 12 | [PersonalAssistantGradProject/robot_personal_assistant_op2](https://github.com/PersonalAssistantGradProject/robot_personal_assistant_op2) (`f6cfc3a`) | `package.xml` 의 `<license>TODO</license>` — **실질 미선언** | `research/community/robot_personal_assistant_op2/` (클론 보존) | ❓ **보류** | OP2 ergonomic + 인사 페이지 메타 (사실) 인용 OK. 코드·바이너리 직접 임포트는 저자 명시적 허가 전까지 금지. README/PDF 텍스트는 출처 명시 후 인용 가능. |
+
+## BSD-3 누적 저작권 (인용 시 보존)
+
+### NimbRo-OP (#10)
+
+```
+Copyright (c) 2012, Autonomous Intelligent Systems Group, Rheinische
+Friedrich-Wilhelms-Universität Bonn
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+  * Neither the name of Rheinische Friedrich-Wilhelms-Universität Bonn
+    nor the names of its contributors may be used to endorse or promote
+    products derived from this software without specific prior written
+    permission.
+```
+
+(원문 → `research/community/nimbro-op/LICENSE`)
 
 ## 알려진 출처별 기본 라이선스 (Phase 1 선조사)
 
