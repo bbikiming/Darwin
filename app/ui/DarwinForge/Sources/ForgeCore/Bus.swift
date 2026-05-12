@@ -230,4 +230,48 @@ public final class Bus: @unchecked Sendable {
     public func emergencyStop() throws {
         try checkForgeReturn(fc_emergency_stop(raw()))
     }
+
+    // MARK: - Motion play (Sprint 15)
+
+    /// `fc_motion_play_slot` — 동기 블로킹. Swift Task.detached 에서 호출.
+    /// `binPath` nil 이면 환경변수/기본 경로 사용.
+    public func motionPlaySlot(
+        slot: UInt8,
+        binPath: String? = nil,
+        dryRun: Bool = false,
+        confirmRisk: Bool = false,
+        singleFootOk: Bool = false,
+        followChain: Bool = false,
+        maxChainDepth: Int = 10
+    ) throws {
+        let result: Int32
+        if let p = binPath {
+            result = p.withCString { ptr in
+                fc_motion_play_slot(raw(), slot, ptr,
+                    dryRun ? 1 : 0,
+                    confirmRisk ? 1 : 0,
+                    singleFootOk ? 1 : 0,
+                    followChain ? 1 : 0,
+                    maxChainDepth)
+            }
+        } else {
+            result = fc_motion_play_slot(raw(), slot, nil,
+                dryRun ? 1 : 0,
+                confirmRisk ? 1 : 0,
+                singleFootOk ? 1 : 0,
+                followChain ? 1 : 0,
+                maxChainDepth)
+        }
+        try checkForgeReturn(result)
+    }
+
+    /// `fc_motion_play_cancel` — 진행 중인 motion task 취소.
+    public func motionPlayCancel() throws {
+        try checkForgeReturn(fc_motion_play_cancel(raw()))
+    }
+
+    /// `fc_motion_play_is_running` — 재생 중이면 true.
+    public var isMotionPlaying: Bool {
+        fc_motion_play_is_running(raw()) == 1
+    }
 }

@@ -86,4 +86,25 @@ public actor BusActor {
         }
         return RobotPose(positions: applied)
     }
+
+    // MARK: - Motion play (Sprint 15)
+
+    /// `fc_motion_play_slot` — 블로킹이므로 actor 내에서 직접 호출 (actor isolation 직렬화).
+    public func motionPlaySlot(
+        slot: UInt8,
+        confirmRisk: Bool = false,
+        followChain: Bool = false
+    ) throws {
+        try bus.motionPlaySlot(slot: slot, confirmRisk: confirmRisk, followChain: followChain)
+    }
+
+    /// 진행 중인 motion task 취소.
+    public func motionPlayCancel() throws {
+        try bus.motionPlayCancel()
+    }
+
+    /// 재생 중이면 true.
+    public var isMotionPlaying: Bool {
+        bus.isMotionPlaying
+    }
 }

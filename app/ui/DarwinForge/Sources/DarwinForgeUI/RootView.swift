@@ -632,6 +632,8 @@ public struct RootView: View {
             ConversationView(commander: commander, dispatcher: dispatcher)
         case .remote:
             RemoteShellView()
+        case .pilot:
+            RemotePilotView()
         case .expert:
             expertDetail
         }
@@ -780,6 +782,9 @@ public struct RootView: View {
             Button("Section 7") { section = .expert }
                 .keyboardShortcut("7", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
+            Button("Section 8") { section = .pilot }
+                .keyboardShortcut("8", modifiers: .command)
+                .opacity(0).frame(width: 0, height: 0)
             Button("Auto Connect") { store.autoConnect() }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .opacity(0).frame(width: 0, height: 0)
@@ -790,7 +795,7 @@ public struct RootView: View {
 // MARK: - Sections
 
 private enum Section: String, CaseIterable, Hashable {
-    case studio, teach, motion, walk, conversation, remote, expert
+    case studio, teach, motion, walk, conversation, remote, pilot, expert
 
     init?(id: String) {
         self.init(rawValue: id)
@@ -804,6 +809,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .walk:          return "워크 랩"
         case .conversation:  return "대화"
         case .remote:        return "원격 명령"
+        case .pilot:         return "원격 조종"
         case .expert:        return "전문가"
         }
     }
@@ -816,6 +822,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .walk:          return "figure.walk"
         case .conversation:  return "bubble.left.and.bubble.right.fill"
         case .remote:        return "terminal.fill"
+        case .pilot:         return "gamecontroller.fill"
         case .expert:        return "wrench.and.screwdriver"
         }
     }
@@ -828,6 +835,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .walk:          return "⌘4"
         case .conversation:  return "⌘5"
         case .remote:        return "⌘6"
+        case .pilot:         return "⌘8"
         case .expert:        return "⌘7"
         }
     }
@@ -840,6 +848,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .walk:          return DFColor.success
         case .conversation:  return DFColor.info
         case .remote:        return DFColor.warning
+        case .pilot:         return DFNeon.electric
         case .expert:        return DFColor.textSecondary
         }
     }
