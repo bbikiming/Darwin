@@ -27,6 +27,20 @@ public struct MotionStudioView: View {
     @State private var aiBuilderToast: String?
     @State private var torqueSidebarOpen: Bool = true
 
+    // MARK: - Edit workflow state
+
+    /// 마지막 저장 이후 변경 있음 — 저장 버튼 활성화 + 닫기 시 경고용.
+    @State private var isDirty: Bool = false
+    /// 이름 변경 sheet 의 대상 페이지 idx + 임시 이름. nil = sheet 닫힘.
+    @State private var renamingPageIdx: Int? = nil
+    @State private var renameDraft: String = ""
+    /// 삭제 확인 alert 의 대상 페이지 idx.
+    @State private var deletingPageIdx: Int? = nil
+    /// "로봇에 실행" 진행 중 — 버튼 disabled + 진행 표시.
+    @State private var executingOnRobot: Bool = false
+    /// 호버한 페이지 idx — `⋯` 메뉴 버튼 표시용.
+    @State private var hoveredPageIdx: Int? = nil
+
     public init() {}
 
     public var body: some View {
@@ -193,24 +207,140 @@ public struct MotionStudioView: View {
                 set: { if let v = $0 { selectedPageIdx = v; selectedStep = 0; applySelectedStepToPose() } }
             )) {
                 ForEach(Array(motion.pages.enumerated()), id: \.offset) { idx, page in
-                    HStack {
-                        Image(systemName: "play.rectangle")
-                            .foregroundStyle(DFColor.accent)
-                        VStack(alignment: .leading, spacing: DFSpace.micro2) {
-                            Text(page.name.isEmpty ? "동작 \(page.id)" : page.name)
-                                .font(DFFont.body)
-                            Text("\(page.steps.count)단계 · \(formatSeconds(page.totalDurationMs))")
-                                .font(DFFont.caption)
-                                .foregroundStyle(DFColor.textSecondary)
-                        }
-                    }
-                    .tag(idx)
+                    pageListRow(idx: idx, page: page)
+                        .tag(idx)
+                        .contextMenu { pageContextMenu(at: idx) }
                 }
             }
             .listStyle(.sidebar)
         }
-        .frame(width: 220)
+        .frame(width: 240)
         .background(DFColor.elev2)
+        // Rename sheet — inline TextField + 확인 / 취소.
+        .sheet(item: Binding(
+            get: { renamingPageIdx.map { RenameTarget(idx: $0) } },
+            set: { renamingPageIdx = $0?.idx }
+        )) { target in
+            renameSheet(target: target)
+        }
+        // Delete 확인 alert — 실수 방지.
+        .alert("이 동작을 삭제할까요?",
+               isPresented: Binding(
+                get: { deletingPageIdx != nil },
+                set: { if !$0 { deletingPageIdx = nil } }
+               ),
+               presenting: deletingPageIdx
+        ) { idx in
+            Button("취소", role: .cancel) { deletingPageIdx = nil }
+            Button("삭제", role: .destructive) {
+                deletePage(at: idx)
+                deletingPageIdx = nil
+            }
+        } message: { idx in
+            if idx < motion.pages.count {
+                Text("\"\(motion.pages[idx].name)\" 을(를) 영구 삭제합니다.\n저장하지 않으면 동작 doc 만 비워지고 파일에는 영향 없음.")
+            } else {
+                Text("이 동작을 삭제합니다.")
+            }
+        }
+    }
+
+    /// 페이지 list row — 호버 시 우측에 ⋯ 메뉴 버튼 노출.
+    private func pageListRow(idx: Int, page: MotionPage) -> some View {
+        HStack(spacing: DFSpace.sm) {
+            Image(systemName: "play.rectangle")
+                .foregroundStyle(DFColor.accent)
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
+                Text(page.name.isEmpty ? "동작 \(page.id)" : page.name)
+                    .font(DFFont.body)
+                    .lineLimit(1)
+                Text("\(page.steps.count)단계 · \(formatSeconds(page.totalDurationMs))")
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+            Spacer()
+            if hoveredPageIdx == idx {
+                Menu {
+                    pageContextMenu(at: idx)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
+                        .foregroundStyle(DFColor.textSecondary)
+                        .frame(width: DFSize.iconMd2, height: DFSize.iconMd2)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: DFSize.iconMd2)
+                .help("이 동작 메뉴 (이름 / 복제 / 삭제 / 내보내기)")
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            hoveredPageIdx = hovering ? idx : (hoveredPageIdx == idx ? nil : hoveredPageIdx)
+        }
+    }
+
+    /// 페이지 context menu — 우클릭 + ⋯ 버튼 양쪽에서 사용.
+    @ViewBuilder
+    private func pageContextMenu(at idx: Int) -> some View {
+        Button {
+            renameDraft = motion.pages[safe: idx]?.name ?? ""
+            renamingPageIdx = idx
+        } label: {
+            Label("이름 변경…", systemImage: "pencil")
+        }
+        Button {
+            duplicatePage(at: idx)
+        } label: {
+            Label("복제", systemImage: "doc.on.doc")
+        }
+        Divider()
+        Button {
+            exportPage(at: idx)
+        } label: {
+            Label("이 동작 내보내기…", systemImage: "square.and.arrow.up")
+        }
+        Button {
+            saveDocAs()
+        } label: {
+            Label("전체 동작 doc 저장…", systemImage: "tray.and.arrow.up.fill")
+        }
+        Divider()
+        Button(role: .destructive) {
+            deletingPageIdx = idx
+        } label: {
+            Label("삭제…", systemImage: "trash")
+        }
+        .disabled(motion.pages.count <= 1)
+    }
+
+    /// 이름 변경 sheet.
+    private func renameSheet(target: RenameTarget) -> some View {
+        VStack(alignment: .leading, spacing: DFSpace.md) {
+            Text("동작 이름 변경")
+                .font(DFFont.title)
+            TextField("동작 이름", text: $renameDraft)
+                .textFieldStyle(.roundedBorder)
+                .font(DFFont.body)
+                .onSubmit {
+                    renamePage(at: target.idx, to: renameDraft)
+                    renamingPageIdx = nil
+                }
+            HStack {
+                Spacer()
+                Button("취소") { renamingPageIdx = nil }
+                Button("저장") {
+                    renamePage(at: target.idx, to: renameDraft)
+                    renamingPageIdx = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: [])
+                .disabled(renameDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(DFSpace.lg)
+        .frame(width: 360)
     }
 
     private func formatSeconds(_ ms: Int) -> String {
@@ -337,38 +467,158 @@ public struct MotionStudioView: View {
             stepCount: currentPage?.steps.count ?? 0,
             hasBus: store.bus != nil,
             sendToHardware: $sendToHardware,
+            isDirty: isDirty,
+            executingOnRobot: executingOnRobot,
             onPlay: { startPlayback() },
             onAddStep: { addStepFromCurrentPose() },
-            onCapture: { captureFromTelemetry() }
+            onCapture: { captureFromTelemetry() },
+            onRunOnRobot: { runCurrentPageOnRobot() },
+            onSave: { saveDocAs() }
         )
     }
 
-    private func stepDetailRow(page: MotionPage) -> some View {
-        let step = (selectedStep < page.steps.count) ? page.steps[selectedStep] : nil
-        return HStack(spacing: DFSpace.md) {
-            Text("\(selectedStep + 1) / \(page.steps.count)단계")
-                .font(DFFont.bodyEmph)
-            if let step {
-                HStack(spacing: DFSpace.xs) {
-                    Text("이동 시간").foregroundStyle(DFColor.textSecondary)
-                    Text("\(step.playMs)ms").fontDesign(.monospaced)
-                }
-                HStack(spacing: DFSpace.xs) {
-                    Text("멈춤 시간").foregroundStyle(DFColor.textSecondary)
-                    Text("\(step.pauseMs)ms").fontDesign(.monospaced)
-                }
+    /// "로봇에 실행" — 현재 페이지를 1배속으로 재생 + sendToHardware 일시 활성 + 끝나면 복귀.
+    /// LIVE 토글과 다름: 명시적 "한 번 실행" semantic, 진행 중 버튼 disabled + 상태 표시.
+    private func runCurrentPageOnRobot() {
+        guard store.bus != nil, let page = currentPage else { return }
+        let priorSend = sendToHardware
+        executingOnRobot = true
+        sendToHardware = true     // 재생 중 player.pose 변경 → applyToHardware 자동 전송.
+        player.load(page, from: .walkReady)
+        player.playbackRate = 1.0  // 실 송출은 1배속 고정 — 모터 안전.
+        player.isLooping = false   // 한 번만.
+        player.play()
+
+        // 종료 polling — player.mode == .stop 으로 전환 시 정리.
+        Task { @MainActor in
+            while player.mode == .playing {
+                try? await Task.sleep(nanoseconds: 100_000_000)
             }
+            // 정리 — sendToHardware 원복 + executingOnRobot off.
+            sendToHardware = priorSend
+            executingOnRobot = false
+        }
+    }
+
+    private func stepDetailRow(page: MotionPage) -> some View {
+        // 현재 step idx 가 안전한 범위인지.
+        let stepCount = page.steps.count
+        return HStack(spacing: DFSpace.md) {
+            // 키프레임 위치 label.
+            HStack(spacing: DFSpace.xs) {
+                Image(systemName: "key.horizontal.fill")
+                    .font(.system(size: DFFontSize.s11))
+                    .foregroundStyle(DFColor.forge)
+                Text("\(selectedStep + 1) / \(stepCount)")
+                    .font(DFFont.bodyEmph.monospacedDigit())
+            }
+
+            Divider().frame(height: DFSize.iconMd2)
+
+            // 이동 시간 (playMs) — stepper 인라인 편집.
+            keyframeStepperField(
+                label: "이동",
+                valueMs: page.steps[safe: selectedStep]?.playMs ?? 0,
+                range: 0...4096,    // .mtn raw 한계 (255 × 8ms = ~2040ms 권장, 여유로 4096).
+                stepMs: 8,           // .mtn raw 단위 (1 raw = 8ms).
+                tint: DFColor.accent
+            ) { newMs in
+                updateSelectedStepTiming(playMs: newMs, pauseMs: nil)
+            }
+
+            // 멈춤 시간 (pauseMs) — stepper 인라인 편집.
+            keyframeStepperField(
+                label: "정지",
+                valueMs: page.steps[safe: selectedStep]?.pauseMs ?? 0,
+                range: 0...2040,
+                stepMs: 8,
+                tint: DFColor.textSecondary
+            ) { newMs in
+                updateSelectedStepTiming(playMs: nil, pauseMs: newMs)
+            }
+
             Spacer()
+
             Button(role: .destructive) {
                 removeSelectedStep()
             } label: {
                 Label("이 단계 삭제", systemImage: "trash")
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
             }
             .controlSize(.small)
-            .disabled((currentPage?.steps.count ?? 0) <= 1)
+            .disabled(stepCount <= 1)
             .help("동작에는 최소 한 단계가 있어야 해요")
         }
         .font(DFFont.caption)
+        .padding(.horizontal, DFSpace.sm)
+        .padding(.vertical, DFSpace.xs2)
+        .background(DFColor.elev2.opacity(DFOpacity.dim))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    /// 키프레임 시간 stepper — 라벨 + 값 (mono) + Stepper +/-. 변경 시 onChange 콜.
+    private func keyframeStepperField(
+        label: String,
+        valueMs: Int,
+        range: ClosedRange<Int>,
+        stepMs: Int,
+        tint: Color,
+        onChange: @escaping (Int) -> Void
+    ) -> some View {
+        HStack(spacing: DFSpace.xs) {
+            Text(label)
+                .font(.system(size: DFFontSize.s11))
+                .foregroundStyle(DFColor.textSecondary)
+            Text("\(valueMs)ms")
+                .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(tint)
+                .frame(minWidth: 56, alignment: .trailing)
+                .monospacedDigit()
+            Stepper("",
+                    value: Binding(
+                        get: { valueMs },
+                        set: { onChange(max(range.lowerBound, min(range.upperBound, $0))) }
+                    ),
+                    in: range,
+                    step: stepMs)
+                .labelsHidden()
+                .controlSize(.mini)
+        }
+        .padding(.horizontal, DFSpace.xs2)
+        .padding(.vertical, DFSpace.xs)
+        .background(DFColor.canvas.opacity(DFOpacity.dim))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs)
+                .stroke(tint.opacity(DFOpacity.subtle), lineWidth: DFSize.borderHairline)
+        )
+    }
+
+    /// 선택된 step 의 playMs / pauseMs 갱신. nil 인 인자는 변경 안 함.
+    private func updateSelectedStepTiming(playMs: Int?, pauseMs: Int?) {
+        guard selectedPageIdx >= 0, selectedPageIdx < motion.pages.count else { return }
+        let stepCount = motion.pages[selectedPageIdx].steps.count
+        guard selectedStep >= 0, selectedStep < stepCount else { return }
+        var step = motion.pages[selectedPageIdx].steps[selectedStep]
+        if let newPlay = playMs {
+            // playMs / pauseMs 모두 raw (×8 ms) 로 저장 — 8 단위 quantize.
+            let quantized = max(0, (newPlay / 8) * 8)
+            step.playTime = UInt8(clamping: quantized / 8)
+        }
+        if let newPause = pauseMs {
+            let quantized = max(0, (newPause / 8) * 8)
+            step.pauseTime = UInt8(clamping: quantized / 8)
+        }
+        motion.pages[selectedPageIdx].steps[selectedStep] = step
+        markDirty()
+        // Player 에 변경 반영 — 재생 중이면 다음 tick 부터 적용.
+        if let page = currentPage {
+            let wasPlaying = player.mode == .playing
+            let elapsed = player.elapsedMs
+            player.page = page
+            player.seek(toMs: elapsed)
+            if wasPlaying { player.play() }
+        }
     }
 
     // MARK: - Right (inspector)
@@ -459,6 +709,7 @@ public struct MotionStudioView: View {
             pauseMs: oldStep.pauseMs
         )
         motion.pages[selectedPageIdx] = page
+        markDirty()
     }
 
     private func addStepFromCurrentPose() {
@@ -467,6 +718,7 @@ public struct MotionStudioView: View {
         page.steps.append(step)
         motion.pages[selectedPageIdx] = page
         selectedStep = page.steps.count - 1
+        markDirty()
     }
 
     private func removeSelectedStep() {
@@ -475,6 +727,7 @@ public struct MotionStudioView: View {
         if selectedStep >= page.steps.count { selectedStep = page.steps.count - 1 }
         motion.pages[selectedPageIdx] = page
         applySelectedStepToPose()
+        markDirty()
     }
 
     private func addPage() {
@@ -484,7 +737,93 @@ public struct MotionStudioView: View {
         motion.pages.append(newPage)
         selectedPageIdx = motion.pages.count - 1
         selectedStep = 0
+        markDirty()
     }
+
+    // MARK: - Page management (duplicate / rename / delete / export)
+
+    /// 페이지 복제 — 같은 step 시퀀스, 새 ID, "<name> 복사본" suffix.
+    private func duplicatePage(at idx: Int) {
+        guard idx >= 0, idx < motion.pages.count else { return }
+        let src = motion.pages[idx]
+        let nextId = (motion.pages.map { $0.id }.max() ?? 0) + 1
+        let copyName = src.name.isEmpty ? "동작 \(src.id) 복사본" : "\(src.name) 복사본"
+        let copy = MotionPage(
+            id: nextId,
+            name: copyName,
+            compliance: src.compliance,
+            nextPage: 0,        // 복제본은 next/exit 체인 끊음 — 안전.
+            exitPage: 0,
+            repeat: src.repeat,
+            speed: src.speed,
+            accel: src.accel,
+            steps: src.steps
+        )
+        // 원본 바로 다음 자리에 삽입.
+        motion.pages.insert(copy, at: idx + 1)
+        selectedPageIdx = idx + 1
+        selectedStep = 0
+        markDirty()
+        applySelectedStepToPose()
+    }
+
+    /// 페이지 삭제 — 1 개 미만으로 줄지 않도록 보호.
+    private func deletePage(at idx: Int) {
+        guard motion.pages.count > 1, idx >= 0, idx < motion.pages.count else { return }
+        motion.pages.remove(at: idx)
+        selectedPageIdx = max(0, min(selectedPageIdx, motion.pages.count - 1))
+        selectedStep = 0
+        markDirty()
+        applySelectedStepToPose()
+    }
+
+    /// 페이지 이름 변경.
+    private func renamePage(at idx: Int, to newName: String) {
+        guard idx >= 0, idx < motion.pages.count else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        motion.pages[idx].name = trimmed
+        markDirty()
+    }
+
+    /// 단일 페이지 .json 으로 내보내기 (NSSavePanel).
+    private func exportPage(at idx: Int) {
+        guard idx >= 0, idx < motion.pages.count else { return }
+        let page = motion.pages[idx]
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = []
+        panel.nameFieldStringValue = "\(page.name.isEmpty ? "motion-\(page.id)" : page.name).json"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let single = MotionDoc(version: motion.version,
+                                    robotGeneration: motion.robotGeneration,
+                                    pages: [page])
+            let json = try single.toJSON(prettyPrinted: true)
+            try json.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            lastError = "내보내기 실패: \(error.localizedDescription)"
+        }
+    }
+
+    /// 전체 motion doc 을 .json 으로 저장 (NSSavePanel) — "다른 이름으로 저장".
+    private func saveDocAs() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = []
+        panel.nameFieldStringValue = "motion-doc.json"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let json = try motion.toJSON(prettyPrinted: true)
+            try json.write(to: url, atomically: true, encoding: .utf8)
+            isDirty = false   // 저장 완료 → clean 상태.
+        } catch {
+            lastError = "저장 실패: \(error.localizedDescription)"
+        }
+    }
+
+    /// motion doc 변경 시 dirty flag set — UI 의 저장 버튼 활성화.
+    private func markDirty() { isDirty = true }
 
     private func captureFromTelemetry() {
         guard let bus = store.bus else { return }
@@ -527,6 +866,24 @@ public struct MotionStudioView: View {
             }
         }
     }
+
+    // MARK: - Helpers
+
+    /// Rename sheet 의 Identifiable 래퍼 — SwiftUI sheet(item:) 요구.
+    fileprivate struct RenameTarget: Identifiable {
+        let idx: Int
+        var id: Int { idx }
+    }
+}
+
+/// Array safe subscript — out-of-range index 시 nil (페이지 idx 안전 접근).
+fileprivate extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
+extension MotionStudioView {
 
     // MARK: - Starter document
 
