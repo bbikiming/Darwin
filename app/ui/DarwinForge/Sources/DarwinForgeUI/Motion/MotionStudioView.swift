@@ -646,20 +646,31 @@ public struct MotionStudioView: View {
             ]
         )
 
-        // ── 5. 앉기 — Hip pitch + Knee. 양쪽 부호가 반대인 점 유의 (mirror axis).
-        // ROBOTIS-OP2 공식 convention: rKnee +굽힘 / lKnee -굽힘 (page 9 ±53° 와 동일 부호).
-        // 종전 코드는 lKnee 도 +90° 로 잘못 적었음 → 좌측 무릎이 hardware limit 쪽으로 휘는
-        // 위험. CLAUDE_NEGATIVE_JOINT_FIX_DIRECTIVE 에 따라 -90° 로 수정.
+        // ── 5. 앉기 — walkReady deep squat 에서 추가 굽힘 (CRITIC P2 #3 + PR #8 부호 fix 통합).
+        //
+        // 종전 버그 (CRITIC 두 건 결합):
+        //  1. lKnee +90° 로 좌·우 같은 부호 — ROBOTIS convention 위반 (mirror axis).
+        //     PR #8 (negative-joint-mirror-fix) 에서 lKnee 절대 -90° 로 부호 fix 됐고,
+        //     본 PR 의 delta -37° 패턴이 walkReady (-53°) 와 합쳐져 동일 결과 (-90°).
+        //  2. 절대 -45°/+90° 사용 → walkReady (-36°/+53°/+30°) 에서 절대값으로 보간 시
+        //     중간 frame 에서 hip 은 walkReady 보다 -4° 더 굽고 knee 는 walkReady 보다
+        //     +18° 더 굽은 비대칭 자세 통과 → hotfix v3 "뒤로 넘어짐" fault mode 와 동일.
+        //  3. ankle pitch 가 walkReady 의 +30° 그대로 → knee +90° 굽힘 후 발이 +15° 들림
+        //     (foot 절대각 = -45+90-30 = +15°) → CoM 뒤로 → 뒤로 넘어짐.
+        //
+        // Fix — walkReady-relative delta + 좌·우 mirror + ankle CoM 보정:
+        //   hip: +(-9°) 추가 굽힘 / knee: +(+37°) 추가 굽힘 / ankle: +(+15°) 발끝 보정.
+        //   foot 절대각 = -45 + 90 - 45 = 0° (수평) — CoM 발 위에 정확히 정렬.
+        let sitDeltas: [JointID: Double] = [
+            .rHipPitch:   -9,    .lHipPitch:   +9,    // mirror pair
+            .rKnee:       +37,   .lKnee:       -37,   // mirror pair (PR #8 의 -90° 와 동일 결과)
+            .rAnklePitch: +15,   .lAnklePitch: -15    // CoM 보정 — foot 수평 유지
+        ]
         let sit = MotionPage(
             id: 204, name: "앉기",
             steps: [
                 .from(pose: .walkReady, playMs: 300, pauseMs: 0),
-                .from(pose: .walkReady.with([
-                    .rHipPitch: Kinematics.raw(fromDegrees: -45),
-                    .lHipPitch: Kinematics.raw(fromDegrees: 45),
-                    .rKnee:     Kinematics.raw(fromDegrees: 90),
-                    .lKnee:     Kinematics.raw(fromDegrees: -90)
-                ]), playMs: 800, pauseMs: 200),
+                .from(pose: Self.deltaFromWalkReady(sitDeltas), playMs: 800, pauseMs: 200),
                 .from(pose: .walkReady, playMs: 800, pauseMs: 0)
             ]
         )
@@ -688,6 +699,18 @@ public struct MotionStudioView: View {
         return [idle, tPose, bow, wave, sit] + extras
              + officialCatalog
              + walkTest + ergonomic + greetings + social
+    }
+
+    /// `walkReady` 의 현재 raw 값에서 각 관절에 delta(°) 를 더한 새 pose.
+    /// `ReferenceMotionLibrary.deltaPose` 와 같은 패턴 — walkReady 가 미래에 갱신돼도 delta 의미 보존.
+    /// CRITIC P2 #3 권고로 도입.
+    fileprivate static func deltaFromWalkReady(_ deltas: [JointID: Double]) -> RobotPose {
+        var dict = RobotPose.walkReady.positions
+        for (joint, delta) in deltas {
+            let base = RobotPose.walkReady.degrees(joint)
+            dict[joint] = Kinematics.raw(fromDegrees: base + delta)
+        }
+        return RobotPose(positions: dict)
     }
 
     /// PoseLibrary 기반 starter 동작 생성 — 단일 자세 페이지 + 오실레이션 페이지.
