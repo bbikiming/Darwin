@@ -29,7 +29,24 @@ const POSITION_MASK: u16 = 0x0FFF;
 
 /// 양발 지지 자세에서 좌·우 hip_pitch 의 최대 raw 차이.
 ///
-/// walkReady 의 r=-65°/l=+65° 차이가 130° ≈ raw 1480 → 약간 여유 1700.
+/// # 도출 (Provenance — BLOCKER M4, 2026-05-12)
+///
+/// walkReady 의 좌·우 hip_pitch 자세를 기준으로 산정:
+///
+/// | 항목 | 값 |
+/// |------|----|
+/// | walkReady R_HIP_PITCH | -65° (raw 1308) |
+/// | walkReady L_HIP_PITCH | +65° (raw 2787) |
+/// | 절댓값 차이 | **|2787 − 1308| = 1479 raw** (≈ 130°) |
+/// | 마진 (현재 1700) | +221 raw (≈ +19°) |
+///
+/// 즉 walkReady 보다 19° 더 큰 비대칭 자세까지 양발 지지로 간주. 한발 자세
+/// (예: kick step 3 hip_pitch 차이 ≈ 1379 raw) 는 마진 안에 들어가므로 page
+/// metadata 의 `single_foot_ok` 가 명시적으로 한발 모션을 표시한다 — 본 임계만
+/// 으로는 한발/양발 자동 구분 불가, 명시적 metadata 필요.
+///
+/// 더 보수적으로 (예: 1500) 줄이면 한발 모션도 자동 catch 가능하나 walkReady
+/// 자체 false-positive 위험. 현 1700 은 walkReady 안전 마진 우선 설계.
 pub const MAX_HIP_PITCH_DIFF_RAW: u16 = 1700;
 
 /// V4 — Static stability validator (단순화 v1).

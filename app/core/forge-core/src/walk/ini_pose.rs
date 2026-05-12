@@ -76,10 +76,26 @@ pub fn interpolate(
     out
 }
 
-/// 공식 mov_time 6.0 s 기준 — 보간 step 개수 (control_cycle 8 ms 기준).
-pub const WALK_READY_MOV_STEPS: usize = 750; // 6000 ms / 8 ms
+/// 공식 mov_time 6.0 s 기준 — 보간 step 개수.
+///
+/// # 도출 (Provenance — BLOCKER M2, 2026-05-12)
+///
+/// ROBOTIS-OP2 `op2_manager/config/OP2.robot` 의 `control_cycle = 8 ms` 와
+/// `ini_pose.yaml` 의 `mov_time = 6.0 s` 로부터:
+///
+/// ```text
+/// WALK_READY_MOV_STEPS = mov_time × 1000 / control_cycle
+///                      = 6.0 × 1000 / 8
+///                      = 750
+/// ```
+///
+/// `control_cycle` 또는 `mov_time` 변경 시 본 상수도 함께 갱신해야 한다.
+pub const WALK_READY_MOV_STEPS: usize = 750;
 
 /// via_time 4.0 s — via_pose(중립)에서 walkReady로 가는 후반 ratio.
+///
+/// `ini_pose.yaml` 의 `via_time = 4.0` / `mov_time = 6.0` 비율. 즉 mov_time 의
+/// 처음 4 s 동안 via_pose(모든 관절 0°) 로, 나머지 2 s 동안 walkReady 로 이동.
 pub const VIA_TIME_RATIO: f64 = 4.0 / 6.0;
 
 #[cfg(test)]

@@ -22,17 +22,17 @@
 | **H1** | `safety::self_collision` | docstring 5종 룰 / 코드 4종 (hip + knee 결합 룰 미구현) | 5번째 룰 구현 + 단위 테스트 |
 | ~~**H2**~~ | ~~`synth::validator::velocity`~~ | ~~calibration 데이터 부재~~ | ✅ **2026-05-12 해결** — `tests/fixtures/velocity_calibration.json` (1100 sample) 생성, `examples/calibrate_velocity` 자동화, p99×1.1=5.21≈상수 5.2 일치 검증. |
 | ~~**H3**~~ | ~~`joint::state::JointLimits`~~ | ~~"Page 12 가 V1 FAIL"~~ | ✅ **2026-05-12 해결** — off-by-one(C1) 정정 후 page 12 V1 PASS 확인. `page_12_right_kick_passes_v1_with_margins` 회귀 테스트 + 마진 53 raw (HeadTilt 4.66°) 측정값 명시. |
-| **H4** | `synth::ops::procedural::Bezier` | 표준 cubic Bezier 아님 — y만 사용, x 무시 | 표준화 또는 docstring에 "scalar curve, x 무시" 명시 |
-| **H5** | `synth::ops::mirror::mirror_page` | name involution 깨짐 — `mirror(mirror(p)).name ≠ p.name` | 두 번 mirror 시 원본 name 복원 로직 |
+| ~~**H4**~~ | ~~`synth::ops::procedural::Bezier`~~ | ~~표준 cubic Bezier 아님~~ | ✅ **2026-05-12 해결** — Curve 와 module docstring 에 "**scalar 큐빅 베지어** — y(x) easing 함수, p1.0/p2.0 x 무시" 명시. 표준 cubic-bezier 호환 필요 시 별도 함수로 추가 권장. |
+| ~~**H5**~~ | ~~`synth::ops::mirror::mirror_page`~~ | ~~name involution 깨짐~~ | ✅ **2026-05-12 해결** — `mirror_page` 이름 생성 로직: `_mirror` 접미사 이미 있으면 제거 (원본 복원), 없으면 추가. `mirror_name_is_involutive` 회귀 테스트. |
 
 ## 🟡 Medium — 1개월 (출처 / 근거 보강)
 
 | # | 위치 | 이슈 |
 |---|------|------|
-| M1 | `walk::imu::ComplementaryFilter` | α=0.98 출처 / 학술 인용 없음 |
-| M2 | `walk::ini_pose::WALK_READY_MOV_STEPS=750` | derived constant인데 도출 식 미노출 |
+| ~~M1~~ | ~~`walk::imu::ComplementaryFilter`~~ | ~~α=0.98 출처 부재~~ | ✅ **2026-05-12 해결** — module docstring 에 시정수 도출 (τ=Δt·α/(1−α)=392 ms) + ROBOTIS 동일값 사용 + Pieter-Jan 2013 인용. |
+| ~~M2~~ | ~~`walk::ini_pose::WALK_READY_MOV_STEPS=750`~~ | ~~도출 식 미노출~~ | ✅ **2026-05-12 해결** — docstring 에 `mov_time × 1000 / control_cycle = 6.0 × 1000 / 8 = 750` 식 명시. `VIA_TIME_RATIO=2/3` 도 함께. |
 | ~~M3~~ | ~~`safety::torque_ramp [0,8,16,32]`~~ | ~~안전 근거 부재~~ | ✅ **2026-05-12 해결** — `safety::torque_ramp` 모듈 docstring 에 "Provenance" 절 추가 (왜 0, 8, 16, 32 / 4 단계 / 200 ms × 4 = 800 ms 인지). 실 모터 실측은 G3 게이트 후. |
-| M4 | `synth::validator::static_stability::MAX_HIP_PITCH_DIFF_RAW=1700` | margin 정량화 부족 |
+| ~~M4~~ | ~~`synth::validator::static_stability::MAX_HIP_PITCH_DIFF_RAW=1700`~~ | ~~margin 정량화 부족~~ | ✅ **2026-05-12 해결** — walkReady L−R = 1479 raw 기준 +221 raw 마진. Page 12 kick 차이 1379 raw 마진 안. single_foot_ok 와 분리 설계 명시. |
 | M5 | `synth::library::OFFICIAL_CATALOG` | ROBOTIS 원본 오타 vs 정정 여부 모호 |
 | M6 | `docs/motion-format/page-format.md` | `> TODO: verify` 가 page-catalog-motion4096.md 와 충돌 |
 

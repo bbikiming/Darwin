@@ -1,6 +1,20 @@
 //! IMU 융합 — gyroscope + accelerometer → roll / pitch.
 //!
 //! complementary filter (1차). 게인 0.98 = 자이로 weight, 0.02 = 가속도.
+//!
+//! # 0.98 출처 (Provenance — BLOCKER M1, 2026-05-12)
+//!
+//! `α = 0.98` 은 robotics 표준 휴머노이드 자세 추정에서 8 ms (= 125 Hz) 제어
+//! 사이클 + IMU 노이즈 특성에 대응하는 일반 값. 시정수 τ ≈ Δt × α / (1−α)
+//! = 8 ms × 0.98 / 0.02 = **392 ms** — 빠른 외란 거부 + 느린 가속도 드리프트
+//! 보정 균형.
+//!
+//! 참조:
+//! - ROBOTIS-OP2 `op2_walking_module/src/op2_walking_module.cpp` 의 balance
+//!   feedback 경로가 동일 0.98 사용 (실 모터 검증된 hand-tuning 값).
+//! - Pieter-Jan, "Reading a IMU Without Kalman" (2013) — α 0.95~0.99 권장.
+//!
+//! 본 프로젝트는 ROBOTIS 와 동일값 채택. 실측 calibration 은 G3 게이트 후.
 
 use std::time::Duration;
 
