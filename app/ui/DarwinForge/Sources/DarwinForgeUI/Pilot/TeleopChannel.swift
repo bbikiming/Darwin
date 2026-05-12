@@ -86,9 +86,14 @@ public final class TeleopChannel: ObservableObject {
             }
             // 짧은 정착.
             try? await Task.sleep(nanoseconds: 250_000_000)
+        } else {
+            // bus 미연결 — 시뮬 모드. 사용자에게 명확히 알림.
+            lastToast = "시뮬 모드 — 실 로봇 미연결 (자세 미리보기만)"
         }
 
-        lastToast = "보행 자세로 전환 중…"
+        if store?.bus != nil {
+            lastToast = "보행 자세로 전환 중…"
+        }
 
         // [3] walkready 자세 (slot 9) 자동 호출.
         armStage = .reachingWalkready
@@ -173,6 +178,9 @@ public final class TeleopChannel: ObservableObject {
             self.progress = 1
         }
 
+        // bus 미연결 시 미리 사용자에게 알림 — 실 송출 없이 시각만 진행.
+        let isSimOnly = (store?.bus == nil)
+
         let motionTask = Task { @MainActor [weak self] in
             guard let self, let store = self.store else { return }
             await store.applyPoseSmoothly(target)
@@ -182,7 +190,30 @@ public final class TeleopChannel: ObservableObject {
         _ = await motionTask.value
         progressTask.cancel()
         lastError = nil
-        lastToast = "\(meta.displayNameKo) 완료"
+        lastToast = isSimOnly
+            ? "\(meta.displayNameKo) — 시뮬 미리보기 (실 로봇 미연결)"
+            : "\(meta.displayNameKo) 완료"
+        return true
+    }
+
+    // MARK: - Manual pose send (UI buttons that aren't motion slots)
+
+    /// 임의 자세 송출 (Walk Lab "walk_ready 송출" 등 UI 헬퍼).
+    /// 게이트는 우회 — UI 호출자가 자체 안전 (cradle 등) 책임.
+    @discardableResult
+    public func sendPose(_ pose: RobotPose, label: String) async -> Bool {
+        guard let store else {
+            lastError = "store 가 연결되지 않았어요"
+            return false
+        }
+        guard store.bus != nil else {
+            lastError = "로봇 미연결 — '\(label)' 송출 skip"
+            return false
+        }
+        lastToast = "\(label) 송출 중…"
+        await store.applyPoseSmoothly(pose)
+        lastError = nil
+        lastToast = "\(label) 완료"
         return true
     }
 

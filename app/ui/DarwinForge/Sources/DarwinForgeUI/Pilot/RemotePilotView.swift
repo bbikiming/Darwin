@@ -81,7 +81,7 @@ public struct RemotePilotView: View {
                 PilotActionBar(channel: channel, gate: gate, flags: flags)
                 PilotModePicker(mode: $mode, flags: flags)
                 PilotSpeedGauge(speedFraction: $speedFraction)
-                PilotDpad(flags: flags)
+                PilotDpad(channel: channel, gate: gate, flags: flags)
                 cameraPanel
             }
         }
@@ -95,7 +95,7 @@ public struct RemotePilotView: View {
                 PilotActionBar(channel: channel, gate: gate, flags: flags)
                 PilotModePicker(mode: $mode, flags: flags)
                 PilotSpeedGauge(speedFraction: $speedFraction)
-                PilotDpad(flags: flags)
+                PilotDpad(channel: channel, gate: gate, flags: flags)
             }
             .padding(.bottom, DFSpace.md)
         }
@@ -262,16 +262,34 @@ public struct RemotePilotView: View {
 
     @ViewBuilder
     private var toastOverlay: some View {
-        if let msg = channel.lastToast {
-            Text(msg)
-                .font(DFFont.bodyEmph)
+        VStack(spacing: 6) {
+            if let err = channel.lastError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DFColor.warning)
+                    Text(err)
+                        .font(DFFont.bodyEmph)
+                        .foregroundStyle(DFColor.warning)
+                }
                 .padding(.horizontal, 14).padding(.vertical, 8)
                 .background(.regularMaterial)
+                .background(DFColor.warning.opacity(0.10))
                 .clipShape(Capsule())
-                .overlay(Capsule().stroke(DFColor.accent.opacity(0.35), lineWidth: 0.5))
-                .padding(.bottom, DFSpace.lg)
+                .overlay(Capsule().stroke(DFColor.warning.opacity(0.45), lineWidth: 0.5))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-                .accessibilityIdentifier("pilot.toast")
+                .accessibilityIdentifier("pilot.error")
+            }
+            if let msg = channel.lastToast {
+                Text(msg)
+                    .font(DFFont.bodyEmph)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.regularMaterial)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(DFColor.accent.opacity(0.35), lineWidth: 0.5))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityIdentifier("pilot.toast")
+            }
         }
+        .padding(.bottom, DFSpace.lg)
     }
 }

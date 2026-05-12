@@ -645,7 +645,7 @@ public struct RootView: View {
         case .board:    ExpertDashboard()
         case .joints:   JointControlView()
         case .motion:   MotionLibraryView()
-        case .walk:     WalkLabView()
+        case .walk:     WalkDiagnosticsView()
         case .strategy: StrategyView()
         }
     }
@@ -863,7 +863,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .board:    return "보드 상태"
         case .joints:   return "관절 제어"
         case .motion:   return "동작 라이브러리"
-        case .walk:     return "보행 시뮬"
+        case .walk:     return "보행 진단"
         case .strategy: return "전략 FSM"
         }
     }
@@ -872,7 +872,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .board:    return "cpu"
         case .joints:   return "slider.horizontal.3"
         case .motion:   return "play.rectangle.on.rectangle"
-        case .walk:     return "figure.walk"
+        case .walk:     return "waveform.path.ecg"
         case .strategy: return "brain.head.profile"
         }
     }

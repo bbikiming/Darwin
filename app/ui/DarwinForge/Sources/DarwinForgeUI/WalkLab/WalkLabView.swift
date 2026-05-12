@@ -15,6 +15,7 @@ import SwiftUI
 /// - L3: live IMU |roll/pitch| > 30° → 자동 stop
 /// - L4: 모터 max 온도 60°C 도달 → 자동 stop
 public struct WalkLabView: View {
+    @EnvironmentObject private var store: ConnectionStore
     @StateObject private var session = WalkLabSession()
     @State private var showingRiskConfirm: Bool = false
     @State private var pendingHighRiskPreset: WalkLabPreset?
@@ -32,6 +33,7 @@ public struct WalkLabView: View {
             riskConfirmSheet
         }
         .background(Color(NSColor.windowBackgroundColor))
+        .onAppear { session.attach(store: store) }
     }
 
     // MARK: - Sidebar
@@ -200,15 +202,15 @@ public struct WalkLabView: View {
         .padding(16)
     }
 
-    /// Sim only 알림 — walk::engine 이 sin파 stub 이라 실 IK 미구현 (BLOCKER C3).
+    /// 시뮬 vs 실 송출 경계 안내. 슬라이더는 sim, 자세 전환은 실 로봇 송출.
     private var simOnlyNotice: some View {
         HStack(spacing: 8) {
             Image(systemName: "info.circle.fill")
                 .foregroundStyle(.blue)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Sim only — 실 IK 미구현")
+                Text("자세 전환 = 실 송출 · 보행 모션 = 시뮬")
                     .font(.system(size: 12, weight: .semibold))
-                Text("발 자취·IMU·온도는 시뮬레이션 모델. 실 모터 송출 전 walk::engine 의 IK 완성 필요. (BLOCKER C3)")
+                Text("프리셋 시작/정지·“walk_ready 송출” 은 실 로봇에 자세 전송 (연결 + cradle 확인 시). 슬라이더 보폭/측면/회전 명령은 walk::engine 의 실 IK 완성 전까지 sim only (BLOCKER C3) — 발 자취·IMU·온도는 시뮬 모델.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -291,29 +293,73 @@ public struct WalkLabView: View {
     }
 
     private var actionBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                tap(.idle)
-            } label: {
-                Label("정지", systemImage: "pause.circle")
+        VStack(spacing: 6) {
+            HStack(spacing: 10) {
+                Button {
+                    tap(.idle)
+                } label: {
+                    Label("정지", systemImage: "pause.circle")
+                }
+
+                Button {
+                    session.emergencyStop()
+                } label: {
+                    Label("비상 정지", systemImage: "exclamationmark.octagon.fill")
+                }
+                .keyboardShortcut(.escape)
+                .tint(.red)
+
+                Divider().frame(height: 20)
+
+                Button {
+                    Task { await store.applyPoseSmoothly(.walkReady) }
+                } label: {
+                    Label("walk_ready 송출", systemImage: "figure.walk.motion")
+                }
+                .disabled(store.bus == nil || !session.cradleConfirmed)
+                .help("실 로봇을 walkReady 자세로 보냄 (정비 스탠드 거치 + 연결 필수)")
+
+                Spacer()
+
+                connectionPill
+
+                Text(session.cradleConfirmed
+                     ? "정비 스탠드 거치 ✓"
+                     : "↑ 사이드바에서 스탠드 거치를 먼저 확인하세요")
+                    .font(.caption)
+                    .foregroundStyle(session.cradleConfirmed ? .green : .orange)
             }
 
-            Button {
-                session.emergencyStop()
-            } label: {
-                Label("비상 정지", systemImage: "exclamationmark.octagon.fill")
+            if let evt = session.lastRobotEvent {
+                HStack(spacing: 6) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.caption2)
+                    Text(evt).font(.caption.monospacedDigit())
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
             }
-            .keyboardShortcut(.escape)
-            .tint(.red)
-
-            Spacer()
-
-            Text(session.cradleConfirmed
-                 ? "정비 스탠드 거치 ✓"
-                 : "↑ 사이드바에서 스탠드 거치를 먼저 확인하세요")
-                .font(.caption)
-                .foregroundStyle(session.cradleConfirmed ? .green : .orange)
         }
+    }
+
+    /// 로봇 연결 상태 pill — bus 유무 + endpoint 짧은 표시.
+    private var connectionPill: some View {
+        let connected = store.bus != nil
+        let label: String = {
+            if !connected { return "로봇 미연결" }
+            if let ep = store.activeEndpoint {
+                return "연결됨 — \(ep.displayName)"
+            }
+            return "연결됨"
+        }()
+        return HStack(spacing: 4) {
+            Circle()
+                .fill(connected ? Color.green : Color.gray)
+                .frame(width: 6, height: 6)
+            Text(label).font(.caption2)
+        }
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(Capsule().fill((connected ? Color.green : Color.gray).opacity(0.12)))
     }
 
     // MARK: - Risk confirm sheet

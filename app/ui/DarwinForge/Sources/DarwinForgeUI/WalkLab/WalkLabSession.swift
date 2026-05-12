@@ -4,7 +4,14 @@ import SwiftUI
 
 /// Walk Lab 의 ObservableObject — 현재 프리셋 / 고급 슬라이더 / 시뮬 결과 / 안전 상태.
 ///
-/// 실 로봇 송출은 `walk::engine` 의 실 IK 가 완성되기 전까지 시뮬만 (BLOCKER C3).
+/// 시뮬 vs 실 송출:
+///   - 슬라이더 (보폭/측면/회전/주기) → sim only. walk::engine 의 실 IK 가 v1.5
+///     에서 완성된 후 실 보행 송출 (BLOCKER C3).
+///   - 프리셋 start/stop → bus 연결 + cradle 확인 시 정적 자세 송출:
+///       · start → walkReady (정적 직립, T-pose 하체)
+///       · stop → walkReady 자세 유지 (직립 상태)
+///       · emergencyStop → ConnectionStore.emergencyStop (토크 OFF)
+///   - `attach(store:)` 호출 전이면 송출 skip (테스트 / preview / 연결 전).
 @MainActor
 public final class WalkLabSession: ObservableObject {
     // MARK: - 사용자 입력
@@ -56,6 +63,17 @@ public final class WalkLabSession: ObservableObject {
 
     // MARK: - 세션 기록
     @Published public var history: [WalkLabRecord] = []
+
+    // MARK: - 실 로봇 연결 (optional)
+    /// 환경에서 주입되는 연결 store. nil 이면 sim only.
+    private weak var store: ConnectionStore?
+    /// 마지막 송출 상태 — UI 토스트용.
+    @Published public private(set) var lastRobotEvent: String?
+
+    /// SwiftUI 한계 우회 — `.onAppear` 에서 env 가 도착하면 호출.
+    public func attach(store: ConnectionStore) {
+        self.store = store
+    }
 
     // MARK: - 내부
     private let engine: WalkEngine
@@ -115,7 +133,7 @@ public final class WalkLabSession: ObservableObject {
         return true
     }
 
-    /// 프리셋 시작 — 시뮬 50 ms tick.
+    /// 프리셋 시작 — 시뮬 50 ms tick + 실 로봇 정적 자세 송출 (bus 연결 시).
     public func start(_ preset: WalkLabPreset) {
         guard cradleConfirmed else { return }
         if preset.requiresRiskConfirmation, !riskAcknowledged { return }
@@ -139,6 +157,10 @@ public final class WalkLabSession: ObservableObject {
                 self?.tick()
             }
         }
+
+        // 실 로봇 송출 — bus 연결 + cradle 확인 시 walkReady 정적 자세로.
+        // 슬라이더(보폭/측면 등) 는 v1.5 IK 완성까지 sim only — 자세만 송출.
+        sendRobotPose(.walkReady, eventLabel: "보행 자세 송출 — \(preset.label)")
     }
 
     /// 진행 중 sim 에 현재 슬라이더/프리셋 값을 재밀어넣는다.
@@ -149,11 +171,12 @@ public final class WalkLabSession: ObservableObject {
         engine.setPeriodMs(effectivePeriodMs)
     }
 
-    /// 정지 — 시뮬 멈춤, 기록 누적.
+    /// 정지 — 시뮬 멈춤, 기록 누적, 실 로봇은 walkReady 정적 자세 유지.
     public func stop() {
         simTimer?.invalidate()
         simTimer = nil
         engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
+        let wasRunning = startTime != nil
         if let start = startTime {
             history.insert(WalkLabRecord(
                 preset: current,
@@ -165,14 +188,43 @@ public final class WalkLabSession: ObservableObject {
         startTime = nil
         current = .idle
         // sway 도 zero 로 디케이 — 다음 tick 에서 매끄럽게 감소.
+
+        // 실 로봇 — walkReady 정적 자세 유지 (서있는 상태). 진행 중이었을 때만 송출.
+        if wasRunning {
+            sendRobotPose(.walkReady, eventLabel: "정지 — 직립 자세 유지")
+        }
     }
 
-    /// 비상 정지 — Stop + risk reset.
+    /// 비상 정지 — Stop + risk reset + 실 로봇 토크 OFF.
     public func emergencyStop() {
-        stop()
+        // 시뮬 정지 — stop() 안에서 자세 송출이 일어나면 위험. 토크 OFF 먼저.
+        store?.emergencyStop()
+        simTimer?.invalidate()
+        simTimer = nil
+        engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
+        startTime = nil
+        current = .idle
         riskAcknowledged = false
         balanceLost = false
+        lastRobotEvent = "🛑 토크 OFF — 비상 정지"
         // 온도는 그대로 — 사용자가 확인 후 자연 냉각.
+    }
+
+    /// 실 로봇에 정적 자세 송출. bus 미연결 / cradle 미확인 / cancelled 시 skip.
+    /// 슬라이더 보행 명령은 v1.5 IK 까지 sim only — 본 메서드는 자세 전환 only.
+    private func sendRobotPose(_ pose: RobotPose, eventLabel: String) {
+        guard let store = store, store.bus != nil else {
+            lastRobotEvent = "ℹ️ 시뮬 모드 — 로봇 미연결 (\(eventLabel))"
+            return
+        }
+        guard cradleConfirmed else {
+            lastRobotEvent = "⚠️ cradle 미확인 — 실 송출 차단"
+            return
+        }
+        lastRobotEvent = "🤖 \(eventLabel)"
+        Task { @MainActor in
+            await store.applyPoseSmoothly(pose)
+        }
     }
 
     private func tick() {
