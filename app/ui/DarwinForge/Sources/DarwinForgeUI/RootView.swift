@@ -121,15 +121,21 @@ public struct RootView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         // 좌측 상태 pill 그룹 — 단일 ToolbarItem 으로 묶어 spacing/padding 정확 통제.
-        // 디자인 ref: Apple HIG 8pt 그리드 + Linear 미묘 보더 (design-system-references.md §1·§Apple).
+        // 윈도우 폭 < 1100 일 때 보조 pill (배터리/온도/토크) 의 텍스트 hide, icon-only.
+        // < 900 에선 보조 pill 자체 hide — 연결 pill 만 유지 + 우측 CTA 보장.
         ToolbarItem(placement: .principal) {
-            HStack(spacing: DFSpace.sm2) {
-                connectionToolbarPill
-                batteryToolbarPill
-                temperatureToolbarPill
-                torqueToolbarPill
+            ResponsiveToolbarRow { size in
+                HStack(spacing: DFSpace.sm2) {
+                    connectionToolbarPill   // 항상 표시 (핵심 상태).
+                    if !size.isCompact {
+                        // regular / wide — 보조 pill 모두 표시. 텍스트는 wide 에서만.
+                        batteryToolbarPill
+                        temperatureToolbarPill
+                        torqueToolbarPill
+                    }
+                }
+                .padding(.horizontal, DFSpace.sm)
             }
-            .padding(.horizontal, DFSpace.sm)   // toolbar 경계와 첫/마지막 pill 사이 호흡.
         }
         // 우측 액션 그룹 — 단일 ToolbarItem 으로 묶어 macOS 자동 배치(타이트) 회피.
         ToolbarItem(placement: .primaryAction) {
@@ -326,25 +332,31 @@ public struct RootView: View {
     // MARK: - Battery / Temp / Torque pills
 
     private var batteryToolbarPill: some View {
-        let v = store.lastTelemetry?.board?.voltageVolts
-        let active = v != nil
-        return statusPill(active: active, tint: batteryTint) {
-            HStack(spacing: 5) {
-                Image(systemName: batteryIcon)
-                    .font(.system(size: DFFontSize.s12, weight: .semibold))
-                    .foregroundStyle(active ? batteryTint : DFColor.textSecondary.opacity(DFOpacity.o50))
-                if let v {
-                    Text(String(format: "%.1fV", v))
-                        .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(batteryTint)
-                } else {
-                    Text("배터리")
-                        .font(.system(size: DFFontSize.s11))
-                        .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
+        ResponsiveToolbarRow { size in
+            let v = store.lastTelemetry?.board?.voltageVolts
+            let active = v != nil
+            return statusPill(active: active, tint: batteryTint) {
+                HStack(spacing: DFSpace.xs2) {
+                    Image(systemName: batteryIcon)
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
+                        .foregroundStyle(active ? batteryTint : DFColor.textSecondary.opacity(DFOpacity.o50))
+                    if size.isWide {
+                        if let v {
+                            Text(String(format: "%.1fV", v))
+                                .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(batteryTint)
+                        } else {
+                            Text("배터리")
+                                .font(.system(size: DFFontSize.s11))
+                                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
+                        }
+                    }
                 }
             }
+            .help(active
+                  ? (v.map { String(format: "배터리 %.1fV", $0) } ?? "배터리")
+                  : "연결 후 표시 — 11.1V 이상 권장")
         }
-        .help(active ? "배터리 전압" : "연결 후 표시 — 11.1V 이상 권장")
     }
 
     private var batteryTint: Color {
@@ -364,25 +376,31 @@ public struct RootView: View {
     }
 
     private var temperatureToolbarPill: some View {
-        let t = store.lastTelemetry?.avgTemperature
-        let active = t != nil
-        return statusPill(active: active, tint: temperatureTint) {
-            HStack(spacing: 5) {
-                Image(systemName: "thermometer.medium")
-                    .font(.system(size: DFFontSize.s12, weight: .semibold))
-                    .foregroundStyle(active ? temperatureTint : DFColor.textSecondary.opacity(DFOpacity.o50))
-                if let t {
-                    Text(String(format: "%.0f°C", t))
-                        .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(temperatureTint)
-                } else {
-                    Text("온도")
-                        .font(.system(size: DFFontSize.s11))
-                        .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
+        ResponsiveToolbarRow { size in
+            let t = store.lastTelemetry?.avgTemperature
+            let active = t != nil
+            return statusPill(active: active, tint: temperatureTint) {
+                HStack(spacing: DFSpace.xs2) {
+                    Image(systemName: "thermometer.medium")
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
+                        .foregroundStyle(active ? temperatureTint : DFColor.textSecondary.opacity(DFOpacity.o50))
+                    if size.isWide {
+                        if let t {
+                            Text(String(format: "%.0f°C", t))
+                                .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(temperatureTint)
+                        } else {
+                            Text("온도")
+                                .font(.system(size: DFFontSize.s11))
+                                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
+                        }
+                    }
                 }
             }
+            .help(active
+                  ? (t.map { String(format: "관절 평균 온도 %.0f°C", $0) } ?? "관절 평균 온도")
+                  : "연결 후 표시")
         }
-        .help(active ? "관절 평균 온도" : "연결 후 표시")
     }
 
     private var temperatureTint: Color {
@@ -393,26 +411,30 @@ public struct RootView: View {
     }
 
     private var torqueToolbarPill: some View {
-        let on = store.lastTelemetry?.torqueOnCount ?? 0
-        let active = isConnectedNow
-        let tint = active && on > 0 ? DFColor.torque : DFColor.textSecondary
-        return statusPill(active: active, tint: tint) {
-            HStack(spacing: 5) {
-                Image(systemName: active && on > 0 ? "bolt.fill" : "bolt.slash")
-                    .font(.system(size: DFFontSize.s12, weight: .semibold))
-                    .foregroundStyle(active ? tint : DFColor.textSecondary.opacity(DFOpacity.o50))
-                if active {
-                    Text("\(on)/20")
-                        .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(tint)
-                } else {
-                    Text("토크")
-                        .font(.system(size: DFFontSize.s11))
-                        .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
+        ResponsiveToolbarRow { size in
+            let on = store.lastTelemetry?.torqueOnCount ?? 0
+            let active = isConnectedNow
+            let tint = active && on > 0 ? DFColor.torque : DFColor.textSecondary
+            return statusPill(active: active, tint: tint) {
+                HStack(spacing: DFSpace.xs2) {
+                    Image(systemName: active && on > 0 ? "bolt.fill" : "bolt.slash")
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
+                        .foregroundStyle(active ? tint : DFColor.textSecondary.opacity(DFOpacity.o50))
+                    if size.isWide {
+                        if active {
+                            Text("\(on)/20")
+                                .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(tint)
+                        } else {
+                            Text("토크")
+                                .font(.system(size: DFFontSize.s11))
+                                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
+                        }
+                    }
                 }
             }
+            .help(active ? "토크 ON 관절 \(on)/20" : "연결 후 표시")
         }
-        .help(active ? "토크 ON 관절 수 / 20" : "연결 후 표시")
     }
 
     // MARK: - Sidebar

@@ -136,66 +136,95 @@ public struct StudioView: View {
         .help("자세 변경 시 모터 이동 속도 — 다수 관절 동시 이동 시 무리 방지")
     }
 
+    /// 반응형 topToolbar — 윈도우 폭에 따라 button label 가시성 자동 조정.
+    /// - wide (≥ 1280): 모든 label 표시
+    /// - regular (820~1280): button label 짧게 또는 icon-only
+    /// - compact (< 820): 핵심 액션만 표시, 나머지는 ⋯ overflow menu
     private var topToolbar: some View {
-        HStack(spacing: DFSpace.md) {
-            HStack(spacing: DFSpace.xs) {
-                Image(systemName: "rectangle.3.group.fill")
-                    .foregroundStyle(DFColor.forge)
-                Text("스튜디오")
-                    .font(DFFont.bodyEmph)
-            }
+        toolbarContent
+            .padding(.horizontal, DFSpace.md)
+            .padding(.vertical, DFSpace.sm)
+            .background(.regularMaterial)
+    }
 
-            Spacer()
-
-            // 모터 속도 프로파일 — 자세 변경 시 보간 시간 결정.
-            motorSpeedPicker
-
-            ConnectionInlineControls()
-
-            // P0-C: confirm race 차단 — 사용자 동의 *이전에* liveApply를 true로 set하지 않는다.
-            // 동의 흐름: toggle off→on → showLiveApplyConfirm=true (liveApply는 그대로 false) →
-            //            alert "켤게요" → liveApply=true.
-            Toggle(isOn: Binding(
-                get: { liveApply },
-                set: { newValue in
-                    if newValue && !hasAcceptedLiveApply {
-                        // 동의 받기 전 — toggle은 시각적으로 off로 유지. alert만 띄움.
-                        showLiveApplyConfirm = true
-                    } else {
-                        liveApply = newValue
+    @ViewBuilder
+    private var toolbarContent: some View {
+        // 환경 width 기반 반응형 — RootView 가 dfWindowWidth 주입.
+        // 사이드바 240 + inspector 360 + torque sidebar 158 = 758 차감 → 본 toolbar 의
+        // 실 가용 width 는 winW - 758 (대략). 따라서 winW < 1500 부터 컴팩트.
+        ResponsiveToolbarRow { size in
+            HStack(spacing: DFSpace.md) {
+                HStack(spacing: DFSpace.xs) {
+                    Image(systemName: "rectangle.3.group.fill")
+                        .foregroundStyle(DFColor.forge)
+                    if !size.isCompact {
+                        Text("스튜디오").font(DFFont.bodyEmph)
                     }
                 }
-            )) {
-                Label("실시간 로봇 반영", systemImage: "bolt.horizontal.circle")
-            }
-            .toggleStyle(.button)
-            .controlSize(.small)
-            .disabled(store.bus == nil)
-            .help(store.bus == nil
-                  ? "USB 연결 후 사용 가능해요"
-                  : "켜면 슬라이더를 움직이는 즉시 로봇이 따라 움직여요")
 
-            Button {
-                Task { await loadPoseFromRobot() }
-            } label: {
-                Label("현재 자세 불러오기", systemImage: "square.and.arrow.down.fill")
-            }
-            .controlSize(.small)
-            .disabled(store.bus == nil)
-            .help("로봇의 현재 관절 위치를 읽어 화면에 반영합니다 (편집의 시작점)")
+                Spacer()
 
-            Button {
-                Task { await applyToHardware(pose) }
-            } label: {
-                Label("로봇에 한번에 보내기", systemImage: "play.fill")
+                motorSpeedPicker
+                ConnectionInlineControls()
+
+                // 실시간 로봇 반영 토글 — wide 에서만 label, 그 외 icon-only.
+                liveApplyToggle(showLabel: size.isWide)
+
+                // 현재 자세 불러오기 — wide 에서 label, regular 에서 icon-only.
+                Button {
+                    Task { await loadPoseFromRobot() }
+                } label: {
+                    if size.isWide {
+                        Label("현재 자세 불러오기", systemImage: "square.and.arrow.down.fill")
+                    } else {
+                        Image(systemName: "square.and.arrow.down.fill")
+                    }
+                }
+                .controlSize(.small)
+                .disabled(store.bus == nil)
+                .help("로봇의 현재 관절 위치를 읽어 화면에 반영합니다 (편집의 시작점)")
+
+                // 로봇에 한번에 보내기 — regular 이상에서 항상 표시 (핵심 액션).
+                Button {
+                    Task { await applyToHardware(pose) }
+                } label: {
+                    if size.isWide {
+                        Label("로봇에 한번에 보내기", systemImage: "play.fill")
+                    } else {
+                        Label("보내기", systemImage: "play.fill")
+                    }
+                }
+                .controlSize(.small)
+                .disabled(store.bus == nil)
+                .help("지금 화면의 자세를 한 번에 로봇에 보냅니다")
             }
-            .controlSize(.small)
-            .disabled(store.bus == nil)
-            .help("지금 화면의 자세를 한 번에 로봇에 보냅니다")
         }
-        .padding(.horizontal, DFSpace.md)
-        .padding(.vertical, DFSpace.sm)
-        .background(.regularMaterial)
+    }
+
+    /// 실시간 토글 — 반응형: showLabel=true 면 텍스트 + 아이콘, false 면 아이콘만.
+    private func liveApplyToggle(showLabel: Bool) -> some View {
+        Toggle(isOn: Binding(
+            get: { liveApply },
+            set: { newValue in
+                if newValue && !hasAcceptedLiveApply {
+                    showLiveApplyConfirm = true
+                } else {
+                    liveApply = newValue
+                }
+            }
+        )) {
+            if showLabel {
+                Label("실시간 로봇 반영", systemImage: "bolt.horizontal.circle")
+            } else {
+                Image(systemName: "bolt.horizontal.circle")
+            }
+        }
+        .toggleStyle(.button)
+        .controlSize(.small)
+        .disabled(store.bus == nil)
+        .help(store.bus == nil
+              ? "USB 연결 후 사용 가능해요"
+              : "켜면 슬라이더를 움직이는 즉시 로봇이 따라 움직여요")
     }
 
     /// 로봇의 현재 관절 위치(present_position)를 모두 read → pose 에 반영.
