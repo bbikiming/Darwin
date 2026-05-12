@@ -146,10 +146,10 @@ public struct PilotDpad: View {
             Text(key)
                 .padding(.horizontal, 5).padding(.vertical, 2)
                 .background(
-                    RoundedRectangle(cornerRadius: 4).fill(DFColor.elev2)
+                    RoundedRectangle(cornerRadius: DFRadius.xs).fill(DFColor.elev2)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5)
+                            RoundedRectangle(cornerRadius: DFRadius.xs)
+                                .stroke(DFColor.textSecondary.opacity(0.25), lineWidth: DFSize.borderHairline)
                         )
                 )
             Text(label)
@@ -174,7 +174,7 @@ public struct PilotDpad: View {
                     .fill(isActive ? tint.opacity(0.55) : tint.opacity(0.15))
                     .overlay(
                         RoundedRectangle(cornerRadius: DFRadius.sm)
-                            .stroke(tint.opacity(isActive ? 0.9 : 0.35), lineWidth: 0.5)
+                            .stroke(tint.opacity(isActive ? 0.9 : 0.35), lineWidth: DFSize.borderHairline)
                     )
                 VStack(spacing: 2) {
                     Image(systemName: zone.icon)

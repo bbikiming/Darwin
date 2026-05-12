@@ -117,7 +117,7 @@ public struct ConnectionWizardView: View {
             .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.md)
-                    .stroke(DFColor.textSecondary.opacity(0.18), lineWidth: 0.5)
+                    .stroke(DFColor.textSecondary.opacity(0.18), lineWidth: DFSize.borderHairline)
             )
             .shadow(radius: 28)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -243,8 +243,8 @@ public struct ConnectionWizardView: View {
                         }
                         Text("Ping + 포트 검사").font(DFFont.caption)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, DFSpace.sm2)
+                    .padding(.vertical, DFSpace.xs2)
                     .background(DFColor.accent.opacity(0.18))
                     .foregroundStyle(DFColor.accent)
                     .clipShape(Capsule())
@@ -268,11 +268,11 @@ public struct ConnectionWizardView: View {
                     } label: {
                         Text(ip)
                             .font(.system(size: 10, design: .monospaced))
-                            .padding(.horizontal, 6)
+                            .padding(.horizontal, DFSpace.xs2)
                             .padding(.vertical, 2)
                             .background(DFColor.card)
                             .clipShape(Capsule())
-                            .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.2), lineWidth: 0.5))
+                            .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.2), lineWidth: DFSize.borderHairline))
                     }
                     .buttonStyle(.plain)
                 }
@@ -284,7 +284,7 @@ public struct ConnectionWizardView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
-                .stroke(DFColor.textSecondary.opacity(0.12), lineWidth: 0.5)
+                .stroke(DFColor.textSecondary.opacity(0.12), lineWidth: DFSize.borderHairline)
         )
     }
 
@@ -302,8 +302,8 @@ public struct ConnectionWizardView: View {
                     } label: {
                         Text("이 호스트로 연결")
                             .font(DFFont.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, DFSpace.sm)
+                            .padding(.vertical, DFSpace.xs)
                             .background(DFColor.success.opacity(0.18))
                             .foregroundStyle(DFColor.success)
                             .clipShape(Capsule())
@@ -318,7 +318,7 @@ public struct ConnectionWizardView: View {
         }
         .padding(8)
         .background(DFColor.elev2)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
     }
 
     private func runManualProbe() {
@@ -464,8 +464,8 @@ public struct ConnectionWizardView: View {
                     } label: {
                         Text("이걸로 연결")
                             .font(DFFont.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, DFSpace.sm)
+                            .padding(.vertical, DFSpace.xs)
                             .background(DFColor.success.opacity(0.16))
                             .foregroundStyle(DFColor.success)
                             .clipShape(Capsule())
@@ -482,11 +482,11 @@ public struct ConnectionWizardView: View {
                                 .font(.system(size: 9))
                             Text("재진단").font(.system(size: 10))
                         }
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, DFSpace.xs2)
                         .padding(.vertical, 3)
                         .background(DFColor.card)
                         .clipShape(Capsule())
-                        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.2), lineWidth: 0.5))
+                        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.2), lineWidth: DFSize.borderHairline))
                     }
                     .buttonStyle(.plain)
                     .help("이 호스트만 다시 ping + 포트 검사")
@@ -498,7 +498,7 @@ public struct ConnectionWizardView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
-                .stroke(stageBorder(c.stage), lineWidth: 0.5)
+                .stroke(stageBorder(c.stage), lineWidth: DFSize.borderHairline)
         )
     }
 
@@ -658,8 +658,8 @@ public struct ConnectionWizardView: View {
                         Image(systemName: "doc.on.clipboard.fill")
                         Text("통합 셋업 복사").font(DFFont.bodyEmph)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, DFSpace.sm3)
+                    .padding(.vertical, DFSpace.sm)
                     .background(DFColor.warning)
                     .foregroundStyle(.white)
                     .clipShape(Capsule())
@@ -673,11 +673,11 @@ public struct ConnectionWizardView: View {
                         Image(systemName: "arrow.clockwise")
                         Text("다시 시도").font(DFFont.body)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, DFSpace.sm3)
+                    .padding(.vertical, DFSpace.sm)
                     .background(DFColor.card)
                     .clipShape(Capsule())
-                    .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5))
+                    .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.25), lineWidth: DFSize.borderHairline))
                 }
                 .buttonStyle(.plain)
 
@@ -696,9 +696,9 @@ public struct ConnectionWizardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(DFColor.elev2)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                     .textSelection(.enabled)
-                    .padding(.top, 4)
+                    .padding(.top, DFSpace.xs)
             }
             .font(DFFont.caption)
         }
@@ -707,7 +707,7 @@ public struct ConnectionWizardView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
-                .stroke(DFColor.warning.opacity(0.30), lineWidth: 0.5)
+                .stroke(DFColor.warning.opacity(0.30), lineWidth: DFSize.borderHairline)
         )
     }
 
@@ -790,7 +790,7 @@ public struct ConnectionWizardView: View {
                     Text(path.recommendation)
                         .font(DFFont.caption)
                         .foregroundStyle(path.tint)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, DFSpace.xs2)
                         .padding(.vertical, 2)
                         .background(path.tint.opacity(0.10))
                         .clipShape(Capsule())
@@ -808,7 +808,7 @@ public struct ConnectionWizardView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.md)
-                .stroke(DFColor.textSecondary.opacity(0.12), lineWidth: 0.5)
+                .stroke(DFColor.textSecondary.opacity(0.12), lineWidth: DFSize.borderHairline)
         )
     }
 
@@ -971,7 +971,7 @@ public struct ConnectionWizardView: View {
                     }
                     .padding(8)
                     .background(DFColor.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                 }
             }
             HStack {
@@ -1023,7 +1023,7 @@ public struct ConnectionWizardView: View {
             .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.sm)
-                    .stroke(DFColor.forge.opacity(0.30), lineWidth: 0.5)
+                    .stroke(DFColor.forge.opacity(0.30), lineWidth: DFSize.borderHairline)
             )
 
             // 호스트/포트 입력.
@@ -1109,7 +1109,7 @@ public struct ConnectionWizardView: View {
                         .foregroundStyle(DFColor.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.top, 4)
+                .padding(.top, DFSpace.xs)
             }
             .font(DFFont.bodyEmph)
 
@@ -1132,9 +1132,9 @@ public struct ConnectionWizardView: View {
                         .foregroundStyle(DFColor.textSecondary)
                         .padding(8)
                         .background(DFColor.elev2)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                 }
-                .padding(.top, 4)
+                .padding(.top, DFSpace.xs)
             }
             .font(DFFont.bodyEmph)
 
@@ -1167,7 +1167,7 @@ public struct ConnectionWizardView: View {
                         command: "sudo ufw status && sudo ufw allow 22/tcp"
                     )
                 }
-                .padding(.top, 4)
+                .padding(.top, DFSpace.xs)
             }
             .font(DFFont.bodyEmph)
 
@@ -1204,7 +1204,7 @@ public struct ConnectionWizardView: View {
                         command: "./target/release/forge serve --port /dev/ttyUSB0 --bind 0.0.0.0:5530 --advertise OP2-MAIN"
                     )
                 }
-                .padding(.top, 4)
+                .padding(.top, DFSpace.xs)
             }
             .font(DFFont.bodyEmph)
         }
@@ -1233,7 +1233,7 @@ public struct ConnectionWizardView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DFColor.elev2)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                     .textSelection(.enabled)
                 Button {
                     let pb = NSPasteboard.general
@@ -1244,7 +1244,7 @@ public struct ConnectionWizardView: View {
                 }
                 .buttonStyle(.plain)
                 .help("이 명령 복사")
-                .padding(.top, 8)
+                .padding(.top, DFSpace.sm)
             }
         }
         .padding(8)
@@ -1311,7 +1311,7 @@ public struct ConnectionWizardView: View {
                         }
                         .padding(DFSpace.sm)
                         .background(DFColor.card)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                     }
                     .buttonStyle(.plain)
                 }
@@ -1329,7 +1329,7 @@ public struct ConnectionWizardView: View {
                             .padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(DFColor.elev2)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                             .textSelection(.enabled)
                         Button {
                             let pb = NSPasteboard.general
@@ -1339,13 +1339,13 @@ public struct ConnectionWizardView: View {
                             Image(systemName: "doc.on.doc")
                         }
                         .buttonStyle(.plain)
-                        .padding(.top, 8)
+                        .padding(.top, DFSpace.sm)
                     }
                     Text("팁: 로봇이 USB로만 연결됐다면 `--bind 127.0.0.1:5530` + SSH 터널이 더 안전.")
                         .font(DFFont.caption)
                         .foregroundStyle(DFColor.textSecondary)
                 }
-                .padding(.top, 4)
+                .padding(.top, DFSpace.xs)
             }
             .font(DFFont.bodyEmph)
         }

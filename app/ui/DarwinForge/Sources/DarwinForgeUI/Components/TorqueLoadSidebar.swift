@@ -61,8 +61,8 @@ public struct TorqueLoadSidebar: View {
                         .opacity(pulse ? 0.4 : 1.0)
                 }
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 4)
+            .padding(.vertical, DFSpace.sm)
+            .padding(.horizontal, DFSpace.xs)
             .frame(width: 28)
             .frame(maxHeight: .infinity)
             .background(DFColor.elev2)
@@ -169,9 +169,9 @@ public struct TorqueLoadSidebar: View {
         }
         .frame(maxWidth: .infinity, minHeight: 32)
         .background(tint.opacity(isCritical ? 0.18 : 0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
         .overlay(
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: DFRadius.xs)
                 .stroke(tint.opacity(isCritical ? 0.7 : 0.25),
                         lineWidth: isCritical ? 1.0 : 0.4)
         )
@@ -202,7 +202,7 @@ public struct TorqueLoadSidebar: View {
             } label: {
                 Text("토크 해제")
                     .font(.system(size: 9, weight: .semibold))
-                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .padding(.horizontal, DFSpace.xs2).padding(.vertical, 3)
                     .frame(maxWidth: .infinity)
                     .background(DFColor.danger)
                     .foregroundStyle(.white)

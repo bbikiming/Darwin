@@ -35,7 +35,7 @@ public struct StatusBar: View {
             paletteAndVersion
         }
         .padding(.horizontal, DFSpace.md)
-        .padding(.vertical, 8)
+        .padding(.vertical, DFSpace.sm)
         .lineLimit(1)
         .background(.regularMaterial)
         .overlay(
@@ -55,10 +55,10 @@ public struct StatusBar: View {
                 Text("K")
             }
             .font(DFFont.caption.monospaced())
-            .padding(.horizontal, 6)
+            .padding(.horizontal, DFSpace.xs2)
             .padding(.vertical, 2)
             .background(DFColor.elev2)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
         }
         .buttonStyle(.plain)
         .help("명령 팔레트 (⌘K)")
@@ -82,7 +82,7 @@ public struct StatusBar: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            .padding(.horizontal, 6)
+            .padding(.horizontal, DFSpace.xs2)
             .padding(.vertical, 2)
             .contentShape(Rectangle())
         }

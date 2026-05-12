@@ -47,8 +47,8 @@ public struct WalkLabView: View {
                     .font(.system(size: 13))
             }
             .toggleStyle(.checkbox)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, DFSpace.md)
+            .padding(.vertical, DFSpace.sm2)
             .background(Color(NSColor.controlBackgroundColor))
 
             Divider()
@@ -66,15 +66,15 @@ public struct WalkLabView: View {
                     }
 
                     Divider()
-                        .padding(.vertical, 8)
+                        .padding(.vertical, DFSpace.sm)
 
                     Toggle("고급 — 슬라이더 조정", isOn: $session.advanced)
                         .font(.system(size: 12))
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, DFSpace.sm)
 
                     if session.advanced {
                         AdvancedSlidersPanel(session: session)
-                            .padding(.top, 4)
+                            .padding(.top, DFSpace.xs)
                     }
                 }
                 .padding(12)
@@ -101,8 +101,8 @@ public struct WalkLabView: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DFSpace.md)
+        .padding(.vertical, DFSpace.sm3)
     }
 
     // 고급 슬라이더 패널은 AdvancedSlidersPanel 로 분리 (Components/AdvancedSlidersPanel.swift).
@@ -113,14 +113,14 @@ public struct WalkLabView: View {
             Text("세션 기록")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.horizontal, DFSpace.md)
+                .padding(.top, DFSpace.sm)
             if session.history.isEmpty {
                 Text("(아직 없음)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
+                    .padding(.horizontal, DFSpace.md)
+                    .padding(.bottom, DFSpace.sm3)
             } else {
                 ScrollView {
                     ForEach(session.history) { rec in
@@ -132,12 +132,12 @@ public struct WalkLabView: View {
                                 .font(.caption.monospacedDigit())
                             Spacer()
                         }
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, DFSpace.md)
                         .padding(.vertical, 2)
                     }
                 }
                 .frame(maxHeight: 120)
-                .padding(.bottom, 8)
+                .padding(.bottom, DFSpace.sm)
             }
         }
     }
@@ -172,10 +172,10 @@ public struct WalkLabView: View {
                     footTrace: session.footTrail.map { $0.left }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: DFRadius.sm)
+                        .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: DFSize.borderHairline)
                 )
 
                 // 사이드 패널: 2D 발자취 (top-down) + IMU 게이지 2개.
@@ -184,10 +184,10 @@ public struct WalkLabView: View {
                                     leftFoot: session.leftFoot,
                                     rightFoot: session.rightFoot)
                         .frame(height: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: 0.5)
+                            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                                .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: DFSize.borderHairline)
                         )
                     IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
                     IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
@@ -227,14 +227,14 @@ public struct WalkLabView: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, DFSpace.sm2)
+        .padding(.vertical, DFSpace.xs2)
         .background(tint.opacity(0.10))
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
                 .stroke(tint.opacity(0.3), lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
     }
 
     private func banner(systemImage: String, message: String, tint: Color) -> some View {
@@ -251,11 +251,11 @@ public struct WalkLabView: View {
             .buttonStyle(.plain)
             .font(.caption)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, DFSpace.sm3)
+        .padding(.vertical, DFSpace.sm)
         .background(tint.opacity(0.18))
         .foregroundStyle(tint)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
 
     private var footTargetsCard: some View {
@@ -292,7 +292,7 @@ public struct WalkLabView: View {
         }
         .padding(10)
         .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
 
     private var tempColor: Color {
@@ -369,7 +369,7 @@ public struct WalkLabView: View {
                 .frame(width: 6, height: 6)
             Text(label).font(.caption2)
         }
-        .padding(.horizontal, 6).padding(.vertical, 2)
+        .padding(.horizontal, DFSpace.xs2).padding(.vertical, 2)
         .background(Capsule().fill((connected ? Color.green : Color.gray).opacity(0.12)))
     }
 

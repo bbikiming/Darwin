@@ -134,7 +134,7 @@ public struct RemotePilotView: View {
                 Text("Sprint 15 v1.0")
                     .font(DFFont.caption.monospaced())
                     .foregroundStyle(DFColor.accent)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .padding(.horizontal, DFSpace.xs2).padding(.vertical, 2)
                     .background(Capsule().fill(DFColor.accent.opacity(0.12)))
                 Text("Action Bar 7 페이지 활성")
                     .font(DFFont.caption)
@@ -222,7 +222,7 @@ public struct RemotePilotView: View {
             }
         }
         .padding(.horizontal, DFSpace.sm)
-        .padding(.vertical, 6)
+        .padding(.vertical, DFSpace.xs2)
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
@@ -252,12 +252,12 @@ public struct RemotePilotView: View {
             Text("시뮬 모드 — 실 로봇 연결 안 됨. 동작 버튼은 시각 미리보기만.")
                 .font(DFFont.caption)
         }
-        .padding(.horizontal, 12).padding(.vertical, 6)
+        .padding(.horizontal, DFSpace.sm3).padding(.vertical, DFSpace.xs2)
         .foregroundStyle(DFColor.warning)
         .background(.regularMaterial)
         .background(DFColor.warning.opacity(0.10))
         .clipShape(Capsule())
-        .overlay(Capsule().stroke(DFColor.warning.opacity(0.35), lineWidth: 0.5))
+        .overlay(Capsule().stroke(DFColor.warning.opacity(0.35), lineWidth: DFSize.borderHairline))
     }
 
     @ViewBuilder
@@ -271,21 +271,21 @@ public struct RemotePilotView: View {
                         .font(DFFont.bodyEmph)
                         .foregroundStyle(DFColor.warning)
                 }
-                .padding(.horizontal, 14).padding(.vertical, 8)
+                .padding(.horizontal, 14).padding(.vertical, DFSpace.sm)
                 .background(.regularMaterial)
                 .background(DFColor.warning.opacity(0.10))
                 .clipShape(Capsule())
-                .overlay(Capsule().stroke(DFColor.warning.opacity(0.45), lineWidth: 0.5))
+                .overlay(Capsule().stroke(DFColor.warning.opacity(0.45), lineWidth: DFSize.borderHairline))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityIdentifier("pilot.error")
             }
             if let msg = channel.lastToast {
                 Text(msg)
                     .font(DFFont.bodyEmph)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .padding(.horizontal, 14).padding(.vertical, DFSpace.sm)
                     .background(.regularMaterial)
                     .clipShape(Capsule())
-                    .overlay(Capsule().stroke(DFColor.accent.opacity(0.35), lineWidth: 0.5))
+                    .overlay(Capsule().stroke(DFColor.accent.opacity(0.35), lineWidth: DFSize.borderHairline))
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .accessibilityIdentifier("pilot.toast")
             }

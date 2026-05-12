@@ -122,12 +122,12 @@ public struct StudioView: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8))
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, DFSpace.sm)
+            .padding(.vertical, DFSpace.xs)
             .background(DFColor.accent.opacity(0.10))
             .foregroundStyle(DFColor.accent)
             .clipShape(Capsule())
-            .overlay(Capsule().stroke(DFColor.accent.opacity(0.25), lineWidth: 0.5))
+            .overlay(Capsule().stroke(DFColor.accent.opacity(0.25), lineWidth: DFSize.borderHairline))
         }
         .buttonStyle(.plain)
         .menuStyle(.borderlessButton)
@@ -342,7 +342,7 @@ public struct StudioView: View {
             }
         }
         .padding(.horizontal, DFSpace.sm)
-        .padding(.vertical, 6)
+        .padding(.vertical, DFSpace.xs2)
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
@@ -372,7 +372,7 @@ public struct StudioView: View {
                 .help("자세 편집기 닫기")
             }
             .padding(.horizontal, DFSpace.md)
-            .padding(.vertical, 8)
+            .padding(.vertical, DFSpace.sm)
             .background(DFColor.elev2)
             Divider()
 
@@ -408,7 +408,7 @@ public struct StudioView: View {
                 .font(DFFont.bodyEmph)
                 .padding(.horizontal, DFSpace.md)
                 .padding(.top, DFSpace.sm)
-                .padding(.bottom, 4)
+                .padding(.bottom, DFSpace.xs)
             Text("점을 클릭해 관절을 선택해요")
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
@@ -560,10 +560,10 @@ public struct StudioView: View {
             Image(systemName: icon).font(.caption)
             Text(text).font(DFFont.caption)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, DFSpace.sm)
+        .padding(.vertical, DFSpace.xs)
         .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .foregroundStyle(tint)
     }
 

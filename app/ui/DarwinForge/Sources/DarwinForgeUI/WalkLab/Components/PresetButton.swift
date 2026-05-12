@@ -39,17 +39,17 @@ struct PresetButton: View {
                         .foregroundStyle(.green)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DFSpace.sm3)
+            .padding(.vertical, DFSpace.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: DFRadius.sm, style: .continuous)
                     .fill(isActive
                           ? preset.safety.tintColor.opacity(0.12)
                           : Color(NSColor.controlBackgroundColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: DFRadius.sm, style: .continuous)
                     .stroke(preset.safety == .safe
                             ? Color.clear
                             : preset.safety.tintColor.opacity(0.4),

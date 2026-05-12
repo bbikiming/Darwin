@@ -155,7 +155,7 @@ public struct TorqueLoadGrid: View {
             } label: {
                 Text("토크 해제")
                     .font(.system(size: 10, weight: .semibold))
-                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .padding(.horizontal, DFSpace.sm).padding(.vertical, DFSpace.xs)
                     .background(DFColor.danger)
                     .foregroundStyle(.white)
                     .clipShape(Capsule())
@@ -164,7 +164,7 @@ public struct TorqueLoadGrid: View {
         }
         .padding(8)
         .background(DFColor.danger.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
     }
 
     // MARK: - Helpers
