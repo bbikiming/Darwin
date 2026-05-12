@@ -19,9 +19,13 @@ public struct TransportBar: View {
     public let stepCount: Int
     public let hasBus: Bool
     @Binding public var sendToHardware: Bool
+    public let isDirty: Bool
+    public let executingOnRobot: Bool
     public let onPlay: () -> Void
     public let onAddStep: () -> Void
     public let onCapture: () -> Void
+    public let onRunOnRobot: () -> Void
+    public let onSave: () -> Void
 
     public init(
         player: MotionPlayer,
@@ -29,18 +33,26 @@ public struct TransportBar: View {
         stepCount: Int,
         hasBus: Bool,
         sendToHardware: Binding<Bool>,
+        isDirty: Bool,
+        executingOnRobot: Bool,
         onPlay: @escaping () -> Void,
         onAddStep: @escaping () -> Void,
-        onCapture: @escaping () -> Void
+        onCapture: @escaping () -> Void,
+        onRunOnRobot: @escaping () -> Void,
+        onSave: @escaping () -> Void
     ) {
         self.player = player
         self.totalDurationMs = totalDurationMs
         self.stepCount = stepCount
         self.hasBus = hasBus
         self._sendToHardware = sendToHardware
+        self.isDirty = isDirty
+        self.executingOnRobot = executingOnRobot
         self.onPlay = onPlay
         self.onAddStep = onAddStep
         self.onCapture = onCapture
+        self.onRunOnRobot = onRunOnRobot
+        self.onSave = onSave
     }
 
     // MARK: - Body
@@ -263,8 +275,8 @@ public struct TransportBar: View {
 
     private var actionCluster: some View {
         HStack(spacing: DFSpace.xs) {
-            // Live to Robot — After Effects record red circle.
-            recordToggle
+            // 저장 — dirty 시 활성화. 모든 동작 변경 추적.
+            saveButton
 
             // 자세 한 컷 추가 — 작은 secondary 버튼.
             iconActionButton(
@@ -282,7 +294,104 @@ public struct TransportBar: View {
                 disabled: !hasBus,
                 action: onCapture
             )
+
+            Divider().frame(height: DFSize.iconLg)
+
+            // LIVE — 재생 중 실시간 자세 스트리밍 토글.
+            recordToggle
+
+            // ▶ 로봇에 실행 — 명시 실행 버튼. 처음부터 끝까지 한 번 + 송출 + 자동 종료.
+            runOnRobotButton
         }
+    }
+
+    /// 저장 버튼 — dirty 표시 점 + 클릭 시 saveDocAs.
+    private var saveButton: some View {
+        Button {
+            onSave()
+        } label: {
+            HStack(spacing: DFSpace.xs) {
+                ZStack {
+                    Image(systemName: "tray.and.arrow.up.fill")
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
+                    if isDirty {
+                        // 우측 상단 dirty dot.
+                        Circle()
+                            .fill(DFColor.warning)
+                            .frame(width: DFSize.indicatorXs, height: DFSize.indicatorXs)
+                            .offset(x: 7, y: -6)
+                    }
+                }
+                Text(isDirty ? "변경 저장…" : "저장…")
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
+            }
+            .foregroundStyle(isDirty ? DFColor.warning : DFColor.textSecondary)
+            .padding(.horizontal, DFSpace.sm)
+            .padding(.vertical, DFSpace.xs2)
+            .background(isDirty ? DFColor.warning.opacity(DFOpacity.subtle) : DFColor.elev2)
+            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+            .overlay(
+                RoundedRectangle(cornerRadius: DFRadius.xs2)
+                    .stroke(
+                        (isDirty ? DFColor.warning : DFColor.textSecondary).opacity(DFOpacity.subtle),
+                        lineWidth: DFSize.borderHairline
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("s", modifiers: .command)
+        .help(isDirty
+              ? "변경 사항 있음 — .json 으로 다른 이름 저장 (⌘S)"
+              : "현재 동작 doc 을 .json 으로 저장 (⌘S)")
+    }
+
+    /// "▶ 로봇에 실행" — 강조 버튼. 안전 확인 후 처음→끝 한 번 재생 + 송출.
+    /// LIVE 토글 (스트리밍) 과 구분 — 이건 "지금 한 번" semantic 의 explicit 액션.
+    private var runOnRobotButton: some View {
+        Button {
+            onRunOnRobot()
+        } label: {
+            HStack(spacing: DFSpace.xs) {
+                if executingOnRobot {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                    Text("실행 중…")
+                        .font(.system(size: DFFontSize.s11, weight: .bold))
+                } else {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: DFFontSize.s11, weight: .bold))
+                    Text("로봇에 실행")
+                        .font(.system(size: DFFontSize.s11, weight: .bold))
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, DFSpace.sm3)
+            .padding(.vertical, DFSpace.xs2)
+            .background(
+                LinearGradient(
+                    colors: hasBus && !executingOnRobot
+                        ? [DFColor.forge, DFColor.forge.opacity(DFOpacity.o85)]
+                        : [DFColor.textSecondary.opacity(DFOpacity.disabled),
+                           DFColor.textSecondary.opacity(DFOpacity.o30)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
+            .clipShape(Capsule())
+            .shadow(
+                color: hasBus && !executingOnRobot
+                    ? DFColor.forge.opacity(DFOpacity.strong)
+                    : .clear,
+                radius: DFSpace.xs, y: DFSpace.micro
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!hasBus || executingOnRobot)
+        .help(hasBus
+              ? (executingOnRobot
+                  ? "재생 중 — 끝나면 자동 정지"
+                  : "현재 동작을 처음부터 끝까지 1회 재생하면서 로봇에 송출")
+              : "USB 연결 후 사용 가능")
     }
 
     /// Live to Robot — 빨간 record-style 토글 (After Effects 의 red record dot).
