@@ -630,6 +630,8 @@ public struct RootView: View {
             WalkLabView()
         case .conversation:
             ConversationView(commander: commander, dispatcher: dispatcher)
+        case .pilot:
+            RemotePilotView()
         case .remote:
             RemoteShellView()
         case .expert:
@@ -780,6 +782,9 @@ public struct RootView: View {
             Button("Section 7") { section = .expert }
                 .keyboardShortcut("7", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
+            Button("Section 8") { section = .pilot }
+                .keyboardShortcut("8", modifiers: .command)
+                .opacity(0).frame(width: 0, height: 0)
             Button("Auto Connect") { store.autoConnect() }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .opacity(0).frame(width: 0, height: 0)
@@ -790,7 +795,7 @@ public struct RootView: View {
 // MARK: - Sections
 
 private enum Section: String, CaseIterable, Hashable {
-    case studio, teach, motion, walk, conversation, remote, expert
+    case studio, teach, motion, walk, conversation, remote, expert, pilot
 
     init?(id: String) {
         self.init(rawValue: id)
@@ -803,6 +808,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .motion:        return "모션 스튜디오"
         case .walk:          return "워크 랩"
         case .conversation:  return "대화"
+        case .pilot:         return "원격 조종"
         case .remote:        return "원격 명령"
         case .expert:        return "전문가"
         }
@@ -815,6 +821,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .motion:        return "play.rectangle.on.rectangle"
         case .walk:          return "figure.walk"
         case .conversation:  return "bubble.left.and.bubble.right.fill"
+        case .pilot:         return "gamecontroller.fill"
         case .remote:        return "terminal.fill"
         case .expert:        return "wrench.and.screwdriver"
         }
@@ -829,6 +836,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .conversation:  return "⌘5"
         case .remote:        return "⌘6"
         case .expert:        return "⌘7"
+        case .pilot:         return "⌘8"
         }
     }
 
@@ -839,6 +847,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .motion:        return DFColor.accent
         case .walk:          return DFColor.success
         case .conversation:  return DFColor.info
+        case .pilot:         return DFColor.accent
         case .remote:        return DFColor.warning
         case .expert:        return DFColor.textSecondary
         }
