@@ -36,7 +36,7 @@ public struct ConnectionDashboardView: View {
             .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.md)
-                    .stroke(DFColor.textSecondary.opacity(0.18), lineWidth: 0.5)
+                    .stroke(DFColor.textSecondary.opacity(0.18), lineWidth: DFSize.borderHairline)
             )
             .shadow(radius: 28)
             .frame(maxWidth: .infinity, maxHeight: .infinity)  // 중앙 정렬.
@@ -84,12 +84,12 @@ public struct ConnectionDashboardView: View {
                 Image(systemName: "powerplug.fill")
                 Text("연결 해제").font(DFFont.bodyEmph)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DFSpace.sm3)
+            .padding(.vertical, DFSpace.sm)
             .background(DFColor.danger.opacity(0.15))
             .foregroundStyle(DFColor.danger)
             .clipShape(Capsule())
-            .overlay(Capsule().stroke(DFColor.danger.opacity(0.4), lineWidth: 0.5))
+            .overlay(Capsule().stroke(DFColor.danger.opacity(0.4), lineWidth: DFSize.borderHairline))
         }
         .buttonStyle(.plain)
         .help("로봇과의 연결을 종료합니다")
@@ -195,7 +195,7 @@ public struct ConnectionDashboardView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.md)
-                .stroke(DFColor.forge.opacity(0.20), lineWidth: 0.5)
+                .stroke(DFColor.forge.opacity(0.20), lineWidth: DFSize.borderHairline)
         )
     }
 
@@ -225,10 +225,10 @@ public struct ConnectionDashboardView: View {
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(tint.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(tint.opacity(0.20), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: DFRadius.xs2)
+                    .stroke(tint.opacity(0.20), lineWidth: DFSize.borderHairline)
             )
         }
         .buttonStyle(.plain)
@@ -324,7 +324,7 @@ public struct ConnectionDashboardView: View {
         }()
         return Text(text)
             .font(.system(size: 10, weight: .bold))
-            .padding(.horizontal, 6)
+            .padding(.horizontal, DFSpace.xs2)
             .padding(.vertical, 2)
             .background(tint.opacity(0.16))
             .foregroundStyle(tint)
@@ -433,7 +433,7 @@ public struct ConnectionDashboardView: View {
         }()
         return Text(text)
             .font(.system(size: 10, weight: .bold))
-            .padding(.horizontal, 6)
+            .padding(.horizontal, DFSpace.xs2)
             .padding(.vertical, 2)
             .background(tint.opacity(0.16))
             .foregroundStyle(tint)
@@ -594,7 +594,7 @@ private struct DashboardCard<Content: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.md)
-                .stroke(DFColor.textSecondary.opacity(0.10), lineWidth: 0.5)
+                .stroke(DFColor.textSecondary.opacity(0.10), lineWidth: DFSize.borderHairline)
         )
     }
 }

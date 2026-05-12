@@ -184,7 +184,7 @@ public struct PilotHudStrip: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .padding(.horizontal, DFSpace.sm)
-                .padding(.vertical, 8)
+                .padding(.vertical, DFSpace.sm)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(DFColor.elev2)
                 .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
@@ -255,7 +255,7 @@ public struct PilotHudStrip: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, DFSpace.sm)
-        .padding(.vertical, 6)
+        .padding(.vertical, DFSpace.xs2)
         .frame(minHeight: 44)
         .background(DFColor.elev2)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))

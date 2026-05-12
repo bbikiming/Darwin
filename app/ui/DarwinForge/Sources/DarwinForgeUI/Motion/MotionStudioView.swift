@@ -43,7 +43,7 @@ public struct MotionStudioView: View {
                     if isCompact {
                         compactPagePicker
                             .padding(.horizontal, DFSpace.md)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, DFSpace.xs2)
                             .background(DFColor.elev2)
                         Divider()
                     }
@@ -107,7 +107,7 @@ public struct MotionStudioView: View {
                 } label: {
                     Label("빌드", systemImage: "wand.and.stars")
                         .font(.system(size: 10, weight: .semibold))
-                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .padding(.horizontal, DFSpace.sm).padding(.vertical, 3)
                         .background(DFColor.forge)
                         .foregroundStyle(.white)
                         .clipShape(Capsule())
@@ -162,7 +162,7 @@ public struct MotionStudioView: View {
                 .padding(.horizontal, DFSpace.md)
                 .padding(.top, DFSpace.sm)
 
-            Divider().padding(.vertical, 6)
+            Divider().padding(.vertical, DFSpace.xs2)
 
             HStack {
                 Text("동작 목록 (\(motion.pages.count))")
@@ -186,7 +186,7 @@ public struct MotionStudioView: View {
             }
             .padding(.horizontal, DFSpace.md)
 
-            Divider().padding(.vertical, 4)
+            Divider().padding(.vertical, DFSpace.xs)
 
             List(selection: Binding(
                 get: { selectedPageIdx },
@@ -432,7 +432,7 @@ public struct MotionStudioView: View {
                 .help("자세 편집기 닫기")
             }
             .padding(.horizontal, DFSpace.md)
-            .padding(.vertical, 8)
+            .padding(.vertical, DFSpace.sm)
             .background(DFColor.elev2)
             Divider()
 

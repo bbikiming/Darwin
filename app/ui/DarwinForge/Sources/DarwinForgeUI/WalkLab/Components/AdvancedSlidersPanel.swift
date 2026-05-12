@@ -40,7 +40,7 @@ public struct AdvancedSlidersPanel: View {
         VStack(alignment: .leading, spacing: DFSpace.sm) {
             // 안정성 게이지
             StabilityGauge(result: stability)
-                .padding(.vertical, 4)
+                .padding(.vertical, DFSpace.xs)
 
             // 6 슬라이더 — 각 파라미터의 안전 영역을 명시.
             SafetyBandedSlider(
@@ -125,14 +125,14 @@ public struct AdvancedSlidersPanel: View {
             }
             .toggleStyle(.switch)
             .controlSize(.mini)
-            .padding(.top, 4)
+            .padding(.top, DFSpace.xs)
             .help("Smart clamp 무시. critical 점수일 때는 여전히 시작 차단됨.")
 
             if session.forceOverrideSafety {
                 Text("⚠️ Smart clamp 가 해제됨. 점수가 critical (≥ 80) 이면 시작은 여전히 차단됩니다.")
                     .font(.system(size: 10))
                     .foregroundStyle(DFColor.danger)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, DFSpace.xs)
             }
 
             // 메시지
@@ -151,7 +151,7 @@ public struct AdvancedSlidersPanel: View {
                         }
                     }
                 }
-                .padding(.top, 6)
+                .padding(.top, DFSpace.xs2)
             }
 
             // 빠른 reset
@@ -207,7 +207,7 @@ public struct StabilityGauge: View {
                 Spacer()
                 Text(result.category.labelKo)
                     .font(.system(size: 10, weight: .semibold))
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, DFSpace.xs2)
                     .padding(.vertical, 2)
                     .background(categoryColor.opacity(0.15))
                     .foregroundStyle(categoryColor)

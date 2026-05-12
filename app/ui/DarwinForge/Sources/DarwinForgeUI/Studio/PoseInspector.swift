@@ -208,9 +208,9 @@ public struct PoseInspector: View {
             .frame(width: 110, alignment: .trailing)
         }
         .padding(.vertical, 2)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, DFSpace.xs)
         .background(isSelected ? DFColor.accent.opacity(0.10) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
         // row-wide onTapGesture 제거 — child Button (StepperField + / −) 의 hit-test
         // 와 충돌해 액션이 발화되지 않던 문제 수정. 선택은 라벨 컬럼 탭으로 일원화.
     }

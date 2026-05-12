@@ -114,8 +114,8 @@ public struct PilotActionBar: View {
                     DFKeyboardHint("\(keyIndex)")
                 }
             }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 8)
+            .padding(.vertical, DFSpace.sm2)
+            .padding(.horizontal, DFSpace.sm)
             .frame(maxWidth: .infinity, minHeight: 130)
             .background(
                 RoundedRectangle(cornerRadius: DFRadius.md)
@@ -187,8 +187,8 @@ public struct PilotActionBar: View {
                     .font(DFFont.bodyEmph)
                 Spacer()
             }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 10)
+            .padding(.vertical, DFSpace.sm2)
+            .padding(.horizontal, DFSpace.sm2)
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: DFRadius.sm).fill(DFColor.elev2)
