@@ -34,12 +34,12 @@ public struct MotionStudioView: View {
             let isCompact = geo.size.width < 1080
             let isVeryCompact = geo.size.width < 820
             let maxRight = min(620, geo.size.width * 0.55)
-            HStack(spacing: 0) {
+            HStack(spacing: DFSpace.none) {
                 if !isCompact {
                     sidebar
                     Divider()
                 }
-                VStack(spacing: 0) {
+                VStack(spacing: DFSpace.none) {
                     if isCompact {
                         compactPagePicker
                             .padding(.horizontal, DFSpace.md)
@@ -86,27 +86,27 @@ public struct MotionStudioView: View {
     /// 사이드바 상단의 AI 모션 빌더 패널 — 자연어 → 모션 페이지 즉시 생성.
     /// MotionBuilder.parseHeuristic 사용 (Claude CLI 없이도 동작).
     private var aiBuilderPanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: "wand.and.stars")
                     .foregroundStyle(DFColor.forge)
                 Text("AI 모션 빌더")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                     .foregroundStyle(DFColor.textSecondary)
                     .textCase(.uppercase)
             }
             TextField("예: 손 흔들고 박수 치기",
                       text: $aiBuilderText, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11))
+                .font(.system(size: DFFontSize.s11))
                 .lineLimit(1...3)
                 .onSubmit { runAIBuilder() }
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Button {
                     runAIBuilder()
                 } label: {
                     Label("빌드", systemImage: "wand.and.stars")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: DFFontSize.s10, weight: .semibold))
                         .padding(.horizontal, DFSpace.sm).padding(.vertical, 3)
                         .background(DFColor.forge)
                         .foregroundStyle(.white)
@@ -118,7 +118,7 @@ public struct MotionStudioView: View {
                 Spacer()
                 if let toast = aiBuilderToast {
                     Text(toast)
-                        .font(.system(size: 9))
+                        .font(.system(size: DFFontSize.s9))
                         .foregroundStyle(DFColor.success)
                         .lineLimit(1)
                 }
@@ -157,7 +157,7 @@ public struct MotionStudioView: View {
     // MARK: - Sidebar (pages)
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: DFSpace.none) {
             aiBuilderPanel
                 .padding(.horizontal, DFSpace.md)
                 .padding(.top, DFSpace.sm)
@@ -196,7 +196,7 @@ public struct MotionStudioView: View {
                     HStack {
                         Image(systemName: "play.rectangle")
                             .foregroundStyle(DFColor.accent)
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: DFSpace.micro2) {
                             Text(page.name.isEmpty ? "동작 \(page.id)" : page.name)
                                 .font(DFFont.body)
                             Text("\(page.steps.count)단계 · \(formatSeconds(page.totalDurationMs))")
@@ -221,7 +221,7 @@ public struct MotionStudioView: View {
 
     /// 컴팩트 모드 — sidebar 대신 헤더의 picker로 페이지 선택.
     private var compactPagePicker: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             Image(systemName: "list.bullet.rectangle")
                 .foregroundStyle(DFColor.accent)
             Picker("동작", selection: $selectedPageIdx) {
@@ -249,7 +249,7 @@ public struct MotionStudioView: View {
     // MARK: - Center (3D + timeline)
 
     private var centerColumn: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DFSpace.none) {
             ZStack(alignment: .topLeading) {
                 RobotScene3D(pose: stagedPose,
                              footTrace: [],
@@ -262,7 +262,7 @@ public struct MotionStudioView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity,
                            alignment: .topTrailing)
             }
-            .background(LinearGradient(colors: [DFColor.canvas.opacity(0.6), DFColor.canvas],
+            .background(LinearGradient(colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                                         startPoint: .top, endPoint: .bottom))
 
             Divider()
@@ -278,7 +278,7 @@ public struct MotionStudioView: View {
             if let page = currentPage {
                 HStack(spacing: DFSpace.sm) {
                     Image(systemName: "doc.text").foregroundStyle(DFColor.accent)
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: DFSpace.none) {
                         Text(page.name.isEmpty ? "동작 \(page.id)" : page.name)
                             .font(DFFont.bodyEmph)
                         Text(metaLine(for: page))
@@ -392,11 +392,11 @@ public struct MotionStudioView: View {
             Text("\(selectedStep + 1) / \(page.steps.count)단계")
                 .font(DFFont.bodyEmph)
             if let step {
-                HStack(spacing: 4) {
+                HStack(spacing: DFSpace.xs) {
                     Text("이동 시간").foregroundStyle(DFColor.textSecondary)
                     Text("\(step.playMs)ms").fontDesign(.monospaced)
                 }
-                HStack(spacing: 4) {
+                HStack(spacing: DFSpace.xs) {
                     Text("멈춤 시간").foregroundStyle(DFColor.textSecondary)
                     Text("\(step.pauseMs)ms").fontDesign(.monospaced)
                 }
@@ -417,7 +417,7 @@ public struct MotionStudioView: View {
     // MARK: - Right (inspector)
 
     private var rightColumn: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DFSpace.none) {
             HStack {
                 Text("자세 편집기").font(DFFont.bodyEmph)
                 Spacer()
@@ -425,7 +425,7 @@ public struct MotionStudioView: View {
                     withAnimation(.easeOut(duration: 0.2)) { rightOpen = false }
                 } label: {
                     Image(systemName: "sidebar.right")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DFColor.textSecondary)
@@ -457,11 +457,11 @@ public struct MotionStudioView: View {
         Button {
             withAnimation(.easeOut(duration: 0.2)) { rightOpen = true }
         } label: {
-            VStack(spacing: 6) {
+            VStack(spacing: DFSpace.xs2) {
                 Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DFFontSize.s14, weight: .semibold))
                 Text("자세\n편집기")
-                    .font(.system(size: 9))
+                    .font(.system(size: DFFontSize.s9))
                     .multilineTextAlignment(.center)
             }
             .foregroundStyle(DFColor.textSecondary)
@@ -830,7 +830,7 @@ struct MotionInspectorSplitter: View {
         ZStack {
             Rectangle().fill(Color.clear).frame(width: 8).contentShape(Rectangle())
             Rectangle()
-                .fill(isHovering ? DFColor.accent : DFColor.textSecondary.opacity(0.20))
+                .fill(isHovering ? DFColor.accent : DFColor.textSecondary.opacity(DFOpacity.o20))
                 .frame(width: isHovering ? 2 : 1)
         }
         .frame(width: 8)

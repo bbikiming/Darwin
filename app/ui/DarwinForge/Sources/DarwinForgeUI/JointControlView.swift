@@ -9,7 +9,7 @@ public struct JointControlView: View {
     public init() {}
 
     public var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: DFSpace.none) {
             // ── 좌측 — body part별 관절 그룹.
             List(selection: Binding(get: { selected }, set: { if let n = $0 { selected = n } })) {
                 ForEach(JointID.BodyPart.allCases, id: \.self) { part in
@@ -49,7 +49,7 @@ struct JointDetailView: View {
     private let positionRange: ClosedRange<Double> = 1024...3072
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DFSpace.md) {
             Text(joint.name)
                 .font(.title2.monospaced())
 
@@ -57,7 +57,7 @@ struct JointDetailView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
                 Text("Goal Position (raw)")
                     .font(.headline)
                 HStack {
@@ -74,7 +74,7 @@ struct JointDetailView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: DFSpace.sm3) {
                 Button("Torque ON") {
                     runJointAction { try store.bus?.setTorque(joint, enable: true) }
                 }

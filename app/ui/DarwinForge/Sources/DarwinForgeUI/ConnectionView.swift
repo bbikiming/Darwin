@@ -9,7 +9,7 @@ public struct ConnectionView: View {
 
     public var body: some View {
         GroupBox("Connection") {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
                 HStack {
                     Picker("Port", selection: Binding(
                         get: { store.selectedPort ?? "" },
@@ -34,7 +34,7 @@ public struct ConnectionView: View {
                     .help("포트 목록 새로고침")
                 }
 
-                HStack(spacing: 8) {
+                HStack(spacing: DFSpace.sm) {
                     if isConnected {
                         Button("Disconnect", role: .destructive) {
                             store.disconnect()
@@ -78,7 +78,7 @@ public struct ConnectionView: View {
             Label("Connecting to \(p)…", systemImage: "ellipsis.circle")
                 .foregroundStyle(.secondary)
         case .connected(let snap):
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Label("Connected", systemImage: "circle.fill")
                     .foregroundStyle(.green)
                 Text(snap.controllerLabel)

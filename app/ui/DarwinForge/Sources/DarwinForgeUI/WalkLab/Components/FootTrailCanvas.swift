@@ -19,14 +19,14 @@ struct FootTrailCanvas: View {
 
             // 그리드
             ctx.stroke(gridPath(in: size, center: center, scale: scale),
-                       with: .color(.gray.opacity(0.18)), lineWidth: 0.5)
+                       with: .color(.gray.opacity(DFOpacity.o18)), lineWidth: 0.5)
             // 중심 십자
             var cross = Path()
             cross.move(to: CGPoint(x: 0, y: center.y))
             cross.addLine(to: CGPoint(x: size.width, y: center.y))
             cross.move(to: CGPoint(x: center.x, y: 0))
             cross.addLine(to: CGPoint(x: center.x, y: size.height))
-            ctx.stroke(cross, with: .color(.gray.opacity(0.35)), lineWidth: 1)
+            ctx.stroke(cross, with: .color(.gray.opacity(DFOpacity.strong)), lineWidth: 1)
 
             // Trail (좌측 발 — 파랑, 우측 — 주황)
             for (idx, p) in trail.enumerated() {
@@ -48,7 +48,7 @@ struct FootTrailCanvas: View {
                      with: .color(.orange))
         }
         .overlay(alignment: .bottomLeading) {
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 legend(color: .blue, label: "L")
                 legend(color: .orange, label: "R")
                 Text("1 cm 그리드")
@@ -88,8 +88,8 @@ struct FootTrailCanvas: View {
     }
 
     private func legend(color: Color, label: String) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 8, height: 8)
+        HStack(spacing: DFSpace.xs) {
+            Circle().fill(color).frame(width: DFSize.indicatorSm, height: DFSize.indicatorSm)
             Text(label).font(.caption2.monospacedDigit())
         }
     }

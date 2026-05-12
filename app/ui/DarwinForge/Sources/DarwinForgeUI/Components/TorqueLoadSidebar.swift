@@ -19,7 +19,7 @@ public struct TorqueLoadSidebar: View {
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: DFSpace.none) {
             // 좌측 toggle 핸들 — 항상 보임.
             toggleHandle
             if isOpen {
@@ -38,17 +38,17 @@ public struct TorqueLoadSidebar: View {
         Button {
             withAnimation(.easeOut(duration: 0.2)) { isOpen.toggle() }
         } label: {
-            VStack(spacing: 8) {
+            VStack(spacing: DFSpace.sm) {
                 Image(systemName: isOpen ? "chevron.right" : "chevron.left")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DFFontSize.s11, weight: .bold))
                 Image(systemName: "bolt.heart.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DFFontSize.s13, weight: .semibold))
                     .foregroundStyle(headerTint)
                 if !isOpen {
-                    VStack(spacing: 2) {
+                    VStack(spacing: DFSpace.micro2) {
                         ForEach("부하".map { String($0) }, id: \.self) { c in
                             Text(c)
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: DFFontSize.s9, weight: .semibold))
                                 .foregroundStyle(DFColor.textSecondary)
                         }
                     }
@@ -56,7 +56,7 @@ public struct TorqueLoadSidebar: View {
                 Spacer()
                 if dangerJoint != nil {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: DFFontSize.s11))
                         .foregroundStyle(DFColor.danger)
                         .opacity(pulse ? 0.4 : 1.0)
                 }
@@ -81,7 +81,7 @@ public struct TorqueLoadSidebar: View {
 
     private var contentPanel: some View {
         ScrollView {
-            VStack(spacing: 8) {
+            VStack(spacing: DFSpace.sm) {
                 header
                 Divider()
                 legend
@@ -98,12 +98,12 @@ public struct TorqueLoadSidebar: View {
     }
 
     private var header: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             Image(systemName: "bolt.heart.fill")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: DFFontSize.s10, weight: .semibold))
                 .foregroundStyle(headerTint)
             Text("부하 신호등")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: DFFontSize.s10, weight: .semibold))
                 .foregroundStyle(DFColor.textSecondary)
                 .textCase(.uppercase)
             Spacer()
@@ -111,7 +111,7 @@ public struct TorqueLoadSidebar: View {
     }
 
     private var legend: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             legendDot(color: DFColor.success, label: "정상")
             legendDot(color: Color.yellow, label: "주의")
             legendDot(color: Color.orange, label: "높음")
@@ -120,10 +120,10 @@ public struct TorqueLoadSidebar: View {
     }
 
     private func legendDot(color: Color, label: String) -> some View {
-        HStack(spacing: 2) {
-            Circle().fill(color).frame(width: 5, height: 5)
+        HStack(spacing: DFSpace.micro2) {
+            Circle().fill(color).frame(width: DFSize.indicatorXs, height: DFSize.indicatorXs)
             Text(label)
-                .font(.system(size: 8))
+                .font(.system(size: DFFontSize.s8))
                 .foregroundStyle(DFColor.textSecondary)
         }
     }
@@ -147,24 +147,24 @@ public struct TorqueLoadSidebar: View {
         let tint = colorFor(level)
         let isCritical = level == .critical
 
-        return VStack(spacing: 1) {
+        return VStack(spacing: DFSpace.micro) {
             HStack(spacing: 3) {
                 Circle()
                     .fill(tint)
-                    .frame(width: 5, height: 5)
+                    .frame(width: DFSize.indicatorXs, height: DFSize.indicatorXs)
                     .opacity(isCritical && pulse ? 0.4 : 1.0)
                 Text("ID\(j.rawValue)")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s8, weight: .bold, design: .monospaced))
                     .foregroundStyle(DFColor.textPrimary)
             }
             if hasData {
                 Text("\(Int(pct))%")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s8, weight: .bold, design: .monospaced))
                     .foregroundStyle(tint)
             } else {
                 Text("—")
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(DFColor.textSecondary.opacity(0.4))
+                    .font(.system(size: DFFontSize.s8, design: .monospaced))
+                    .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.disabled))
             }
         }
         .frame(maxWidth: .infinity, minHeight: 32)
@@ -183,25 +183,25 @@ public struct TorqueLoadSidebar: View {
             guard let s = store.lastTelemetry?.joints[danger] else { return 0 }
             return SafeMotion.loadPercent(Int(s.presentLoad))
         }()
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
+        return VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.danger)
                     .opacity(pulse ? 0.5 : 1.0)
                 Text("⚠ ID \(danger.rawValue)")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: DFFontSize.s10, weight: .bold))
                     .foregroundStyle(DFColor.danger)
             }
             Text("\(Int(pct))% — \(danger.koreanLabel)")
-                .font(.system(size: 9))
+                .font(.system(size: DFFontSize.s9))
                 .foregroundStyle(DFColor.textSecondary)
                 .lineLimit(2)
             Button {
                 store.emergencyStop()
             } label: {
                 Text("토크 해제")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DFFontSize.s9, weight: .semibold))
                     .padding(.horizontal, DFSpace.xs2).padding(.vertical, 3)
                     .frame(maxWidth: .infinity)
                     .background(DFColor.danger)
@@ -211,7 +211,7 @@ public struct TorqueLoadSidebar: View {
             .buttonStyle(.plain)
         }
         .padding(6)
-        .background(DFColor.danger.opacity(0.10))
+        .background(DFColor.danger.opacity(DFOpacity.o10))
         .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 
@@ -232,7 +232,7 @@ public struct TorqueLoadSidebar: View {
         case .moderate:  return Color.yellow
         case .high:      return Color.orange
         case .critical:  return DFColor.danger
-        case .unknown:   return DFColor.textSecondary.opacity(0.4)
+        case .unknown:   return DFColor.textSecondary.opacity(DFOpacity.disabled)
         }
     }
 }

@@ -43,17 +43,17 @@ public struct ViewCubeOverlay: View {
     }
 
     public var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: DFSpace.xs) {
             // 큐브 hint — 클릭하면 기본 view (3D 툴의 ViewCube home 동작과 일치).
             Button {
                 controller.goToFace(.isometric)
             } label: {
                 ZStack {
                     Image(systemName: "cube.fill")
-                        .font(.system(size: 22, weight: .regular))
+                        .font(.system(size: DFFontSize.s22, weight: .regular))
                         .foregroundStyle(DFColor.accent)
                     Image(systemName: "house.fill")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: DFFontSize.s9, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(2)
                         .background(Circle().fill(DFColor.forge))
@@ -67,9 +67,9 @@ public struct ViewCubeOverlay: View {
             .help("기본 시점으로 돌아가기")
 
             // Cross layout: top, mid (left center right), bottom
-            VStack(spacing: 2) {
+            VStack(spacing: DFSpace.micro2) {
                 faceButton(.top)
-                HStack(spacing: 2) {
+                HStack(spacing: DFSpace.micro2) {
                     faceButton(.left)
                     faceButton(.front)
                     faceButton(.right)
@@ -82,7 +82,7 @@ public struct ViewCubeOverlay: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(DFColor.textSecondary.opacity(0.18), lineWidth: 0.5)
+                    .stroke(DFColor.textSecondary.opacity(DFOpacity.o18), lineWidth: 0.5)
             )
         }
     }
@@ -91,11 +91,11 @@ public struct ViewCubeOverlay: View {
         Button {
             controller.goToFace(face)
         } label: {
-            VStack(spacing: 1) {
+            VStack(spacing: DFSpace.micro) {
                 Image(systemName: face.icon)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                 Text(face.label)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: DFFontSize.s9, weight: .medium))
             }
             .foregroundStyle(DFColor.textPrimary)
             .frame(width: 38, height: 32)

@@ -14,14 +14,14 @@ public struct ModeBadge: View {
     public var body: some View {
         HStack(spacing: DFSpace.xs) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DFFontSize.s13, weight: .semibold))
             Text(label)
                 .font(DFFont.bodyEmph)
         }
         .padding(.horizontal, DFSpace.sm + 2)
         .padding(.vertical, DFSpace.xs + 2)
         .background(
-            Capsule().fill(color.opacity(0.18))
+            Capsule().fill(color.opacity(DFOpacity.o18))
         )
         .overlay(
             Capsule().stroke(color, lineWidth: 1.2)

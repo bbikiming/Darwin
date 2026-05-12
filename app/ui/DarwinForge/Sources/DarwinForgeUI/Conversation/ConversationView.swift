@@ -29,7 +29,7 @@ public struct ConversationView: View {
             icon: "bubble.left.and.bubble.right.fill",
             tint: DFColor.info,
             trailing: {
-                HStack(spacing: 8) {
+                HStack(spacing: DFSpace.sm) {
                     if winWidth >= 600 {
                         ModeBadge(dispatcher: dispatcher)
                     }
@@ -37,7 +37,7 @@ public struct ConversationView: View {
                         vm.clear()
                     } label: {
                         Image(systemName: "square.and.pencil")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: DFFontSize.s14, weight: .medium))
                             .foregroundStyle(DFColor.accent)
                     }
                     .buttonStyle(.plain)
@@ -46,7 +46,7 @@ public struct ConversationView: View {
                 }
             }
         ) {
-            VStack(spacing: 0) {
+            VStack(spacing: DFSpace.none) {
                 if vm.messages.isEmpty {
                     EmptyState(vm: vm)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -16,7 +16,7 @@ public struct SynthPaletteView: View {
     public init() {}
 
     public var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: DFSpace.none) {
             // Left — Library
             SynthLibraryPanel(model: model)
                 .frame(width: 320)

@@ -131,7 +131,7 @@ public struct PilotDpad: View {
     }
 
     private var legend: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
             legendRow("W / A / S / D", "전·좌·후·우")
             legendRow("Q / E",         "좌회전·우회전")
             legendRow("Space",         "정지")
@@ -142,14 +142,14 @@ public struct PilotDpad: View {
     }
 
     private func legendRow(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             Text(key)
                 .padding(.horizontal, 5).padding(.vertical, 2)
                 .background(
                     RoundedRectangle(cornerRadius: DFRadius.xs).fill(DFColor.elev2)
                         .overlay(
                             RoundedRectangle(cornerRadius: DFRadius.xs)
-                                .stroke(DFColor.textSecondary.opacity(0.25), lineWidth: DFSize.borderHairline)
+                                .stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: DFSize.borderHairline)
                         )
                 )
             Text(label)
@@ -171,18 +171,18 @@ public struct PilotDpad: View {
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: DFRadius.sm)
-                    .fill(isActive ? tint.opacity(0.55) : tint.opacity(0.15))
+                    .fill(isActive ? tint.opacity(0.55) : tint.opacity(DFOpacity.o15))
                     .overlay(
                         RoundedRectangle(cornerRadius: DFRadius.sm)
                             .stroke(tint.opacity(isActive ? 0.9 : 0.35), lineWidth: DFSize.borderHairline)
                     )
-                VStack(spacing: 2) {
+                VStack(spacing: DFSpace.micro2) {
                     Image(systemName: zone.icon)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: DFFontSize.s16, weight: .bold))
                         .foregroundStyle(isActive ? .white : tint)
                     if let k = zone.keyChar {
                         Text(k)
-                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            .font(.system(size: DFFontSize.s8, weight: .semibold, design: .monospaced))
                             .foregroundStyle((isActive ? Color.white : tint).opacity(0.75))
                     }
                 }

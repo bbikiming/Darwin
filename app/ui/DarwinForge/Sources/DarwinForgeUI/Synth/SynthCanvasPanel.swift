@@ -6,7 +6,7 @@ public struct SynthCanvasPanel: View {
     @ObservedObject var model: SynthModel
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DFSpace.sm3) {
             HStack {
                 Text("Canvas").font(.headline)
                 Spacer()
@@ -26,7 +26,7 @@ public struct SynthCanvasPanel: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    VStack(spacing: 8) {
+                    VStack(spacing: DFSpace.sm) {
                         ForEach(Array(model.canvas.enumerated()), id: \.element.id) { index, item in
                             SynthCanvasRow(
                                 index: index,
@@ -44,7 +44,7 @@ public struct SynthCanvasPanel: View {
             // Result section
             if let resultJSON = model.resultJSON {
                 Divider()
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: DFSpace.xs) {
                     Text("결과 Motion JSON").font(.caption).foregroundStyle(.secondary)
                     ScrollView {
                         Text(resultJSON.prefix(800).appending(resultJSON.count > 800 ? "\n..." : ""))
@@ -69,7 +69,7 @@ struct SynthCanvasRow: View {
     let onRemove: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             Text("\(index + 1)")
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: 24)
@@ -77,9 +77,9 @@ struct SynthCanvasRow: View {
 
             Circle()
                 .fill(SynthModel.color(for: item.entry.safetyClass))
-                .frame(width: 8, height: 8)
+                .frame(width: DFSize.indicatorSm, height: DFSize.indicatorSm)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text(item.entry.displayName).font(.body)
                 Text("page \(item.entry.id) · \(item.entry.stepCount) step")
                     .font(.caption2)
@@ -94,7 +94,7 @@ struct SynthCanvasRow: View {
             .buttonStyle(.plain)
         }
         .padding(8)
-        .background(.background.opacity(0.4))
+        .background(.background.opacity(DFOpacity.disabled))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

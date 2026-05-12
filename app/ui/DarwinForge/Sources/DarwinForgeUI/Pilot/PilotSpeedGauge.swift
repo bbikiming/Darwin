@@ -29,11 +29,11 @@ public struct PilotSpeedGauge: View {
                     Text("속도")
                 } minimumValueLabel: {
                     Image(systemName: "tortoise.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: DFFontSize.s11))
                         .foregroundStyle(DFColor.textSecondary)
                 } maximumValueLabel: {
                     Image(systemName: "hare.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: DFFontSize.s11))
                         .foregroundStyle(DFColor.textSecondary)
                 }
                 .controlSize(.small)

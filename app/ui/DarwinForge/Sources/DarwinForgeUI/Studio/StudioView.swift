@@ -41,7 +41,7 @@ public struct StudioView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DFSpace.none) {
             topToolbar
             Divider()
             mainSplit
@@ -114,20 +114,20 @@ public struct StudioView: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: store.motorSpeedProfile.icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: DFFontSize.s11))
                 Text(store.motorSpeedProfile.koreanLabel)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8))
+                    .font(.system(size: DFFontSize.s8))
             }
             .padding(.horizontal, DFSpace.sm)
             .padding(.vertical, DFSpace.xs)
-            .background(DFColor.accent.opacity(0.10))
+            .background(DFColor.accent.opacity(DFOpacity.o10))
             .foregroundStyle(DFColor.accent)
             .clipShape(Capsule())
-            .overlay(Capsule().stroke(DFColor.accent.opacity(0.25), lineWidth: DFSize.borderHairline))
+            .overlay(Capsule().stroke(DFColor.accent.opacity(DFOpacity.o25), lineWidth: DFSize.borderHairline))
         }
         .buttonStyle(.plain)
         .menuStyle(.borderlessButton)
@@ -138,7 +138,7 @@ public struct StudioView: View {
 
     private var topToolbar: some View {
         HStack(spacing: DFSpace.md) {
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: "rectangle.3.group.fill")
                     .foregroundStyle(DFColor.forge)
                 Text("스튜디오")
@@ -221,7 +221,7 @@ public struct StudioView: View {
             let isCompact = geo.size.width < 1080
             // 닫혔을 때 좌우 너비를 더 줄임 — 컴팩트에서도 inspector가 너무 넓지 않게.
             let effectiveMaxWidth = min(inspectorMaxWidth, geo.size.width * 0.55)
-            HStack(spacing: 0) {
+            HStack(spacing: DFSpace.none) {
                 if !isCompact {
                     leftPanel
                     Divider()
@@ -253,15 +253,15 @@ public struct StudioView: View {
         Button {
             withAnimation(.easeOut(duration: 0.2)) { inspectorOpen = true }
         } label: {
-            VStack(spacing: 6) {
+            VStack(spacing: DFSpace.xs2) {
                 Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: DFFontSize.s14, weight: .semibold))
                 Text("자세\n편집")
                     .font(DFFont.caption.bold())
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 11))
+                    .font(.system(size: DFFontSize.s11))
             }
             .foregroundStyle(DFColor.textPrimary)
             .frame(width: 36)
@@ -269,7 +269,7 @@ public struct StudioView: View {
             .padding(.vertical, DFSpace.md)
             .background(DFColor.elev2)
             .overlay(
-                Rectangle().fill(DFColor.textSecondary.opacity(0.20)).frame(width: 0.5),
+                Rectangle().fill(DFColor.textSecondary.opacity(DFOpacity.o20)).frame(width: 0.5),
                 alignment: .leading
             )
         }
@@ -278,7 +278,7 @@ public struct StudioView: View {
     }
 
     private var leftPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: DFSpace.none) {
             if store.bus == nil {
                 onboardingPanel
             } else {
@@ -299,7 +299,7 @@ public struct StudioView: View {
                          onMeshFallback: { fallback in meshFallback = fallback },
                          cameraController: camera)
                 .background(LinearGradient(
-                    colors: [DFColor.canvas.opacity(0.6), DFColor.canvas],
+                    colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                     startPoint: .top, endPoint: .bottom))
 
             viewportBadges
@@ -330,10 +330,10 @@ public struct StudioView: View {
 
     /// P0-F: STL 메쉬 로드에 실패해 primitive fallback rig을 쓸 때 표시.
     private var meshFallbackBanner: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             Image(systemName: "cube.transparent")
                 .foregroundStyle(DFColor.warning)
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: DFSpace.none) {
                 Text("기본 모델 로드 실패")
                     .font(DFFont.bodyEmph)
                 Text("단순 형상으로 표시 중 — 빌드의 .stl 메쉬를 확인해 주세요")
@@ -347,14 +347,14 @@ public struct StudioView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
-                .strokeBorder(DFColor.warning.opacity(0.6), lineWidth: 1)
+                .strokeBorder(DFColor.warning.opacity(DFOpacity.dim), lineWidth: 1)
         )
     }
 
     private func inspectorPanel(isCompact: Bool) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DFSpace.none) {
             // 헤더 — 닫기 버튼.
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "slider.horizontal.3")
                     .foregroundStyle(DFColor.accent)
                 Text("자세 편집기")
@@ -364,7 +364,7 @@ public struct StudioView: View {
                     withAnimation(.easeOut(duration: 0.2)) { inspectorOpen = false }
                 } label: {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
                         .foregroundStyle(DFColor.textSecondary)
                         .padding(6)
                 }
@@ -387,7 +387,7 @@ public struct StudioView: View {
     }
 
     private var compactOnboardingHint: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             Label("USB 연결이 필요해요", systemImage: "cable.connector")
                 .font(DFFont.bodyEmph)
                 .foregroundStyle(DFColor.accent)
@@ -403,7 +403,7 @@ public struct StudioView: View {
     // MARK: - Body map panel (USB 연결 시)
 
     private var bodyMapPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: DFSpace.none) {
             Text("관절 위치 한눈에")
                 .font(DFFont.bodyEmph)
                 .padding(.horizontal, DFSpace.md)
@@ -431,7 +431,7 @@ public struct StudioView: View {
 
     private var onboardingPanel: some View {
         VStack(alignment: .leading, spacing: DFSpace.md) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
                 Text("처음이시죠?")
                     .font(DFFont.title)
                 Text("3단계만 따라하면 시작할 수 있어요")
@@ -464,7 +464,7 @@ public struct StudioView: View {
 
             Spacer()
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
                 Label("⌘K로 명령 팔레트", systemImage: "command")
                     .font(DFFont.caption)
                 Label("⌘⇧. 긴급정지", systemImage: "exclamationmark.octagon")
@@ -483,16 +483,16 @@ public struct StudioView: View {
         HStack(alignment: .top, spacing: DFSpace.sm) {
             ZStack {
                 Circle()
-                    .fill(DFColor.accent.opacity(0.18))
-                    .frame(width: 28, height: 28)
+                    .fill(DFColor.accent.opacity(DFOpacity.o18))
+                    .frame(width: DFSize.iconLg, height: DFSize.iconLg)
                 Text(num)
                     .font(DFFont.bodyEmph)
                     .foregroundStyle(DFColor.accent)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
+                HStack(spacing: DFSpace.xs) {
                     Image(systemName: icon)
-                        .font(.system(size: 11))
+                        .font(.system(size: DFFontSize.s11))
                         .foregroundStyle(DFColor.accent)
                     Text(title)
                         .font(DFFont.bodyEmph)
@@ -509,7 +509,7 @@ public struct StudioView: View {
     // MARK: - Selected joint summary
 
     private func selectedJointSummary(_ j: JointID) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text(j.koreanLabel)
                 .font(DFFont.bodyEmph)
             Text("\(j.name) (ID \(j.rawValue))")
@@ -556,7 +556,7 @@ public struct StudioView: View {
     }
 
     private func badge(_ text: String, icon: String, tint: Color = DFColor.accent) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             Image(systemName: icon).font(.caption)
             Text(text).font(DFFont.caption)
         }
@@ -715,7 +715,7 @@ struct InspectorSplitter: View {
 
             // 시각 라인 (1px).
             Rectangle()
-                .fill(isHovering ? DFColor.accent : DFColor.textSecondary.opacity(0.20))
+                .fill(isHovering ? DFColor.accent : DFColor.textSecondary.opacity(DFOpacity.o20))
                 .frame(width: isHovering ? 2 : 1)
         }
         .frame(width: 8)
@@ -760,7 +760,7 @@ struct ConnectionInlineControls: View {
     @State private var mode: Mode = .usb
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             // 종류 선택.
             Picker("", selection: $mode) {
                 ForEach(Mode.allCases) { m in

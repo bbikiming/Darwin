@@ -45,7 +45,7 @@ public struct TeachModeView: View {
 
     @ViewBuilder
     private var headerTrailing: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             if capture.isCapturing {
                 DFChip("LIVE \(String(format: "%.0f", capture.readMs))ms",
                        icon: "dot.radiowaves.left.and.right",
@@ -61,7 +61,7 @@ public struct TeachModeView: View {
     // MARK: - Layouts
 
     private var regularLayout: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: DFSpace.none) {
             scenePane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
@@ -73,7 +73,7 @@ public struct TeachModeView: View {
     }
 
     private var compactLayout: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DFSpace.none) {
             scenePane.frame(height: 360)
             Divider()
             controlPane
@@ -89,7 +89,7 @@ public struct TeachModeView: View {
                          showAxes: true,
                          cameraController: camera)
                 .background(LinearGradient(
-                    colors: [DFColor.canvas.opacity(0.6), DFColor.canvas],
+                    colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                     startPoint: .top, endPoint: .bottom))
             sceneOverlay
                 .padding(DFSpace.md)
@@ -100,17 +100,17 @@ public struct TeachModeView: View {
     }
 
     private var sceneOverlay: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             if let at = capture.lastUpdateAt {
                 let elapsed = Int(-at.timeIntervalSinceNow * 1000)
                 Label("마지막 \(elapsed)ms 전", systemImage: "clock.fill")
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: DFFontSize.s10, design: .monospaced))
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(.regularMaterial)
                     .clipShape(Capsule())
             }
             Text("3D 모델은 실시간 자세를 반영합니다")
-                .font(.system(size: 10))
+                .font(.system(size: DFFontSize.s10))
                 .foregroundStyle(DFColor.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(.regularMaterial)
@@ -143,8 +143,8 @@ public struct TeachModeView: View {
         DFPanel("워크플로우",
                 subtitle: "1. 토크 해제 → 2. 손으로 자세 → 3. 저장",
                 icon: "1.circle.fill", tint: DFColor.accent) {
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(spacing: DFSpace.sm) {
+                HStack(spacing: DFSpace.sm) {
                     DFButton(.danger, size: .medium,
                              action: { Task { await capture.disableAllTorque(store: store) } }) {
                         Label("토크 해제", systemImage: "lock.open.fill")
@@ -154,7 +154,7 @@ public struct TeachModeView: View {
                         Label("토크 고정", systemImage: "lock.fill")
                     }
                 }
-                HStack(spacing: 8) {
+                HStack(spacing: DFSpace.sm) {
                     if capture.isCapturing {
                         DFButton(.secondary, size: .medium,
                                  action: { capture.stopCapture() }) {
@@ -181,9 +181,9 @@ public struct TeachModeView: View {
         DFPanel("관절별 토크",
                 subtitle: "탭하면 그 관절만 토글",
                 icon: "bolt.fill", tint: DFColor.torque) {
-            VStack(spacing: 6) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 5),
-                          spacing: 4) {
+            VStack(spacing: DFSpace.xs2) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DFSpace.xs), count: 5),
+                          spacing: DFSpace.xs) {
                     ForEach(JointID.allCases, id: \.self) { j in
                         torqueTile(j)
                     }
@@ -191,12 +191,12 @@ public struct TeachModeView: View {
                 let onCount = JointID.allCases.filter { capture.torqueState[$0] == true }.count
                 HStack {
                     Text("토크 ON \(onCount)/20")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: DFFontSize.s10, design: .monospaced))
                         .foregroundStyle(onCount > 0 ? DFColor.torque : DFColor.textSecondary)
                     Spacer()
                     Text("● live")
-                        .font(.system(size: 9))
-                        .foregroundStyle(capture.isCapturing ? DFColor.success : DFColor.textSecondary.opacity(0.5))
+                        .font(.system(size: DFFontSize.s9))
+                        .foregroundStyle(capture.isCapturing ? DFColor.success : DFColor.textSecondary.opacity(DFOpacity.o50))
                 }
             }
         }
@@ -207,16 +207,16 @@ public struct TeachModeView: View {
         return Button {
             capture.toggleTorque(j, store: store)
         } label: {
-            VStack(spacing: 1) {
+            VStack(spacing: DFSpace.micro) {
                 Text(shortJointName(j))
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s9, weight: .bold, design: .monospaced))
                     .foregroundStyle(on ? .white : DFColor.textSecondary)
                 Text(String(format: "%.0f°", capture.livePose.degrees(j)))
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(on ? .white.opacity(0.8) : DFColor.textSecondary.opacity(0.7))
+                    .font(.system(size: DFFontSize.s8, design: .monospaced))
+                    .foregroundStyle(on ? .white.opacity(0.8) : DFColor.textSecondary.opacity(DFOpacity.o70))
             }
             .frame(maxWidth: .infinity, minHeight: 30)
-            .background(on ? DFColor.torque.opacity(0.85) : DFColor.elev2)
+            .background(on ? DFColor.torque.opacity(DFOpacity.o85) : DFColor.elev2)
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
@@ -233,15 +233,15 @@ public struct TeachModeView: View {
                     if !capture.snapshots.isEmpty {
                         Button { capture.clearSnapshots() } label: {
                             Image(systemName: "trash")
-                                .font(.system(size: 10))
+                                .font(.system(size: DFFontSize.s10))
                                 .foregroundStyle(DFColor.danger)
                         }
                         .buttonStyle(.plain)
                         .help("모두 삭제")
                     }
                 }) {
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
+            VStack(spacing: DFSpace.sm) {
+                HStack(spacing: DFSpace.xs2) {
                     TextField("자세 이름 (선택)", text: $snapshotName)
                         .textFieldStyle(.roundedBorder)
                         .font(DFFont.body)
@@ -262,7 +262,7 @@ public struct TeachModeView: View {
                         .padding(.vertical, 8)
                         .frame(maxWidth: .infinity)
                 } else {
-                    VStack(spacing: 4) {
+                    VStack(spacing: DFSpace.xs) {
                         ForEach(capture.snapshots) { s in
                             snapshotRow(s)
                         }
@@ -273,14 +273,14 @@ public struct TeachModeView: View {
     }
 
     private func snapshotRow(_ s: TeachCapture.PoseSnapshot) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             Image(systemName: "figure.stand")
                 .foregroundStyle(DFColor.accent)
                 .frame(width: 16)
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: DFSpace.none) {
                 Text(s.name).font(DFFont.bodyEmph)
                 Text(Self.timeFmt.string(from: s.capturedAt))
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: DFFontSize.s9, design: .monospaced))
                     .foregroundStyle(DFColor.textSecondary)
             }
             Spacer()
@@ -289,7 +289,7 @@ public struct TeachModeView: View {
                 UserPoseLibrary.shared.save(name: s.name, pose: s.pose)
             } label: {
                 Image(systemName: "bookmark.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.forge)
             }
             .buttonStyle(.plain)
@@ -304,7 +304,7 @@ public struct TeachModeView: View {
                 )
             } label: {
                 Image(systemName: "square.and.pencil")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.accent)
             }
             .buttonStyle(.plain)
@@ -314,7 +314,7 @@ public struct TeachModeView: View {
                 capture.applySnapshot(s, store: store)
             } label: {
                 Image(systemName: "paperplane.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.success)
             }
             .buttonStyle(.plain)
@@ -324,7 +324,7 @@ public struct TeachModeView: View {
                 capture.deleteSnapshot(s)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9))
+                    .font(.system(size: DFFontSize.s9))
                     .foregroundStyle(DFColor.textSecondary)
             }
             .buttonStyle(.plain)

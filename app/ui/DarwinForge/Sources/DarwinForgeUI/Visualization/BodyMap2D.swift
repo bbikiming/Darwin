@@ -20,7 +20,7 @@ public struct BodyMap2D: View {
         GeometryReader { geo in
             ZStack {
                 silhouette
-                    .stroke(DFColor.textSecondary.opacity(0.35),
+                    .stroke(DFColor.textSecondary.opacity(DFOpacity.strong),
                             style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                     .frame(width: geo.size.width, height: geo.size.height)
 
@@ -121,7 +121,7 @@ extension BodyMap2D {
                 p.addLine(to: CGPoint(x: 0.60 * w, y: 0.95 * h))
                 p.addLine(to: CGPoint(x: 0.54 * w, y: 0.95 * h))
             }
-            .stroke(DFColor.textSecondary.opacity(0.4),
+            .stroke(DFColor.textSecondary.opacity(DFOpacity.disabled),
                     style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
         }
     }
@@ -150,7 +150,7 @@ private struct JointDot: View {
                 .overlay(
                     Circle().stroke(stroke, lineWidth: isSelected ? 2.5 : 1.2)
                 )
-                .shadow(color: fill.opacity(0.6), radius: isSelected ? 6 : 0)
+                .shadow(color: fill.opacity(DFOpacity.dim), radius: isSelected ? 6 : 0)
         }
         .help("\(joint.koreanLabel) — \(Int(pose.degrees(joint)))°")
         .accessibilityLabel(joint.koreanLabel)
@@ -161,7 +161,7 @@ private struct JointDot: View {
             if s.presentTemperature >= 60 { return DFColor.danger }
             if abs(Int(s.goalPosition) - Int(s.presentPosition)) > 60 { return DFColor.warning }
             if s.torqueEnabled { return DFColor.success }
-            return DFColor.textSecondary.opacity(0.5)
+            return DFColor.textSecondary.opacity(DFOpacity.o50)
         }
         // 상태 없음 — 자세 단독 시: 한계 근접도로 색상.
         let raw = pose.raw(joint)
@@ -174,6 +174,6 @@ private struct JointDot: View {
     }
 
     private var stroke: Color {
-        isSelected ? DFColor.forge : .black.opacity(0.4)
+        isSelected ? DFColor.forge : .black.opacity(DFOpacity.disabled)
     }
 }

@@ -26,9 +26,9 @@ public struct ComingSoonOverlay: ViewModifier {
                 .allowsHitTesting(false)
                 .grayscale(0.8)
 
-            VStack(spacing: 6) {
+            VStack(spacing: DFSpace.xs2) {
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: DFFontSize.s18, weight: .semibold))
                     .foregroundStyle(PilotColor.comingSoon)
                 Text("\(stage) 활성 예정")
                     .font(DFFont.bodyEmph)
@@ -43,10 +43,10 @@ public struct ComingSoonOverlay: ViewModifier {
             .padding(DFSpace.md)
             .background(
                 RoundedRectangle(cornerRadius: DFRadius.md)
-                    .fill(PilotColor.comingSoon.opacity(0.18))
+                    .fill(PilotColor.comingSoon.opacity(DFOpacity.o18))
                     .overlay(
                         RoundedRectangle(cornerRadius: DFRadius.md)
-                            .stroke(PilotColor.comingSoon.opacity(0.45), lineWidth: 1)
+                            .stroke(PilotColor.comingSoon.opacity(DFOpacity.o45), lineWidth: 1)
                     )
             )
             .contentShape(Rectangle())

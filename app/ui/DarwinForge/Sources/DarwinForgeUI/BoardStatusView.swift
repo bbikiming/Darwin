@@ -11,7 +11,7 @@ public struct BoardStatusView: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DFSpace.md) {
             Text("Board Status")
                 .font(.title)
                 .padding(.bottom, 4)

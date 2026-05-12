@@ -29,7 +29,7 @@ public struct PilotArmSlider: View {
                     DFButton(.ghost, size: .small) {
                         channel.disarm()
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DFSpace.xs) {
                             Image(systemName: "lock.fill")
                             Text("DISARM")
                             DFKeyboardHint("esc")
@@ -59,14 +59,14 @@ public struct PilotArmSlider: View {
                 .fill(
                     LinearGradient(
                         colors: gate.armed
-                            ? [PilotColor.armLocked.opacity(0.40), PilotColor.armLocked.opacity(0.18)]
-                            : [PilotColor.armUnlocked.opacity(0.35), PilotColor.armLocked.opacity(0.15)],
+                            ? [PilotColor.armLocked.opacity(DFOpacity.disabled), PilotColor.armLocked.opacity(DFOpacity.o18)]
+                            : [PilotColor.armUnlocked.opacity(DFOpacity.strong), PilotColor.armLocked.opacity(DFOpacity.o15)],
                         startPoint: .leading, endPoint: .trailing
                     )
                 )
                 .overlay(
                     Capsule().stroke(
-                        gate.armed ? PilotColor.armLocked.opacity(0.55) : PilotColor.armUnlocked.opacity(0.40),
+                        gate.armed ? PilotColor.armLocked.opacity(0.55) : PilotColor.armUnlocked.opacity(DFOpacity.disabled),
                         lineWidth: 1
                     )
                 )
@@ -74,7 +74,7 @@ public struct PilotArmSlider: View {
             // 진행 채움.
             if !gate.armed {
                 Capsule()
-                    .fill(PilotColor.armLocked.opacity(0.30))
+                    .fill(PilotColor.armLocked.opacity(DFOpacity.o30))
                     .frame(width: max(thumbSize, offset + thumbSize))
             }
 
@@ -82,13 +82,13 @@ public struct PilotArmSlider: View {
             if !gate.armed {
                 HStack {
                     Spacer()
-                    HStack(spacing: 6) {
+                    HStack(spacing: DFSpace.xs2) {
                         Image(systemName: "arrow.right")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: DFFontSize.s14, weight: .bold))
                         Text("끌어서 ARM")
                             .font(DFFont.bodyEmph)
                     }
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(.white.opacity(DFOpacity.o85))
                     Spacer().frame(width: thumbSize + 8)
                 }
                 .opacity(offset > 4 ? 0 : 1)
@@ -112,7 +112,7 @@ public struct PilotArmSlider: View {
                     radius: 6, y: 2
                 )
             Image(systemName: gate.armed ? "lock.open.fill" : "lock.fill")
-                .font(.system(size: 18, weight: .bold))
+                .font(.system(size: DFFontSize.s18, weight: .bold))
                 .foregroundStyle(.white)
         }
         .frame(width: thumbSize, height: thumbSize)
@@ -150,12 +150,12 @@ public struct PilotArmSlider: View {
             case .disarming:         return ("잠금 중…", true)
             }
         }()
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             if showProgress {
                 ProgressView().controlSize(.mini)
             } else {
                 Image(systemName: gate.armed ? "checkmark.circle.fill" : "shield.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                     .foregroundStyle(gate.armed ? DFColor.success : DFColor.textSecondary)
             }
             Text(text)

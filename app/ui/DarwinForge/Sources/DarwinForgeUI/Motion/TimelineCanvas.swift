@@ -77,7 +77,7 @@ public struct TimelineCanvas: View {
         return ZStack(alignment: .topLeading) {
             // play 부분
             RoundedRectangle(cornerRadius: 4)
-                .fill(isSel ? DFColor.accent.opacity(0.85) : DFColor.accent.opacity(0.55))
+                .fill(isSel ? DFColor.accent.opacity(DFOpacity.o85) : DFColor.accent.opacity(0.55))
                 .frame(width: max(playW - 1, 1), height: height - 14)
                 .offset(y: 8)
                 .overlay(alignment: .topLeading) {
@@ -92,7 +92,7 @@ public struct TimelineCanvas: View {
             // pause 부분 (있을 때만)
             if pauseW > 0 {
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(DFColor.textSecondary.opacity(0.30))
+                    .fill(DFColor.textSecondary.opacity(DFOpacity.o30))
                     .frame(width: pauseW, height: height - 24)
                     .offset(x: x + playW, y: 13)
             }
@@ -113,6 +113,6 @@ public struct TimelineCanvas: View {
                 t += step
             }
         }
-        .stroke(DFColor.textSecondary.opacity(0.18), lineWidth: 0.5)
+        .stroke(DFColor.textSecondary.opacity(DFOpacity.o18), lineWidth: 0.5)
     }
 }

@@ -123,7 +123,7 @@ public struct RootView: View {
         // 좌측 상태 pill 그룹 — 단일 ToolbarItem 으로 묶어 spacing/padding 정확 통제.
         // 디자인 ref: Apple HIG 8pt 그리드 + Linear 미묘 보더 (design-system-references.md §1·§Apple).
         ToolbarItem(placement: .principal) {
-            HStack(spacing: 10) {
+            HStack(spacing: DFSpace.sm2) {
                 connectionToolbarPill
                 batteryToolbarPill
                 temperatureToolbarPill
@@ -133,7 +133,7 @@ public struct RootView: View {
         }
         // 우측 액션 그룹 — 단일 ToolbarItem 으로 묶어 macOS 자동 배치(타이트) 회피.
         ToolbarItem(placement: .primaryAction) {
-            HStack(spacing: 10) {
+            HStack(spacing: DFSpace.sm2) {
                 quickConnectCTA
                 paletteShortcutPill
             }
@@ -149,9 +149,9 @@ public struct RootView: View {
             statusPill(active: false, tint: DFColor.accent) {
                 HStack(spacing: 3) {
                     Image(systemName: "command")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DFFontSize.s11, weight: .semibold))
                     Text("K")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
                 }
                 .foregroundStyle(DFColor.textSecondary)
             }
@@ -178,9 +178,9 @@ public struct RootView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DFFontSize.s11, weight: .bold))
                 Text(label)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
             }
             .dfPillPadding()
             .foregroundStyle(.white)
@@ -217,9 +217,9 @@ public struct RootView: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DFFontSize.s11, weight: .bold))
                     Text("재시도")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
                 }
                 .dfPillPadding()
                 .foregroundStyle(.white)
@@ -234,7 +234,7 @@ public struct RootView: View {
             HStack(spacing: 5) {
                 ProgressView().controlSize(.small).tint(.white)
                 Text("연결 중 — \(label)")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                     .lineLimit(1)
             }
             .dfPillPadding()
@@ -248,9 +248,9 @@ public struct RootView: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "powerplug.fill")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DFFontSize.s11, weight: .bold))
                     Text("연결 해제")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
                 }
                 .dfPillPadding()
                 .foregroundStyle(DFColor.danger)
@@ -291,15 +291,15 @@ public struct RootView: View {
                     Circle()
                         .fill(connectionStatusTint)
                         .frame(width: DFSize.indicatorSm, height: DFSize.indicatorSm)
-                        .shadow(color: connectionStatusTint.opacity(0.7),
+                        .shadow(color: connectionStatusTint.opacity(DFOpacity.o70),
                                 radius: isConnectedNow ? 3 : 0)
                     Text(toolbarConnectionLabel)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
                         .foregroundStyle(connectionStatusTint)
                         .lineLimit(1)
                     if isConnectedNow {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DFFontSize.s9, weight: .semibold))
                             .foregroundStyle(connectionStatusTint.opacity(DFOpacity.dim))
                     }
                 }
@@ -331,16 +331,16 @@ public struct RootView: View {
         return statusPill(active: active, tint: batteryTint) {
             HStack(spacing: 5) {
                 Image(systemName: batteryIcon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(active ? batteryTint : DFColor.textSecondary.opacity(0.5))
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
+                    .foregroundStyle(active ? batteryTint : DFColor.textSecondary.opacity(DFOpacity.o50))
                 if let v {
                     Text(String(format: "%.1fV", v))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(batteryTint)
                 } else {
                     Text("배터리")
-                        .font(.system(size: 11))
-                        .foregroundStyle(DFColor.textSecondary.opacity(0.6))
+                        .font(.system(size: DFFontSize.s11))
+                        .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
                 }
             }
         }
@@ -369,16 +369,16 @@ public struct RootView: View {
         return statusPill(active: active, tint: temperatureTint) {
             HStack(spacing: 5) {
                 Image(systemName: "thermometer.medium")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(active ? temperatureTint : DFColor.textSecondary.opacity(0.5))
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
+                    .foregroundStyle(active ? temperatureTint : DFColor.textSecondary.opacity(DFOpacity.o50))
                 if let t {
                     Text(String(format: "%.0f°C", t))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(temperatureTint)
                 } else {
                     Text("온도")
-                        .font(.system(size: 11))
-                        .foregroundStyle(DFColor.textSecondary.opacity(0.6))
+                        .font(.system(size: DFFontSize.s11))
+                        .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
                 }
             }
         }
@@ -399,16 +399,16 @@ public struct RootView: View {
         return statusPill(active: active, tint: tint) {
             HStack(spacing: 5) {
                 Image(systemName: active && on > 0 ? "bolt.fill" : "bolt.slash")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(active ? tint : DFColor.textSecondary.opacity(0.5))
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
+                    .foregroundStyle(active ? tint : DFColor.textSecondary.opacity(DFOpacity.o50))
                 if active {
                     Text("\(on)/20")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(tint)
                 } else {
                     Text("토크")
-                        .font(.system(size: 11))
-                        .foregroundStyle(DFColor.textSecondary.opacity(0.6))
+                        .font(.system(size: DFFontSize.s11))
+                        .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
                 }
             }
         }
@@ -418,7 +418,7 @@ public struct RootView: View {
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: DFSpace.none) {
             DarwinForgeLogo(variant: .full, density: .standard, showsTagline: true)
                 .padding(.horizontal, DFSpace.md)
                 .padding(.top, DFSpace.md)
@@ -462,7 +462,7 @@ public struct RootView: View {
                     Spacer()
                     Image(systemName: connectionStatusIcon)
                         .foregroundStyle(connectionStatusTint)
-                        .font(.system(size: 11))
+                        .font(.system(size: DFFontSize.s11))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -472,7 +472,7 @@ public struct RootView: View {
                 .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
                 .overlay(
                     RoundedRectangle(cornerRadius: DFRadius.md)
-                        .stroke(DFColor.forge.opacity(0.30), lineWidth: 1)
+                        .stroke(DFColor.forge.opacity(DFOpacity.o30), lineWidth: 1)
                 )
             }
             .buttonStyle(.plain)
@@ -508,9 +508,9 @@ public struct RootView: View {
             .padding(.bottom, DFSpace.sm)
 
             // Forge core badge
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: "cube.box")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                 Text("forge-core \(forgeCoreVersion())")
                     .font(DFFont.caption.monospaced())
             }
@@ -534,7 +534,7 @@ public struct RootView: View {
             // 확인 다이얼로그 — cradle 거치 안내.
             showRecoveryConfirm = true
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 Group {
                     if inProgress {
                         ProgressView()
@@ -542,21 +542,21 @@ public struct RootView: View {
                             .tint(.white)
                     } else {
                         Image(systemName: "arrow.clockwise.heart.fill")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: DFFontSize.s14, weight: .semibold))
                     }
                 }
-                .frame(width: 18, height: 18)
+                .frame(width: DFSize.iconSm2, height: DFSize.iconSm2)
                 Text(inProgress ? "복구 중…" : "로봇 복구")
                     .font(DFFont.bodyEmph)
                 Spacer()
                 if !inProgress && busAvailable {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(.white.opacity(DFOpacity.o85))
                 } else if !busAvailable {
                     Image(systemName: "wifi.slash")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(.white.opacity(DFOpacity.o70))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -565,8 +565,8 @@ public struct RootView: View {
             .background(
                 LinearGradient(
                     colors: enabled
-                        ? [DFColor.success, DFColor.success.opacity(0.85)]
-                        : [DFColor.success.opacity(0.45), DFColor.success.opacity(0.30)],
+                        ? [DFColor.success, DFColor.success.opacity(DFOpacity.o85)]
+                        : [DFColor.success.opacity(DFOpacity.o45), DFColor.success.opacity(DFOpacity.o30)],
                     startPoint: .leading, endPoint: .trailing
                 )
             )
@@ -598,7 +598,7 @@ public struct RootView: View {
     private var recoveryToastOverlay: some View {
         if let msg = store.lastRecoveryResult, let outcome = store.lastRecoveryOutcome {
             VStack {
-                HStack(spacing: 8) {
+                HStack(spacing: DFSpace.sm) {
                     Image(systemName: recoveryToastIcon(outcome))
                         .foregroundStyle(recoveryToastTint(outcome))
                     Text(msg)
@@ -613,9 +613,9 @@ public struct RootView: View {
                 .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
                 .overlay(
                     RoundedRectangle(cornerRadius: DFRadius.md)
-                        .stroke(recoveryToastTint(outcome).opacity(0.45), lineWidth: 0.8)
+                        .stroke(recoveryToastTint(outcome).opacity(DFOpacity.o45), lineWidth: 0.8)
                 )
-                .shadow(color: Color.black.opacity(0.15), radius: 8, y: 2)
+                .shadow(color: Color.black.opacity(DFOpacity.o15), radius: 8, y: 2)
                 .padding(.top, 56)
                 Spacer()
             }
@@ -649,11 +649,11 @@ public struct RootView: View {
             if let ep = store.lastSuccessfulEndpoint, case .network(let h, _) = ep { return h }
             return "192.168.123.1"
         }()
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("원격 도구")
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 remoteIconButton(icon: "macwindow", tint: DFColor.accent,
                                  help: "VNC 데스크톱 열기",
                                  url: "vnc://\(host):5900")
@@ -672,14 +672,14 @@ public struct RootView: View {
             if let u = URL(string: url) { NSWorkspace.shared.open(u) }
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DFFontSize.s13, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(maxWidth: .infinity, minHeight: 28)
-                .background(tint.opacity(0.10))
+                .background(tint.opacity(DFOpacity.o10))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(tint.opacity(0.25), lineWidth: 0.5)
+                        .stroke(tint.opacity(DFOpacity.o25), lineWidth: 0.5)
                 )
         }
         .buttonStyle(.plain)
@@ -725,7 +725,7 @@ public struct RootView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 (section == .expert && expertTab == tab)
-                    ? DFColor.accent.opacity(0.12) : Color.clear
+                    ? DFColor.accent.opacity(DFOpacity.subtle) : Color.clear
             )
             .foregroundStyle(
                 (section == .expert && expertTab == tab) ? DFColor.accent : DFColor.textPrimary
@@ -775,7 +775,7 @@ public struct RootView: View {
 
     private var paletteOverlay: some View {
         ZStack {
-            Color.black.opacity(0.35)
+            Color.black.opacity(DFOpacity.strong)
                 .onTapGesture { paletteOpen = false }
             CommandPalette(
                 isPresented: $paletteOpen,
@@ -804,7 +804,7 @@ public struct RootView: View {
         case .connected:    return DFColor.success
         case .connecting:   return DFColor.warning
         case .error:        return DFColor.danger
-        case .disconnected: return DFColor.textSecondary.opacity(0.6)
+        case .disconnected: return DFColor.textSecondary.opacity(DFOpacity.dim)
         }
     }
 
@@ -812,7 +812,7 @@ public struct RootView: View {
 
     private var wizardOverlay: some View {
         ZStack {
-            Color.black.opacity(0.40)
+            Color.black.opacity(DFOpacity.disabled)
                 .onTapGesture { wizardOpen = false }
             ConnectionWizardView(isPresented: $wizardOpen)
                 .environmentObject(store)
@@ -825,7 +825,7 @@ public struct RootView: View {
 
     private var dashboardOverlay: some View {
         ZStack {
-            Color.black.opacity(0.40)
+            Color.black.opacity(DFOpacity.disabled)
                 .onTapGesture { dashboardOpen = false }
             ConnectionDashboardView(isPresented: $dashboardOpen)
                 .environmentObject(store)

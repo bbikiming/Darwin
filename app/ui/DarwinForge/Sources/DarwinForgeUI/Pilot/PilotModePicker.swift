@@ -58,7 +58,7 @@ public struct PilotModePicker: View {
                 }
 
                 if !flags.ballFollow {
-                    HStack(spacing: 6) {
+                    HStack(spacing: DFSpace.xs2) {
                         Image(systemName: "lock.fill")
                             .foregroundStyle(PilotColor.comingSoon)
                         Text("공 자동 추적은 v1.1 (head 추적) → v1.5 (walk 자동) 에 활성")
@@ -72,7 +72,7 @@ public struct PilotModePicker: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: DFRadius.sm)
-                            .fill(PilotColor.comingSoon.opacity(0.10))
+                            .fill(PilotColor.comingSoon.opacity(DFOpacity.o10))
                     )
                 }
             }

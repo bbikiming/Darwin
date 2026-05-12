@@ -33,7 +33,7 @@ public struct PilotCameraView: View {
                     ))
                     .overlay(
                         RoundedRectangle(cornerRadius: DFRadius.sm)
-                            .stroke(DFColor.textSecondary.opacity(0.2), lineWidth: 0.5)
+                            .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: 0.5)
                     )
 
                 if flags.camera {
@@ -50,9 +50,9 @@ public struct PilotCameraView: View {
 
     @ViewBuilder
     private var cameraActiveOverlay: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: DFSpace.sm) {
             Image(systemName: "video.fill")
-                .font(.system(size: 32))
+                .font(.system(size: DFFontSize.s32))
                 .foregroundStyle(DFColor.success)
             Text("카메라 활성")
                 .font(DFFont.bodyEmph)
@@ -64,22 +64,22 @@ public struct PilotCameraView: View {
 
     @ViewBuilder
     private var cameraPlaceholderOverlay: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: DFSpace.sm2) {
             Image(systemName: "video.slash")
-                .font(.system(size: 32, weight: .light))
+                .font(.system(size: DFFontSize.s32, weight: .light))
                 .foregroundStyle(DFColor.textSecondary)
             Text("카메라 미연결")
                 .font(DFFont.bodyEmph)
                 .foregroundStyle(DFColor.textSecondary)
             Text("v1.5 에서 활성 — 로봇 측 mjpg-streamer 셋업 필요")
                 .font(DFFont.caption)
-                .foregroundStyle(DFColor.textSecondary.opacity(0.7))
+                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.o70))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, DFSpace.md)
             DFButton(.secondary, size: .small) {
                 showSetupSheet = true
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: DFSpace.xs) {
                     Image(systemName: "doc.text")
                     Text("로봇 셋업 가이드")
                 }
@@ -100,7 +100,7 @@ public struct PilotCameraView: View {
             Divider()
             Text("v1.5 활성 조건 — 로봇에서 mjpg-streamer + forge-bridge socat 설치.")
                 .font(DFFont.body)
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DFSpace.xs2) {
                 Label("Sprint 17 의 robot-side 가이드 — docs/handoff/teleop-robot-setup.md",
                       systemImage: "doc")
                 Label("RemoteShell QuickAction vision-start 가 자동화 예정",

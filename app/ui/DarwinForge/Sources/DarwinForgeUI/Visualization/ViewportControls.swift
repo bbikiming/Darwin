@@ -14,20 +14,20 @@ public struct ViewportControls: View {
     }
 
     public var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: DFSpace.xs2) {
             ViewCubeWidget(controller: camera)
                 .frame(width: 96, height: 96)
                 .background(.regularMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: 0.5)
+                        .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: 0.5)
                 )
 
             Button {
                 camera.reset()
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: DFSpace.xs) {
                     Image(systemName: "house.fill")
                     Text("기본 시점")
                 }

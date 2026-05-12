@@ -8,7 +8,7 @@ public struct SynthLibraryPanel: View {
     @State private var safetyFilter: String? = nil
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DFSpace.sm3) {
             // Header
             HStack {
                 Text("Library").font(.headline)
@@ -32,7 +32,7 @@ public struct SynthLibraryPanel: View {
 
             // Cards
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: DFSpace.sm) {
                     ForEach(filteredEntries) { entry in
                         SynthLibraryCard(entry: entry, onAdd: {
                             model.addToCanvas(entry)
@@ -58,13 +58,13 @@ struct SynthLibraryCard: View {
     let onAdd: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: DFSpace.sm) {
             // Safety indicator
             Circle()
                 .fill(SynthModel.color(for: entry.safetyClass))
-                .frame(width: 8, height: 8)
+                .frame(width: DFSize.indicatorSm, height: DFSize.indicatorSm)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text(entry.displayName)
                     .font(.system(.body, design: .rounded).weight(.medium))
                 Text("page \(entry.id) · \(entry.rawName) · \(entry.stepCount) step")
@@ -82,7 +82,7 @@ struct SynthLibraryCard: View {
             .buttonStyle(.plain)
         }
         .padding(8)
-        .background(.background.opacity(0.6))
+        .background(.background.opacity(DFOpacity.dim))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

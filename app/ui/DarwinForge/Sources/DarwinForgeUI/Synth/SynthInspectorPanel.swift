@@ -11,7 +11,7 @@ public struct SynthInspectorPanel: View {
     @State private var showingHelp = false
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DFSpace.sm3) {
             HStack {
                 Text("Inspector").font(.headline)
                 Spacer()
@@ -66,7 +66,7 @@ public struct SynthInspectorPanel: View {
             // Validator overlay
             if !model.validatorResults.isEmpty {
                 Divider()
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: DFSpace.xs2) {
                     Text("Validation").font(.caption).foregroundStyle(.secondary)
                     ForEach(Array(model.validatorResults.enumerated()), id: \.offset) { _, r in
                         validatorRow(r)
@@ -92,7 +92,7 @@ public struct SynthInspectorPanel: View {
     }
 
     private func paramSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
             HStack {
                 Text(label).font(.caption)
                 Spacer()
@@ -104,7 +104,7 @@ public struct SynthInspectorPanel: View {
     }
 
     private func validatorRow(_ r: SynthValidatorOutcome) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             Image(systemName: icon(r.status))
                 .foregroundStyle(color(r.status))
             Text(r.stage).font(.system(.caption, design: .monospaced)).frame(width: 110, alignment: .leading)
@@ -130,7 +130,7 @@ public struct SynthInspectorPanel: View {
 
     private func helpSheet() -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
                 Text("Motion Synthesis 도움말").font(.title3.bold())
                 Text("좌측 라이브러리에서 페이지를 캔버스에 추가합니다. 우측 연산자를 선택하고 파라미터를 조정한 뒤 Synthesize.")
                 Text("연산자별:")

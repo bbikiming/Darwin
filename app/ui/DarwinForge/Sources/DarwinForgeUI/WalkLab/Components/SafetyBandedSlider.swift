@@ -61,8 +61,8 @@ public struct SafetyBandedSlider: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.sm) {
                 Text(label)
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)
@@ -72,11 +72,11 @@ public struct SafetyBandedSlider: View {
                     .foregroundStyle(currentZoneColor)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
-                    .background(currentZoneColor.opacity(0.15))
+                    .background(currentZoneColor.opacity(DFOpacity.o15))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                 if verniering {
                     Text("⌥ 미세")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: DFFontSize.s9, weight: .semibold))
                         .foregroundStyle(DFColor.accent)
                 }
             }
@@ -101,7 +101,7 @@ public struct SafetyBandedSlider: View {
                         let overWidth = max(0, geo.size.width - capX)
                         if overWidth > 0 {
                             Rectangle()
-                                .fill(DFColor.danger.opacity(0.4))
+                                .fill(DFColor.danger.opacity(DFOpacity.disabled))
                                 .frame(width: overWidth, height: trackHeight)
                                 .padding(.leading, capX)
                                 .padding(.vertical, (thumbSize - trackHeight) / 2)
@@ -112,8 +112,8 @@ public struct SafetyBandedSlider: View {
                     ForEach(ticks, id: \.self) { t in
                         let tx = CGFloat(percentile(for: t)) * usable + thumbSize / 2
                         Diamond()
-                            .fill(DFColor.textSecondary.opacity(0.6))
-                            .frame(width: 6, height: 6)
+                            .fill(DFColor.textSecondary.opacity(DFOpacity.dim))
+                            .frame(width: DFSize.indicatorXxs, height: DFSize.indicatorXxs)
                             .position(x: tx, y: geo.size.height / 2)
                             .help("권장 \(unitLabel(t))")
                     }
@@ -125,7 +125,7 @@ public struct SafetyBandedSlider: View {
                         .overlay(
                             Circle().stroke(Color.white, lineWidth: 1.5)
                         )
-                        .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+                        .shadow(color: .black.opacity(DFOpacity.o30), radius: 2, y: 1)
                         .offset(x: thumbX, y: 0)
                         .gesture(dragGesture(usable: usable, thumbSize: thumbSize))
                         .onHover { isHovering = $0 }
@@ -204,7 +204,7 @@ public struct SafetyBandedSlider: View {
     private func bandsTrack(width: CGFloat, height: CGFloat) -> some View {
         let steps = 20
         let stepWidth = width / CGFloat(steps)
-        HStack(spacing: 0) {
+        HStack(spacing: DFSpace.none) {
             ForEach(0..<steps, id: \.self) { i in
                 Rectangle()
                     .fill(bandColor(forStep: i, of: steps))

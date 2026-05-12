@@ -39,12 +39,12 @@ public struct WalkLabView: View {
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: DFSpace.none) {
             header
 
             Toggle(isOn: $session.cradleConfirmed) {
                 Label("정비 스탠드에 거치됨", systemImage: "checkmark.shield")
-                    .font(.system(size: 13))
+                    .font(.system(size: DFFontSize.s13))
             }
             .toggleStyle(.checkbox)
             .padding(.horizontal, DFSpace.md)
@@ -54,7 +54,7 @@ public struct WalkLabView: View {
             Divider()
 
             ScrollView {
-                VStack(spacing: 6) {
+                VStack(spacing: DFSpace.xs2) {
                     ForEach(WalkLabPreset.allCases) { preset in
                         PresetButton(
                             preset: preset,
@@ -69,7 +69,7 @@ public struct WalkLabView: View {
                         .padding(.vertical, DFSpace.sm)
 
                     Toggle("고급 — 슬라이더 조정", isOn: $session.advanced)
-                        .font(.system(size: 12))
+                        .font(.system(size: DFFontSize.s12))
                         .padding(.horizontal, DFSpace.sm)
 
                     if session.advanced {
@@ -84,17 +84,17 @@ public struct WalkLabView: View {
 
             sessionHistory
         }
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+        .background(Color(NSColor.controlBackgroundColor).opacity(DFOpacity.o50))
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             Image(systemName: "figure.walk")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: DFFontSize.s18, weight: .semibold))
                 .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: DFSpace.none) {
                 Text("Walk Lab")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: DFFontSize.s16, weight: .semibold))
                 Text("걷기 테스트 + 보완")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -109,7 +109,7 @@ public struct WalkLabView: View {
     // 옛 sliderRow 헬퍼는 SafetyBandedSlider 로 대체.
 
     private var sessionHistory: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("세션 기록")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -124,7 +124,7 @@ public struct WalkLabView: View {
             } else {
                 ScrollView {
                     ForEach(session.history) { rec in
-                        HStack(spacing: 8) {
+                        HStack(spacing: DFSpace.sm) {
                             Image(systemName: rec.preset.icon)
                                 .font(.caption2)
                                 .foregroundStyle(rec.preset.safety.tintColor)
@@ -145,7 +145,7 @@ public struct WalkLabView: View {
     // MARK: - Detail
 
     private var detail: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DFSpace.sm3) {
             simOnlyNotice
 
             if session.balanceLost {
@@ -164,7 +164,7 @@ public struct WalkLabView: View {
                        tint: .red)
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: DFSpace.sm3) {
                 // Hero: 3D 모델 — pose 는 walkReady, footTrace 는 좌측 발 자취.
                 // 구 WalkLab.swift 의 RobotScene3D wiring 패턴 재사용.
                 RobotScene3D(
@@ -175,11 +175,11 @@ public struct WalkLabView: View {
                 .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
                 .overlay(
                     RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: DFSize.borderHairline)
+                        .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
                 )
 
                 // 사이드 패널: 2D 발자취 (top-down) + IMU 게이지 2개.
-                VStack(spacing: 10) {
+                VStack(spacing: DFSpace.sm2) {
                     FootTrailCanvas(trail: session.footTrail,
                                     leftFoot: session.leftFoot,
                                     rightFoot: session.rightFoot)
@@ -187,7 +187,7 @@ public struct WalkLabView: View {
                         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                         .overlay(
                             RoundedRectangle(cornerRadius: DFRadius.xs2)
-                                .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: DFSize.borderHairline)
+                                .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
                         )
                     IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
                     IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
@@ -215,12 +215,12 @@ public struct WalkLabView: View {
         }()
         let detail = "프리셋(제자리·천천히·보통·빠르게·달리기·좌/우회전)은 WalkMotionLibrary 의 합성 step 시퀀스를 모터에 직접 송출합니다. 슬라이더(보폭/측면/회전/주기) 는 walk::engine 의 실 IK 완성 전까지 sim only (BLOCKER C3) — 발 자취·IMU·온도는 시뮬 모델."
         let tint: Color = walking ? .green : .blue
-        return HStack(spacing: 8) {
+        return HStack(spacing: DFSpace.sm) {
             Image(systemName: walking ? "figure.walk.motion" : "info.circle.fill")
                 .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: DFSpace.micro) {
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
                 Text(detail)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -229,20 +229,20 @@ public struct WalkLabView: View {
         }
         .padding(.horizontal, DFSpace.sm2)
         .padding(.vertical, DFSpace.xs2)
-        .background(tint.opacity(0.10))
+        .background(tint.opacity(DFOpacity.o10))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.xs2)
-                .stroke(tint.opacity(0.3), lineWidth: 1)
+                .stroke(tint.opacity(DFOpacity.o30), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
     }
 
     private func banner(systemImage: String, message: String, tint: Color) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: DFFontSize.s14, weight: .semibold))
             Text(message)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: DFFontSize.s13, weight: .medium))
             Spacer()
             Button("닫기") {
                 session.balanceLost = false
@@ -253,41 +253,41 @@ public struct WalkLabView: View {
         }
         .padding(.horizontal, DFSpace.sm3)
         .padding(.vertical, DFSpace.sm)
-        .background(tint.opacity(0.18))
+        .background(tint.opacity(DFOpacity.o18))
         .foregroundStyle(tint)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
 
     private var footTargetsCard: some View {
         HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text("Phase").font(.caption).foregroundStyle(.secondary)
                 Text(session.phaseLabel)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s13, weight: .semibold, design: .monospaced))
             }
             Divider().frame(height: 32)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text("L (x,y,z)").font(.caption).foregroundStyle(.secondary)
                 Text(fmt3(session.leftFoot))
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: DFFontSize.s12, design: .monospaced))
             }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text("R (x,y,z)").font(.caption).foregroundStyle(.secondary)
                 Text(fmt3(session.rightFoot))
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: DFFontSize.s12, design: .monospaced))
             }
             Divider().frame(height: 32)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text("Temp").font(.caption).foregroundStyle(.secondary)
                 Text(String(format: "%.1f°C", session.maxMotorTemp))
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: DFFontSize.s12, design: .monospaced))
                     .foregroundStyle(tempColor)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: DFSpace.micro2) {
                 Text("Elapsed").font(.caption).foregroundStyle(.secondary)
                 Text("\(session.elapsedMs) ms")
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: DFFontSize.s12, design: .monospaced))
             }
         }
         .padding(10)
@@ -304,8 +304,8 @@ public struct WalkLabView: View {
     }
 
     private var actionBar: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.sm2) {
                 Button {
                     tap(.idle)
                 } label: {
@@ -342,7 +342,7 @@ public struct WalkLabView: View {
             }
 
             if let evt = session.lastRobotEvent {
-                HStack(spacing: 6) {
+                HStack(spacing: DFSpace.xs2) {
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.caption2)
                     Text(evt).font(.caption.monospacedDigit())
@@ -363,14 +363,14 @@ public struct WalkLabView: View {
             }
             return "연결됨"
         }()
-        return HStack(spacing: 4) {
+        return HStack(spacing: DFSpace.xs) {
             Circle()
                 .fill(connected ? Color.green : Color.gray)
-                .frame(width: 6, height: 6)
+                .frame(width: DFSize.indicatorXxs, height: DFSize.indicatorXxs)
             Text(label).font(.caption2)
         }
         .padding(.horizontal, DFSpace.xs2).padding(.vertical, 2)
-        .background(Capsule().fill((connected ? Color.green : Color.gray).opacity(0.12)))
+        .background(Capsule().fill((connected ? Color.green : Color.gray).opacity(DFOpacity.subtle)))
     }
 
     // MARK: - Risk confirm sheet
@@ -386,7 +386,7 @@ public struct WalkLabView: View {
             }
             if let warning = pendingHighRiskPreset?.warning {
                 Text(warning)
-                    .font(.system(size: 13))
+                    .font(.system(size: DFFontSize.s13))
                     .foregroundStyle(.secondary)
             }
             Toggle("위험을 인지하고 진행합니다", isOn: $session.riskAcknowledged)

@@ -115,7 +115,7 @@ public struct AdvancedSlidersPanel: View {
             Toggle(isOn: $session.forceOverrideSafety) {
                 Label {
                     Text("안전 한도 해제")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DFFontSize.s11, weight: .medium))
                 } icon: {
                     Image(systemName: session.forceOverrideSafety
                           ? "lock.open.fill" : "lock.fill")
@@ -130,7 +130,7 @@ public struct AdvancedSlidersPanel: View {
 
             if session.forceOverrideSafety {
                 Text("⚠️ Smart clamp 가 해제됨. 점수가 critical (≥ 80) 이면 시작은 여전히 차단됩니다.")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.danger)
                     .padding(.horizontal, DFSpace.xs)
             }
@@ -139,13 +139,13 @@ public struct AdvancedSlidersPanel: View {
             if !stability.messages.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(stability.messages, id: \.self) { msg in
-                        HStack(alignment: .top, spacing: 4) {
+                        HStack(alignment: .top, spacing: DFSpace.xs) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 9))
+                                .font(.system(size: DFFontSize.s9))
                                 .foregroundStyle(stability.category == .critical
                                                   ? DFColor.danger : DFColor.warning)
                             Text(msg)
-                                .font(.system(size: 10))
+                                .font(.system(size: DFFontSize.s10))
                                 .foregroundStyle(DFColor.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -155,7 +155,7 @@ public struct AdvancedSlidersPanel: View {
             }
 
             // 빠른 reset
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Button("권장 안전 값으로") {
                     session.strideMm       = 15
                     session.sideMm         = 0
@@ -197,19 +197,19 @@ public struct StabilityGauge: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: categoryIcon)
                     .foregroundStyle(categoryColor)
                 Text("낙상 위험 \(Int(result.score)) / 100")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
                     .foregroundStyle(categoryColor)
                 Spacer()
                 Text(result.category.labelKo)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: DFFontSize.s10, weight: .semibold))
                     .padding(.horizontal, DFSpace.xs2)
                     .padding(.vertical, 2)
-                    .background(categoryColor.opacity(0.15))
+                    .background(categoryColor.opacity(DFOpacity.o15))
                     .foregroundStyle(categoryColor)
                     .clipShape(Capsule())
             }
@@ -220,9 +220,9 @@ public struct StabilityGauge: View {
                     // 배경 그라데이션
                     LinearGradient(
                         colors: [
-                            DFColor.success.opacity(0.4),
-                            DFColor.warning.opacity(0.5),
-                            DFColor.danger.opacity(0.6)
+                            DFColor.success.opacity(DFOpacity.disabled),
+                            DFColor.warning.opacity(DFOpacity.o50),
+                            DFColor.danger.opacity(DFOpacity.dim)
                         ],
                         startPoint: .leading,
                         endPoint: .trailing
@@ -240,14 +240,14 @@ public struct StabilityGauge: View {
 
             HStack {
                 Text("유효 속도")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.textSecondary)
                 Text(String(format: "%.1f mm/s", result.effectiveSpeedMmPerSec))
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: DFFontSize.s10, design: .monospaced))
                 Spacer()
                 if !result.breakdown.isEmpty {
                     Text(topContributorsLabel)
-                        .font(.system(size: 10))
+                        .font(.system(size: DFFontSize.s10))
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(1)
                 }

@@ -39,7 +39,7 @@ public struct EStopButton: View {
                     .frame(width: DFSize.estop, height: DFSize.estop)
                 // 아이콘 (색+아이콘+텍스트 3중)
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 22, weight: .heavy))
+                    .font(.system(size: DFFontSize.s22, weight: .heavy))
                     .foregroundStyle(.white)
             }
             .scaleEffect(isPressing ? 0.92 : (pulse && !reduceMotion ? 1.04 : 1.0))

@@ -26,12 +26,12 @@ public struct WalkLab: View {
             let isCompact = geo.size.width < 920
             if isCompact {
                 // 좁은 화면 — control panel을 ScrollView에 + 시각화는 위에 고정 비율.
-                VStack(spacing: 0) {
+                VStack(spacing: DFSpace.none) {
                     ZStack(alignment: .topTrailing) {
                         RobotScene3D(pose: .walkReady, footTrace: trace,
                                      showAxes: true, cameraController: camera)
                             .background(LinearGradient(
-                                colors: [DFColor.canvas.opacity(0.6), DFColor.canvas],
+                                colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                                 startPoint: .top, endPoint: .bottom))
                         phaseBadge.padding(DFSpace.md)
                         ViewportControls(camera: camera)
@@ -45,14 +45,14 @@ public struct WalkLab: View {
                 }
                 .onDisappear { stop() }
             } else {
-                HStack(spacing: 0) {
+                HStack(spacing: DFSpace.none) {
                     controlPanel
                     Divider()
                     ZStack(alignment: .topTrailing) {
                         RobotScene3D(pose: .walkReady, footTrace: trace,
                                      showAxes: true, cameraController: camera)
                             .background(LinearGradient(
-                                colors: [DFColor.canvas.opacity(0.6), DFColor.canvas],
+                                colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                                 startPoint: .top, endPoint: .bottom))
                         phaseBadge.padding(DFSpace.md)
                         ViewportControls(camera: camera)
@@ -89,7 +89,7 @@ public struct WalkLab: View {
                   : "켜면 매 50ms마다 다리 6관절 명령이 실 로봇에 전송됩니다 — 안전한 환경에서만 사용")
 
             GroupBox("걸음 설정") {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: DFSpace.xs2) {
                     sliderRow("앞뒤 한 걸음", value: $x, range: -0.04...0.04, step: 0.005, format: "%+.0f mm",
                               displayMultiplier: 1000)
                     sliderRow("옆 한 걸음", value: $y, range: -0.03...0.03, step: 0.005, format: "%+.0f mm",
@@ -169,10 +169,10 @@ public struct WalkLab: View {
     @ViewBuilder
     private var phaseBadge: some View {
         if let s = lastSample {
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 Image(systemName: phaseIcon(s.phase))
                     .foregroundStyle(phaseTint(s.phase))
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: DFSpace.none) {
                     Text(phaseKoreanLabel(s.phase)).font(DFFont.bodyEmph)
                     Text(String(format: "%.1f초 경과", s.elapsedMs / 1000.0))
                         .font(DFFont.caption.monospaced())
@@ -214,7 +214,7 @@ public struct WalkLab: View {
     // MARK: - Trace table
 
     private var traceTable: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("최근 발 위치 (m)")
                 .font(DFFont.bodyEmph)
             HStack {
@@ -225,7 +225,7 @@ public struct WalkLab: View {
             .font(DFFont.caption)
             .foregroundStyle(DFColor.textSecondary)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
+                LazyVStack(alignment: .leading, spacing: DFSpace.micro) {
                     ForEach(Array(trace.suffix(8).reversed().enumerated()), id: \.offset) { idx, lf in
                         let rf = rightTrace.suffix(8).reversed()
                             .enumerated().first { $0.offset == idx }?.element ?? SIMD3()

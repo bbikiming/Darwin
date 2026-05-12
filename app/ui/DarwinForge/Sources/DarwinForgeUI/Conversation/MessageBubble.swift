@@ -22,7 +22,7 @@ public struct MessageBubble: View {
     }
 
     public var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        HStack(alignment: .top, spacing: DFSpace.none) {
             switch message.kind {
             case .user:
                 Spacer(minLength: DFSpace.xxl)
@@ -62,7 +62,7 @@ public struct MessageBubble: View {
     private var systemBubble: some View {
         HStack(alignment: .top, spacing: DFSpace.sm) {
             Image(systemName: "cpu")
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: DFFontSize.s16, weight: .medium))
                 .foregroundStyle(DFColor.accent)
                 .padding(.top, 2)
             Text(message.text)
@@ -120,7 +120,7 @@ public struct MessageBubble: View {
 
     @ViewBuilder
     private func argsList(_ args: [String: ArgValue]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
             ForEach(args.keys.sorted(), id: \.self) { key in
                 if let v = args[key] {
                     HStack(alignment: .firstTextBaseline) {
@@ -156,7 +156,7 @@ public struct MessageBubble: View {
     private var errorBubble: some View {
         HStack(alignment: .top, spacing: DFSpace.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 16))
+                .font(.system(size: DFFontSize.s16))
                 .foregroundStyle(DFColor.danger)
                 .padding(.top, 2)
             Text(message.text)
@@ -166,11 +166,11 @@ public struct MessageBubble: View {
                 .padding(.vertical, DFSpace.sm)
                 .background(
                     RoundedRectangle(cornerRadius: DFRadius.md, style: .continuous)
-                        .fill(DFColor.danger.opacity(0.10))
+                        .fill(DFColor.danger.opacity(DFOpacity.o10))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: DFRadius.md, style: .continuous)
-                        .stroke(DFColor.danger.opacity(0.4), lineWidth: 0.5)
+                        .stroke(DFColor.danger.opacity(DFOpacity.disabled), lineWidth: 0.5)
                 )
         }
         .accessibilityLabel("오류: \(message.text)")

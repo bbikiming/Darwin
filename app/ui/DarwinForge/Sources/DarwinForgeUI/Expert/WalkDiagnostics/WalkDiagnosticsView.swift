@@ -71,7 +71,7 @@ public struct WalkDiagnosticsView: View {
             let wide = geo.size.width >= 1280
             let regular = geo.size.width >= 1100
 
-            VStack(spacing: 0) {
+            VStack(spacing: DFSpace.none) {
                 toolbar
                     .padding(.horizontal, DFSpace.md)
                     .padding(.vertical, 8)
@@ -116,23 +116,23 @@ public struct WalkDiagnosticsView: View {
     private var toolbar: some View {
         HStack(spacing: DFSpace.md) {
             // Run / Pause / Step / Reset
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 DFButton(.primary, size: .small, action: toggleRun) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         Image(systemName: enabled ? "pause.fill" : "play.fill")
                         Text(enabled ? "일시정지" : "실행")
                     }
                 }
                 .keyboardShortcut(.space, modifiers: [])
                 DFButton(.secondary, size: .small, action: stepOnce) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         Image(systemName: "forward.frame.fill")
                         Text("스텝")
                     }
                 }
                 .disabled(enabled)
                 DFButton(.ghost, size: .small, action: reset) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         Image(systemName: "arrow.counterclockwise")
                         Text("리셋")
                     }
@@ -142,7 +142,7 @@ public struct WalkDiagnosticsView: View {
             Divider().frame(height: 22)
 
             // Sample rate
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "metronome").foregroundStyle(DFColor.textSecondary)
                 Picker("", selection: $sampleRateHz) {
                     Text("50 Hz").tag(50)
@@ -159,7 +159,7 @@ public struct WalkDiagnosticsView: View {
             Divider().frame(height: 22)
 
             // Units
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Picker("자이로", selection: $unitGyro) {
                     Text("rad/s").tag(GyroUnit.radPerSec)
                     Text("deg/s").tag(GyroUnit.degPerSec)
@@ -182,7 +182,7 @@ public struct WalkDiagnosticsView: View {
 
             // CSV export
             DFButton(.secondary, size: .small, action: exportCsv) {
-                HStack(spacing: 4) {
+                HStack(spacing: DFSpace.xs) {
                     Image(systemName: "tablecells")
                     Text("CSV")
                 }
@@ -198,26 +198,26 @@ public struct WalkDiagnosticsView: View {
 
     private var statusPill: some View {
         let on = enabled
-        return HStack(spacing: 6) {
+        return HStack(spacing: DFSpace.xs2) {
             Circle()
                 .fill(on ? DFColor.success : DFColor.textSecondary)
                 .frame(width: 7, height: 7)
-                .shadow(color: on ? DFColor.success.opacity(0.7) : .clear, radius: 3)
+                .shadow(color: on ? DFColor.success.opacity(DFOpacity.o70) : .clear, radius: 3)
             Text(on ? "RUNNING" : "PAUSED")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .font(.system(size: DFFontSize.s10, weight: .bold, design: .monospaced))
                 .foregroundStyle(on ? DFColor.success : DFColor.textSecondary)
             Text("·").foregroundStyle(DFColor.textSecondary)
             Text("t=\(String(format: "%6.3fs", simTime))")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.system(size: DFFontSize.s10, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
             Text("·").foregroundStyle(DFColor.textSecondary)
             Text("n=\(data.gyroX.samples.count)")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.system(size: DFFontSize.s10, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
         }
         .padding(.horizontal, 10).padding(.vertical, 4)
         .background(Capsule().fill(DFColor.elev2))
-        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5))
+        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 0.5))
     }
 
     // MARK: - Left panel (input controls)
@@ -240,7 +240,7 @@ public struct WalkDiagnosticsView: View {
             icon: "figure.walk",
             tint: DFColor.accent
         ) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
                 numericRow(label: "x", unit: "m/cyc", value: $cmdX, range: -0.05...0.05, step: 0.005, fmt: "%+.3f")
                 numericRow(label: "y", unit: "m/cyc", value: $cmdY, range: -0.03...0.03, step: 0.005, fmt: "%+.3f")
                 numericRow(label: "a", unit: "rad/cyc", value: $cmdA, range: -0.3...0.3, step: 0.01, fmt: "%+.3f")
@@ -258,13 +258,13 @@ public struct WalkDiagnosticsView: View {
             icon: "waveform.path.ecg",
             tint: DFColor.info
         ) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
                 numericRow(label: "gyro σ", unit: "rad/s", value: $gyroNoiseSigma,
                            range: 0.0...0.2, step: 0.005, fmt: "%.3f")
                 numericRow(label: "accel σ", unit: "m/s²", value: $accelNoiseSigma,
                            range: 0.0...0.5, step: 0.01, fmt: "%.3f")
                 Text("실 로봇 IMU FFI(v1.1) 추가 전 합성 모드. WalkEngine 의 발 trajectory 로부터 finite-diff + ZMP 근사.")
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: DFFontSize.s9, design: .monospaced))
                     .foregroundStyle(DFColor.textSecondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -281,22 +281,22 @@ public struct WalkDiagnosticsView: View {
             icon: "function",
             tint: DFColor.torque
         ) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
                 numericRow(label: "α (gyro weight)", unit: "", value: $filterAlpha,
                            range: 0.50...0.999, step: 0.005, fmt: "%.3f")
                 HStack {
-                    Text("τ ≈").font(.system(size: 10, design: .monospaced))
+                    Text("τ ≈").font(.system(size: DFFontSize.s10, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                     Text("\(timeConstantMs) ms")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.system(size: DFFontSize.s10, weight: .bold, design: .monospaced))
                         .foregroundStyle(DFColor.torque)
                     Spacer()
                     Text("@ \(sampleRateHz) Hz")
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: DFFontSize.s9, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                 }
                 DFButton(.ghost, size: .small, action: { filter.reset() }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         Image(systemName: "arrow.counterclockwise")
                         Text("필터 리셋")
                     }
@@ -308,7 +308,7 @@ public struct WalkDiagnosticsView: View {
 
     private var channelToggleCard: some View {
         DFPanel("채널 표시", icon: "eye", tint: DFColor.textSecondary) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
                 channelToggle("gyro.x", color: gyroX_color, isOn: $showGx)
                 channelToggle("gyro.y", color: gyroY_color, isOn: $showGy)
                 channelToggle("gyro.z", color: gyroZ_color, isOn: $showGz)
@@ -327,12 +327,12 @@ public struct WalkDiagnosticsView: View {
 
     private func channelToggle(_ label: String, color: Color, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 RoundedRectangle(cornerRadius: 1)
                     .fill(color)
                     .frame(width: 12, height: 2)
                 Text(label)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: DFFontSize.s10, design: .monospaced))
             }
         }
         .toggleStyle(.checkbox)
@@ -395,7 +395,7 @@ public struct WalkDiagnosticsView: View {
 
     private var liveNumericCard: some View {
         DFPanel("Live", icon: "waveform", tint: DFColor.accent) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
                 liveRow("gyro.x", data.gyroX.samples.last?.v, scale: unitGyro)
                 liveRow("gyro.y", data.gyroY.samples.last?.v, scale: unitGyro)
                 liveRow("gyro.z", data.gyroZ.samples.last?.v, scale: unitGyro)
@@ -415,12 +415,12 @@ public struct WalkDiagnosticsView: View {
     private var phaseLiveRow: some View {
         HStack {
             Text("phase")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.system(size: DFFontSize.s10, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
                 .frame(width: 100, alignment: .leading)
             Spacer()
             Text(data.phaseMarks.last.map { "\($0.phase.rawValue)" } ?? "—")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(DFColor.textPrimary)
             Text("")
                 .frame(width: 38)
@@ -430,15 +430,15 @@ public struct WalkDiagnosticsView: View {
     private func liveRow<U: UnitConvertible>(_ label: String, _ v: Double?, scale: U) -> some View {
         HStack {
             Text(label)
-                .font(.system(size: 10, design: .monospaced))
+                .font(.system(size: DFFontSize.s10, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
                 .frame(width: 100, alignment: .leading)
             Spacer()
             Text(v.map { String(format: "%+10.4f", scale.convert($0)) } ?? "—")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(DFColor.textPrimary)
             Text(scale.label)
-                .font(.system(size: 9, design: .monospaced))
+                .font(.system(size: DFFontSize.s9, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
                 .frame(width: 38, alignment: .trailing)
         }
@@ -448,7 +448,7 @@ public struct WalkDiagnosticsView: View {
         DFPanel("Stats (\(data.gyroX.samples.count) samples)",
                 icon: "chart.bar.doc.horizontal",
                 tint: DFColor.info) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 statsHeader
                 statsRow("gyro.x",  data.gyroX.stats,  scale: unitGyro)
                 statsRow("gyro.y",  data.gyroY.stats,  scale: unitGyro)
@@ -461,21 +461,21 @@ public struct WalkDiagnosticsView: View {
     }
 
     private var statsHeader: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             Text("").frame(width: 56, alignment: .leading)
             Text("μ").frame(width: 50, alignment: .trailing)
             Text("σ").frame(width: 44, alignment: .trailing)
             Text("min").frame(width: 50, alignment: .trailing)
             Text("max").frame(width: 50, alignment: .trailing)
         }
-        .font(.system(size: 9, weight: .bold, design: .monospaced))
+        .font(.system(size: DFFontSize.s9, weight: .bold, design: .monospaced))
         .foregroundStyle(DFColor.textSecondary)
     }
 
     private func statsRow<U: UnitConvertible>(_ label: String, _ stats: SignalStatistics, scale: U) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             Text(label)
-                .font(.system(size: 9, design: .monospaced))
+                .font(.system(size: DFFontSize.s9, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
                 .frame(width: 56, alignment: .leading)
             Text(String(format: "%+.3f", scale.convert(stats.mean))).frame(width: 50, alignment: .trailing)
@@ -483,18 +483,18 @@ public struct WalkDiagnosticsView: View {
             Text(String(format: "%+.2f", scale.convert(stats.min))).frame(width: 50, alignment: .trailing)
             Text(String(format: "%+.2f", scale.convert(stats.max))).frame(width: 50, alignment: .trailing)
         }
-        .font(.system(size: 9, design: .monospaced))
-        .foregroundStyle(DFColor.textPrimary.opacity(0.85))
+        .font(.system(size: DFFontSize.s9, design: .monospaced))
+        .foregroundStyle(DFColor.textPrimary.opacity(DFOpacity.o85))
     }
 
     private var sampleLogCard: some View {
         DFPanel("Last frames", icon: "list.bullet.rectangle", tint: DFColor.textSecondary) {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: DFSpace.micro) {
                 let tail = data.recentLog.suffix(8).reversed()
                 ForEach(Array(tail.enumerated()), id: \.offset) { _, line in
                     Text(line)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(DFColor.textPrimary.opacity(0.85))
+                        .font(.system(size: DFFontSize.s9, design: .monospaced))
+                        .foregroundStyle(DFColor.textPrimary.opacity(DFOpacity.o85))
                         .lineLimit(1)
                 }
             }
@@ -508,22 +508,22 @@ public struct WalkDiagnosticsView: View {
                             range: ClosedRange<Double>,
                             step: Double,
                             fmt: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: DFSpace.micro2) {
             HStack {
                 Text(label)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer()
                 Text(String(format: fmt, value.wrappedValue))
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s11, weight: .bold, design: .monospaced))
                     .foregroundStyle(DFColor.textPrimary)
                 if !unit.isEmpty {
                     Text(unit)
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: DFFontSize.s9, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Slider(value: value, in: range, step: step)
                     .controlSize(.mini)
                 Stepper("", value: value, in: range, step: step)
@@ -629,11 +629,11 @@ public struct WalkDiagnosticsView: View {
     @ViewBuilder
     private var toast: some View {
         if showExportToast, let path = lastExportPath {
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(DFColor.success)
                 Text(path)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: DFFontSize.s10, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 480)
@@ -641,7 +641,7 @@ public struct WalkDiagnosticsView: View {
             .padding(.horizontal, 12).padding(.vertical, 6)
             .background(.regularMaterial)
             .clipShape(Capsule())
-            .overlay(Capsule().stroke(DFColor.success.opacity(0.35), lineWidth: 0.5))
+            .overlay(Capsule().stroke(DFColor.success.opacity(DFOpacity.strong), lineWidth: 0.5))
             .padding(.top, 64)
             .transition(.move(edge: .top).combined(with: .opacity))
         }
