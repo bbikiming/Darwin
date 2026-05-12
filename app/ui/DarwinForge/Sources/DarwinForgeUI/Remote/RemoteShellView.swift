@@ -35,7 +35,7 @@ public struct RemoteShellView: View {
             tint: DFColor.forge,
             trailing: { headerTrailing }
         ) {
-            VStack(spacing: 0) {
+            VStack(spacing: DFSpace.none) {
                 if shouldShowSetupWizard {
                     setupWizardContent
                 } else {
@@ -62,7 +62,7 @@ public struct RemoteShellView: View {
     /// Page scaffold header 우측 — 채널 칩 + 모드 토글.
     @ViewBuilder
     private var headerTrailing: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             channelChip
             if let path = shell.lastMountPath {
                 DFChip(URL(fileURLWithPath: path).lastPathComponent,
@@ -76,7 +76,7 @@ public struct RemoteShellView: View {
     // MARK: - Setup wizard
 
     private var setupWizardContent: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DFSpace.none) {
             InitialSetupWizardView()
                 .environmentObject(shellStoreOrFallback)
             Divider()
@@ -114,7 +114,7 @@ public struct RemoteShellView: View {
     // MARK: - Quick actions
 
     private var quickActionsBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             // 카테고리 picker (segmented).
             Picker("", selection: $selectedCategory) {
                 ForEach(QuickActionCategory.allCases) { cat in
@@ -126,7 +126,7 @@ public struct RemoteShellView: View {
 
             // 액션 카드 그리드 — 가로 스크롤.
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: DFSpace.xs2) {
                     ForEach(QuickActionCatalog.actions(in: selectedCategory)) { action in
                         quickActionButton(action)
                     }
@@ -147,32 +147,32 @@ public struct RemoteShellView: View {
                 Task { await shell.send(action.command) }
             }
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
+                HStack(spacing: DFSpace.xs) {
                     Image(systemName: action.icon)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DFFontSize.s11, weight: .semibold))
                         .foregroundStyle(action.category.tint)
                     Text(action.label)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DFFontSize.s11, weight: .semibold))
                     if action.requiresConfirm {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 8))
+                            .font(.system(size: DFFontSize.s8))
                             .foregroundStyle(DFColor.warning)
                     }
                 }
                 Text(action.detail)
-                    .font(.system(size: 9))
+                    .font(.system(size: DFFontSize.s9))
                     .foregroundStyle(DFColor.textSecondary)
                     .lineLimit(1)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .frame(minWidth: 130, alignment: .leading)
-            .background(action.category.tint.opacity(0.08))
+            .background(action.category.tint.opacity(DFOpacity.ghost))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(action.category.tint.opacity(0.25), lineWidth: 0.5)
+                    .stroke(action.category.tint.opacity(DFOpacity.o25), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)
@@ -193,20 +193,20 @@ public struct RemoteShellView: View {
                 .padding(.horizontal, 8).padding(.vertical, 4)
                 .background(DFColor.card)
                 .clipShape(Capsule())
-                .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5))
+                .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }
 
     private var mountChip: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             channelChip
             if let path = shell.lastMountPath {
                 Label(URL(fileURLWithPath: path).lastPathComponent,
                       systemImage: "externaldrive.fill")
                     .font(DFFont.caption.monospaced())
                     .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(DFColor.textSecondary.opacity(0.10))
+                    .background(DFColor.textSecondary.opacity(DFOpacity.o10))
                     .foregroundStyle(DFColor.textSecondary)
                     .clipShape(Capsule())
             }
@@ -223,7 +223,7 @@ public struct RemoteShellView: View {
             }
         }()
         return Label(text, systemImage: icon)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: DFFontSize.s10, weight: .semibold))
             .padding(.horizontal, 6).padding(.vertical, 3)
             .background(tint.opacity(0.14))
             .foregroundStyle(tint)
@@ -244,7 +244,7 @@ public struct RemoteShellView: View {
     private var content: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: DFSpace.sm3) {
                     if shell.history.isEmpty {
                         emptyState
                             .padding(.top, DFSpace.lg)
@@ -267,7 +267,7 @@ public struct RemoteShellView: View {
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DFSpace.sm3) {
             Label("처음 사용 — 로봇 측 셋업이 필요해요",
                   systemImage: "wand.and.stars")
                 .font(DFFont.bodyEmph)
@@ -277,7 +277,7 @@ public struct RemoteShellView: View {
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
 
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 Button {
                     let pb = NSPasteboard.general
                     pb.clearContents()
@@ -301,7 +301,7 @@ public struct RemoteShellView: View {
 
             DisclosureGroup("셋업 명령 미리보기 (SMB watcher)") {
                 Text(RobotSetupCommand.remoteShellSetup)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: DFFontSize.s10, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(DFColor.elev2)
@@ -321,7 +321,7 @@ public struct RemoteShellView: View {
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
 
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 Button {
                     let pb = NSPasteboard.general
                     pb.clearContents()
@@ -346,7 +346,7 @@ public struct RemoteShellView: View {
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .background(DFColor.card)
                         .clipShape(Capsule())
-                        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5))
+                        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
                 Spacer()
@@ -366,8 +366,8 @@ public struct RemoteShellView: View {
     }
 
     private func exchangeCard(_ ex: RemoteShell.Exchange) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: ex.error == nil ? "arrow.up.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(ex.error == nil ? DFColor.accent : DFColor.danger)
                 Text("명령")
@@ -376,12 +376,12 @@ public struct RemoteShellView: View {
                 Spacer()
                 if let ms = ex.elapsedMs {
                     Text("\(ms)ms")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: DFFontSize.s10, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
             Text(ex.command)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.system(size: DFFontSize.s12, design: .monospaced))
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(DFColor.elev2)
@@ -398,14 +398,14 @@ public struct RemoteShellView: View {
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)
                 Text(result)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: DFFontSize.s11, design: .monospaced))
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DFColor.success.opacity(0.06))
+                    .background(DFColor.success.opacity(DFOpacity.o06))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .textSelection(.enabled)
             } else {
-                HStack(spacing: 6) {
+                HStack(spacing: DFSpace.xs2) {
                     ProgressView().controlSize(.small)
                     Text("실행 중…")
                         .font(DFFont.caption)
@@ -419,21 +419,21 @@ public struct RemoteShellView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
-                .stroke(DFColor.textSecondary.opacity(0.10), lineWidth: 0.5)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.o10), lineWidth: 0.5)
         )
     }
 
     // MARK: - Input bar
 
     private var inputBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
             presetRow
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: DFSpace.sm) {
                 TextField("로봇에서 실행할 명령 (예: ls ~/Desktop, sudo /etc/init.d/df-inbox status)",
                           text: $inputText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...6)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(size: DFFontSize.s13, design: .monospaced))
                     .padding(8)
                     .background(DFColor.elev2)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -443,10 +443,10 @@ public struct RemoteShellView: View {
                     sendNow()
                 } label: {
                     Image(systemName: shell.isSending ? "ellipsis" : "arrow.up")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: DFFontSize.s14, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(canSend ? DFColor.accent : DFColor.textSecondary.opacity(0.3)))
+                        .frame(width: DFSize.iconXl, height: DFSize.iconXl)
+                        .background(Circle().fill(canSend ? DFColor.accent : DFColor.textSecondary.opacity(DFOpacity.o30)))
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
@@ -460,7 +460,7 @@ public struct RemoteShellView: View {
 
     private var presetRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 presetChip("inbox 상태", cmd: "sudo /etc/init.d/df-inbox status")
                 presetChip("ttyUSB0 확인", cmd: "ls -la /dev/ttyUSB* 2>/dev/null; lsof /dev/ttyUSB0 2>/dev/null")
                 presetChip("5530 listen", cmd: "ss -lnt | grep :5530 || netstat -lnt | grep :5530")
@@ -478,12 +478,12 @@ public struct RemoteShellView: View {
             inputText = cmd
         } label: {
             Text(label)
-                .font(.system(size: 10))
+                .font(.system(size: DFFontSize.s10))
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(DFColor.accent.opacity(0.10))
+                .background(DFColor.accent.opacity(DFOpacity.o10))
                 .foregroundStyle(DFColor.accent)
                 .clipShape(Capsule())
-                .overlay(Capsule().stroke(DFColor.accent.opacity(0.25), lineWidth: 0.5))
+                .overlay(Capsule().stroke(DFColor.accent.opacity(DFOpacity.o25), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
         .help(cmd)

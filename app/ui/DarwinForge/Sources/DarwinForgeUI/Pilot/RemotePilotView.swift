@@ -123,19 +123,19 @@ public struct RemotePilotView: View {
     // MARK: - Header
 
     private var headerBlock: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.micro2) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "gamecontroller.fill")
                     .foregroundStyle(DFColor.accent)
                 Text("원격 조종")
                     .font(DFFont.title)
             }
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Text("Sprint 15 v1.0")
                     .font(DFFont.caption.monospaced())
                     .foregroundStyle(DFColor.accent)
                     .padding(.horizontal, DFSpace.xs2).padding(.vertical, 2)
-                    .background(Capsule().fill(DFColor.accent.opacity(0.12)))
+                    .background(Capsule().fill(DFColor.accent.opacity(DFOpacity.subtle)))
                 Text("Action Bar 7 페이지 활성")
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)
@@ -172,7 +172,7 @@ public struct RemotePilotView: View {
                 )
                 .background(
                     LinearGradient(
-                        colors: [DFColor.canvas.opacity(0.6), DFColor.canvas],
+                        colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                         startPoint: .top, endPoint: .bottom
                     )
                 )
@@ -210,10 +210,10 @@ public struct RemotePilotView: View {
     }
 
     private var meshFallbackBanner: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             Image(systemName: "cube.transparent")
                 .foregroundStyle(DFColor.warning)
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: DFSpace.none) {
                 Text("기본 모델 로드 실패")
                     .font(DFFont.bodyEmph)
                 Text("단순 형상으로 표시 중 — 빌드의 .stl 메쉬 확인")
@@ -227,7 +227,7 @@ public struct RemotePilotView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
-                .strokeBorder(DFColor.warning.opacity(0.6), lineWidth: 1)
+                .strokeBorder(DFColor.warning.opacity(DFOpacity.dim), lineWidth: 1)
         )
     }
 
@@ -246,25 +246,25 @@ public struct RemotePilotView: View {
     // MARK: - Overlays
 
     private var simBanner: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             Image(systemName: "wifi.slash")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: DFFontSize.s11, weight: .semibold))
             Text("시뮬 모드 — 실 로봇 연결 안 됨. 동작 버튼은 시각 미리보기만.")
                 .font(DFFont.caption)
         }
         .padding(.horizontal, DFSpace.sm3).padding(.vertical, DFSpace.xs2)
         .foregroundStyle(DFColor.warning)
         .background(.regularMaterial)
-        .background(DFColor.warning.opacity(0.10))
+        .background(DFColor.warning.opacity(DFOpacity.o10))
         .clipShape(Capsule())
-        .overlay(Capsule().stroke(DFColor.warning.opacity(0.35), lineWidth: DFSize.borderHairline))
+        .overlay(Capsule().stroke(DFColor.warning.opacity(DFOpacity.strong), lineWidth: DFSize.borderHairline))
     }
 
     @ViewBuilder
     private var toastOverlay: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: DFSpace.xs2) {
             if let err = channel.lastError {
-                HStack(spacing: 6) {
+                HStack(spacing: DFSpace.xs2) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(DFColor.warning)
                     Text(err)
@@ -273,9 +273,9 @@ public struct RemotePilotView: View {
                 }
                 .padding(.horizontal, 14).padding(.vertical, DFSpace.sm)
                 .background(.regularMaterial)
-                .background(DFColor.warning.opacity(0.10))
+                .background(DFColor.warning.opacity(DFOpacity.o10))
                 .clipShape(Capsule())
-                .overlay(Capsule().stroke(DFColor.warning.opacity(0.45), lineWidth: DFSize.borderHairline))
+                .overlay(Capsule().stroke(DFColor.warning.opacity(DFOpacity.o45), lineWidth: DFSize.borderHairline))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityIdentifier("pilot.error")
             }
@@ -285,7 +285,7 @@ public struct RemotePilotView: View {
                     .padding(.horizontal, 14).padding(.vertical, DFSpace.sm)
                     .background(.regularMaterial)
                     .clipShape(Capsule())
-                    .overlay(Capsule().stroke(DFColor.accent.opacity(0.35), lineWidth: DFSize.borderHairline))
+                    .overlay(Capsule().stroke(DFColor.accent.opacity(DFOpacity.strong), lineWidth: DFSize.borderHairline))
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .accessibilityIdentifier("pilot.toast")
             }

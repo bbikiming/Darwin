@@ -79,7 +79,7 @@ public struct PilotHudStrip: View {
 
     private var wrappedGrid: some View {
         VStack(alignment: .leading, spacing: DFSpace.sm) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: DFSpace.sm)], spacing: DFSpace.sm) {
                 voltageBlock
                 temperatureBlock
                 sessionTimerBlock
@@ -93,7 +93,7 @@ public struct PilotHudStrip: View {
 
     private var divider: some View {
         Rectangle()
-            .fill(DFColor.textSecondary.opacity(0.15))
+            .fill(DFColor.textSecondary.opacity(DFOpacity.o15))
             .frame(width: 1, height: 36)
     }
 
@@ -208,15 +208,15 @@ public struct PilotHudStrip: View {
         Button {
             channel.emergencyStop()
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "exclamationmark.octagon.fill")
-                    .font(.system(size: 14, weight: .bold))
-                VStack(alignment: .leading, spacing: 0) {
+                    .font(.system(size: DFFontSize.s14, weight: .bold))
+                VStack(alignment: .leading, spacing: DFSpace.none) {
                     Text("긴급 정지")
                         .font(DFFont.bodyEmph)
                     Text("⌘⇧.")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .font(.system(size: DFFontSize.s9, design: .monospaced))
+                        .foregroundStyle(.white.opacity(DFOpacity.o85))
                 }
             }
             .padding(.horizontal, 14)
@@ -225,7 +225,7 @@ public struct PilotHudStrip: View {
             .background(
                 RoundedRectangle(cornerRadius: DFRadius.md)
                     .fill(DFColor.danger)
-                    .shadow(color: DFColor.danger.opacity(0.45), radius: 8, y: 2)
+                    .shadow(color: DFColor.danger.opacity(DFOpacity.o45), radius: 8, y: 2)
             )
         }
         .buttonStyle(.plain)
@@ -237,12 +237,12 @@ public struct PilotHudStrip: View {
     // MARK: - Metric cell
 
     private func metricCell(label: String, icon: String, tint: Color, value: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: DFFontSize.s14, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: 18)
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: DFSpace.none) {
                 Text(label)
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)

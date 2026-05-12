@@ -13,7 +13,7 @@ public struct InputBar: View {
     public init(vm: ConversationViewModel) { self.vm = vm }
 
     public var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DFSpace.none) {
             Divider()
             HStack(alignment: .bottom, spacing: DFSpace.sm) {
                 // 음성 버튼 (Phase 4 — 현재 비활성)
@@ -45,13 +45,13 @@ public struct InputBar: View {
                             .tint(.white)
                     } else {
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: DFFontSize.s14, weight: .bold))
                             .foregroundStyle(.white)
                     }
                 }
-                .frame(width: 32, height: 32)
+                .frame(width: DFSize.iconXl, height: DFSize.iconXl)
                 .background(
-                    Circle().fill(canSend ? DFColor.accent : DFColor.textSecondary.opacity(0.3))
+                    Circle().fill(canSend ? DFColor.accent : DFColor.textSecondary.opacity(DFOpacity.o30))
                 )
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
@@ -74,9 +74,9 @@ public struct InputBar: View {
             // Phase 4 — WhisperKit / SpeechAnalyzer
         } label: {
             Image(systemName: "mic")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: DFFontSize.s14, weight: .medium))
                 .foregroundStyle(DFColor.textSecondary)
-                .frame(width: 32, height: 32)
+                .frame(width: DFSize.iconXl, height: DFSize.iconXl)
                 .background(
                     Circle().fill(Color.primary.opacity(0.05))
                 )

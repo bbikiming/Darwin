@@ -27,7 +27,7 @@ public struct TelemetrySparkline: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
             HStack {
                 Text(label)
                     .font(DFFont.caption)
@@ -63,7 +63,7 @@ public struct TelemetrySparkline: View {
                     p.move(to: CGPoint(x: 0, y: h - 1))
                     p.addLine(to: CGPoint(x: w, y: h - 1))
                 }
-                .stroke(DFColor.textSecondary.opacity(0.15), lineWidth: 0.5)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.o15), lineWidth: 0.5)
 
                 if samples.count >= 2 {
                     line(in: CGSize(width: w, height: h))
@@ -72,7 +72,7 @@ public struct TelemetrySparkline: View {
 
                     fillArea(in: CGSize(width: w, height: h))
                         .fill(LinearGradient(
-                            colors: [currentColor.opacity(0.30), currentColor.opacity(0.0)],
+                            colors: [currentColor.opacity(DFOpacity.o30), currentColor.opacity(0.0)],
                             startPoint: .top, endPoint: .bottom)
                         )
                 }

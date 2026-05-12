@@ -51,7 +51,7 @@ public struct DarwinForgeLogo: View {
                     .accessibilityHidden(true)
             }
             if variant != .markOnly {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: DFSpace.none) {
                     wordmark
                     if showsTagline {
                         Text("다윈-OP 로봇을 위한 통합 작업실")
@@ -67,7 +67,7 @@ public struct DarwinForgeLogo: View {
     }
 
     private var wordmark: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: DFSpace.none) {
             Text("Darwin").foregroundStyle(DarwinForgePalette.body)
             Text("Forge").foregroundStyle(DarwinForgePalette.forge)
         }
@@ -141,11 +141,11 @@ public enum DarwinForgePalette {
 #if DEBUG
 struct DarwinForgeLogo_Previews: PreviewProvider {
     static var previews: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: DFSpace.lg) {
             DarwinForgeLogo(variant: .full, density: .prominent, showsTagline: true)
             DarwinForgeLogo(variant: .full, density: .standard)
             DarwinForgeLogo(variant: .full, density: .compact)
-            HStack(spacing: 24) {
+            HStack(spacing: DFSpace.lg) {
                 DarwinForgeLogo(variant: .markOnly, density: .prominent)
                 DarwinForgeLogo(variant: .wordmarkOnly, density: .prominent)
             }

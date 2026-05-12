@@ -19,7 +19,7 @@ public struct TorqueLoadGrid: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: DFSpace.sm) {
             header
             grid
             if let danger = dangerJoint {
@@ -39,12 +39,12 @@ public struct TorqueLoadGrid: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             Image(systemName: "bolt.heart.fill")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: DFFontSize.s11, weight: .semibold))
                 .foregroundStyle(headerTint)
             Text("모터 부하 신호등")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: DFFontSize.s11, weight: .semibold))
                 .foregroundStyle(DFColor.textSecondary)
                 .textCase(.uppercase)
             Spacer()
@@ -57,10 +57,10 @@ public struct TorqueLoadGrid: View {
     }
 
     private func legendItem(color: Color, label: String) -> some View {
-        HStack(spacing: 2) {
-            Circle().fill(color).frame(width: 5, height: 5)
+        HStack(spacing: DFSpace.micro2) {
+            Circle().fill(color).frame(width: DFSize.indicatorXs, height: DFSize.indicatorXs)
             Text(label)
-                .font(.system(size: 9))
+                .font(.system(size: DFFontSize.s9))
                 .foregroundStyle(DFColor.textSecondary)
         }
     }
@@ -73,14 +73,14 @@ public struct TorqueLoadGrid: View {
         if dangerJoint != nil {
             return DFColor.danger.opacity(pulse ? 0.8 : 0.3)
         }
-        return DFColor.textSecondary.opacity(0.15)
+        return DFColor.textSecondary.opacity(DFOpacity.o15)
     }
 
     // MARK: - Grid 5×4
 
     private var grid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 5),
-                  spacing: 4) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DFSpace.xs), count: 5),
+                  spacing: DFSpace.xs) {
             ForEach(JointID.allCases, id: \.self) { j in
                 tile(j)
             }
@@ -96,27 +96,27 @@ public struct TorqueLoadGrid: View {
         let tint = colorFor(level)
         let isCritical = level == .critical
 
-        return VStack(spacing: 1) {
+        return VStack(spacing: DFSpace.micro) {
             HStack(spacing: 3) {
                 Circle()
                     .fill(tint)
-                    .frame(width: 6, height: 6)
+                    .frame(width: DFSize.indicatorXxs, height: DFSize.indicatorXxs)
                     .opacity(isCritical && pulse ? 0.4 : 1.0)
                 Text("ID\(j.rawValue)")
-                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s8, weight: .semibold, design: .monospaced))
                     .foregroundStyle(DFColor.textPrimary)
             }
             Text(shortName(j))
-                .font(.system(size: 8, weight: .medium))
+                .font(.system(size: DFFontSize.s8, weight: .medium))
                 .foregroundStyle(DFColor.textSecondary)
             if hasData {
                 Text("\(Int(pct))%")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s9, weight: .bold, design: .monospaced))
                     .foregroundStyle(tint)
             } else {
                 Text("—")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(DFColor.textSecondary.opacity(0.4))
+                    .font(.system(size: DFFontSize.s9, design: .monospaced))
+                    .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.disabled))
             }
         }
         .frame(maxWidth: .infinity, minHeight: 40)
@@ -137,16 +137,16 @@ public struct TorqueLoadGrid: View {
             guard let s = store.lastTelemetry?.joints[danger] else { return 0 }
             return SafeMotion.loadPercent(Int(s.presentLoad))
         }()
-        return HStack(spacing: 6) {
+        return HStack(spacing: DFSpace.xs2) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(DFColor.danger)
                 .opacity(pulse ? 0.5 : 1.0)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: DFSpace.micro) {
                 Text("⚠ \(danger.koreanLabel) (ID \(danger.rawValue)) 부하 위험")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                     .foregroundStyle(DFColor.danger)
                 Text("\(Int(pct))% — 즉시 점검 권장. 자세 변경 자동 중단됩니다.")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.textSecondary)
             }
             Spacer()
@@ -154,7 +154,7 @@ public struct TorqueLoadGrid: View {
                 store.emergencyStop()
             } label: {
                 Text("토크 해제")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: DFFontSize.s10, weight: .semibold))
                     .padding(.horizontal, DFSpace.sm).padding(.vertical, DFSpace.xs)
                     .background(DFColor.danger)
                     .foregroundStyle(.white)
@@ -163,7 +163,7 @@ public struct TorqueLoadGrid: View {
             .buttonStyle(.plain)
         }
         .padding(8)
-        .background(DFColor.danger.opacity(0.10))
+        .background(DFColor.danger.opacity(DFOpacity.o10))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
     }
 
@@ -184,7 +184,7 @@ public struct TorqueLoadGrid: View {
         case .moderate:  return Color.yellow
         case .high:      return Color.orange
         case .critical:  return DFColor.danger
-        case .unknown:   return DFColor.textSecondary.opacity(0.4)
+        case .unknown:   return DFColor.textSecondary.opacity(DFOpacity.disabled)
         }
     }
 

@@ -9,20 +9,20 @@ struct PresetButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: DFSpace.sm3) {
                 Image(systemName: preset.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                    .font(.system(size: DFFontSize.s18, weight: .semibold))
+                    .frame(width: DFSize.iconLg, height: DFSize.iconLg)
                     .foregroundStyle(preset.safety.tintColor)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DFSpace.micro2) {
                     Text(preset.label)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: DFFontSize.s14, weight: .medium))
                     if preset.safety != .safe {
                         Text(preset.safety.labelKo)
                             .font(.caption2)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(preset.safety.tintColor.opacity(0.18))
+                            .background(preset.safety.tintColor.opacity(DFOpacity.o18))
                             .foregroundStyle(preset.safety.tintColor)
                             .clipShape(Capsule())
                     }
@@ -35,7 +35,7 @@ struct PresetButton: View {
                 }
                 if isActive {
                     Image(systemName: "circle.fill")
-                        .font(.system(size: 8))
+                        .font(.system(size: DFFontSize.s8))
                         .foregroundStyle(.green)
                 }
             }
@@ -45,14 +45,14 @@ struct PresetButton: View {
             .background(
                 RoundedRectangle(cornerRadius: DFRadius.sm, style: .continuous)
                     .fill(isActive
-                          ? preset.safety.tintColor.opacity(0.12)
+                          ? preset.safety.tintColor.opacity(DFOpacity.subtle)
                           : Color(NSColor.controlBackgroundColor))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.sm, style: .continuous)
                     .stroke(preset.safety == .safe
                             ? Color.clear
-                            : preset.safety.tintColor.opacity(0.4),
+                            : preset.safety.tintColor.opacity(DFOpacity.disabled),
                             lineWidth: preset.safety == .safe ? 0 : 1)
             )
         }

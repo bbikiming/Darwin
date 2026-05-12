@@ -21,7 +21,7 @@ public struct DFCard<Content: View>: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.lg, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+                    .stroke(Color.primary.opacity(DFOpacity.o06), lineWidth: 0.5)
             )
             .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
     }
@@ -68,10 +68,10 @@ public struct StatusPill: View {
             .padding(.vertical, DFSpace.xs)
             .background(
                 Capsule()
-                    .fill(severity.color.opacity(0.15))
+                    .fill(severity.color.opacity(DFOpacity.o15))
             )
             .overlay(
-                Capsule().stroke(severity.color.opacity(0.3), lineWidth: 0.5)
+                Capsule().stroke(severity.color.opacity(DFOpacity.o30), lineWidth: 0.5)
             )
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(severityLabel(severity)) — \(label)")

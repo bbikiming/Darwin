@@ -40,7 +40,7 @@ public struct StatusBar: View {
         .background(.regularMaterial)
         .overlay(
             Rectangle()
-                .fill(DFColor.textSecondary.opacity(0.20))
+                .fill(DFColor.textSecondary.opacity(DFOpacity.o20))
                 .frame(height: 0.5),
             alignment: .bottom    // 상단 toolbar → 하단 경계선.
         )
@@ -50,7 +50,7 @@ public struct StatusBar: View {
     @ViewBuilder
     private var paletteAndVersion: some View {
         Button(action: onCommandPalette) {
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: "command")
                 Text("K")
             }
@@ -74,8 +74,8 @@ public struct StatusBar: View {
             HStack(spacing: 5) {
                 Circle()
                     .fill(connectionColor)
-                    .frame(width: 8, height: 8)
-                    .shadow(color: connectionColor.opacity(0.6), radius: 3)
+                    .frame(width: DFSize.indicatorSm, height: DFSize.indicatorSm)
+                    .shadow(color: connectionColor.opacity(DFOpacity.dim), radius: 3)
                 Text(connectionLabel)
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textPrimary)
@@ -95,10 +95,10 @@ public struct StatusBar: View {
     @ViewBuilder
     private var connectionActions: some View {
         if isConnected {
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Button(action: onShowDashboard) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 12))
+                        .font(.system(size: DFFontSize.s12))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DFColor.accent)
@@ -107,7 +107,7 @@ public struct StatusBar: View {
 
                 Button(action: { store.disconnect() }) {
                     Image(systemName: "powerplug")
-                        .font(.system(size: 12))
+                        .font(.system(size: DFFontSize.s12))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DFColor.danger)
@@ -117,7 +117,7 @@ public struct StatusBar: View {
     }
 
     private var batteryPill: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             Image(systemName: batteryIcon)
                 .foregroundStyle(batteryColor)
             Text(batteryText)
@@ -126,7 +126,7 @@ public struct StatusBar: View {
     }
 
     private var temperaturePill: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             Image(systemName: "thermometer.medium")
                 .foregroundStyle(temperatureColor)
             Text(temperatureText)
@@ -135,7 +135,7 @@ public struct StatusBar: View {
     }
 
     private var torquePill: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             Image(systemName: torqueIcon)
                 .foregroundStyle(torqueColor)
             Text(torqueText)
@@ -174,7 +174,7 @@ public struct StatusBar: View {
         case .connected:    return DFColor.success
         case .connecting:   return DFColor.warning
         case .error:        return DFColor.danger
-        case .disconnected: return DFColor.textSecondary.opacity(0.6)
+        case .disconnected: return DFColor.textSecondary.opacity(DFOpacity.dim)
         }
     }
 
@@ -218,7 +218,7 @@ public struct StatusBar: View {
     }
     private var torqueColor: Color {
         if !isConnected { return DFColor.textSecondary }
-        return torqueOn > 0 ? DFColor.torque : DFColor.textSecondary.opacity(0.7)
+        return torqueOn > 0 ? DFColor.torque : DFColor.textSecondary.opacity(DFOpacity.o70)
     }
     private var torqueIcon: String {
         torqueOn > 0 ? "bolt.fill" : "bolt.slash"

@@ -41,6 +41,11 @@ public enum DFColor {
 }
 
 /// 타이포 스케일 — Apple HIG Typography 가이드 기반.
+///
+/// # 사용 규칙
+/// - **Semantic alias 우선** (`.display`, `.title`, `.body`, `.caption`) — 의도 명확.
+/// - **Numeric size (`DFFontSize.s9` ~ `.s28`)** — custom weight / monospaced 가 필요할 때만.
+/// - `font.system(size: DFFontSize.s11, weight: .semibold)` 패턴 권장.
 public enum DFFont {
     public static let display = Font.system(size: 28, weight: .bold, design: .default)
     public static let title = Font.system(size: 22, weight: .semibold, design: .default)
@@ -49,6 +54,42 @@ public enum DFFont {
     public static let bodyEmph = Font.system(size: 13, weight: .semibold, design: .default)
     public static let caption = Font.system(size: 11, weight: .regular, design: .default)
     public static let mono = Font.system(size: 12, weight: .regular, design: .monospaced)
+}
+
+/// 타이포 raw size 토큰 — `font.system(size: ...)` 사용 시 raw 숫자 대신 사용.
+///
+/// Apple HIG + macOS 본문 / 캡션 / 헤딩 표준 스케일.
+public enum DFFontSize {
+    /// 8pt — extreme small (load tile indicator — 영문/숫자 전용, 한국어 비추천).
+    public static let s8: CGFloat = 8
+    /// 9pt — 매우 작은 helper text (한국어 가독 한계).
+    public static let s9: CGFloat = 9
+    /// 10pt — 작은 helper / tab 라벨.
+    public static let s10: CGFloat = 10
+    /// 11pt — 캡션 (== DFFont.caption).
+    public static let s11: CGFloat = 11
+    /// 12pt — pill 라벨 / mono (== DFFont.mono 의 size).
+    public static let s12: CGFloat = 12
+    /// 13pt — 본문 (== DFFont.body 의 size).
+    public static let s13: CGFloat = 13
+    /// 14pt — 보조 헤딩 / 강조 본문.
+    public static let s14: CGFloat = 14
+    /// 16pt — 섹션 헤딩 / 큰 본문.
+    public static let s16: CGFloat = 16
+    /// 18pt — 작은 카드 제목.
+    public static let s18: CGFloat = 18
+    /// 20pt — subtitle (== DFFont.subtitle 의 size).
+    public static let s20: CGFloat = 20
+    /// 22pt — 페이지 제목 (== DFFont.title 의 size).
+    public static let s22: CGFloat = 22
+    /// 24pt — section heading.
+    public static let s24: CGFloat = 24
+    /// 26pt — large heading variant.
+    public static let s26: CGFloat = 26
+    /// 28pt — hero display (== DFFont.display 의 size).
+    public static let s28: CGFloat = 28
+    /// 32pt — XL display variant.
+    public static let s32: CGFloat = 32
 }
 
 /// 스페이싱 — Apple HIG 4pt 그리드 (8pt semantic + 4pt interstitial).
@@ -66,6 +107,8 @@ public enum DFSpace {
     public static let none: CGFloat = 0
     /// 1pt — pixel-perfect alignment.
     public static let micro: CGFloat = 1
+    /// 2pt — 매우 조밀한 inline gap (badge 내부, super-tight).
+    public static let micro2: CGFloat = 2
     /// 4pt — tight grouping (icon ↔ label).
     public static let xs: CGFloat = 4
     /// 6pt — pill vertical padding, 조밀 그룹.
@@ -143,10 +186,32 @@ public enum DFSize {
     // MARK: Indicators (status dot / load tile / phase pixel)
     /// 5pt — 작은 grid indicator (load tile dot).
     public static let indicatorXs: CGFloat = 5
+    /// 6pt — phase pixel / small status dot.
+    public static let indicatorXxs: CGFloat = 6
     /// 8pt — connection / status circle.
     public static let indicatorSm: CGFloat = 8
     /// 12pt — larger badge dot.
     public static let indicatorMd: CGFloat = 12
+
+    // MARK: Icons (SF Symbol container — `.frame(width: N, height: N)`)
+    /// 12pt — 매우 작은 inline icon.
+    public static let iconXs: CGFloat = 12
+    /// 16pt — 작은 icon (DPad / 인디케이터 hub).
+    public static let iconSm: CGFloat = 16
+    /// 18pt — 작은 button icon.
+    public static let iconSm2: CGFloat = 18
+    /// 22pt — 표준 toolbar icon (== `toolbarIcon`).
+    public static let iconMd: CGFloat = 22
+    /// 24pt — 작은 panel icon.
+    public static let iconMd2: CGFloat = 24
+    /// 28pt — 중간 badge.
+    public static let iconLg: CGFloat = 28
+    /// 32pt — 큰 button icon container.
+    public static let iconXl: CGFloat = 32
+    /// 36pt — 큰 panel icon.
+    public static let iconXl2: CGFloat = 36
+    /// 48pt — hero icon.
+    public static let iconXxl: CGFloat = 48
 
     // MARK: Sidebar / Panel widths
     /// 사이드바 collapsed 상태 폭.
@@ -181,13 +246,38 @@ public enum DFAnimation {
     public static let bounce = Animation.spring(response: 0.5, dampingFraction: 0.7)
 }
 
-/// 불투명도 토큰 — 일관 dim/disabled 처리.
+/// 불투명도 토큰 — 일관 dim/disabled/border 처리.
+///
+/// # 사용 규칙
+/// - **Semantic alias 우선** (`.disabled`, `.dim`, `.ghost`, `.subtle`, `.strong`)
+///   — 의도가 명확한 곳.
+/// - **Numeric (o06 ~ o85)** — semantic 매핑이 없는 정확한 알파값 필요한 곳.
+/// - Numeric 명명: `o<percent×100>` (e.g. `o35 = 0.35`).
 public enum DFOpacity {
+    // MARK: - Semantic
     public static let disabled: Double = 0.4
     public static let dim: Double = 0.6
-    public static let ghost: Double = 0.08
+    /// 거의 안 보임 — background tint (raw 0.06 통일).
+    public static let ghost: Double = 0.06
     public static let subtle: Double = 0.12
     public static let strong: Double = 0.35
+
+    // MARK: - Numeric (0.06 ~ 0.85, 5pp 단위)
+    public static let o06: Double = 0.06
+    public static let o10: Double = 0.10
+    public static let o12: Double = 0.12
+    public static let o15: Double = 0.15
+    public static let o18: Double = 0.18
+    public static let o20: Double = 0.20
+    public static let o25: Double = 0.25
+    public static let o30: Double = 0.30
+    public static let o35: Double = 0.35
+    public static let o40: Double = 0.40
+    public static let o45: Double = 0.45
+    public static let o50: Double = 0.50
+    public static let o60: Double = 0.60
+    public static let o70: Double = 0.70
+    public static let o85: Double = 0.85
 }
 
 // MARK: - View modifiers (정형 helper)

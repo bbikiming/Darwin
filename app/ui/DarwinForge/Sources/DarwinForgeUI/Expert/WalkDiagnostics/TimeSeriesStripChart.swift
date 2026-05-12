@@ -39,18 +39,18 @@ public struct TimeSeriesStripChart: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             header
             chart
                 .frame(height: height)
                 .padding(.horizontal, 4)
                 .background(
                     RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .fill(DFColor.canvas.opacity(0.45))
+                        .fill(DFColor.canvas.opacity(DFOpacity.o45))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: 0.5)
+                        .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: 0.5)
                 )
         }
     }
@@ -58,24 +58,24 @@ public struct TimeSeriesStripChart: View {
     private var header: some View {
         HStack(spacing: DFSpace.sm) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(DFColor.textPrimary)
             Spacer(minLength: 6)
             ForEach(channels) { ch in
                 if ch.visible {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         RoundedRectangle(cornerRadius: 1)
                             .fill(ch.color)
                             .frame(width: 12, height: 2)
                         Text(ch.label)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
                             .foregroundStyle(DFColor.textSecondary)
                     }
                 }
             }
             Text("[\(yUnit)]")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(DFColor.textSecondary.opacity(0.7))
+                .font(.system(size: DFFontSize.s10, design: .monospaced))
+                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.o70))
         }
     }
 
@@ -103,12 +103,12 @@ public struct TimeSeriesStripChart: View {
         .chartLegend(.hidden)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 5)) { value in
-                AxisGridLine().foregroundStyle(DFColor.textSecondary.opacity(0.15))
-                AxisTick().foregroundStyle(DFColor.textSecondary.opacity(0.4))
+                AxisGridLine().foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.o15))
+                AxisTick().foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.disabled))
                 AxisValueLabel {
                     if let t = value.as(Double.self) {
                         Text(String(format: "%.1fs", t))
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.system(size: DFFontSize.s9, design: .monospaced))
                             .foregroundStyle(DFColor.textSecondary)
                     }
                 }
@@ -116,12 +116,12 @@ public struct TimeSeriesStripChart: View {
         }
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
-                AxisGridLine().foregroundStyle(DFColor.textSecondary.opacity(0.15))
-                AxisTick().foregroundStyle(DFColor.textSecondary.opacity(0.4))
+                AxisGridLine().foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.o15))
+                AxisTick().foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.disabled))
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
                         Text(String(format: "%+.2f", v))
-                            .font(.system(size: 9, design: .monospaced))
+                            .font(.system(size: DFFontSize.s9, design: .monospaced))
                             .foregroundStyle(DFColor.textSecondary)
                     }
                 }

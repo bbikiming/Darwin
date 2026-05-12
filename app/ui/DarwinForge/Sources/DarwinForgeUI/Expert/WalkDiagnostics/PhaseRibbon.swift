@@ -25,10 +25,10 @@ public struct PhaseRibbon: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs2) {
                 Text("PHASE")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer(minLength: 4)
                 legend
@@ -36,7 +36,7 @@ public struct PhaseRibbon: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(DFColor.canvas.opacity(0.45))
+                        .fill(DFColor.canvas.opacity(DFOpacity.o45))
 
                     if !marks.isEmpty {
                         Canvas { ctx, size in
@@ -45,14 +45,14 @@ public struct PhaseRibbon: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                     } else {
                         Text("no data")
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
                             .foregroundStyle(DFColor.textSecondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(DFColor.textSecondary.opacity(0.20), lineWidth: 0.5)
+                        .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: 0.5)
                 )
             }
             .frame(height: height)
@@ -60,14 +60,14 @@ public struct PhaseRibbon: View {
     }
 
     private var legend: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             ForEach(WalkPhase.allCases, id: \.self) { p in
                 HStack(spacing: 3) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(color(for: p))
                         .frame(width: 10, height: 6)
                     Text(legendLabel(p))
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: DFFontSize.s9, weight: .medium, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
@@ -100,7 +100,7 @@ public struct PhaseRibbon: View {
 
     private func color(for p: WalkPhase) -> Color {
         switch p {
-        case .phase0: return DFColor.textSecondary.opacity(0.45)
+        case .phase0: return DFColor.textSecondary.opacity(DFOpacity.o45)
         case .phase1: return DFColor.warning
         case .phase2: return DFColor.info
         case .phase3: return DFColor.torque

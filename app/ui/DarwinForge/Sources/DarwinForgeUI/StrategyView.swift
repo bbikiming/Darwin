@@ -12,7 +12,7 @@ public struct StrategyView: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DFSpace.md) {
             Text("Strategy FSM").font(.title)
             Text("forge-core::strategy의 결정성 전이를 step 단위로 시뮬레이션. 실 카메라/모터 명령 X.")
                 .font(.callout).foregroundStyle(.secondary)
@@ -103,7 +103,7 @@ public struct StrategyView: View {
                 ScrollView(.horizontal) {
                     HStack {
                         ForEach(Array(history.enumerated()), id: \.offset) { idx, s in
-                            VStack(spacing: 2) {
+                            VStack(spacing: DFSpace.micro2) {
                                 Text("\(idx + 1)").font(.caption2).foregroundStyle(.secondary)
                                 Text(s.label).font(.caption).fontDesign(.monospaced)
                             }

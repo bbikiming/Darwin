@@ -111,11 +111,11 @@ public struct MotionLibraryView: View {
     // MARK: - Sidebar rows
 
     private func sidebarRow(entry: StarterEntry) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             Circle()
                 .fill(entry.safetyColor)
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
+                .frame(width: DFSize.indicatorSm, height: DFSize.indicatorSm)
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text(entry.page.name)
                     .font(.system(.body, design: .default))
                     .lineLimit(1)
@@ -190,14 +190,14 @@ struct StarterMotionDetailView: View {
     let entry: StarterEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Circle().fill(entry.safetyColor).frame(width: 12, height: 12)
+        VStack(alignment: .leading, spacing: DFSpace.sm3) {
+            HStack(spacing: DFSpace.sm) {
+                Circle().fill(entry.safetyColor).frame(width: DFSize.iconXs, height: DFSize.iconXs)
                 Text(entry.page.name).font(.title2)
                 Spacer()
                 Text("ID \(entry.page.id)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
-            HStack(spacing: 16) {
+            HStack(spacing: DFSpace.md) {
                 Label("\(entry.page.steps.count) step", systemImage: "list.number")
                 Label("\(totalMs) ms 총 재생", systemImage: "clock")
                 if entry.page.`repeat` > 1 {
@@ -210,10 +210,10 @@ struct StarterMotionDetailView: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: DFSpace.xs2) {
                     Text("Step timeline").font(.caption.bold()).foregroundStyle(.secondary)
                     ForEach(Array(entry.page.steps.enumerated()), id: \.offset) { idx, step in
-                        HStack(spacing: 8) {
+                        HStack(spacing: DFSpace.sm) {
                             Text("\(idx)")
                                 .font(.caption.monospacedDigit())
                                 .frame(width: 24)
@@ -263,7 +263,7 @@ struct MotionDetailView: View {
     @State private var showingMtn = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DFSpace.sm3) {
             Text(motion.name).font(.title2)
             Text(motion.sourcePath).font(.caption).foregroundStyle(.secondary)
 

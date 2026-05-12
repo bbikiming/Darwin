@@ -56,41 +56,41 @@ public struct ExpertDashboard: View {
     @ViewBuilder
     private func adaptiveRowOne(narrow: Bool, veryNarrow: Bool) -> some View {
         if veryNarrow {
-            VStack(spacing: 12) { controllerCard; batteryCard; tempCard; commCard }
+            VStack(spacing: DFSpace.sm3) { controllerCard; batteryCard; tempCard; commCard }
         } else if narrow {
-            VStack(spacing: 12) {
-                HStack(spacing: 12) { controllerCard; batteryCard }
-                HStack(spacing: 12) { tempCard; commCard }
+            VStack(spacing: DFSpace.sm3) {
+                HStack(spacing: DFSpace.sm3) { controllerCard; batteryCard }
+                HStack(spacing: DFSpace.sm3) { tempCard; commCard }
             }
         } else {
-            HStack(spacing: 12) { controllerCard; batteryCard; tempCard; commCard }
+            HStack(spacing: DFSpace.sm3) { controllerCard; batteryCard; tempCard; commCard }
         }
     }
 
     @ViewBuilder
     private func adaptiveRowTwo(narrow: Bool) -> some View {
         if narrow {
-            VStack(spacing: 12) { torqueGridCard; postureCard }
+            VStack(spacing: DFSpace.sm3) { torqueGridCard; postureCard }
         } else {
-            HStack(alignment: .top, spacing: 12) { torqueGridCard; postureCard }
+            HStack(alignment: .top, spacing: DFSpace.sm3) { torqueGridCard; postureCard }
         }
     }
 
     @ViewBuilder
     private func adaptiveRowThree(narrow: Bool) -> some View {
         if narrow {
-            VStack(spacing: 12) { jointTempCard; jointLoadCard }
+            VStack(spacing: DFSpace.sm3) { jointTempCard; jointLoadCard }
         } else {
-            HStack(alignment: .top, spacing: 12) { jointTempCard; jointLoadCard }
+            HStack(alignment: .top, spacing: DFSpace.sm3) { jointTempCard; jointLoadCard }
         }
     }
 
     @ViewBuilder
     private func adaptiveRowFour(narrow: Bool) -> some View {
         if narrow {
-            VStack(spacing: 12) { voltageHistoryCard; sessionInfoCard }
+            VStack(spacing: DFSpace.sm3) { voltageHistoryCard; sessionInfoCard }
         } else {
-            HStack(alignment: .top, spacing: 12) { voltageHistoryCard; sessionInfoCard }
+            HStack(alignment: .top, spacing: DFSpace.sm3) { voltageHistoryCard; sessionInfoCard }
         }
     }
 
@@ -101,7 +101,7 @@ public struct ExpertDashboard: View {
     private var controllerCard: some View {
         ExpertCard(title: "보드", icon: "cpu.fill", tint: DFColor.forge) {
             if case .connected(let s) = store.status {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: DFSpace.xs2) {
                     bigNumber(text: shortControllerName(s.controllerLabel),
                               size: 18, tint: DFColor.textPrimary)
                     metricRow(label: "모델", value: "\(s.modelNumber)", mono: true)
@@ -119,10 +119,10 @@ public struct ExpertDashboard: View {
     private var batteryCard: some View {
         ExpertCard(title: "배터리", icon: "bolt.batteryblock.fill",
                    tint: batteryColor(currentVoltage)) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.xs2) {
+                HStack(alignment: .firstTextBaseline, spacing: DFSpace.xs) {
                     Text(String(format: "%.1f", currentVoltage))
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.system(size: DFFontSize.s28, weight: .bold, design: .rounded))
                         .foregroundStyle(batteryColor(currentVoltage))
                     Text("V").foregroundStyle(DFColor.textSecondary)
                     Spacer()
@@ -131,7 +131,7 @@ public struct ExpertDashboard: View {
                 Chart(voltageSeries) { s in
                     AreaMark(x: .value("t", s.idx), y: .value("V", s.value))
                         .foregroundStyle(LinearGradient(
-                            colors: [batteryColor(s.value).opacity(0.5), .clear],
+                            colors: [batteryColor(s.value).opacity(DFOpacity.o50), .clear],
                             startPoint: .top, endPoint: .bottom))
                     LineMark(x: .value("t", s.idx), y: .value("V", s.value))
                         .foregroundStyle(batteryColor(s.value))
@@ -147,10 +147,10 @@ public struct ExpertDashboard: View {
     private var tempCard: some View {
         ExpertCard(title: "평균 온도", icon: "thermometer.medium",
                    tint: tempColor(currentAvgTemp)) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.xs2) {
+                HStack(alignment: .firstTextBaseline, spacing: DFSpace.xs) {
                     Text(String(format: "%.0f", currentAvgTemp))
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.system(size: DFFontSize.s28, weight: .bold, design: .rounded))
                         .foregroundStyle(tempColor(currentAvgTemp))
                     Text("°C").foregroundStyle(DFColor.textSecondary)
                     Spacer()
@@ -162,7 +162,7 @@ public struct ExpertDashboard: View {
                     LineMark(x: .value("t", s.idx), y: .value("°C", s.value))
                         .foregroundStyle(tempColor(s.value))
                     RuleMark(y: .value("주의", 55))
-                        .foregroundStyle(DFColor.warning.opacity(0.4))
+                        .foregroundStyle(DFColor.warning.opacity(DFOpacity.disabled))
                         .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
                 }
                 .chartYScale(domain: 20...80)
@@ -176,11 +176,11 @@ public struct ExpertDashboard: View {
     private var commCard: some View {
         ExpertCard(title: "통신 RTT", icon: "waveform.path.ecg",
                    tint: rttColor(store.lastRoundTripMs ?? 0)) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DFSpace.xs2) {
                 if let rtt = store.lastRoundTripMs {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: DFSpace.xs) {
                         Text(String(format: "%.1f", rtt))
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .font(.system(size: DFFontSize.s28, weight: .bold, design: .rounded))
                             .foregroundStyle(rttColor(rtt))
                         Text("ms").foregroundStyle(DFColor.textSecondary)
                         Spacer()
@@ -205,14 +205,14 @@ public struct ExpertDashboard: View {
         ExpertCard(title: "20 관절 토크", icon: "bolt.fill",
                    tint: DFColor.torque, expanded: true, height: 200) {
             let cols = 5
-            VStack(spacing: 6) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: cols),
-                          spacing: 4) {
+            VStack(spacing: DFSpace.xs2) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DFSpace.xs), count: cols),
+                          spacing: DFSpace.xs) {
                     ForEach(JointID.allCases, id: \.self) { j in
                         torqueTile(j)
                     }
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: DFSpace.xs2) {
                     let on = JointID.allCases.filter { store.jointStates[$0]?.torqueEnabled == true }.count
                     Text("토크 ON \(on)/20")
                         .font(DFFont.caption.monospaced())
@@ -229,16 +229,16 @@ public struct ExpertDashboard: View {
     private func torqueTile(_ j: JointID) -> some View {
         let s = store.jointStates[j]
         let on = s?.torqueEnabled ?? false
-        return VStack(spacing: 1) {
+        return VStack(spacing: DFSpace.micro) {
             Text(shortJointName(j))
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(.system(size: DFFontSize.s9, weight: .bold, design: .monospaced))
                 .foregroundStyle(on ? .white : DFColor.textSecondary)
             Text("\(j.rawValue)")
-                .font(.system(size: 8, design: .monospaced))
-                .foregroundStyle(on ? .white.opacity(0.8) : DFColor.textSecondary.opacity(0.6))
+                .font(.system(size: DFFontSize.s8, design: .monospaced))
+                .foregroundStyle(on ? .white.opacity(0.8) : DFColor.textSecondary.opacity(DFOpacity.dim))
         }
         .frame(maxWidth: .infinity, minHeight: 30)
-        .background(on ? DFColor.torque.opacity(0.85) : DFColor.elev2)
+        .background(on ? DFColor.torque.opacity(DFOpacity.o85) : DFColor.elev2)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .help("\(j.koreanLabel) — ID \(j.rawValue) \(on ? "ON" : "OFF")")
     }
@@ -247,7 +247,7 @@ public struct ExpertDashboard: View {
         ExpertCard(title: "자세 — 위치 vs 목표 오차",
                    icon: "figure.stand", tint: DFColor.accent,
                    expanded: true, height: 200) {
-            VStack(spacing: 4) {
+            VStack(spacing: DFSpace.xs) {
                 Chart(positionErrorSeries, id: \.id) { e in
                     BarMark(
                         x: .value("관절", e.label),
@@ -258,7 +258,7 @@ public struct ExpertDashboard: View {
                 .chartYAxis {
                     AxisMarks { v in
                         AxisGridLine()
-                        AxisValueLabel().font(.system(size: 8))
+                        AxisValueLabel().font(.system(size: DFFontSize.s8))
                     }
                 }
                 .chartXAxis {
@@ -286,22 +286,22 @@ public struct ExpertDashboard: View {
                 )
                 .foregroundStyle(tempColor(e.value))
                 RuleMark(y: .value("주의", 55))
-                    .foregroundStyle(DFColor.warning.opacity(0.5))
+                    .foregroundStyle(DFColor.warning.opacity(DFOpacity.o50))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 RuleMark(y: .value("위험", 65))
-                    .foregroundStyle(DFColor.danger.opacity(0.6))
+                    .foregroundStyle(DFColor.danger.opacity(DFOpacity.dim))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
             .chartYScale(domain: 0...80)
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                    AxisValueLabel().font(.system(size: 8))
+                    AxisValueLabel().font(.system(size: DFFontSize.s8))
                 }
             }
             .chartYAxis {
                 AxisMarks { _ in
                     AxisGridLine()
-                    AxisValueLabel().font(.system(size: 9))
+                    AxisValueLabel().font(.system(size: DFFontSize.s9))
                 }
             }
         }
@@ -320,13 +320,13 @@ public struct ExpertDashboard: View {
             .chartYScale(domain: 0...100)
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                    AxisValueLabel().font(.system(size: 8))
+                    AxisValueLabel().font(.system(size: DFFontSize.s8))
                 }
             }
             .chartYAxis {
                 AxisMarks { _ in
                     AxisGridLine()
-                    AxisValueLabel().font(.system(size: 9))
+                    AxisValueLabel().font(.system(size: DFFontSize.s9))
                 }
             }
         }
@@ -342,19 +342,19 @@ public struct ExpertDashboard: View {
                 Chart(voltageSeries) { s in
                     AreaMark(x: .value("t", s.idx), y: .value("V", s.value))
                         .foregroundStyle(LinearGradient(
-                            colors: [DFColor.success.opacity(0.4), .clear],
+                            colors: [DFColor.success.opacity(DFOpacity.disabled), .clear],
                             startPoint: .top, endPoint: .bottom))
                     LineMark(x: .value("t", s.idx), y: .value("V", s.value))
                         .foregroundStyle(DFColor.success)
                     RuleMark(y: .value("주의", 9.5))
-                        .foregroundStyle(DFColor.warning.opacity(0.5))
+                        .foregroundStyle(DFColor.warning.opacity(DFOpacity.o50))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 }
                 .chartYScale(domain: 8.0...12.6)
                 .chartYAxis {
                     AxisMarks(values: [8.5, 9.5, 10.5, 11.1, 12.0]) { _ in
                         AxisGridLine()
-                        AxisValueLabel().font(.system(size: 9))
+                        AxisValueLabel().font(.system(size: DFFontSize.s9))
                     }
                 }
                 .chartXAxis(.hidden)
@@ -369,7 +369,7 @@ public struct ExpertDashboard: View {
     private var sessionInfoCard: some View {
         ExpertCard(title: "세션 정보", icon: "clock.fill",
                    tint: DFColor.accent, expanded: true, height: 180) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
                 if let connectedAt = store.connectedAt {
                     metricRow(label: "연결 시간",
                               value: formatUptime(now.timeIntervalSince(connectedAt)))
@@ -491,7 +491,7 @@ public struct ExpertDashboard: View {
     private func loadColor(_ p: Double) -> Color {
         if p >= 80 { return DFColor.danger }
         if p >= 50 { return DFColor.warning }
-        return DFColor.success.opacity(0.7)
+        return DFColor.success.opacity(DFOpacity.o70)
     }
     private func errorColor(_ deg: Double) -> Color {
         if deg >= 5 { return DFColor.danger }
@@ -563,7 +563,7 @@ public struct ExpertDashboard: View {
     }
     private func statusChip(_ text: String, _ tint: Color) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .bold))
+            .font(.system(size: DFFontSize.s10, weight: .bold))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(tint.opacity(0.16))
@@ -592,13 +592,13 @@ private struct ExpertCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.sm2) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                     .foregroundStyle(tint)
                 Text(title)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                     .foregroundStyle(DFColor.textSecondary)
                     .textCase(.uppercase)
                 Spacer()
@@ -612,7 +612,7 @@ private struct ExpertCard<Content: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.md)
-                .stroke(DFColor.textSecondary.opacity(0.10), lineWidth: 0.5)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.o10), lineWidth: 0.5)
         )
     }
 }

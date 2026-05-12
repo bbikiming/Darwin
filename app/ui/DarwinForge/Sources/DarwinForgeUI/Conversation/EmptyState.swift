@@ -57,7 +57,7 @@ public struct EmptyState: View {
                     .foregroundStyle(DFColor.textPrimary)
                 Spacer()
                 Image(systemName: "arrow.up.right")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                     .foregroundStyle(DFColor.textSecondary)
             }
             .padding(.horizontal, DFSpace.md)
@@ -68,7 +68,7 @@ public struct EmptyState: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.md, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    .stroke(Color.primary.opacity(DFOpacity.ghost), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)

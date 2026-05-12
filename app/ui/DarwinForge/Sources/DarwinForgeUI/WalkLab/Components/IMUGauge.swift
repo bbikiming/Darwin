@@ -9,7 +9,7 @@ struct IMUGauge: View {
     let dangerThreshold: Double
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: DFSpace.xs2) {
             ZStack {
                 // 외곽
                 Path { p in
@@ -20,7 +20,7 @@ struct IMUGauge: View {
                              endAngle: .degrees(0),
                              clockwise: false)
                 }
-                .stroke(Color.gray.opacity(0.25), lineWidth: 6)
+                .stroke(Color.gray.opacity(DFOpacity.o25), lineWidth: 6)
 
                 // 채워진 호
                 Path { p in
@@ -36,9 +36,9 @@ struct IMUGauge: View {
                 }
                 .stroke(currentColor, style: StrokeStyle(lineWidth: 6, lineCap: .round))
 
-                VStack(spacing: 2) {
+                VStack(spacing: DFSpace.micro2) {
                     Text(String(format: "%+.0f°", degrees))
-                        .font(.system(size: 22, weight: .semibold, design: .rounded).monospacedDigit())
+                        .font(.system(size: DFFontSize.s22, weight: .semibold, design: .rounded).monospacedDigit())
                         .foregroundStyle(currentColor)
                     Text(axis)
                         .font(.caption)

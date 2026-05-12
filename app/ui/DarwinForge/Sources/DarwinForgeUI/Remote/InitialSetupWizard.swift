@@ -152,8 +152,8 @@ public struct InitialSetupWizardView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "sparkles")
                     .foregroundStyle(DFColor.forge)
                 Text("초기 셋업")
@@ -172,7 +172,7 @@ public struct InitialSetupWizardView: View {
         let done = state.statuses.values.filter { $0 == .completed }.count
         let total = InitialSetupState.Step.allCases.count
         return Text("\(done) / \(total)")
-            .font(.system(size: 12, weight: .bold, design: .monospaced))
+            .font(.system(size: DFFontSize.s12, weight: .bold, design: .monospaced))
             .padding(.horizontal, 10).padding(.vertical, 4)
             .background(done == total ? DFColor.success.opacity(0.16) : DFColor.accent.opacity(0.16))
             .foregroundStyle(done == total ? DFColor.success : DFColor.accent)
@@ -183,11 +183,11 @@ public struct InitialSetupWizardView: View {
 
     private func stepCard(_ step: InitialSetupState.Step) -> some View {
         let status = state.statuses[step] ?? .pending
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+        return VStack(alignment: .leading, spacing: DFSpace.sm2) {
+            HStack(spacing: DFSpace.sm2) {
                 stepNumberBadge(step, status: status)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: DFSpace.micro) {
+                    HStack(spacing: DFSpace.xs2) {
                         Image(systemName: step.icon)
                             .foregroundStyle(stepTint(status))
                         Text(step.title).font(DFFont.bodyEmph)
@@ -199,7 +199,7 @@ public struct InitialSetupWizardView: View {
                 Spacer()
                 if status == .completed {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 18))
+                        .font(.system(size: DFFontSize.s18))
                         .foregroundStyle(DFColor.success)
                 } else if status == .verifying {
                     ProgressView().controlSize(.small)
@@ -218,9 +218,9 @@ public struct InitialSetupWizardView: View {
 
     private func stepNumberBadge(_ step: InitialSetupState.Step, status: InitialSetupState.StepStatus) -> some View {
         ZStack {
-            Circle().fill(stepTint(status).opacity(0.16)).frame(width: 32, height: 32)
+            Circle().fill(stepTint(status).opacity(0.16)).frame(width: DFSize.iconXl, height: DFSize.iconXl)
             Text("\(step.rawValue + 1)")
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: DFFontSize.s14, weight: .bold))
                 .foregroundStyle(stepTint(status))
         }
     }
@@ -234,16 +234,16 @@ public struct InitialSetupWizardView: View {
     }
     private func stepBackground(_ status: InitialSetupState.StepStatus) -> Color {
         switch status {
-        case .completed: return DFColor.success.opacity(0.06)
-        case .verifying: return DFColor.accent.opacity(0.06)
+        case .completed: return DFColor.success.opacity(DFOpacity.o06)
+        case .verifying: return DFColor.accent.opacity(DFOpacity.o06)
         default: return DFColor.card
         }
     }
     private func stepBorder(_ status: InitialSetupState.StepStatus) -> Color {
         switch status {
-        case .completed: return DFColor.success.opacity(0.35)
-        case .verifying: return DFColor.accent.opacity(0.35)
-        default: return DFColor.textSecondary.opacity(0.12)
+        case .completed: return DFColor.success.opacity(DFOpacity.strong)
+        case .verifying: return DFColor.accent.opacity(DFOpacity.strong)
+        default: return DFColor.textSecondary.opacity(DFOpacity.subtle)
         }
     }
 
@@ -261,11 +261,11 @@ public struct InitialSetupWizardView: View {
 
     // Step 1: VNC
     private var vncActions: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             Text("로봇 데스크톱을 Mac에 띄워 가상 키보드로 명령을 입력합니다.")
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 Button {
                     if let u = URL(string: "vnc://\(state.host):5900") {
                         NSWorkspace.shared.open(u)
@@ -288,12 +288,12 @@ public struct InitialSetupWizardView: View {
 
     // Step 2: Robot master setup
     private var robotSetupActions: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             Text("VNC 터미널에 아래 한 블록을 붙여넣고 Enter — SSH + 5530 + df-inbox 영구 활성.")
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 Button {
                     let pb = NSPasteboard.general
                     pb.clearContents()
@@ -315,18 +315,18 @@ public struct InitialSetupWizardView: View {
             }
             DisclosureGroup("미리보기") {
                 Text(RobotSetupCommand.masterSetup)
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: DFFontSize.s9, design: .monospaced))
                     .padding(8)
                     .background(DFColor.elev2)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                     .textSelection(.enabled)
             }
             .font(DFFont.caption)
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                 Text("실행 후 \"SSH 22 + TCP 5530\" 둘 다 열리면 이 단계 자동 ✅")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
             }
             .foregroundStyle(DFColor.textSecondary)
         }
@@ -334,12 +334,12 @@ public struct InitialSetupWizardView: View {
 
     // Step 3: Mac SSH key
     private var macSSHKeyActions: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             Text("Mac 터미널을 열어 아래 명령을 한 번만 실행 — 그 후 비밀번호 없이 SSH 즉시 사용.")
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 Button {
                     let pb = NSPasteboard.general
                     pb.clearContents()
@@ -363,15 +363,15 @@ public struct InitialSetupWizardView: View {
                         .padding(.horizontal, 10).padding(.vertical, 5)
                         .background(DFColor.card)
                         .clipShape(Capsule())
-                        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5))
+                        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
             }
-            HStack(spacing: 4) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
                 Text("ssh-copy-id 단계에서 robotis 비번 (111111) 한 번 입력. 그 후 자동 ✅")
-                    .font(.system(size: 10))
+                    .font(.system(size: DFFontSize.s10))
             }
             .foregroundStyle(DFColor.textSecondary)
         }
@@ -379,11 +379,11 @@ public struct InitialSetupWizardView: View {
 
     // Step 4: DarwinForge connect
     private var connectActions: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             Text("앞 단계 완료 후 자동 연결 시도 — 또는 즉시 연결 시도.")
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
-            HStack(spacing: 8) {
+            HStack(spacing: DFSpace.sm) {
                 Button {
                     store.connect(endpoint: .network(host: state.host, port: 5530))
                 } label: {
@@ -402,10 +402,10 @@ public struct InitialSetupWizardView: View {
     // MARK: - Completion
 
     private var completionCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
+            HStack(spacing: DFSpace.sm) {
                 Image(systemName: "sparkles.tv.fill")
-                    .font(.system(size: 22))
+                    .font(.system(size: DFFontSize.s22))
                     .foregroundStyle(DFColor.success)
                 Text("🎉 셋업 완료 — 영구 자동화")
                     .font(DFFont.title)
@@ -416,11 +416,11 @@ public struct InitialSetupWizardView: View {
                 .foregroundStyle(DFColor.textSecondary)
         }
         .padding(DFSpace.md)
-        .background(DFColor.success.opacity(0.08))
+        .background(DFColor.success.opacity(DFOpacity.ghost))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.md)
-                .stroke(DFColor.success.opacity(0.30), lineWidth: 0.8)
+                .stroke(DFColor.success.opacity(DFOpacity.o30), lineWidth: 0.8)
         )
     }
 }

@@ -21,7 +21,7 @@ public struct CommandPalette: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DFSpace.none) {
             searchField
             Divider()
             list
@@ -31,7 +31,7 @@ public struct CommandPalette: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.md, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.md, style: .continuous)
-                .stroke(DFColor.textSecondary.opacity(0.18), lineWidth: 0.5)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.o18), lineWidth: 0.5)
         )
         .shadow(radius: 30)
         .onAppear {
@@ -79,7 +79,7 @@ public struct CommandPalette: View {
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
+                LazyVStack(alignment: .leading, spacing: DFSpace.micro) {
                     let items = filtered
                     ForEach(Array(items.enumerated()), id: \.element.id) { idx, e in
                         row(e, isSelected: idx == selectedIndex)
@@ -125,7 +125,7 @@ public struct CommandPalette: View {
             Image(systemName: e.icon)
                 .frame(width: 22)
                 .foregroundStyle(isSelected ? DFColor.accent : e.tint)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: DFSpace.micro) {
                 Text(e.title)
                     .font(DFFont.bodyEmph)
                     .foregroundStyle(isSelected ? DFColor.textPrimary : DFColor.textPrimary)
@@ -151,7 +151,7 @@ public struct CommandPalette: View {
         }
         .padding(.horizontal, DFSpace.md)
         .padding(.vertical, 6)
-        .background(isSelected ? DFColor.accent.opacity(0.12) : Color.clear)
+        .background(isSelected ? DFColor.accent.opacity(DFOpacity.subtle) : Color.clear)
     }
 
     private func runSelected() {

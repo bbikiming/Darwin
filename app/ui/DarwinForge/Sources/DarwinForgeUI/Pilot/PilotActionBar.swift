@@ -33,7 +33,7 @@ public struct PilotActionBar: View {
             }
         ) {
             VStack(alignment: .leading, spacing: DFSpace.sm) {
-                LazyVGrid(columns: gridColumns, spacing: 8) {
+                LazyVGrid(columns: gridColumns, spacing: DFSpace.sm) {
                     ForEach(Array(MotionCatalog.actionBarMain.enumerated()), id: \.element.slot) { idx, meta in
                         actionButton(meta, keyIndex: idx + 1)
                     }
@@ -70,18 +70,18 @@ public struct PilotActionBar: View {
         Button {
             press(meta)
         } label: {
-            VStack(spacing: 6) {
+            VStack(spacing: DFSpace.xs2) {
                 ZStack {
                     if isPlaying {
                         Circle()
                             .trim(from: 0, to: max(0.02, channel.progress))
                             .stroke(safetyTint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                             .rotationEffect(.degrees(-90))
-                            .frame(width: 48, height: 48)
+                            .frame(width: DFSize.iconXxl, height: DFSize.iconXxl)
                             .animation(PilotAnim.motionProgress, value: channel.progress)
                     }
                     Image(systemName: meta.icon)
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.system(size: DFFontSize.s22, weight: .semibold))
                         .foregroundStyle(safetyTint)
                 }
                 .frame(height: 48)
@@ -93,22 +93,22 @@ public struct PilotActionBar: View {
                     .minimumScaleFactor(0.85)
                     .frame(maxWidth: .infinity)
 
-                HStack(spacing: 4) {
+                HStack(spacing: DFSpace.xs) {
                     Text(meta.rawName)
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: DFFontSize.s9, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(1)
-                    Text("·").foregroundStyle(DFColor.textSecondary.opacity(0.5))
+                    Text("·").foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.o50))
                     Text(String(format: "%.1fs", Double(meta.durationMs)/1000.0))
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: DFFontSize.s9, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                 }
                 .lineLimit(1)
 
-                HStack(spacing: 4) {
-                    Circle().fill(safetyTint).frame(width: 6, height: 6)
+                HStack(spacing: DFSpace.xs) {
+                    Circle().fill(safetyTint).frame(width: DFSize.indicatorXxs, height: DFSize.indicatorXxs)
                     Text(meta.safetyClass.koreanLabel)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: DFFontSize.s9, weight: .semibold))
                         .foregroundStyle(safetyTint)
                     Spacer(minLength: 0)
                     DFKeyboardHint("\(keyIndex)")
@@ -123,7 +123,7 @@ public struct PilotActionBar: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: DFRadius.md)
                             .stroke(
-                                isPlaying ? safetyTint : safetyTint.opacity(0.25),
+                                isPlaying ? safetyTint : safetyTint.opacity(DFOpacity.o25),
                                 lineWidth: isPlaying ? 1.5 : 0.5
                             )
                     )
@@ -170,18 +170,18 @@ public struct PilotActionBar: View {
             DFButton(.secondary, size: .medium) {
                 showMoreSheet = true
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: DFSpace.xs2) {
                     Image(systemName: "ellipsis.circle.fill")
                     Text("+ 더 보기 (\(MotionCatalog.actionBarMore.count) 페이지)")
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: DFFontSize.s10, weight: .semibold))
                         .foregroundStyle(DFColor.textSecondary)
                 }
                 .frame(maxWidth: .infinity)
             }
         } else {
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "ellipsis.circle")
                 Text("+ 더 보기 (\(MotionCatalog.actionBarMore.count) 페이지)")
                     .font(DFFont.bodyEmph)
@@ -214,7 +214,7 @@ public struct PilotActionBar: View {
             }
             Divider()
             ScrollView {
-                LazyVGrid(columns: gridColumns, spacing: 8) {
+                LazyVGrid(columns: gridColumns, spacing: DFSpace.sm) {
                     ForEach(MotionCatalog.actionBarMore, id: \.slot) { meta in
                         actionButton(meta, keyIndex: 0)
                     }

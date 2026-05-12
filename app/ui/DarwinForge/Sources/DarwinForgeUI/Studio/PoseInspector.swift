@@ -28,7 +28,7 @@ public struct PoseInspector: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: DFSpace.none) {
             header
             Divider()
             sliders
@@ -43,7 +43,7 @@ public struct PoseInspector: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             Text("자세 편집기")
                 .font(DFFont.title)
             Text("슬라이더로 20개 관절 각도를 조절해요")
@@ -51,12 +51,12 @@ public struct PoseInspector: View {
                 .foregroundStyle(DFColor.textSecondary)
 
             // 모터 속도 프로파일 — 자세 변경 시 적용될 보간 속도.
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "speedometer")
-                    .font(.system(size: 11))
+                    .font(.system(size: DFFontSize.s11))
                     .foregroundStyle(DFColor.accent)
                 Text("이동 속도")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
                     .foregroundStyle(DFColor.textSecondary)
                 Picker("", selection: $store.motorSpeedProfile) {
                     ForEach(MotorSpeedProfile.allCases) { p in
@@ -106,8 +106,8 @@ public struct PoseInspector: View {
     }
 
     private func bodyPartSection(_ group: BodyPartGroup) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: group.icon)
                     .foregroundStyle(group.tint)
                 Text(group.label)
@@ -117,7 +117,7 @@ public struct PoseInspector: View {
                     centerGroup(group)
                 } label: {
                     Image(systemName: "arrow.counterclockwise.circle")
-                        .font(.system(size: 12))
+                        .font(.system(size: DFFontSize.s12))
                 }
                 .buttonStyle(.plain)
                 .help("이 부위 관절을 모두 0°(중심)로 되돌립니다")
@@ -148,15 +148,15 @@ public struct PoseInspector: View {
         let limitDistance = min(degree - limits.lowerBound, limits.upperBound - degree)
         let limitNear = limitDistance < 8
 
-        return HStack(spacing: 6) {
+        return HStack(spacing: DFSpace.xs2) {
             // 라벨만 selection 탭 영역으로 지정 — slider / StepperField hit-area 와의
             // gesture 충돌 방지 (child Button 액션이 무시되던 원인).
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: DFSpace.none) {
                 Text(j.koreanLabel)
-                    .font(.system(size: 11))
+                    .font(.system(size: DFFontSize.s11))
                     .foregroundStyle(isSelected ? DFColor.accent : DFColor.textPrimary)
                 Text(j.name)
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: DFFontSize.s9, design: .monospaced))
                     .foregroundStyle(DFColor.textSecondary)
             }
             .frame(width: 144, alignment: .leading)
@@ -181,7 +181,7 @@ public struct PoseInspector: View {
                 }
             )
 
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: DFSpace.micro2) {
                 StepperField(
                     value: Binding(
                         get: { Double(degree) },
@@ -197,11 +197,11 @@ public struct PoseInspector: View {
                 )
                 if limitNear {
                     Text("한계 가까움")
-                        .font(.system(size: 9))
+                        .font(.system(size: DFFontSize.s9))
                         .foregroundStyle(DFColor.warning)
                 } else {
                     Text("raw \(raw)")
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(.system(size: DFFontSize.s9, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
@@ -209,7 +209,7 @@ public struct PoseInspector: View {
         }
         .padding(.vertical, 2)
         .padding(.horizontal, DFSpace.xs)
-        .background(isSelected ? DFColor.accent.opacity(0.10) : Color.clear)
+        .background(isSelected ? DFColor.accent.opacity(DFOpacity.o10) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
         // row-wide onTapGesture 제거 — child Button (StepperField + / −) 의 hit-test
         // 와 충돌해 액션이 발화되지 않던 문제 수정. 선택은 라벨 컬럼 탭으로 일원화.

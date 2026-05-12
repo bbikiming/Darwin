@@ -104,7 +104,7 @@ public struct ConnectionWizardView: View {
         GeometryReader { geo in
             let w = min(660, geo.size.width * 0.92)
             let h = min(660, geo.size.height * 0.92)
-            VStack(spacing: 0) {
+            VStack(spacing: DFSpace.none) {
                 header
                 Divider()
                 content
@@ -117,7 +117,7 @@ public struct ConnectionWizardView: View {
             .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.md)
-                    .stroke(DFColor.textSecondary.opacity(0.18), lineWidth: DFSize.borderHairline)
+                    .stroke(DFColor.textSecondary.opacity(DFOpacity.o18), lineWidth: DFSize.borderHairline)
             )
             .shadow(radius: 28)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -151,9 +151,9 @@ public struct ConnectionWizardView: View {
     private var header: some View {
         HStack(spacing: DFSpace.sm) {
             Image(systemName: "wand.and.stars")
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: DFFontSize.s20, weight: .semibold))
                 .foregroundStyle(DFColor.forge)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text("연결 마법사")
                     .font(DFFont.title)
                 Text(headerSubtitle)
@@ -163,7 +163,7 @@ public struct ConnectionWizardView: View {
             Spacer()
             Button { isPresented = false } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 18))
+                    .font(.system(size: DFFontSize.s18))
                     .foregroundStyle(DFColor.textSecondary)
             }
             .buttonStyle(.plain)
@@ -214,8 +214,8 @@ public struct ConnectionWizardView: View {
 
     /// 사용자가 직접 IP/호스트 입력해서 ping + 포트 검사 — 자동 진단이 못 잡는 IP를 점검할 때.
     private var manualProbeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "stethoscope")
                     .foregroundStyle(DFColor.accent)
                 Text("직접 점검")
@@ -225,7 +225,7 @@ public struct ConnectionWizardView: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 TextField("",
                           text: $manualHost,
                           prompt: Text("예: 192.168.123.1, op2.local, 192.168.0.33"))
@@ -235,7 +235,7 @@ public struct ConnectionWizardView: View {
                 Button {
                     runManualProbe()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         if oneClick.isManualProbing {
                             ProgressView().controlSize(.mini)
                         } else {
@@ -245,7 +245,7 @@ public struct ConnectionWizardView: View {
                     }
                     .padding(.horizontal, DFSpace.sm2)
                     .padding(.vertical, DFSpace.xs2)
-                    .background(DFColor.accent.opacity(0.18))
+                    .background(DFColor.accent.opacity(DFOpacity.o18))
                     .foregroundStyle(DFColor.accent)
                     .clipShape(Capsule())
                 }
@@ -259,7 +259,7 @@ public struct ConnectionWizardView: View {
             }
 
             // 빠른 입력 프리셋.
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 Text("빠른 입력:").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
                 ForEach(quickPresets(), id: \.self) { ip in
                     Button {
@@ -267,12 +267,12 @@ public struct ConnectionWizardView: View {
                         runManualProbe()
                     } label: {
                         Text(ip)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
                             .padding(.horizontal, DFSpace.xs2)
                             .padding(.vertical, 2)
                             .background(DFColor.card)
                             .clipShape(Capsule())
-                            .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.2), lineWidth: DFSize.borderHairline))
+                            .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline))
                     }
                     .buttonStyle(.plain)
                 }
@@ -284,15 +284,15 @@ public struct ConnectionWizardView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
-                .stroke(DFColor.textSecondary.opacity(0.12), lineWidth: DFSize.borderHairline)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: DFSize.borderHairline)
         )
     }
 
     private func manualResultCard(_ r: OneClickConnect.ManualProbeResult) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.xs2) {
                 Text(r.host)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(size: DFFontSize.s12, weight: .semibold, design: .monospaced))
                 pingChip(r.ping)
                 portChip(r.port)
                 Spacer()
@@ -304,7 +304,7 @@ public struct ConnectionWizardView: View {
                             .font(DFFont.caption)
                             .padding(.horizontal, DFSpace.sm)
                             .padding(.vertical, DFSpace.xs)
-                            .background(DFColor.success.opacity(0.18))
+                            .background(DFColor.success.opacity(DFOpacity.o18))
                             .foregroundStyle(DFColor.success)
                             .clipShape(Capsule())
                     }
@@ -339,12 +339,12 @@ public struct ConnectionWizardView: View {
     private var heroBadge: some View {
         HStack(spacing: DFSpace.sm) {
             ZStack {
-                Circle().fill(DFColor.forge.opacity(0.12)).frame(width: 56, height: 56)
+                Circle().fill(DFColor.forge.opacity(DFOpacity.subtle)).frame(width: 56, height: 56)
                 Image(systemName: "bolt.fill")
-                    .font(.system(size: 26, weight: .bold))
+                    .font(.system(size: DFFontSize.s26, weight: .bold))
                     .foregroundStyle(DFColor.forge)
             }
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
                 Text("한 번 클릭으로 연결")
                     .font(DFFont.title)
                 Text("Mac이 USB·이더넷·LAN·mDNS를 동시에 검색해 가장 빠른 경로로 자동 연결합니다.")
@@ -352,12 +352,12 @@ public struct ConnectionWizardView: View {
                     .foregroundStyle(DFColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let last = store.lastSuccessfulEndpoint {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         Image(systemName: "memorychip.fill")
-                            .font(.system(size: 9))
+                            .font(.system(size: DFFontSize.s9))
                             .foregroundStyle(DFColor.success)
                         Text("기억된 마지막: \(last.detail)")
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
                             .foregroundStyle(DFColor.success)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -384,10 +384,10 @@ public struct ConnectionWizardView: View {
                     ProgressView().controlSize(.small).tint(.white)
                 } else {
                     Image(systemName: "play.fill")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: DFFontSize.s14, weight: .bold))
                 }
                 Text(heroButtonTitle)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: DFFontSize.s16, weight: .semibold))
             }
             .frame(maxWidth: .infinity, minHeight: 56)
             .foregroundStyle(.white)
@@ -413,7 +413,7 @@ public struct ConnectionWizardView: View {
     }
 
     private var liveDiagnosticsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
             HStack {
                 Text("📡 진단")
                     .font(DFFont.bodyEmph)
@@ -427,7 +427,7 @@ public struct ConnectionWizardView: View {
                     oneClick.runDiagnosticsOnly()
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11))
+                        .font(.system(size: DFFontSize.s11))
                 }
                 .buttonStyle(.plain)
                 .help("다시 진단")
@@ -439,12 +439,12 @@ public struct ConnectionWizardView: View {
     }
 
     private func candidateRow(_ c: OneClickConnect.CandidateState) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: DFSpace.sm2) {
             stageIcon(c.stage)
-                .frame(width: 22, height: 22)
+                .frame(width: DFSize.iconMd, height: DFSize.iconMd)
                 .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
+                HStack(spacing: DFSpace.xs2) {
                     Text(c.label).font(DFFont.bodyEmph)
                     kindChip(c.kind)
                     if c.kind != .usb {
@@ -457,7 +457,7 @@ public struct ConnectionWizardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            VStack(spacing: 4) {
+            VStack(spacing: DFSpace.xs) {
                 if case .readyToConnect = c.stage, let ep = c.endpoint {
                     Button {
                         store.connect(endpoint: ep)
@@ -479,14 +479,14 @@ public struct ConnectionWizardView: View {
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "stethoscope")
-                                .font(.system(size: 9))
-                            Text("재진단").font(.system(size: 10))
+                                .font(.system(size: DFFontSize.s9))
+                            Text("재진단").font(.system(size: DFFontSize.s10))
                         }
                         .padding(.horizontal, DFSpace.xs2)
                         .padding(.vertical, 3)
                         .background(DFColor.card)
                         .clipShape(Capsule())
-                        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.2), lineWidth: DFSize.borderHairline))
+                        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline))
                     }
                     .buttonStyle(.plain)
                     .help("이 호스트만 다시 ping + 포트 검사")
@@ -504,7 +504,7 @@ public struct ConnectionWizardView: View {
 
     /// Ping + Port 5530 결과를 짧은 칩 두 개로 표시. 사용자가 한눈에 어디 막혔는지 인지.
     private func pingPortChips(_ c: OneClickConnect.CandidateState) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DFSpace.xs) {
             pingChip(c.ping)
             portChip(c.port)
         }
@@ -549,7 +549,7 @@ public struct ConnectionWizardView: View {
 
     private func chipText(_ s: String, tint: Color, sym: String) -> some View {
         Text(s)
-            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .font(.system(size: DFFontSize.s9, weight: .semibold, design: .monospaced))
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(tint.opacity(0.14))
@@ -576,7 +576,7 @@ public struct ConnectionWizardView: View {
                 .foregroundStyle(DFColor.success)
         case .failed:
             Image(systemName: "xmark.octagon.fill")
-                .foregroundStyle(DFColor.danger.opacity(0.7))
+                .foregroundStyle(DFColor.danger.opacity(DFOpacity.o70))
         }
     }
 
@@ -594,21 +594,21 @@ public struct ConnectionWizardView: View {
         switch stage {
         case .pending, .probing: return DFColor.textSecondary
         case .found, .readyToConnect: return DFColor.success
-        case .failed: return DFColor.danger.opacity(0.85)
+        case .failed: return DFColor.danger.opacity(DFOpacity.o85)
         }
     }
     private func stageBackground(_ stage: OneClickConnect.CandidateState.Stage) -> Color {
         switch stage {
-        case .readyToConnect: return DFColor.success.opacity(0.06)
+        case .readyToConnect: return DFColor.success.opacity(DFOpacity.o06)
         case .failed: return DFColor.danger.opacity(0.04)
         default: return DFColor.card
         }
     }
     private func stageBorder(_ stage: OneClickConnect.CandidateState.Stage) -> Color {
         switch stage {
-        case .readyToConnect: return DFColor.success.opacity(0.35)
-        case .failed: return DFColor.danger.opacity(0.18)
-        default: return DFColor.textSecondary.opacity(0.12)
+        case .readyToConnect: return DFColor.success.opacity(DFOpacity.strong)
+        case .failed: return DFColor.danger.opacity(DFOpacity.o18)
+        default: return DFColor.textSecondary.opacity(DFOpacity.subtle)
         }
     }
 
@@ -622,7 +622,7 @@ public struct ConnectionWizardView: View {
             }
         }()
         return Text(text)
-            .font(.system(size: 9, weight: .bold))
+            .font(.system(size: DFFontSize.s9, weight: .bold))
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(tint.opacity(0.16))
@@ -632,8 +632,8 @@ public struct ConnectionWizardView: View {
 
     /// 모든 후보가 실패한 경우 — 큰 [복사] 버튼 + 통합 셋업 블록.
     private var unifiedSetupSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "wand.and.stars")
                     .foregroundStyle(DFColor.warning)
                 Text("로봇 PC 셋업이 필요해요")
@@ -644,7 +644,7 @@ public struct ConnectionWizardView: View {
                 .foregroundStyle(DFColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 10) {
+            HStack(spacing: DFSpace.sm2) {
                 Button {
                     let pb = NSPasteboard.general
                     pb.clearContents()
@@ -654,7 +654,7 @@ public struct ConnectionWizardView: View {
                         copyConfirm = nil
                     }
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: DFSpace.xs2) {
                         Image(systemName: "doc.on.clipboard.fill")
                         Text("통합 셋업 복사").font(DFFont.bodyEmph)
                     }
@@ -669,7 +669,7 @@ public struct ConnectionWizardView: View {
                 Button {
                     oneClick.runOneClick()
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: DFSpace.xs2) {
                         Image(systemName: "arrow.clockwise")
                         Text("다시 시도").font(DFFont.body)
                     }
@@ -677,7 +677,7 @@ public struct ConnectionWizardView: View {
                     .padding(.vertical, DFSpace.sm)
                     .background(DFColor.card)
                     .clipShape(Capsule())
-                    .overlay(Capsule().stroke(DFColor.textSecondary.opacity(0.25), lineWidth: DFSize.borderHairline))
+                    .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: DFSize.borderHairline))
                 }
                 .buttonStyle(.plain)
 
@@ -692,7 +692,7 @@ public struct ConnectionWizardView: View {
 
             DisclosureGroup("미리보기 (실행 전 확인용)") {
                 Text(RobotSetupCommand.unifiedSetup)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: DFFontSize.s10, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(DFColor.elev2)
@@ -703,11 +703,11 @@ public struct ConnectionWizardView: View {
             .font(DFFont.caption)
         }
         .padding(DFSpace.sm)
-        .background(DFColor.warning.opacity(0.06))
+        .background(DFColor.warning.opacity(DFOpacity.o06))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
-                .stroke(DFColor.warning.opacity(0.30), lineWidth: DFSize.borderHairline)
+                .stroke(DFColor.warning.opacity(DFOpacity.o30), lineWidth: DFSize.borderHairline)
         )
     }
 
@@ -718,7 +718,7 @@ public struct ConnectionWizardView: View {
                 isAdvanced = true
                 oneClick.cancel()
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: DFSpace.xs) {
                     Image(systemName: "slider.horizontal.3")
                     Text("수동으로 연결하기 (USB · IP · Bonjour)")
                         .font(DFFont.caption)
@@ -743,7 +743,7 @@ public struct ConnectionWizardView: View {
                     isAdvanced = false
                     oneClick.runDiagnosticsOnly()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         Image(systemName: "chevron.left")
                         Text("자동 연결로 돌아가기").font(DFFont.caption)
                     }
@@ -777,14 +777,14 @@ public struct ConnectionWizardView: View {
         HStack(spacing: DFSpace.md) {
             ZStack {
                 Circle()
-                    .fill(path.tint.opacity(0.15))
-                    .frame(width: 48, height: 48)
+                    .fill(path.tint.opacity(DFOpacity.o15))
+                    .frame(width: DFSize.iconXxl, height: DFSize.iconXxl)
                 Image(systemName: path.icon)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: DFFontSize.s22, weight: .semibold))
                     .foregroundStyle(path.tint)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
+                HStack(spacing: DFSpace.xs2) {
                     Text(path.title)
                         .font(DFFont.bodyEmph)
                     Text(path.recommendation)
@@ -792,7 +792,7 @@ public struct ConnectionWizardView: View {
                         .foregroundStyle(path.tint)
                         .padding(.horizontal, DFSpace.xs2)
                         .padding(.vertical, 2)
-                        .background(path.tint.opacity(0.10))
+                        .background(path.tint.opacity(DFOpacity.o10))
                         .clipShape(Capsule())
                 }
                 Text(path.subtitle)
@@ -808,7 +808,7 @@ public struct ConnectionWizardView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.md)
-                .stroke(DFColor.textSecondary.opacity(0.12), lineWidth: DFSize.borderHairline)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: DFSize.borderHairline)
         )
     }
 
@@ -841,7 +841,7 @@ public struct ConnectionWizardView: View {
                 .padding(.top, DFSpace.md)
 
                 // step 카드들.
-                VStack(spacing: 8) {
+                VStack(spacing: DFSpace.sm) {
                     ForEach(steps) { step in
                         stepCard(step)
                     }
@@ -861,13 +861,13 @@ public struct ConnectionWizardView: View {
             // 단계 번호 + 상태 아이콘.
             ZStack {
                 Circle()
-                    .fill(stepBadgeColor(step.status).opacity(0.18))
-                    .frame(width: 32, height: 32)
+                    .fill(stepBadgeColor(step.status).opacity(DFOpacity.o18))
+                    .frame(width: DFSize.iconXl, height: DFSize.iconXl)
                 stepStatusIcon(step.status, fallbackText: "\(step.number)")
-                    .frame(width: 32, height: 32)
+                    .frame(width: DFSize.iconXl, height: DFSize.iconXl)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text(step.title)
                     .font(DFFont.bodyEmph)
                     .foregroundStyle(DFColor.textPrimary)
@@ -907,11 +907,11 @@ public struct ConnectionWizardView: View {
                 .tint(DFColor.accent)
         case .success:
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 18))
+                .font(.system(size: DFFontSize.s18))
                 .foregroundStyle(DFColor.success)
         case .failed:
             Image(systemName: "xmark.octagon.fill")
-                .font(.system(size: 18))
+                .font(.system(size: DFFontSize.s18))
                 .foregroundStyle(DFColor.danger)
         }
     }
@@ -926,18 +926,18 @@ public struct ConnectionWizardView: View {
     }
     private func stepBgColor(_ s: StepStatus) -> Color {
         switch s {
-        case .inProgress: return DFColor.accent.opacity(0.06)
-        case .success:    return DFColor.success.opacity(0.06)
-        case .failed:     return DFColor.danger.opacity(0.06)
+        case .inProgress: return DFColor.accent.opacity(DFOpacity.o06)
+        case .success:    return DFColor.success.opacity(DFOpacity.o06)
+        case .failed:     return DFColor.danger.opacity(DFOpacity.o06)
         case .pending:    return DFColor.card
         }
     }
     private func stepBorderColor(_ s: StepStatus) -> Color {
         switch s {
-        case .inProgress: return DFColor.accent.opacity(0.45)
-        case .success:    return DFColor.success.opacity(0.45)
-        case .failed:     return DFColor.danger.opacity(0.45)
-        case .pending:    return DFColor.textSecondary.opacity(0.15)
+        case .inProgress: return DFColor.accent.opacity(DFOpacity.o45)
+        case .success:    return DFColor.success.opacity(DFOpacity.o45)
+        case .failed:     return DFColor.danger.opacity(DFOpacity.o45)
+        case .pending:    return DFColor.textSecondary.opacity(DFOpacity.o15)
         }
     }
 
@@ -956,7 +956,7 @@ public struct ConnectionWizardView: View {
     }
 
     private var usbActions: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             if !store.availablePorts.isEmpty {
                 Text("발견된 USB 포트")
                     .font(DFFont.bodyEmph)
@@ -994,15 +994,15 @@ public struct ConnectionWizardView: View {
     }
 
     private var networkInputs: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DFSpace.sm2) {
             // ROBOTIS-OP2 표준 환경 프리셋.
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DFSpace.xs2) {
                 Text("ROBOTIS-OP2 표준 환경")
                     .font(DFFont.bodyEmph)
                 Text("이더넷 직결 시 e-Manual 기본값 (DHCP automatic).")
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)
-                HStack(spacing: 8) {
+                HStack(spacing: DFSpace.sm) {
                     Button {
                         manualHost = "192.168.123.1"
                         manualPort = "5530"
@@ -1019,11 +1019,11 @@ public struct ConnectionWizardView: View {
                 .controlSize(.small)
             }
             .padding(DFSpace.sm)
-            .background(DFColor.forge.opacity(0.06))
+            .background(DFColor.forge.opacity(DFOpacity.o06))
             .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.sm)
-                    .stroke(DFColor.forge.opacity(0.30), lineWidth: DFSize.borderHairline)
+                    .stroke(DFColor.forge.opacity(DFOpacity.o30), lineWidth: DFSize.borderHairline)
             )
 
             // 호스트/포트 입력.
@@ -1068,12 +1068,12 @@ public struct ConnectionWizardView: View {
     ///   ② forge serve (자동 광고 등 추가 기능, RAM/디스크 충분 시)
     /// e-Manual 표준 환경: user `robotis`, pw `111111`, IP `192.168.123.1`.
     private var robotSideCommandsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
 
             // 가장 빠른 방법 — socat + alias로 매번 1글자 실행. 우선 노출.
             DisclosureGroup("⚡ 가장 빠른 방법 — 한 번 셋업, 그 후 'f' 한 글자",
                             isExpanded: .constant(true)) {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: DFSpace.sm2) {
                     Text("OP2 표준(Ubuntu 14.04, Atom Z530, 1 GB RAM)은 cargo build가 비현실적. `socat`+ `alias` 조합으로 매 사용 시 한 글자만 입력하면 됩니다.")
                         .font(DFFont.caption)
                         .foregroundStyle(DFColor.textSecondary)
@@ -1115,7 +1115,7 @@ public struct ConnectionWizardView: View {
 
             // 환경 진단 — 빌드 가능성 확인.
             DisclosureGroup("🔍 로봇 환경 진단 (cargo build 가능성)") {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: DFSpace.sm2) {
                     Text("로봇 PC에서 다음을 실행하고 결과를 확인하세요. RAM이 2GB 이상이고 cargo가 있으면 forge serve도 가능, 아니면 위 socat 권장.")
                         .font(DFFont.caption)
                         .foregroundStyle(DFColor.textSecondary)
@@ -1140,7 +1140,7 @@ public struct ConnectionWizardView: View {
 
             // SSH 트러블슈팅.
             DisclosureGroup("🛠 SSH 'Connection refused' 트러블슈팅") {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: DFSpace.sm2) {
                     Text("`refused`는 호스트는 닿지만 22번 포트에 sshd가 listen하지 않는다는 뜻 (vs `timeout` = 호스트 자체 unreachable).\n\n**이미 로봇 터미널에 접근 가능하다면 SSH는 필수가 아닙니다.** 그 터미널에서 위 socat 한 줄을 바로 실행하세요.")
                         .font(DFFont.caption)
                         .foregroundStyle(DFColor.textSecondary)
@@ -1173,7 +1173,7 @@ public struct ConnectionWizardView: View {
 
             // forge serve 풀 빌드 (선택, RAM/디스크 충분한 경우만).
             DisclosureGroup("⚙️ (선택) forge serve 풀 빌드 — RAM 2GB+ 환경") {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: DFSpace.sm2) {
                     Text("Bonjour 자동 광고, 동시 연결 제한, 더 친절한 로그가 필요하면 이 경로. OP3 NUC 또는 외부 SBC 권장.")
                         .font(DFFont.caption)
                         .foregroundStyle(DFColor.textSecondary)
@@ -1212,10 +1212,10 @@ public struct ConnectionWizardView: View {
 
     /// 단계 카드 — 번호 + 제목 + 설명 + 복사 가능한 명령 블록.
     private func commandStepCard(step: String, title: String, note: String, command: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: DFSpace.xs2) {
                 Text(step)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DFFontSize.s11, weight: .bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -1227,9 +1227,9 @@ public struct ConnectionWizardView: View {
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .top, spacing: DFSpace.xs2) {
                 Text(command)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: DFFontSize.s11, design: .monospaced))
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DFColor.elev2)
@@ -1253,13 +1253,13 @@ public struct ConnectionWizardView: View {
     }
 
     private var bonjourList: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
             HStack {
                 Text("같은 네트워크의 로봇")
                     .font(DFFont.bodyEmph)
                 Spacer()
                 if bonjour.isBrowsing {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         ProgressView().controlSize(.small)
                         Text("검색 중…")
                             .font(DFFont.caption)
@@ -1275,9 +1275,9 @@ public struct ConnectionWizardView: View {
                 .help("다시 검색")
             }
             if bonjour.discovered.isEmpty {
-                VStack(spacing: 4) {
+                VStack(spacing: DFSpace.xs) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 24))
+                        .font(.system(size: DFFontSize.s24))
                         .foregroundStyle(DFColor.textSecondary)
                     Text("아직 발견된 로봇이 없어요")
                         .font(DFFont.caption)
@@ -1299,7 +1299,7 @@ public struct ConnectionWizardView: View {
                         HStack {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                                 .foregroundStyle(DFColor.forge)
-                            VStack(alignment: .leading, spacing: 1) {
+                            VStack(alignment: .leading, spacing: DFSpace.micro) {
                                 Text(svc.serviceName).font(DFFont.bodyEmph)
                                 Text("\(svc.host):\(svc.port)")
                                     .font(DFFont.caption.monospaced())
@@ -1318,14 +1318,14 @@ public struct ConnectionWizardView: View {
             }
 
             DisclosureGroup("로봇 PC에서 실행할 명령 (자동 광고)") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DFSpace.sm) {
                     Text("Mac이 자동으로 발견할 수 있도록 `--advertise` 옵션과 함께 실행:")
                         .font(DFFont.caption)
                         .foregroundStyle(DFColor.textSecondary)
                     let cmd = "./target/release/forge serve --port /dev/ttyUSB0 --bind 0.0.0.0:5530 --advertise OP2-MAIN"
-                    HStack(alignment: .top, spacing: 6) {
+                    HStack(alignment: .top, spacing: DFSpace.xs2) {
                         Text(cmd)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: DFFontSize.s11, design: .monospaced))
                             .padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(DFColor.elev2)
@@ -1379,7 +1379,7 @@ public struct ConnectionWizardView: View {
     @ViewBuilder
     private var oneClickFooter: some View {
         if store.isReconnecting {
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 ProgressView().controlSize(.small)
                 Text("자동 재연결 \(store.reconnectAttempt)/5 — 잠시 후 다시 시도해요")
                     .font(DFFont.caption)
@@ -1398,14 +1398,14 @@ public struct ConnectionWizardView: View {
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
         case .scanning:
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 ProgressView().controlSize(.small)
                 Text("주변 검색 중…")
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)
             }
         case .connecting(let label):
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 ProgressView().controlSize(.small)
                 Text("연결 중 — \(label)")
                     .font(DFFont.caption)
@@ -1441,7 +1441,7 @@ public struct ConnectionWizardView: View {
                 .font(DFFont.caption)
                 .lineLimit(2)
         case .inProgress:
-            HStack(spacing: 6) {
+            HStack(spacing: DFSpace.xs2) {
                 ProgressView().controlSize(.small)
                 Text(last.title)
                     .font(DFFont.caption)
