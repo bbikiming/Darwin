@@ -1,0 +1,159 @@
+# motions/external/MANIFEST.toml
+#
+# 외부 커뮤니티 `motion_4096.bin` (및 보조 .bin) 파일의 정식 카탈로그.
+# 파일 자체는 `research/community/` 하위 원본 클론에 보존하고, 이 매니페스트에서
+# SHA-256 · 라이선스 · 페이지 카탈로그 위치 · 소스 출처를 추적한다.
+#
+# 정합성 규칙:
+#   - 모든 `motion_4096.bin` 은 256 페이지 × 512 byte = 131 072 byte (Action.h 의 PAGE 구조 기준).
+#   - SHA-256 이 바뀌면 이 항목과 `_catalog/<name>.csv` 를 동시에 재생성한다.
+#   - `license_compat` 가 `gpl-isolated` 인 항목은 `forge-core` 가 임포트하면 안 된다 (텍스트·메타·페이지 분석 인용만 허용).
+#
+# 갱신: 2026-05-12 (Phase 1 확장 — 커뮤니티 모션 DB 구축)
+
+[default]
+page_size_bytes        = 512
+num_pages              = 256
+expected_size_bytes    = 131072
+servo_count_in_step    = 31     # position[31], ID 1..20 사용 + 예약
+servo_step_position_lsb_unit = "MX-28 4096-tick goal_position"
+# 페이지 헤더 schedule 코드: 0x00 = SPEED_BASE, 0x0a = TIME_BASE (Action.h enum)
+schedule_codes         = { speed_base = 0x00, time_base = 0x0a }
+
+
+[[motion]]
+id                = "op2-personal-assistant"
+source_repo       = "PersonalAssistantGradProject/robot_personal_assistant_op2"
+source_commit     = "f6cfc3a77d49f75d439c4fd1857cc56babf5711b"
+path              = "research/community/robot_personal_assistant_op2/motion_4096.bin"
+catalog_csv       = "motions/external/_catalog/op2-personal-assistant.csv"
+sha256            = "1132f4240b7441fd6c0f22e5d939c9830683e0de191508be85267f77e37f3947"
+size_bytes        = 131072
+target_robot      = "DARwIn-OP2 (CM-740)"
+license           = "package.xml: TODO (실질 미선언) — README 인용 가능 / 코드 직접 임포트는 보류"
+license_compat    = "unclear"
+named_pages       = 63
+highlight_pages   = [100, 101, 102, 103, 104, 105, 106, 107, 108, 250, 251, 252, 253, 254, 255]
+highlight_groups  = [
+  { pages = [100, 101, 102, 103, 104, 105, 106, 107, 108], theme = "책상 작업자 통증 케어 — 목/어깨/팔/허리/다리 스트레칭 시퀀스" },
+  { pages = [250, 251, 252, 253, 254, 255],                theme = "인사·환영·작별 인터랙션 (init_pose → welcome/ok/bye/Go/test)" },
+]
+notes             = "스톡 ROBOTIS 카탈로그 위에 ergonomic + 인사 페이지를 덧붙인 OP2 실기체 자료."
+
+
+[[motion]]
+id                = "nimbro-op"
+source_repo       = "NimbRo/nimbro-op"
+source_commit     = "5572d413eda0b53b8c4417d32efabdffff0a2904"
+path              = "research/community/nimbro-op/software/motion_4096.bin"
+catalog_csv       = "motions/external/_catalog/nimbro-op.csv"
+sha256            = "503b7af688e76b193c74a36e0baa32afd396a6e993276dd13306943778a60f3f"
+size_bytes        = 131072
+target_robot      = "NimbRo-OP (TeenSize 변형, DARwIn-OP 1.5.0 패치 베이스)"
+license           = "BSD-3-Clause (software/) · CC BY-NC-SA 3.0 (hardware/CAD)"
+license_compat    = "ok"
+named_pages       = 45
+highlight_pages   = [9, 10, 11]
+highlight_groups  = [
+  { pages = [9],         theme = "walkready 가 3-step 으로 확장 (스톡 1-step 대비 안정적 진입)" },
+  { pages = [10, 11],    theme = "낙상 복구 이름 변경: f up/b up → up f/up b (`Walking-tuned-for-NimbRo-OP` 패치와 한 묶음)" },
+]
+walking_patch_files = [
+  "research/community/nimbro-op/software/patches-essential/0012-Walking-tuned-for-NimbRo-OP.patch",
+  "research/community/nimbro-op/software/patches-essential/0007-MotionManager-torque-management.patch",
+  "research/community/nimbro-op/software/patches-essential/0009-LinuxMotionTimer-improved-performance.patch",
+  "research/community/nimbro-op/software/patches-essential/0010-Simple-angle-estimator.patch",
+  "research/community/nimbro-op/software/patches-essential/0016-Fall-protection-implementation.patch",
+]
+notes             = "TeenSize 무게중심/다리 길이가 OP1·OP2 와 다름 — 페이지 전체 덮어쓰기 금지. 보행 파라미터·낙상 보호 로직만 알고리즘 참고."
+
+
+[[motion]]
+id                = "darwinop-ens"
+source_repo       = "darwinop-ens/darwin-op"
+source_commit     = "fe301d0b77a9a537b4d88d2358c97864d3dd84ed"
+path              = "research/community/darwinop-ens-darwin-op/Data/motion_4096.bin"
+catalog_csv       = "motions/external/_catalog/darwinop-ens.csv"
+sha256            = "45f1f3a7c84b4e281cc9d73751a54d0cb63a2beb33f81ce86de5567e9d1dae63"
+size_bytes        = 131072
+target_robot      = "DARwIn-OP (CM-730, 1세대) — SourceForge v1.5/v1.6 베이스"
+license           = "Apache 2.0 (ROBOTIS upstream 상속)"
+license_compat    = "ok"
+named_pages       = 45
+highlight_pages   = [1, 9, 10, 11, 12, 13, 15, 16, 23, 24, 25, 27, 29, 30, 70, 71, 90, 91, 237, 239, 240, 241]
+highlight_groups  = [
+  { pages = [1, 2, 3, 4, 5, 6],     theme = "기본 인터랙션 (init/ok/no/hi/??/talk1) — 스톡 ROBOTIS 카탈로그 그대로" },
+  { pages = [9],                    theme = "walkready (1-step, 스톡)" },
+  { pages = [10, 11],               theme = "낙상 복구 (f up / b up)" },
+  { pages = [12, 13],               theme = "킥 (rk / lk) — Sprint 9~13 모션 합성의 좌우 미러 reference" },
+  { pages = [15, 16],               theme = "sit down / stand up — 시작/종료 시퀀스" },
+  { pages = [17, 18, 19],           theme = "mul1→mul2→mul3 — next-page 체이닝 예시" },
+  { pages = [70, 71],               theme = "rPASS / lPASS — 패스 동작" },
+  { pages = [90, 91],               theme = "lie down / lie up" },
+  { pages = [237, 239, 240, 241],   theme = "sit down 변주 — repeat·next 체이닝 (스톡 ROBOTIS 가 보존한 RoboPlus Action 예제)" },
+]
+notes             = "공식 SourceForge framework v1.5/v1.6 의 가장 깔끔한 GitHub 미러. **OP1 의 사실상 정본 reference**. Sprint 5 walking·Sprint 3 motion 파서의 1차 비교 기준."
+
+
+[[motion]]
+id                = "hros5-motion_4096"
+source_repo       = "Interbotix/HROS5-Framework"
+source_commit     = "a0640f194b89165b4a5b3ed637a19a31a8a3e339"
+path              = "research/community/_gpl-isolated/HROS5-Framework/Data/motion_4096.bin"
+catalog_csv       = "motions/external/_catalog/hros5-motion_4096.csv"
+sha256            = "3bf7046c792f4e610831694e166bbab7bf45068aa39ce32e826b9ace8df1c692"
+size_bytes        = 131072
+target_robot      = "HR-OS5 (Interbotix, Arbotix-Pro 컨트롤러)"
+license           = "GPL v3"
+license_compat    = "gpl-isolated"   # forge-core 임포트 금지, 페이지 메타데이터 인용만 OK
+named_pages       = 20
+highlight_pages   = [8, 9, 15, 20, 22, 25, 30, 35, 40, 45, 46, 47, 48, 51, 55]
+highlight_groups  = [
+  { pages = [8, 9, 15],     theme = "보행 진입/종료 — slow-wake → walkready → sit down" },
+  { pages = [20, 22, 25],   theme = "소셜 제스처 — wave / arms up / scratch" },
+  { pages = [30, 35, 40, 45, 46], theme = "대화·표현 — bow / excite / talking / thanks / pose" },
+  { pages = [47, 48, 51],   theme = "댄스 — dance1 / dance (chain via page 51)" },
+  { pages = [55],           theme = "long pose — 정지 자세" },
+]
+notes             = "HR-OS5 라이브 카탈로그. **OP1/OP2 호환 X — 그대로 실행하지 말 것**. 페이지 구성·next/exit 체이닝 패턴만 참고."
+
+
+[[motion]]
+id                = "hros5-motion_src"
+source_repo       = "Interbotix/HROS5-Framework"
+source_commit     = "a0640f194b89165b4a5b3ed637a19a31a8a3e339"
+path              = "research/community/_gpl-isolated/HROS5-Framework/Data/motion_src.bin"
+catalog_csv       = "motions/external/_catalog/hros5-motion_src.csv"
+sha256            = "dd7da7cf42dbf3ceec8b95cf7aad2e288623d4f6153765a1d629d17e9467610d"
+size_bytes        = 131072
+target_robot      = "DARwIn-OP 스톡 (HR-OS5 의 rme 변환 입력)"
+license           = "GPL v3 (저장소 단위)"
+license_compat    = "gpl-isolated"
+named_pages       = 46
+highlight_pages   = [75]
+highlight_groups  = [
+  { pages = [75], theme = "skate — 스톡 ROBOTIS 카탈로그에 없는 추가 페이지" },
+]
+notes             = "rme(개선된 Action Editor)의 변환 입력 파일. ENS / 스톡과 거의 동일하나 page 75 = skate 추가."
+
+
+[[motion]]
+id                = "hros5-motion_dest"
+source_repo       = "Interbotix/HROS5-Framework"
+source_commit     = "a0640f194b89165b4a5b3ed637a19a31a8a3e339"
+path              = "research/community/_gpl-isolated/HROS5-Framework/Data/motion_dest.bin"
+catalog_csv       = "motions/external/_catalog/hros5-motion_dest.csv"
+sha256            = "226d35165befb4a659c179fdef0d729ab000778da093ccf3bceb00672a67d3ca"
+size_bytes        = 131072
+target_robot      = "HR-OS5 (rme 변환 출력)"
+license           = "GPL v3 (저장소 단위)"
+license_compat    = "gpl-isolated"
+named_pages       = 46
+highlight_pages   = [1, 27, 38, 39, 75]
+highlight_groups  = [
+  { pages = [1],         theme = "init → int (이름 변경, 변환 부산물)" },
+  { pages = [27],        theme = "d3 → scratch_head (의미 부여 리네이밍)" },
+  { pages = [38, 39],    theme = "d2/d2 → wave_1a/wave_1b (체이닝 페이지 의미화)" },
+  { pages = [75],        theme = "skate 유지" },
+]
+notes             = "rme 변환 출력 — 페이지 ID 는 보존하면서 이름만 의미 있게 리매핑한 사례. **모션 라이브러리에 의미 있는 이름 부여하는 패턴 참고**."

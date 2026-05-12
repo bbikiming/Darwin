@@ -11,11 +11,36 @@ public final class WalkLabSession: ObservableObject {
     @Published public var current: WalkLabPreset = .idle
     @Published public var cradleConfirmed: Bool = false
     @Published public var advanced: Bool = false
-    @Published public var customX: Double = 0
-    @Published public var customY: Double = 0
-    @Published public var customA: Double = 0
+    /// 보폭 (앞, mm/cycle). 0..50. WalkEngine 의 x (m) 와 매핑: x_m = strideMm / 1000.
+    @Published public var strideMm: Double = 0
+    /// 측면 보폭 (mm/cycle). -25..25. y_m = sideMm / 1000.
+    @Published public var sideMm: Double = 0
+    /// 회전 (°/cycle). -20..20. a_rad = turnDeg * π/180.
+    @Published public var turnDeg: Double = 0
     @Published public var customPeriodMs: Double = 600
+    /// 발 들기 높이 (mm). sim 영향 — 엔진 미반영 (BLOCKER C3 까지).
+    @Published public var footHeightMm: Double = 40
+    /// 균형 게인 (NimbRo lean_fb_gain 등가). sim 영향 — 엔진 미반영.
+    @Published public var balanceGain: Double = 1.0
+    /// 사용자 명시적 안전 한도 해제. Smart-clamp 무시, 단 critical 점수는 여전히 차단.
+    @Published public var forceOverrideSafety: Bool = false
     @Published public var riskAcknowledged: Bool = false
+
+    // MARK: - 레거시 호환 (기존 코드 경로 보존)
+    /// `customX`/`customY`/`customA` 는 strideMm/sideMm/turnDeg 의 m 단위 view.
+    /// 외부 코드(Walk.swift FFI 등) 는 m 단위를 기대하므로 변환.
+    public var customX: Double {
+        get { strideMm / 1000.0 }
+        set { strideMm = newValue * 1000.0 }
+    }
+    public var customY: Double {
+        get { sideMm / 1000.0 }
+        set { sideMm = newValue * 1000.0 }
+    }
+    public var customA: Double {
+        get { turnDeg * .pi / 180.0 }
+        set { turnDeg = newValue * 180.0 / .pi }
+    }
 
     // MARK: - 시뮬 / 실시간 상태
     @Published public var elapsedMs: UInt32 = 0
@@ -68,10 +93,35 @@ public final class WalkLabSession: ObservableObject {
         return Double(current.periodMs)
     }
 
+    /// 현재 슬라이더 조합의 낙상 위험 점수 (사이드바 게이지 + start gate 공유).
+    /// advanced 모드일 때만 의미. 그 외는 preset 의 안전 분류가 우선.
+    public var stabilityScore: WalkStabilityResult {
+        WalkStabilityPredictor.evaluate(WalkStabilityInput(
+            strideMm: strideMm,
+            sideMm: sideMm,
+            turnDeg: turnDeg,
+            periodMs: customPeriodMs,
+            footHeightMm: footHeightMm,
+            balanceGain: balanceGain
+        ))
+    }
+
+    /// 시작 가능한가? advanced 모드의 critical 점수는 차단. preset 모드는 risk confirm 흐름.
+    public var canStart: Bool {
+        guard cradleConfirmed else { return false }
+        if advanced {
+            return stabilityScore.category != .critical
+        }
+        return true
+    }
+
     /// 프리셋 시작 — 시뮬 50 ms tick.
     public func start(_ preset: WalkLabPreset) {
         guard cradleConfirmed else { return }
         if preset.requiresRiskConfirmation, !riskAcknowledged { return }
+        // advanced 모드에서 critical 조합이면 시작 차단 — 사용자가 슬라이더로 직접 위험 조합을
+        // 만든 경우 (preset 의 risk confirm 과는 별개).
+        if advanced && stabilityScore.category == .critical { return }
 
         current = preset
         let cmd = effectiveCommand

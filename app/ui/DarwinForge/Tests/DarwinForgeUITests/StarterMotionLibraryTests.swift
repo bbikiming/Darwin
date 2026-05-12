@@ -17,6 +17,38 @@ final class StarterMotionLibraryTests: XCTestCase {
             "P0-H: 첫 실행 motion library에 최소 5 페이지 필요 (idle, T-pose, bow, wave, sit)")
     }
 
+    /// ReferenceMotionLibrary 의 4 카테고리 페이지가 starterPages 에 포함되어야 함.
+    /// (walk progression test 6 + ergonomic 케어 + 인사 + 소셜)
+    func testReferenceMotionLibraryIsIncluded() {
+        let names = MotionStudioView.starterPages().map(\.name)
+        // 보행 테스트 6 페이지 — 위험도 오름차순 (1~6)
+        for n in 1...6 {
+            XCTAssertTrue(
+                names.contains(where: { $0.hasPrefix("보행 테스트 \(n) —") }),
+                "보행 테스트 \(n) 페이지가 starterPages 에 없음"
+            )
+        }
+        // 카테고리별 대표 페이지가 적어도 하나 있어야 함
+        XCTAssertTrue(names.contains(where: { $0.contains("거북목 케어") }), "ergonomic 페이지 없음")
+        XCTAssertTrue(names.contains(where: { $0.contains("환영 인사") }), "환영 인사 페이지 없음")
+        XCTAssertTrue(names.contains(where: { $0.contains("머리 긁기") }), "HROS5 소셜 페이지 없음")
+    }
+
+    /// ReferenceMotionLibrary 의 보행 progression 6 페이지가 walkReady 에서 시작·종료해야 함.
+    func testWalkProgressionPagesAreSafe() {
+        let pages = ReferenceMotionLibrary.walkProgressionPages(startId: 50)
+        XCTAssertEqual(pages.count, 6, "보행 테스트는 정확히 6 페이지")
+        for page in pages {
+            guard let first = page.steps.first, let last = page.steps.last else {
+                XCTFail("page \(page.id) (\(page.name)) — empty"); continue
+            }
+            XCTAssertEqual(first.toPose(), .walkReady,
+                "보행 테스트 \(page.id) — 첫 step 이 walkReady 아님")
+            XCTAssertEqual(last.toPose(), .walkReady,
+                "보행 테스트 \(page.id) — 마지막 step 이 walkReady 아님")
+        }
+    }
+
     func testEveryPageHasAtLeastOneStep() {
         for page in MotionStudioView.starterPages() {
             XCTAssertFalse(page.steps.isEmpty,

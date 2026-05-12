@@ -1,0 +1,24 @@
+<?xml version="1.0" ?>
+<launch>
+
+    <!-- launch the op2_manager for the robotis op2 as the standard interface with the hardware -->
+    <include file="$(find op2_manager)/launch/op2_manager.launch"/>    
+
+
+    <!-- Run the action initialization node which is responsible to enabling the action module, this will make the robot respond for sent actions (page numbers) -->
+
+    <node pkg="timed_roslaunch" type="timed_roslaunch.sh"
+    args="10 robot_personal_assistant_op2 rostopic_init.launch"
+    name="timed_roslaunch_rostopic_init" output="screen" />
+    
+    <node pkg="timed_roslaunch" type="timed_roslaunch.sh"
+    args="10 robot_personal_assistant_op2 action_initialize.launch"
+    name="timed_roslaunch_action_initialize" output="screen" />
+
+    <node pkg="timed_roslaunch" type="timed_roslaunch.sh"
+    args="25 robot_personal_assistant_op2 functions_of_robot.launch"
+    name="functions_of_robot" output="screen" />
+
+    
+
+</launch>

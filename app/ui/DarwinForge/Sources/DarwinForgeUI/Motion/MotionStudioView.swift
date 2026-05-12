@@ -662,7 +662,17 @@ public struct MotionStudioView: View {
         //     각 페이지: walk_ready → key pose → (좌우 oscillate 추가) → walk_ready.
         let extras = libraryStarterPages()
 
+        // ── 7. 외부 reference (research/community + motions/external) 기반 추가 페이지.
+        //     ReferenceMotionLibrary 가 분류별로 분리 — 보행 점진 테스트, ergonomic 케어,
+        //     인사·작별, HROS5 소셜 패턴. 라이선스·출처 주석은 해당 파일 참고.
+        //     ID 충돌 회피: existing 1..5 + 10..32 = ~32 까지 사용 → 새 페이지는 50+.
+        let walkTest = ReferenceMotionLibrary.walkProgressionPages(startId: 50)
+        let ergonomic = ReferenceMotionLibrary.ergonomicPages(startId: 60)
+        let greetings = ReferenceMotionLibrary.greetingPages(startId: 70)
+        let social = ReferenceMotionLibrary.socialPages(startId: 80)
+
         return [idle, tPose, bow, wave, sit] + extras
+             + walkTest + ergonomic + greetings + social
     }
 
     /// PoseLibrary 기반 starter 동작 생성 — 단일 자세 페이지 + 오실레이션 페이지.
