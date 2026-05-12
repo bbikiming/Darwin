@@ -73,33 +73,39 @@ public enum PoseLibrary {
     public static let all: [NamedPose] = build()
 
     private static func build() -> [NamedPose] {
-        // ── ROBOTIS DARwIn-OP framework 표준 부호 규약 ────────────────
+        // ── ROBOTIS-OP2 URDF-consistent 부호 규약 (2026-05-13 hotfix) ─────
         //
-        // 모든 자세는 RobotPose.walkReady (ROBOTIS JointData::Initialize 정확값) 기반.
+        // 모든 자세는 RobotPose.walkReady (ROBOTIS motion_4096.bin page 9 raw) 기반.
         //
-        // 부호 규약 (ROBOTIS framework 와 동일):
-        //   - 어깨 Pitch (1/2): 음수 = 팔 앞으로, 양수 = 팔 뒤로
-        //                       오른쪽(1) 음수 / 왼쪽(2) 양수 — 좌우 대칭
-        //   - 어깨 Roll  (3/4): 음수 = 오른쪽으로, 양수 = 왼쪽으로
-        //                       오른쪽(3) 음수 / 왼쪽(4) 양수
-        //   - 팔꿈치    (5/6): 음수/양수 = 굽힘 방향. 오른쪽 양수 / 왼쪽 음수
+        // 부호 규약 — ROBOTIS-OP2 URDF axis 와 정합. "신체 앞쪽 / 위쪽 / 굽힘" 의도:
+        //   - 어깨 Pitch (1/2): 양수 = 팔 앞·위로, 음수 = 팔 뒤로 (URDF axis (0,∓1,0))
+        //                       오른쪽(1) **양수** / 왼쪽(2) **음수** — mirror pair
+        //                       (★ 이전 PoseLibrary 가 정반대 부호로 작성돼 모든 팔
+        //                          모션이 뒤로 가던 버그 — 2026-05-13 일괄 반전)
+        //   - 어깨 Roll  (3/4): 음수 = 오른쪽으로, 양수 = 왼쪽으로. 오른쪽 음수 / 왼쪽 양수
+        //   - 팔꿈치    (5/6): 굽힘. 오른쪽 양수 / 왼쪽 음수 (ROBOTIS ini_pose r_el +30)
         //   - 골반 Yaw (7/8):  좌우 회전 — 좌우 대칭
-        //   - 골반 Roll (9/10):  골반 좌우 — 좌우 대칭
-        //   - 골반 Pitch(11/12): 다리 앞뒤. 음수 = 앞으로
-        //                       오른쪽(11) 음수 / 왼쪽(12) 양수
-        //   - 무릎      (13/14): 양수 = 굽힘. 오른쪽 양수 / 왼쪽 음수
-        //   - 발목 Pitch(15/16): 음수 = 앞으로 기울임 (compensation)
-        //                       오른쪽 음수 / 왼쪽 양수
-        //   - 발목 Roll (17/18): 좌우 — 좌우 대칭
+        //   - 골반 Roll (9/10): 좌우 — 대칭
+        //   - 골반 Pitch(11/12): 다리 앞으로 굽힘. 오른쪽 음수 / 왼쪽 양수
+        //                       (ROBOTIS ini_pose r_hip_pitch -65 = hip flex 65°)
+        //   - 무릎      (13/14): 굽힘. 오른쪽 양수 / 왼쪽 음수
+        //   - 발목 Pitch(15/16): 발끝 위 (dorsiflexion). 오른쪽 양수 / 왼쪽 음수
+        //   - 발목 Roll (17/18): 좌우 — 대칭
         //   - 머리 Pan (19): 양수 = 오른쪽
-        //   - 머리 Tilt(20): 양수 = 위
+        //   - 머리 Tilt(20): 양수 = 위 (chin up)
         //
-        // walkReady 절대값 (도):
-        //   shoulder_pitch ±45, shoulder_roll ±17, elbow ±20
-        //   hip_pitch ±8, knee ±16, ankle_pitch ±7
+        // 검증: mirror pair 의 abs 값 동일 + 부호 반대 → URDF mirror 정합.
         //
-        // 자세 정의 패턴: walkReady 베이스 + 한정된 modification.
-        // 다리 자세 (lunge, kick 등) 는 walkReady 의 hip/knee/ankle 변경.
+        // walkReady 절대값 (ROBOTIS 공식 raw → 도):
+        //   shoulder_pitch R-48 / L+48 (deep squat counter-balance — 의도적 후방)
+        //   shoulder_roll  R-18 / L+18
+        //   elbow          R+29 / L-29
+        //   hip_pitch      R-36 / L+36 (hip flex)
+        //   knee           R+53 / L-53 (knee bend)
+        //   ankle_pitch    R+30 / L-30 (ankle dorsiflex)
+        //
+        // 자세 정의 패턴: walkReady 베이스 + 한정 modification.
+        // 새 자세 추가 시 위 부호표를 반드시 따를 것 — motion-composer 에이전트도 동일.
 
         func wrPose(_ overrides: [JointID: Double]) -> RobotPose {
             var dict = RobotPose.walkReady.positions
@@ -153,7 +159,7 @@ public enum PoseLibrary {
                   description: "정중한 인사 — 머리 + 어깨 굽힘 (다리 그대로)",
                   keywords: ["깊은 인사", "큰절", "deep bow", "정중"],
                   pose: pose([
-                    .rShoulderPitch: -15, .lShoulderPitch: +15,  // walkReady -45/+45 → -15/+15 (앞으로 30°)
+                    .rShoulderPitch: +15, .lShoulderPitch: -15,  // walkReady -45/+45 → -15/+15 (앞으로 30°)
                     .headTilt: -35
                   ])),
 
@@ -162,7 +168,7 @@ public enum PoseLibrary {
                   description: "오른팔 위 — wave 시작",
                   keywords: ["손 흔들기", "wave", "안녕", "오른손"],
                   pose: pose([
-                    .rShoulderPitch: -135,    // 팔 위로 (walkReady -45 → -135 = +90° 들기)
+                    .rShoulderPitch: +135,    // 팔 위로 (walkReady -45 → -135 = +90° 들기)
                     .rShoulderRoll: -45,      // 어깨 벌림 (-17 → -45)
                     .rElbow: +90              // 팔꿈치 굽힘 (20 → 90)
                   ])),
@@ -172,7 +178,7 @@ public enum PoseLibrary {
                   description: "wave oscillation — 손목 방향만 변경",
                   keywords: ["wave", "흔들기", "오른손"],
                   pose: pose([
-                    .rShoulderPitch: -135,
+                    .rShoulderPitch: +135,
                     .rShoulderRoll: -20,      // -45 ↔ -20 oscillation
                     .rElbow: +90
                   ])),
@@ -182,7 +188,7 @@ public enum PoseLibrary {
                   description: "왼팔 위 — 좌우 대칭",
                   keywords: ["왼손 흔들기", "wave left"],
                   pose: pose([
-                    .lShoulderPitch: +135,
+                    .lShoulderPitch: -135,
                     .lShoulderRoll: +45,
                     .lElbow: -90
                   ])),
@@ -192,7 +198,7 @@ public enum PoseLibrary {
                   description: "오른손 앞으로 — 악수 시작",
                   keywords: ["악수", "handshake", "shake"],
                   pose: pose([
-                    .rShoulderPitch: -75, .rElbow: 90, .rShoulderRoll: -10
+                    .rShoulderPitch: +75, .rElbow: 90, .rShoulderRoll: -10
                   ])),
 
         NamedPose(id: "salute", displayName: "경례",
@@ -200,7 +206,7 @@ public enum PoseLibrary {
                   description: "군대식 경례 — 오른손 이마 옆",
                   keywords: ["경례", "salute"],
                   pose: pose([
-                    .rShoulderPitch: -130,    // 팔 거의 위
+                    .rShoulderPitch: +130,    // 팔 거의 위
                     .rShoulderRoll: -25,      // 살짝 벌림
                     .rElbow: +110,            // 팔꿈치 깊게 굽힘
                     .headTilt: 0              // 머리 직립
@@ -211,8 +217,8 @@ public enum PoseLibrary {
                   description: "양손 모은 직전 — 박수 starting",
                   keywords: ["박수", "clap"],
                   pose: pose([
-                    .rShoulderPitch: -80, .rElbow: 110, .rShoulderRoll: -45,
-                    .lShoulderPitch: 80, .lElbow: -110, .lShoulderRoll: 45
+                    .rShoulderPitch: +80, .rElbow: 110, .rShoulderRoll: -45,
+                    .lShoulderPitch: -80, .lElbow: -110, .lShoulderRoll: 45
                   ])),
 
         NamedPose(id: "clap_apart", displayName: "박수 (벌림)",
@@ -220,8 +226,8 @@ public enum PoseLibrary {
                   description: "박수 사이 — 양손 벌림",
                   keywords: ["박수", "clap"],
                   pose: pose([
-                    .rShoulderPitch: -80, .rElbow: 80, .rShoulderRoll: -75,
-                    .lShoulderPitch: 80, .lElbow: -80, .lShoulderRoll: 75
+                    .rShoulderPitch: +80, .rElbow: 80, .rShoulderRoll: -75,
+                    .lShoulderPitch: -80, .lElbow: -80, .lShoulderRoll: 75
                   ])),
 
         NamedPose(id: "hands_up", displayName: "만세",
@@ -229,8 +235,8 @@ public enum PoseLibrary {
                   description: "양팔 머리 위 V자",
                   keywords: ["만세", "hands up", "V", "celebrate"],
                   pose: pose([
-                    .rShoulderPitch: -160,    // 거의 수직
-                    .lShoulderPitch: +160,
+                    .rShoulderPitch: +160,    // 거의 수직
+                    .lShoulderPitch: -160,
                     .rShoulderRoll: -30,
                     .lShoulderRoll: +30,
                     .rElbow: 0, .lElbow: 0    // 팔 펴기
@@ -241,7 +247,7 @@ public enum PoseLibrary {
                   description: "오른팔로 오른쪽 가리킴",
                   keywords: ["가리키기", "point", "오른쪽"],
                   pose: pose([
-                    .rShoulderPitch: -90, .rShoulderRoll: -85, .rElbow: 0,
+                    .rShoulderPitch: +90, .rShoulderRoll: -85, .rElbow: 0,
                     .headPan: 60
                   ])),
 
@@ -250,7 +256,7 @@ public enum PoseLibrary {
                   description: "왼팔로 왼쪽 가리킴",
                   keywords: ["가리키기", "point", "왼쪽"],
                   pose: pose([
-                    .lShoulderPitch: 90, .lShoulderRoll: 85, .lElbow: 0,
+                    .lShoulderPitch: -90, .lShoulderRoll: 85, .lElbow: 0,
                     .headPan: -60
                   ])),
 
@@ -259,7 +265,7 @@ public enum PoseLibrary {
                   description: "오른팔로 정면 가리킴",
                   keywords: ["가리키기", "point forward", "앞"],
                   pose: pose([
-                    .rShoulderPitch: -90, .rElbow: 0, .rShoulderRoll: -10
+                    .rShoulderPitch: +90, .rElbow: 0, .rShoulderRoll: -10
                   ])),
 
         NamedPose(id: "pray", displayName: "기도 자세",
@@ -267,8 +273,8 @@ public enum PoseLibrary {
                   description: "양손 가슴 앞 모으기",
                   keywords: ["기도", "pray", "namaste"],
                   pose: pose([
-                    .rShoulderPitch: -45, .rElbow: 110, .rShoulderRoll: -10,
-                    .lShoulderPitch: 45, .lElbow: -110, .lShoulderRoll: 10
+                    .rShoulderPitch: +45, .rElbow: 110, .rShoulderRoll: -10,
+                    .lShoulderPitch: -45, .lElbow: -110, .lShoulderRoll: 10
                   ])),
 
         // ── 운동/스포츠 ──────────────────────────────────────────
@@ -281,8 +287,8 @@ public enum PoseLibrary {
                   pose: pose([
                     .rHipPitch: -25, .lHipPitch: +25,
                     .rKnee: +50, .lKnee: -50,
-                    .rAnklePitch: -25, .lAnklePitch: +25,
-                    .rShoulderPitch: -90, .lShoulderPitch: +90  // 팔 앞으로 균형
+                    .rAnklePitch: +25, .lAnklePitch: -25,
+                    .rShoulderPitch: +90, .lShoulderPitch: -90  // 팔 앞으로 균형
                   ])),
 
         NamedPose(id: "squat_up", displayName: "스쿼트 (서기)",
@@ -296,9 +302,9 @@ public enum PoseLibrary {
                   description: "오른발 앞으로 lunge",
                   keywords: ["런지", "lunge"],
                   pose: pose([
-                    .rHipPitch: 45, .rKnee: 80, .rAnklePitch: -35,
+                    .rHipPitch: -45, .rKnee: 80, .rAnklePitch: +35,
                     .lHipPitch: -15, .lKnee: 0,
-                    .rShoulderPitch: 30, .lShoulderPitch: -30
+                    .rShoulderPitch: -30, .lShoulderPitch: +30
                   ])),
 
         NamedPose(id: "kick_back_right", displayName: "발차기 준비 (오른발 뒤)",
@@ -306,9 +312,9 @@ public enum PoseLibrary {
                   description: "오른발 뒤로 빼고 차기 준비",
                   keywords: ["발차기", "kick back", "준비"],
                   pose: pose([
-                    .rHipPitch: -30, .rKnee: 30, .rAnklePitch: 0,
+                    .rHipPitch: +30, .rKnee: 30, .rAnklePitch: 0,
                     .lHipRoll: -15, .lHipPitch: 5,
-                    .rShoulderPitch: 30, .lShoulderPitch: -30
+                    .rShoulderPitch: -30, .lShoulderPitch: +30
                   ])),
 
         NamedPose(id: "kick_forward_right", displayName: "발차기 (오른발 앞)",
@@ -316,9 +322,9 @@ public enum PoseLibrary {
                   description: "오른발 앞으로 차기 — 충격 순간",
                   keywords: ["발차기", "kick forward"],
                   pose: pose([
-                    .rHipPitch: 60, .rKnee: 0, .rAnklePitch: -20,
+                    .rHipPitch: -60, .rKnee: 0, .rAnklePitch: +20,
                     .lHipRoll: -15,
-                    .rShoulderPitch: -30, .lShoulderPitch: 30
+                    .rShoulderPitch: +30, .lShoulderPitch: -30
                   ])),
 
         NamedPose(id: "punch_right", displayName: "오른손 펀치",
@@ -326,8 +332,8 @@ public enum PoseLibrary {
                   description: "오른손 정면 펀치",
                   keywords: ["펀치", "punch", "주먹"],
                   pose: pose([
-                    .rShoulderPitch: -90, .rElbow: 0, .rShoulderRoll: -5,
-                    .lShoulderPitch: 30, .lElbow: -80
+                    .rShoulderPitch: +90, .rElbow: 0, .rShoulderRoll: -5,
+                    .lShoulderPitch: -30, .lElbow: -80
                   ])),
 
         NamedPose(id: "punch_left", displayName: "왼손 펀치",
@@ -335,8 +341,8 @@ public enum PoseLibrary {
                   description: "왼손 정면 펀치",
                   keywords: ["펀치", "punch", "왼손"],
                   pose: pose([
-                    .lShoulderPitch: 90, .lElbow: 0, .lShoulderRoll: 5,
-                    .rShoulderPitch: -30, .rElbow: 80
+                    .lShoulderPitch: -90, .lElbow: 0, .lShoulderRoll: 5,
+                    .rShoulderPitch: +30, .rElbow: 80
                   ])),
 
         NamedPose(id: "fighting_stance", displayName: "복싱 자세",
@@ -344,9 +350,9 @@ public enum PoseLibrary {
                   description: "복싱 가드 — 양손 얼굴 앞",
                   keywords: ["복싱", "boxing", "가드"],
                   pose: pose([
-                    .rShoulderPitch: -60, .rElbow: 90, .rShoulderRoll: -30,
-                    .lShoulderPitch: 60, .lElbow: -90, .lShoulderRoll: 30,
-                    .rHipPitch: 10, .lHipPitch: -10,
+                    .rShoulderPitch: +60, .rElbow: 90, .rShoulderRoll: -30,
+                    .lShoulderPitch: -60, .lElbow: -90, .lShoulderRoll: 30,
+                    .rHipPitch: -10, .lHipPitch: +10,
                     .rKnee: 20, .lKnee: -20
                   ])),
 
@@ -356,10 +362,10 @@ public enum PoseLibrary {
                   description: "엉덩이를 가상 의자에 — 90° 무릎",
                   keywords: ["앉기", "sit", "의자"],
                   pose: pose([
-                    .rHipPitch: 80, .lHipPitch: -80,
+                    .rHipPitch: -80, .lHipPitch: +80,
                     .rKnee: 90, .lKnee: -90,
-                    .rAnklePitch: -10, .lAnklePitch: 10,
-                    .rShoulderPitch: -10, .lShoulderPitch: 10
+                    .rAnklePitch: +10, .lAnklePitch: -10,
+                    .rShoulderPitch: +10, .lShoulderPitch: -10
                   ])),
 
         NamedPose(id: "look_left", displayName: "왼쪽 보기",
@@ -400,8 +406,8 @@ public enum PoseLibrary {
                   description: "양팔 가슴 앞 교차",
                   keywords: ["팔짱", "crossed arms"],
                   pose: pose([
-                    .rShoulderPitch: -45, .rElbow: 130, .rShoulderRoll: -30,
-                    .lShoulderPitch: 45, .lElbow: -130, .lShoulderRoll: 30
+                    .rShoulderPitch: +45, .rElbow: 130, .rShoulderRoll: -30,
+                    .lShoulderPitch: -45, .lElbow: -130, .lShoulderRoll: 30
                   ])),
 
         // ── 감정 ──────────────────────────────────────────
@@ -410,7 +416,7 @@ public enum PoseLibrary {
                   description: "만세 + 머리 위",
                   keywords: ["환호", "cheer", "만세", "기쁨"],
                   pose: pose([
-                    .rShoulderPitch: -170, .lShoulderPitch: 170,
+                    .rShoulderPitch: +170, .lShoulderPitch: -170,
                     .rElbow: 20, .lElbow: -20,
                     .headTilt: 20
                   ])),
@@ -421,7 +427,7 @@ public enum PoseLibrary {
                   keywords: ["좌절", "despair", "슬픔"],
                   pose: pose([
                     .headTilt: -40,
-                    .rShoulderPitch: 30, .lShoulderPitch: -30,
+                    .rShoulderPitch: -30, .lShoulderPitch: +30,
                     .rShoulderRoll: -5, .lShoulderRoll: 5
                   ])),
 
@@ -430,7 +436,7 @@ public enum PoseLibrary {
                   description: "오른손 턱 — '로댕의 생각하는 사람'",
                   keywords: ["생각", "think", "턱"],
                   pose: pose([
-                    .rShoulderPitch: -50, .rElbow: 130, .rShoulderRoll: -10,
+                    .rShoulderPitch: +50, .rElbow: 130, .rShoulderRoll: -10,
                     .headTilt: -10
                   ])),
 
@@ -439,7 +445,7 @@ public enum PoseLibrary {
                   description: "양팔 살짝 들기 + 고개 들기",
                   keywords: ["놀람", "surprise", "깜짝"],
                   pose: pose([
-                    .rShoulderPitch: -45, .lShoulderPitch: 45,
+                    .rShoulderPitch: +45, .lShoulderPitch: -45,
                     .rShoulderRoll: -45, .lShoulderRoll: 45,
                     .rElbow: 60, .lElbow: -60,
                     .headTilt: 15
@@ -451,7 +457,7 @@ public enum PoseLibrary {
                   keywords: ["수줍음", "shy"],
                   pose: pose([
                     .headPan: -20, .headTilt: -15,
-                    .rShoulderPitch: -30, .rElbow: 90, .rShoulderRoll: -30
+                    .rShoulderPitch: +30, .rElbow: 90, .rShoulderRoll: -30
                   ])),
 
         // ── 댄스 ──────────────────────────────────────────
@@ -460,7 +466,7 @@ public enum PoseLibrary {
                   description: "한팔 위, 한팔 옆",
                   keywords: ["댄스", "dance"],
                   pose: pose([
-                    .rShoulderPitch: -150, .rElbow: 30,
+                    .rShoulderPitch: +150, .rElbow: 30,
                     .lShoulderRoll: 80, .lElbow: -10
                   ])),
 
@@ -469,7 +475,7 @@ public enum PoseLibrary {
                   description: "댄스 A 의 좌우 반전",
                   keywords: ["댄스", "dance"],
                   pose: pose([
-                    .lShoulderPitch: 150, .lElbow: -30,
+                    .lShoulderPitch: -150, .lElbow: -30,
                     .rShoulderRoll: -80, .rElbow: 10
                   ])),
 
@@ -478,9 +484,9 @@ public enum PoseLibrary {
                   description: "양손 앞으로 — 말 잡기",
                   keywords: ["강남스타일", "말춤", "horse dance"],
                   pose: pose([
-                    .rShoulderPitch: -80, .rElbow: 90, .rShoulderRoll: -20,
-                    .lShoulderPitch: 80, .lElbow: -90, .lShoulderRoll: 20,
-                    .rHipPitch: 20, .lHipPitch: -20,
+                    .rShoulderPitch: +80, .rElbow: 90, .rShoulderRoll: -20,
+                    .lShoulderPitch: -80, .lElbow: -90, .lShoulderRoll: 20,
+                    .rHipPitch: -20, .lHipPitch: +20,
                     .rKnee: 30, .lKnee: -30
                   ])),
 
@@ -489,8 +495,8 @@ public enum PoseLibrary {
                   description: "각진 로봇 모션 — 양팔 직각",
                   keywords: ["로봇댄스", "robot dance"],
                   pose: pose([
-                    .rShoulderPitch: -90, .rElbow: 90,
-                    .lShoulderPitch: 30
+                    .rShoulderPitch: +90, .rElbow: 90,
+                    .lShoulderPitch: -30
                   ])),
 
         NamedPose(id: "robot_dance_b", displayName: "로봇 댄스 B",
@@ -498,8 +504,8 @@ public enum PoseLibrary {
                   description: "로봇 댄스 A 의 좌우 반전",
                   keywords: ["로봇댄스", "robot dance"],
                   pose: pose([
-                    .lShoulderPitch: 90, .lElbow: -90,
-                    .rShoulderPitch: -30
+                    .lShoulderPitch: -90, .lElbow: -90,
+                    .rShoulderPitch: +30
                   ])),
 
         // ── 축구 (RoboCup) ──────────────────────────────────────────
@@ -514,9 +520,9 @@ public enum PoseLibrary {
                   description: "오른발 뒤로 빼고 골 차기 준비",
                   keywords: ["축구", "kick", "백스윙"],
                   pose: pose([
-                    .rHipPitch: -25, .rKnee: 40, .rAnklePitch: 10,
+                    .rHipPitch: +25, .rKnee: 40, .rAnklePitch: -10,
                     .lHipRoll: -10, .lHipPitch: -5,
-                    .rShoulderPitch: 35, .lShoulderPitch: -35
+                    .rShoulderPitch: -35, .lShoulderPitch: +35
                   ])),
 
         NamedPose(id: "soccer_kick_right_swing", displayName: "오른발 차기 임팩트",
@@ -524,9 +530,9 @@ public enum PoseLibrary {
                   description: "오른발 앞으로 임팩트 순간",
                   keywords: ["축구", "kick", "임팩트"],
                   pose: pose([
-                    .rHipPitch: 50, .rKnee: 5, .rAnklePitch: -25,
+                    .rHipPitch: -50, .rKnee: 5, .rAnklePitch: +25,
                     .lHipRoll: -12,
-                    .rShoulderPitch: -25, .lShoulderPitch: 25
+                    .rShoulderPitch: +25, .lShoulderPitch: -25
                   ])),
 
         NamedPose(id: "goalkeeper_save_right", displayName: "골키퍼 오른쪽 세이브",
@@ -545,7 +551,7 @@ public enum PoseLibrary {
                   description: "양손 머리 위 (양팔 90°)",
                   keywords: ["스로인", "throw in"],
                   pose: pose([
-                    .rShoulderPitch: -160, .lShoulderPitch: 160,
+                    .rShoulderPitch: +160, .lShoulderPitch: -160,
                     .rElbow: 70, .lElbow: -70
                   ])),
 
@@ -555,9 +561,9 @@ public enum PoseLibrary {
                   description: "오른발로 서고 왼발 들기",
                   keywords: ["요가", "나무", "tree", "balance"],
                   pose: pose([
-                    .lHipPitch: -40, .lKnee: -80, .lAnklePitch: 0,
+                    .lHipPitch: +40, .lKnee: -80, .lAnklePitch: 0,
                     .lHipRoll: 15,
-                    .rShoulderPitch: -160, .lShoulderPitch: 160,
+                    .rShoulderPitch: +160, .lShoulderPitch: -160,
                     .rElbow: 30, .lElbow: -30
                   ])),
 
@@ -566,7 +572,7 @@ public enum PoseLibrary {
                   description: "오른발 앞, 양팔 수평",
                   keywords: ["요가", "전사", "warrior"],
                   pose: pose([
-                    .rHipPitch: 30, .rKnee: 60, .rAnklePitch: -25,
+                    .rHipPitch: -30, .rKnee: 60, .rAnklePitch: +25,
                     .lHipPitch: -15,
                     .rShoulderRoll: -85, .lShoulderRoll: 85
                   ])),
@@ -576,7 +582,7 @@ public enum PoseLibrary {
                   description: "양팔 머리 위로 합장",
                   keywords: ["요가", "산", "mountain"],
                   pose: pose([
-                    .rShoulderPitch: -170, .lShoulderPitch: 170,
+                    .rShoulderPitch: +170, .lShoulderPitch: -170,
                     .rShoulderRoll: -5, .lShoulderRoll: 5,
                     .rElbow: 10, .lElbow: -10
                   ])),

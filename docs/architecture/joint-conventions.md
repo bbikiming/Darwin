@@ -31,6 +31,31 @@
 
 부호 약속(좌표계): +X 정면, +Y 좌측, +Z 위. 좌·우 관절은 부호 반전 — 예: walkReady의 `r_hip_pitch=-65°`, `l_hip_pitch=+65°`.
 
+## 신체 방향 부호 규칙 (motion authoring) — 2026-05-13 hotfix
+
+ROBOTIS-OP2 URDF (`vendor/robotis-op2-common/urdf/robotis_op2.structure.*.xacro`) axis 와 정합. **"신체 앞쪽 / 위쪽 / 굽힘"** 의도 시 사용할 부호:
+
+| 의도 | R 부호 | L 부호 | URDF axis (R / L) | 검증 출처 |
+|---|:-:|:-:|:-:|---|
+| 다리 앞으로 굽힘 (hip flex) | **−** | **+** | (0,+1,0) / (0,−1,0) | ini_pose `r_hip_pitch=-65 / l_hip_pitch=+65` |
+| 무릎 굽힘 | **+** | **−** | (0,+1,0) / (0,−1,0) | ini_pose `r_knee=+130 / l_knee=-130` |
+| 발끝 위 (ankle dorsiflex) | **+** | **−** | (0,−1,0) / (0,+1,0) | ini_pose `r_ank_pitch=+70 / l_ank_pitch=-70` |
+| **팔 앞·위로 (sho pitch)** | **+** | **−** | (0,−1,0) / (0,+1,0) | URDF Rodrigues + Walking.cpp `dir[R_ARM_SWING]=+1` |
+| 팔꿈치 굽힘 (elbow flex) | **+** | **−** | (0,−1,0) / (0,+1,0) | ini_pose `r_el=+30 / l_el=-30` |
+| 어깨 옆으로 벌림 (sho roll) | **−** | **+** | (−1,0,0) / (−1,0,0) | walkReady `r_sho_roll=-18 / l_sho_roll=+18` |
+| 머리 우측 회전 (head pan) | **+** | n/a | (0,0,1) | head_pan +60 = 우측 |
+| 머리 위 (head tilt) | **+** | n/a | (0,−1,0) | head_tilt +10 = chin up |
+
+**중요 — 팔 (shoulder pitch / elbow) URDF Y-axis 는 다리와 반대**:
+- 다리 pitch joint: `r=(0,+1,0)`, `l=(0,−1,0)`
+- 팔 pitch joint: `r=(0,−1,0)`, `l=(0,+1,0)` ← 반전
+
+→ "R 음수 = 앞" 규칙을 팔에 그대로 일반화하면 팔이 뒤로 가는 버그 발생 (2026-05-13 PoseLibrary / OfficialCatalogReference 전체 부호 반전 hotfix). 새 모션 작성 시 위 표의 부호 규칙을 반드시 따를 것 — `.claude/agents/motion-composer.md` 에이전트도 동일 규칙 적용.
+
+**Mirror pair 자가 검증**: `pose.degrees(r) + pose.degrees(l) ≈ 0` (반대 부호, 동일 abs) → URDF mirror 정합. 잔차 ≤ 2° 허용 (walkReady ROBOTIS raw 의 ±1 tick 비대칭 때문).
+
+**walkReady 의도적 후방 자세**: `r_sho_pitch=-48 / l_sho_pitch=+48` 는 ROBOTIS 공식 raw (motion_4096.bin page 9) 그대로 — deep squat counter-balance 의도. **수정 금지**.
+
 ## Legacy OP1 매핑 (fallback)
 
 일부 OP1 firmware 분기에서 다리를 ID 11~18로 재배치한 흔적이 있다(공식과 충돌). DarwinForge `forge_core::joint::JointMap::LegacyOp1` 는 다음과 같이 fallback:
