@@ -328,62 +328,19 @@ public struct MotionStudioView: View {
         }
     }
 
+    /// 영상 편집 도구 (Premiere / FCP / After Effects) 스타일의 transport bar.
+    /// 분리된 컴포넌트로 — `Motion/TransportBar.swift`.
     private var transportRow: some View {
-        HStack(spacing: DFSpace.sm) {
-            Button { player.stop(); applySelectedStepToPose() } label: {
-                Image(systemName: "stop.fill")
-            }
-            .controlSize(.large)
-            .help("재생을 멈추고 처음으로 되돌립니다")
-
-            Button {
-                if player.mode == .playing { player.pause() }
-                else { startPlayback() }
-            } label: {
-                Image(systemName: player.mode == .playing ? "pause.fill" : "play.fill")
-                    .frame(width: 18)
-            }
-            .controlSize(.large)
-            .buttonStyle(.glassNeon(tint: DFColor.forge))
-            .keyboardShortcut(.return, modifiers: .command)
-            .help(player.mode == .playing ? "일시 정지 (⌘↵)" : "재생 시작 (⌘↵)")
-
-            Toggle(isOn: $sendToHardware) {
-                Label("로봇에 전송", systemImage: "bolt.horizontal.fill")
-            }
-            .toggleStyle(.button)
-            .controlSize(.small)
-            .disabled(store.bus == nil)
-            .help(store.bus == nil ? "USB 연결 후 사용 가능합니다" : "재생 중 자세를 실시간으로 로봇에 보냅니다")
-
-            Spacer()
-
-            Text("\(formatTime(player.elapsedMs)) / \(formatTime(Double(currentPage?.totalDurationMs ?? 0)))")
-                .font(DFFont.caption.monospaced())
-                .foregroundStyle(DFColor.textSecondary)
-
-            Button {
-                addStepFromCurrentPose()
-            } label: {
-                Label("자세 한 컷 추가", systemImage: "key.horizontal")
-            }
-            .controlSize(.small)
-            .help("지금 편집 중인 자세를 동작의 마지막 단계로 추가합니다")
-
-            Button {
-                captureFromTelemetry()
-            } label: {
-                Label("로봇 자세 가져오기", systemImage: "scope")
-            }
-            .controlSize(.small)
-            .disabled(store.bus == nil)
-            .help("실제 로봇이 지금 취하고 있는 자세를 읽어와 편집기에 넣습니다")
-        }
-    }
-
-    private func formatTime(_ ms: Double) -> String {
-        let s = ms / 1000.0
-        return String(format: "%.2f초", s)
+        TransportBar(
+            player: player,
+            totalDurationMs: Double(currentPage?.totalDurationMs ?? 0),
+            stepCount: currentPage?.steps.count ?? 0,
+            hasBus: store.bus != nil,
+            sendToHardware: $sendToHardware,
+            onPlay: { startPlayback() },
+            onAddStep: { addStepFromCurrentPose() },
+            onCapture: { captureFromTelemetry() }
+        )
     }
 
     private func stepDetailRow(page: MotionPage) -> some View {

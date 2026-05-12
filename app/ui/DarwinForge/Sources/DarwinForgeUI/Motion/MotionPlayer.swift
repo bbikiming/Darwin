@@ -20,9 +20,17 @@ public final class MotionPlayer: ObservableObject {
     @Published public private(set) var currentStepIndex: Int = 0
     @Published public private(set) var pose: RobotPose = .walkReady
 
+    /// 재생 속도 — 0.25 ~ 2.0. UI 가 표준 0.5 / 1.0 / 2.0 cycle.
+    @Published public var playbackRate: Double = 1.0
+    /// 끝에 도달 시 처음부터 다시 재생 (loop).
+    @Published public var isLooping: Bool = false
+
     public var page: MotionPage?
     /// 페이지 시작 자세 (default: walk_ready).
     public var startPose: RobotPose = .walkReady
+
+    /// 총 재생 시간 (ms) — UI 가 자주 조회.
+    public var totalDurationMs: Double { Double(page?.totalDurationMs ?? 0) }
 
     private var timer: Timer?
     private var lastTickTime: Date?
@@ -77,12 +85,50 @@ public final class MotionPlayer: ObservableObject {
         recompute()
     }
 
+    /// 처음으로 (0ms).
+    public func seekToStart() { seek(toMs: 0) }
+
+    /// 끝으로 (totalDurationMs).
+    public func seekToEnd() {
+        guard let page else { return }
+        seek(toMs: Double(page.totalDurationMs))
+    }
+
+    /// 한 step 앞으로 (dir=+1) / 뒤로 (dir=-1) — 키프레임 navigation.
+    /// 현재 step 의 시작 지점으로 snap 후 dir 적용.
+    public func step(by dir: Int) {
+        guard let page else { return }
+        let target = currentStepIndex + dir
+        guard target >= 0, target < page.steps.count else { return }
+        var t = 0
+        for i in 0..<target { t += page.steps[i].playMs + page.steps[i].pauseMs }
+        seek(toMs: Double(t))
+    }
+
+    /// 특정 step 의 시작 지점으로 jump.
+    public func jumpToStep(_ index: Int) {
+        guard let page else { return }
+        let clamped = max(0, min(index, page.steps.count - 1))
+        var t = 0
+        for i in 0..<clamped { t += page.steps[i].playMs + page.steps[i].pauseMs }
+        seek(toMs: Double(t))
+    }
+
+    /// 재생 속도 cycle — 0.5 → 1.0 → 2.0 → 0.5.
+    public func cyclePlaybackRate() {
+        switch playbackRate {
+        case 0.5: playbackRate = 1.0
+        case 1.0: playbackRate = 2.0
+        default:  playbackRate = 0.5
+        }
+    }
+
     // MARK: - Tick
 
     private func tick() {
         guard mode == .playing else { return }
         let now = Date()
-        let dt = now.timeIntervalSince(lastTickTime ?? now) * 1000.0
+        let dt = now.timeIntervalSince(lastTickTime ?? now) * 1000.0 * playbackRate
         lastTickTime = now
         elapsedMs += dt
         recompute()
@@ -124,8 +170,14 @@ public final class MotionPlayer: ObservableObject {
         // 페이지 끝.
         pose = prevPose
         currentStepIndex = page.steps.count - 1
-        mode = .stop
-        timer?.invalidate(); timer = nil
+        if isLooping {
+            // Loop 모드 — 처음으로 wrap-around. mode 유지, timer 유지.
+            elapsedMs = 0
+            // 다음 tick 에서 다시 시작 step 부터 계산.
+        } else {
+            mode = .stop
+            timer?.invalidate(); timer = nil
+        }
     }
 
     private func cubicEase(_ t: Double) -> Double {
