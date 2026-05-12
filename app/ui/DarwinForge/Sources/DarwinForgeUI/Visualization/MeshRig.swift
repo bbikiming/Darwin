@@ -39,7 +39,11 @@ final class MeshRig {
             -n, n, n
         )
         // 발이 Y=0 평면에 닿도록 들어올림.
-        root.position = SCNVector3(0, 0.345, 0)
+        // **Sprint 16 정정**: walkReady 가 deep squat (knee ±53°) 로 변경되면서
+        // 발 IK 위치가 더 멀어짐. 이전 0.345 m 은 발이 floor 아래로 침수 →
+        // robot 이 공중에 떠있어 보임 (의자에 앉기 등 깊은 squat 자세). 새 hip
+        // 높이 0.265 m — walkReady deep squat 시 발 floor 정확 접지.
+        root.position = SCNVector3(0, 0.265, 0)
         try buildBody()
     }
 

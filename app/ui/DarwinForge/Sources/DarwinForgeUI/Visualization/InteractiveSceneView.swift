@@ -18,17 +18,21 @@ public final class InteractiveSceneView: SCNView {
     // MARK: - Desired (사용자 입력의 즉각 반영) vs Applied (보간된 카메라 상태)
     //
     // 기본 시점: robot의 정면이 카메라 쪽을 향하도록.
-    // ROBOTIS X+(정면) → SceneKit Z-, 카메라는 SceneKit Z- 쪽에 있어야 정면을 봄.
-    // 즉 azimuth = π (살짝 우측 isometric을 위해 -0.45 차감).
+    //
+    // **Sprint 16 정정** (사용자 보고: "오른쪽 가리키기 / 의자에 앉기 가 반대"):
+    // 이전 `defaultAzimuth = .pi - 0.35` (≈162°) 는 코드 주석상 "정면" 의도였으나
+    // 실제 SceneKit `look(at:)` + mesh rig 의 120° axis-angle 매핑 조합에서는
+    // robot **등 쪽**에서 보는 카메라 위치로 동작. azimuth=−0.35 (≈−20°) 로
+    // 정정 — 정면 + 약간 우측 isometric.
+    //
+    // `defaultTarget Y` 도 walkReady 정정 (deep squat, hip ±36°/knee ±53°) 으로
+    // 실 robot hip 높이가 약 20 cm → Y=0.20 으로 조정.
 
     /// 기본 시점: 정면(robot 가슴이 카메라 쪽) + 살짝 우측 isometric.
-    /// 좌표(MeshRig axis-angle 120°): ROS X+(정면) → SceneKit Z-.
-    /// 카메라가 SceneKit Z- 쪽이려면 azimuth = π. -0.35로 우측 isometric.
-    /// elevation 0.05 (≈3°) — 거의 수평으로 보아 grid가 덜 기울어 보임.
-    public static let defaultAzimuth: CGFloat = .pi - 0.35
+    public static let defaultAzimuth: CGFloat = -0.35
     public static let defaultElevation: CGFloat = 0.05
     public static let defaultDistance: CGFloat = 1.80
-    public static let defaultTarget = SCNVector3(0, 0.30, 0)
+    public static let defaultTarget = SCNVector3(0, 0.20, 0)
 
     private var desiredAzimuth:   CGFloat = InteractiveSceneView.defaultAzimuth
     private var desiredElevation: CGFloat = InteractiveSceneView.defaultElevation
