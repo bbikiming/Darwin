@@ -75,6 +75,9 @@ public struct RootView: View {
             .environment(\.dfWindowWidth, geo.size.width)
             .environment(\.dfWindowHeight, geo.size.height)
         }
+        // 윈도우 / fullscreen 전체 채움 명시 — WindowGroup frame max .infinity 와 결합해
+        // 사용자가 윈도우를 확장하거나 ⌃⌘F 로 fullscreen 진입 시 RootView 도 화면 가득.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             dispatcher.connectionStore = store
             dispatcher.mode = store.bus != nil ? .hardware : .simulation
