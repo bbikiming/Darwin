@@ -98,7 +98,10 @@ public final class IntentDispatcher: ObservableObject {
             // id 가 없으면 keyword 로 search 한 번 더.
             if let fallback = PoseLibrary.search(id) {
                 if let store = connectionStore {
-                    await store.applyPoseSmoothly(fallback.pose)
+                    let r = await store.applyPoseSmoothly(fallback.pose)
+                    return ExecutionResult(
+                        speak: speakForPose(r, displayName: fallback.displayName, fallbackFrom: id)
+                    )
                 }
                 return ExecutionResult(
                     speak: "'\(id)' 정확한 ID 가 없어 '\(fallback.displayName)' 으로 적용했어요."
@@ -107,11 +110,29 @@ public final class IntentDispatcher: ObservableObject {
             throw DispatcherError.invalidArgs("자세 '\(id)' 를 찾지 못했어요")
         }
         if let store = connectionStore {
-            await store.applyPoseSmoothly(named.pose)
+            let r = await store.applyPoseSmoothly(named.pose)
+            return ExecutionResult(speak: speakForPose(r, displayName: named.displayName, description: named.description))
         }
         return ExecutionResult(
             speak: "✓ 자세 '\(named.displayName)' 적용 — \(named.description)"
         )
+    }
+
+    /// Codex 2차 권고: applyPoseSmoothly 결과를 Claude 의 speak 응답에 surface.
+    private func speakForPose(_ r: ConnectionStore.PoseApplyResult, displayName: String,
+                              description: String? = nil, fallbackFrom: String? = nil) -> String {
+        let prefix = fallbackFrom.map { "'\($0)' 정확한 ID 가 없어 '\(displayName)' 으로 시도 — " } ?? ""
+        switch r {
+        case .completed:
+            let extra = description.map { " — \($0)" } ?? ""
+            return "\(prefix)✓ '\(displayName)' 적용\(extra)"
+        case .partialFailure:
+            return "\(prefix)⚠ '\(displayName)' 부분 완료 — \(r.userMessage)"
+        case .notConnected:
+            return "\(prefix)ℹ '\(displayName)' 시뮬 미리보기만 진행 (실 로봇 미연결)"
+        case .rejected, .cancelled, .writeFailed, .criticalLoad:
+            return "\(prefix)✗ '\(displayName)' 실패 — \(r.userMessage)"
+        }
     }
 
     private func runBuildMotion(args: [String: ArgValue]) async throws -> ExecutionResult {

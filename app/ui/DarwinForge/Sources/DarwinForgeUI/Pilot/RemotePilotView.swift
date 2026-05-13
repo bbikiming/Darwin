@@ -21,7 +21,15 @@ public struct RemotePilotView: View {
 
     @Environment(\.dfResponsiveSize) private var responsive
 
-    private let flags: PilotFeatureFlags = .active
+    /// 사용자 선택 가능한 활성 단계 — @AppStorage 로 즉시 반영 (Codex 권고 2026-05-13).
+    /// 이전 v1.0 의 `static let active` 는 앱 재시작 전까지 고정 → feature picker 안 됨.
+    @AppStorage("df.pilot.featureLevel") private var featureLevelRaw: String = PilotFeatureLevel.v1_5.rawValue
+
+    private var level: PilotFeatureLevel {
+        PilotFeatureLevel(rawValue: featureLevelRaw) ?? .v1_5
+    }
+
+    private var flags: PilotFeatureFlags { level.flags }
 
     public init() {}
 
@@ -40,10 +48,9 @@ public struct RemotePilotView: View {
                 }
                 .padding(DFSpace.md)
 
-                if store.bus == nil {
-                    simBanner
-                        .padding(.top, DFSpace.sm)
-                }
+                topBanner
+                    .padding(.top, DFSpace.sm)
+                    .padding(.horizontal, DFSpace.md)
             }
             .overlay(toastOverlay, alignment: .bottom)
         }
@@ -70,12 +77,13 @@ public struct RemotePilotView: View {
 
     @ViewBuilder
     private var compactLayout: some View {
-        // 좁은 윈도우 — 세로 단일 컬럼. 우선순위: 3D + HUD → ARM → Action Bar → 나머지.
+        // 좁은 윈도우 — 세로 단일 컬럼. 우선순위: 3D + 진단 → ARM → Action Bar → 나머지.
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: DFSpace.md) {
                 headerBlock
                 robot3DPanel
                     .frame(height: 280)
+                PilotDiagnosticsPanel(store: store, channel: channel)
                 hudPanel
                 PilotArmSlider(channel: channel, gate: gate)
                 PilotActionBar(channel: channel, gate: gate, flags: flags)
@@ -93,6 +101,7 @@ public struct RemotePilotView: View {
                 headerBlock
                 PilotArmSlider(channel: channel, gate: gate)
                 PilotActionBar(channel: channel, gate: gate, flags: flags)
+                PilotDiagnosticsPanel(store: store, channel: channel)
                 PilotModePicker(mode: $mode, flags: flags)
                 PilotSpeedGauge(speedFraction: $speedFraction)
                 PilotDpad(channel: channel, gate: gate, flags: flags)
@@ -123,25 +132,68 @@ public struct RemotePilotView: View {
     // MARK: - Header
 
     private var headerBlock: some View {
-        VStack(alignment: .leading, spacing: DFSpace.micro2) {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
             HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "gamecontroller.fill")
                     .foregroundStyle(DFColor.accent)
                 Text("원격 조종")
                     .font(DFFont.title)
+                Spacer(minLength: 0)
+                featurePickerMenu
             }
             HStack(spacing: DFSpace.xs2) {
-                Text("Sprint 15 v1.0")
+                Text(level.rawValue)
                     .font(DFFont.caption.monospaced())
                     .foregroundStyle(DFColor.accent)
                     .padding(.horizontal, DFSpace.xs2).padding(.vertical, 2)
                     .background(Capsule().fill(DFColor.accent.opacity(DFOpacity.subtle)))
-                Text("Action Bar 7 페이지 활성")
+                Text(level.subtitle)
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 작은 Menu picker — 우상단. UserDefaults 즉시 반영.
+    private var featurePickerMenu: some View {
+        Menu {
+            ForEach(PilotFeatureLevel.allCases) { lv in
+                Button {
+                    featureLevelRaw = lv.rawValue
+                } label: {
+                    Label {
+                        VStack(alignment: .leading) {
+                            Text(lv.label)
+                            Text(lv.subtitle).font(DFFont.caption)
+                        }
+                    } icon: {
+                        Image(systemName: lv == level ? "checkmark.circle.fill" : "circle")
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "slider.horizontal.3")
+                Text(level.label)
+                    .font(DFFont.caption.monospaced())
+                Image(systemName: "chevron.down")
+                    .font(.system(size: DFFontSize.s10, weight: .semibold))
+            }
+            .padding(.horizontal, DFSpace.xs2).padding(.vertical, 2)
+            .background(
+                Capsule().fill(DFColor.elev2)
+                    .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: DFSize.borderHairline))
+            )
+            .foregroundStyle(DFColor.textPrimary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Pilot 활성 단계 — 즉시 반영")
+        .accessibilityIdentifier("pilot.feature.picker")
     }
 
     // MARK: - 3D 로봇 뷰
@@ -244,6 +296,80 @@ public struct RemotePilotView: View {
     }
 
     // MARK: - Overlays
+
+    /// 상태에 따라 다른 배너:
+    ///   - .error: 큰 빨간 배너 + 재연결 버튼 (사용자 즉시 인지 필요)
+    ///   - .connecting: 작은 노란 회전 배너
+    ///   - .disconnected (bus nil): 시뮬 모드 배너 (작은 캡슐)
+    ///   - .connected: 배너 없음
+    @ViewBuilder
+    private var topBanner: some View {
+        switch store.status {
+        case .error(let msg):
+            errorBanner(message: msg)
+        case .connecting(let label):
+            connectingBanner(label: label)
+        case .disconnected where store.bus == nil:
+            simBanner
+        case .disconnected, .connected:
+            EmptyView()
+        }
+    }
+
+    private func errorBanner(message: String) -> some View {
+        HStack(spacing: DFSpace.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: DFFontSize.s14, weight: .bold))
+                .foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: DFSpace.none) {
+                Text("연결 오류")
+                    .font(DFFont.bodyEmph)
+                    .foregroundStyle(.white)
+                Text(message)
+                    .font(DFFont.caption)
+                    .foregroundStyle(.white.opacity(DFOpacity.o85))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+            }
+            Spacer(minLength: DFSpace.sm)
+            if store.lastSuccessfulEndpoint != nil {
+                Button {
+                    if let ep = store.lastSuccessfulEndpoint {
+                        store.connect(endpoint: ep)
+                    }
+                } label: {
+                    Text("재연결")
+                        .font(DFFont.bodyEmph)
+                        .padding(.horizontal, DFSpace.sm)
+                        .padding(.vertical, DFSpace.xs2)
+                        .background(.white.opacity(DFOpacity.o25))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("pilot.reconnect")
+            }
+        }
+        .padding(.horizontal, DFSpace.md).padding(.vertical, DFSpace.sm)
+        .background(DFColor.danger)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+        .shadow(color: DFColor.danger.opacity(DFOpacity.o45), radius: 6, y: 2)
+        .accessibilityIdentifier("pilot.error.banner")
+    }
+
+    private func connectingBanner(label: String) -> some View {
+        HStack(spacing: DFSpace.xs2) {
+            ProgressView().controlSize(.mini).tint(DFColor.warning)
+            Text("연결 중 — \(label)")
+                .font(DFFont.caption)
+                .foregroundStyle(DFColor.warning)
+        }
+        .padding(.horizontal, DFSpace.sm3).padding(.vertical, DFSpace.xs2)
+        .background(.regularMaterial)
+        .background(DFColor.warning.opacity(DFOpacity.o10))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(DFColor.warning.opacity(DFOpacity.o45), lineWidth: DFSize.borderHairline))
+    }
 
     private var simBanner: some View {
         HStack(spacing: DFSpace.xs2) {

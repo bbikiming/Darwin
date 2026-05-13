@@ -309,16 +309,84 @@ public final class ConnectionStore: ObservableObject {
         lastSafetyEvent = nil
     }
 
-    /// 자세 적용 — 안전 검증 + Mac 측 큰 변화 분할 + 부하 watchdog.
+    /// 자세 적용의 결과 — 호출자가 성공/실패를 명확히 구분할 수 있게.
+    ///
+    /// Codex 권고 (2026-05-13 1·2차):
+    ///   - 1차: SafeMotion 거부 / write 실패를 silently swallow 하지 말 것.
+    ///   - 2차: "절반 이상 실패 → writeFailed" 너무 관대. 하체 관절 1개 실패도
+    ///          fall risk → hardFail. partial 은 별도 case 로 분리.
+    public enum PoseApplyResult: Equatable, Sendable {
+        /// 모든 step 이 정상 송출 + critical 부하 없이 종료.
+        case completed
+        /// 상체 관절만 일부 쓰기 실패 — 시각적으로는 이상 가능, 안전 OK.
+        case partialFailure(positionFailed: Int, speedFailed: Int, totalJoints: Int, sample: String?)
+        /// bus 미연결 — sim 만 진행, 실 모터 송출 없음.
+        case notConnected
+        /// SafeMotion.verify 거부 (voltage / load / angle).
+        case rejected(reason: String)
+        /// 진행 중 cancel — emergencyStop 또는 disarm.
+        case cancelled
+        /// 하체 (hip/knee/ankle) 관절 position write 실패 OR 모든 write 절반 이상 실패.
+        /// 균형 위험 → 호출자는 사용자에게 hard fail 로 표시.
+        case writeFailed(positionFailed: Int, speedFailed: Int, totalJoints: Int, sample: String?)
+        /// 단계 대기 중 critical 부하 감지 → soft e-stop.
+        case criticalLoad(joint: String)
+
+        public var isSuccess: Bool {
+            if case .completed = self { return true } else { return false }
+        }
+
+        /// 부분 실패까지는 호출자가 "진행" 처리 가능 (사용자에게 경고만).
+        public var allowsContinue: Bool {
+            switch self {
+            case .completed, .notConnected, .partialFailure: return true
+            case .rejected, .cancelled, .writeFailed, .criticalLoad: return false
+            }
+        }
+
+        public var userMessage: String {
+            switch self {
+            case .completed:                       return "완료"
+            case .partialFailure(let p, let s, let t, let sample):
+                let suffix = sample.map { " · 예: \($0)" } ?? ""
+                return "상체 부분 실패 — 위치 \(p)개·속도 \(s)개 (관절 총 \(t))\(suffix)"
+            case .notConnected:                    return "실 로봇 미연결 — 시뮬 미리보기만 실행됨"
+            case .rejected(let reason):            return reason
+            case .cancelled:                       return "동작이 중단됐어요"
+            case .writeFailed(let p, let s, let t, let sample):
+                let suffix = sample.map { " · 예: \($0)" } ?? ""
+                if p > 0 {
+                    return "하체 위치쓰기 \(p)개 실패 — 균형 위험. USB·전원·ID 확인 (관절 총 \(t), 속도쓰기 \(s)개)\(suffix)"
+                }
+                return "쓰기 절반 이상 실패 — 위치 \(p)개·속도 \(s)개 (관절 총 \(t))\(suffix)"
+            case .criticalLoad(let j):             return "\(j) 부하 위험 — 자동 정지"
+            }
+        }
+    }
+
+    /// 하체 (균형에 critical) 관절 — hip/knee/ankle 12개.
+    /// 이 중 하나라도 position write 실패하면 fall risk.
+    private static let lowerBodyJoints: Set<JointID> = [
+        .rHipYaw, .lHipYaw, .rHipRoll, .lHipRoll,
+        .rHipPitch, .lHipPitch,
+        .rKnee, .lKnee,
+        .rAnklePitch, .lAnklePitch, .rAnkleRoll, .lAnkleRoll,
+    ]
+
+    /// 자세 적용 — 안전 검증 + Mac 측 큰 변화 분할 + 부하 watchdog + write 실패 집계.
     ///
     /// 흐름 (ROBOTIS 포럼 + DARwIn-OP MotionManager 패턴):
     ///   1. SafeMotion.verify — voltage / load / angle limits 검증
     ///   2. requireSplit 이면 거리가 maxStepDegrees(60°) 이하가 되도록 중간 자세 단계 추가
     ///   3. 각 단계마다 moving_speed 설정 후 setPosition 일괄 전송
     ///   4. 단계 사이 대기 중 부하 watchdog — critical 부하 감지 시 즉시 e-stop
-    public func applyPoseSmoothly(_ target: RobotPose, profile: MotorSpeedProfile? = nil) async {
+    ///
+    /// **반환값**: 결과 유형. `.completed` 만 성공. 호출자는 `result.isSuccess` 또는
+    /// pattern match 로 분기해야 한다. 결과를 무시할 수 있도록 `@discardableResult`.
+    @discardableResult
+    public func applyPoseSmoothly(_ target: RobotPose, profile: MotorSpeedProfile? = nil) async -> PoseApplyResult {
         let p = profile ?? motorSpeedProfile
-        guard let bus = bus else { return }
+        guard let bus = bus else { return .notConnected }
 
         // 1) 현재 자세 read — 안전 검증의 기준.
         var currentPositions: [JointID: Int] = [:]
@@ -341,7 +409,7 @@ public final class ConnectionStore: ObservableObject {
         )
         if !verdict.allowsProceed {
             self.lastSafetyEvent = "⚠ 자세 변경 거부 — \(verdict.message)"
-            return
+            return .rejected(reason: verdict.message)
         }
 
         isMovingPose = true
@@ -356,38 +424,92 @@ public final class ConnectionStore: ObservableObject {
 
         let speed = p.rawSpeedValue
         let stepDuration = max(0.3, p.durationSeconds / Double(steps.count))
+        let totalJoints = JointID.allCases.count
+        // Codex 2차: position / speed 실패를 분리 + 하체 (균형) 실패는 별도 set.
+        var positionFailureCount: Int = 0
+        var speedFailureCount: Int = 0
+        var lowerBodyPositionFails: Set<JointID> = []
+        var failedJointsUnique: Set<JointID> = []
+        var lastWriteError: String? = nil
 
         for (stepIdx, step) in steps.enumerated() {
-            if isMovingPoseCancelled { break }
+            if isMovingPoseCancelled { return .cancelled }
 
-            // 4) 단계별 moving_speed 설정 후 전송.
             for j in step.positions.keys {
-                _ = try? bus.setMovingSpeed(j, speed: speed)
+                do { try bus.setMovingSpeed(j, speed: speed) }
+                catch {
+                    speedFailureCount += 1
+                    failedJointsUnique.insert(j)
+                    lastWriteError = "\(j.name) 속도쓰기: \(error.localizedDescription)"
+                }
             }
             for (j, raw) in step.positions {
-                _ = try? bus.setPosition(j, raw: UInt16(clamping: raw))
+                do { _ = try bus.setPosition(j, raw: UInt16(clamping: raw)) }
+                catch {
+                    positionFailureCount += 1
+                    failedJointsUnique.insert(j)
+                    if Self.lowerBodyJoints.contains(j) {
+                        lowerBodyPositionFails.insert(j)
+                    }
+                    lastWriteError = "\(j.name) 위치쓰기: \(error.localizedDescription)"
+                }
             }
 
-            // 5) 부하 watchdog — 단계 대기 중 100ms 마다 critical 부하 체크.
             let watchdogTicks = max(1, Int(stepDuration * 10))
             for _ in 0..<watchdogTicks {
-                if isMovingPoseCancelled { break }
+                if isMovingPoseCancelled { return .cancelled }
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 if let dangerJoint = await checkCriticalLoad() {
-                    // 즉시 토크 해제 — soft e-stop.
                     self.lastSafetyEvent = "🛑 \(dangerJoint.koreanLabel) 부하 위험 — 자세 변경 중단"
                     _ = try? bus.emergencyStop()
                     isMovingPoseCancelled = true
-                    return
+                    return .criticalLoad(joint: dangerJoint.koreanLabel)
                 }
             }
 
             if stepIdx < steps.count - 1 {
-                // 단계 사이 짧은 정착 시간 — 모터가 trapezoidal motion 완료.
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
         }
+
+        let totalWrites = totalJoints * 2 * steps.count
+
+        // **하체 position write 실패 1개라도 → writeFailed (균형 위험)**.
+        if !lowerBodyPositionFails.isEmpty {
+            self.lastSafetyEvent = "🛑 하체 \(lowerBodyPositionFails.count)개 위치쓰기 실패 — 균형 위험"
+            return .writeFailed(
+                positionFailed: positionFailureCount,
+                speedFailed: speedFailureCount,
+                totalJoints: failedJointsUnique.count,
+                sample: lastWriteError
+            )
+        }
+
+        // 모든 write 절반 이상 실패 → writeFailed (통신 자체가 죽음).
+        let totalFailures = positionFailureCount + speedFailureCount
+        if totalFailures >= max(1, totalWrites / 2) {
+            self.lastSafetyEvent = "통신 절반 이상 실패 — bus 점검 필요"
+            return .writeFailed(
+                positionFailed: positionFailureCount,
+                speedFailed: speedFailureCount,
+                totalJoints: failedJointsUnique.count,
+                sample: lastWriteError
+            )
+        }
+
+        // 상체만 부분 실패 → partialFailure (시각 이상 가능, fall risk 없음).
+        if positionFailureCount > 0 || speedFailureCount > 0 {
+            self.lastSafetyEvent = "상체 부분 실패 — 위치 \(positionFailureCount)개·속도 \(speedFailureCount)개"
+            return .partialFailure(
+                positionFailed: positionFailureCount,
+                speedFailed: speedFailureCount,
+                totalJoints: failedJointsUnique.count,
+                sample: lastWriteError
+            )
+        }
+
         self.lastSafetyEvent = nil
+        return .completed
     }
 
     /// 부하 watchdog — 폴링 telemetry 의 load 값 검사. critical 이면 해당 관절 반환.

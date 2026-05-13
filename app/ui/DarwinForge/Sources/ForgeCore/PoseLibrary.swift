@@ -392,6 +392,22 @@ public enum PoseLibrary {
                   keywords: ["아래 보기", "look down"],
                   pose: pose([.headTilt: -30])),
 
+        // ── Remote Pilot v1.5: + 더 보기 9페이지 매핑용 단발 자세 ─────
+        // 끄덕임/가로젓기는 본래 multi-step chain (page 2/3 의 motion_4096.bin).
+        // v1.5 는 단발 target pose 로 근사 — 사용자가 "고개가 움직였다" 정도는 인지하나
+        // 실제 시각 fidelity 는 v1.6 의 motion_play library 추출 후 향상 예정.
+        NamedPose(id: "nod_target", displayName: "끄덕임 단발 (v1.5 근사)",
+                  category: .greeting,
+                  description: "고개 살짝 숙임 — page 2 ok 의 단일 target",
+                  keywords: ["끄덕임", "nod", "yes"],
+                  pose: pose([.headTilt: -15])),
+
+        NamedPose(id: "shake_target", displayName: "가로젓기 단발 (v1.5 근사)",
+                  category: .greeting,
+                  description: "머리 한쪽으로 — page 3 no 의 단일 target",
+                  keywords: ["가로젓기", "shake", "no"],
+                  pose: pose([.headPan: 20])),
+
         NamedPose(id: "stretch_arms", displayName: "팔 스트레칭",
                   category: .daily,
                   description: "양팔 좌우 수평 — 펴기",

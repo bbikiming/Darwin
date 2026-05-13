@@ -117,32 +117,38 @@ public enum MotionCatalog {
               v1TargetPoseID: "hands_up"),
 
         // — + 더 보기 9 페이지 (v1.5) —
+        // v1.5: 안전한 head/arm 단발 자세만 활성. get-up 류 (10/11) 는 chain 이 필요해서
+        // 단일 pose 로 열면 fall risk → nil 유지 (v1.6 motion_play 추출 후 활성).
+        // Codex 2차 권고 (2026-05-13): 단발 자세는 끄덕임/가로젓기로 인지되기
+        // 어려움. (단발) 마커 명시 + duration 도 단발 기준으로 낮춤 (원본 chain
+        // 2600ms 는 사용자에게 잘못된 기대 — progress ring 시간 + 토스트 timing
+        // 둘 다 영향). chain 기반 모션은 v1.6 motion_play 추출 후.
         .init(slot: 2, rawName: "ok",
-              displayName: "Yes", displayNameKo: "끄덕임",
-              safetyClass: .safe, durationMs: 2600,
+              displayName: "Yes (single-step)", displayNameKo: "고개 숙이기 (단발)",
+              safetyClass: .safe, durationMs: 800,
               mp3Sync: "Yes.mp3", bodyRegions: [.head],
-              icon: "checkmark.circle",
-              v1TargetPoseID: nil),
+              icon: "arrow.down.circle",
+              v1TargetPoseID: "nod_target"),
         .init(slot: 3, rawName: "no",
-              displayName: "No", displayNameKo: "가로젓기",
-              safetyClass: .safe, durationMs: 2600,
+              displayName: "No (single-step)", displayNameKo: "고개 돌리기 (단발)",
+              safetyClass: .safe, durationMs: 800,
               mp3Sync: "No.mp3", bodyRegions: [.head],
-              icon: "xmark.circle",
-              v1TargetPoseID: nil),
+              icon: "arrow.right.circle",
+              v1TargetPoseID: "shake_target"),
         .init(slot: 10, rawName: "f up",
               displayName: "Get Up Front", displayNameKo: "앞 일어서기",
               safetyClass: .caution, durationMs: 3200,
               mp3Sync: nil,
               bodyRegions: [.rightArm, .leftArm, .rightLeg, .leftLeg],
               icon: "figure.stand",
-              v1TargetPoseID: nil),
+              v1TargetPoseID: nil),     // v1.6 — multi-step chain 필요 (낙상 자세 → 무릎 → 직립)
         .init(slot: 11, rawName: "b up",
               displayName: "Get Up Back", displayNameKo: "뒤 일어서기",
               safetyClass: .caution, durationMs: 4200,
               mp3Sync: nil,
               bodyRegions: [.rightArm, .leftArm, .rightLeg, .leftLeg],
               icon: "figure.stand",
-              v1TargetPoseID: nil),
+              v1TargetPoseID: nil),     // v1.6 — 동일
         .init(slot: 16, rawName: "stand up",
               displayName: "Stand Up Exact", displayNameKo: "일어서기",
               safetyClass: .safe, durationMs: 1000, mp3Sync: nil,
@@ -152,12 +158,12 @@ public enum MotionCatalog {
               displayName: "Wow", displayNameKo: "감탄",
               safetyClass: .safe, durationMs: 3600, mp3Sync: "Wow.mp3",
               bodyRegions: [.rightArm, .leftArm, .head], icon: "sparkles",
-              v1TargetPoseID: nil),
+              v1TargetPoseID: "surprise"),
         .init(slot: 27, rawName: "d3",
               displayName: "Oops", displayNameKo: "실수",
               safetyClass: .safe, durationMs: 3200, mp3Sync: nil,
               bodyRegions: [.head, .rightArm], icon: "face.dashed",
-              v1TargetPoseID: nil),
+              v1TargetPoseID: "shy"),
         .init(slot: 38, rawName: "d2 bye",
               displayName: "Bye Bye", displayNameKo: "손 흔들기",
               safetyClass: .safe, durationMs: 3600, mp3Sync: nil,
