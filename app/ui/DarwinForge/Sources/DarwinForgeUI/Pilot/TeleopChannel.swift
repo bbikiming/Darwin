@@ -81,6 +81,15 @@ public final class TeleopChannel: ObservableObject {
         .rAnklePitch, .lAnklePitch, .rAnkleRoll, .lAnkleRoll,
     ]
 
+    /// `arm()` defer 가 보존해야 할 terminal ready stage 화이트리스트.
+    /// Codex P2 fix: 이전엔 `.ready` 만 보존 → readyDegraded/simReady 가 idle 로 회귀.
+    private static func isTerminalReadyStage(_ s: ArmStage) -> Bool {
+        switch s {
+        case .ready, .readyDegraded, .simReady: return true
+        case .idle, .enablingPower, .rampingTorque, .reachingWalkready, .disarming: return false
+        }
+    }
+
     /// ARM 슬라이더 drag 완료 시 호출.
     ///
     /// 시뮬 모드(bus == nil): `gate.arm()` 호출 **안 함** (Codex 2차 권고).
@@ -107,8 +116,13 @@ public final class TeleopChannel: ObservableObject {
         }
 
         armStage = .enablingPower
+        // Codex P2 fix (2026-05-13 3차): `.ready` 만 보존하던 defer 가 `.readyDegraded`
+        // / `.simReady` (이번 PR 신규 stage) 도 `.idle` 로 되돌리던 버그. Terminal
+        // ready stage 전체 화이트리스트로 변경.
         defer {
-            if armStage != .ready { armStage = .idle }
+            if !Self.isTerminalReadyStage(armStage) {
+                armStage = .idle
+            }
         }
 
         guard let bus = store?.bus else {

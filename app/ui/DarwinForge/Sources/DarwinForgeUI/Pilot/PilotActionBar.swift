@@ -9,6 +9,7 @@ import SwiftUI
 ///   - Safe/Caution/HighRisk DFChip 으로 시각 위계.
 ///   - 키 1..7 (no modifier) — Pilot 화면 활성 시만 작동.
 public struct PilotActionBar: View {
+    @EnvironmentObject private var store: ConnectionStore
     @ObservedObject var channel: TeleopChannel
     @ObservedObject var gate: PilotSafetyGate
     let flags: PilotFeatureFlags
@@ -22,10 +23,13 @@ public struct PilotActionBar: View {
         self.flags = flags
     }
 
+    /// 실 로봇 미연결 — sim 미리보기 모드. ARM 없이도 버튼 활성 (Codex P1 권고).
+    private var isSimMode: Bool { store.bus == nil }
+
     public var body: some View {
         DFPanel(
             "Action Bar",
-            subtitle: gate.armed ? "키 1..7 / 클릭 — 7 페이지 송출 가능" : "ARM 후 활성화",
+            subtitle: subtitleText,
             icon: "play.rectangle.on.rectangle",
             tint: DFColor.accent,
             trailing: {
@@ -60,11 +64,24 @@ public struct PilotActionBar: View {
         [GridItem(.adaptive(minimum: 110, maximum: 200), spacing: 8, alignment: .top)]
     }
 
+    /// Action Bar 의 상태별 부제목 — sim 미연결 / ARM 전 / ARM 후 명확.
+    private var subtitleText: String {
+        if isSimMode {
+            return "시뮬 미리보기 — 실 로봇 미연결 (자세 미리보기만)"
+        }
+        if gate.armed {
+            return "키 1..7 / 클릭 — 7 페이지 송출 가능"
+        }
+        return "🔒 ARM 슬라이더 잠금 해제 후 활성"
+    }
+
     @ViewBuilder
     private func actionButton(_ meta: MotionPageMetadata, keyIndex: Int) -> some View {
         let isPlaying = channel.playingSlot == meta.slot
         let isV1Sendable = meta.v1TargetPoseID != nil
-        let isEnabled = isV1Sendable && (gate.armed || !gate.armed)  // 시뮬에서도 시각만 동작
+        // Codex P1 fix (2026-05-13 3차): `gate.armed || !gate.armed` 는 무의미한 boolean.
+        // 실 로봇 모드면 gate.armed 필요. sim 모드면 ARM 없이 미리보기 허용.
+        let isEnabled = isV1Sendable && (isSimMode || gate.armed)
         let safetyTint: Color = safetyColor(meta.safetyClass)
 
         Button {
@@ -145,14 +162,18 @@ public struct PilotActionBar: View {
     }
 
     private func tooltip(_ meta: MotionPageMetadata) -> String {
-        [
+        // Codex P0/A3 권고 (2026-05-13 3차): "source: motion_4096.bin page N" 은
+        // raw page chain 재생을 암시하지만, 현재 구현은 단일 PoseLibrary target.
+        // 사용자 오해 방지 — 명시적으로 "단일 pose preview" 와 매핑 ID 노출.
+        let renderingMode = meta.v1TargetPoseID.map { "단일 pose preview → PoseLibrary.\($0)" }
+            ?? "준비 중 — raw page chain 재생 (별도 Sprint, motion_4096.bin page \(meta.slot) chain)"
+        return [
             "[\(meta.displayNameKo)] (\(meta.displayName))",
-            "raw_name: \(meta.rawName)",
+            "원본: motion_4096.bin page \(meta.slot) (raw_name: \(meta.rawName))",
             "duration: \(meta.durationMs) ms",
             "safety: \(meta.safetyClass.koreanLabel)",
-            "mp3: \(meta.mp3Sync ?? "—")",
-            "source: motion_4096.bin page \(meta.slot)",
-            meta.v1TargetPoseID != nil ? "v1.0 활성" : "v1.5 활성 (raw step 경로 필요)",
+            "mp3: \(meta.mp3Sync ?? "—") (재생 비활성 — v2)",
+            "재생 방식: \(renderingMode)",
         ].joined(separator: "\n")
     }
 

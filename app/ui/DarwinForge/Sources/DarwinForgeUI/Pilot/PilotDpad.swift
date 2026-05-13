@@ -80,6 +80,8 @@ public struct PilotDpad: View {
     @EnvironmentObject private var store: ConnectionStore
     let flags: PilotFeatureFlags
     @State private var activeZone: DpadZone? = nil
+    @State private var unavailableToast: String? = nil
+    @State private var unavailableToastVisible: Bool = false
 
     private let cellSize: CGFloat = 56  // Apple HIG min 44pt + visual padding.
 
@@ -89,23 +91,64 @@ public struct PilotDpad: View {
         self.flags = flags
     }
 
+    /// 방향 zone (stop 제외) 가 현재 실 송출 가능한지.
+    /// Codex P1 fix (2026-05-13 3차): 이전엔 false 시 silently return → 사용자
+    /// 무반응 으로 인지. v1.5 부터는 disabled visual + 명확한 toast.
+    private var dpadDirectionsActive: Bool {
+        flags.dpadRealMotor && store.bus != nil && gate.armed
+    }
+
+    /// 방향 zone 이 비활성된 이유 — 사용자 toast/tooltip 용.
+    private func directionUnavailableReason() -> String {
+        if !flags.dpadRealMotor {
+            return "v1.5 에서 D-pad 실 송출 비활성 — 실 IK (BLOCKER C3) 해결 후 v2 활성"
+        }
+        if store.bus == nil {
+            return "실 로봇 미연결 — D-pad 방향 송출 불가 (sim 미리보기는 ARM 후)"
+        }
+        if !gate.armed {
+            return "먼저 ARM 슬라이더 잠금 해제 필요"
+        }
+        return "D-pad 직접 송출 불가"
+    }
+
     public var body: some View {
         DFPanel(
             "방향 조작 (D-pad)",
-            subtitle: flags.dpadRealMotor ? "실 송출 활성" : "v1.0: sim 미리보기 (실 송출은 v2)",
+            subtitle: dpadDirectionsActive
+                ? "방향 실 송출 활성 — Stop 은 항상 walkReady 송출"
+                : "방향 비활성 — \(directionUnavailableReason())",
             icon: "dpad",
             tint: PilotColor.dpadActive,
             trailing: {
-                if !flags.dpadRealMotor {
-                    DFChip("v2 활성 예정", icon: "lock.fill", style: .warning)
+                if !dpadDirectionsActive {
+                    DFChip("방향 비활성", icon: "lock.fill", style: .warning)
                 }
             }
         ) {
-            HStack(spacing: DFSpace.md) {
-                dpadGrid
-                    .frame(width: cellSize * 3 + 12)
-                Spacer(minLength: 0)
-                legend
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
+                HStack(spacing: DFSpace.md) {
+                    dpadGrid
+                        .frame(width: cellSize * 3 + 12)
+                    Spacer(minLength: 0)
+                    legend
+                }
+                if unavailableToastVisible, let msg = unavailableToast {
+                    HStack(spacing: DFSpace.xs2) {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundStyle(DFColor.warning)
+                        Text(msg)
+                            .font(DFFont.caption)
+                            .foregroundStyle(DFColor.warning)
+                            .lineLimit(2)
+                    }
+                    .padding(.horizontal, DFSpace.sm)
+                    .padding(.vertical, DFSpace.xs2)
+                    .background(DFColor.warning.opacity(DFOpacity.o10))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+                    .transition(.opacity)
+                    .accessibilityIdentifier("pilot.dpad.toast")
+                }
             }
         }
     }
@@ -159,6 +202,8 @@ public struct PilotDpad: View {
     private func zoneButton(_ zone: DpadZone, dim: Bool = false) -> some View {
         let isActive = activeZone == zone
         let tint = zone == .stop ? PilotColor.safetyHighRisk : PilotColor.dpadActive
+        // Codex P1 fix: 방향 zone (stop 제외) 가 비활성이면 시각적으로 disabled.
+        let isDirectionDisabled = (zone != .stop) && !dpadDirectionsActive
         return Button {
             withAnimation(PilotAnim.dpadPress) { activeZone = zone }
             handlePress(zone)
@@ -186,42 +231,64 @@ public struct PilotDpad: View {
                             .foregroundStyle((isActive ? Color.white : tint).opacity(0.75))
                     }
                 }
+                // 비활성 방향엔 작은 lock overlay.
+                if isDirectionDisabled {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: DFFontSize.s10, weight: .bold))
+                        .foregroundStyle(DFColor.textSecondary)
+                        .padding(2)
+                        .background(.regularMaterial)
+                        .clipShape(Circle())
+                        .offset(x: cellSize/2 - 8, y: -cellSize/2 + 8)
+                }
             }
             .frame(width: cellSize, height: cellSize)
-            .opacity(dim ? 0.85 : 1.0)
+            .opacity(dim ? 0.85 : (isDirectionDisabled ? DFOpacity.disabled : 1.0))
         }
         .buttonStyle(.plain)
-        .help("\(zone.koreanLabel) — 키 \(zone.keyChar ?? "")")
+        .help(isDirectionDisabled
+              ? "\(zone.koreanLabel) — 현재 비활성 (\(directionUnavailableReason()))"
+              : "\(zone.koreanLabel) — 키 \(zone.keyChar ?? "")")
         .accessibilityLabel(zone.koreanLabel)
     }
 
     /// 한 zone 누름 처리. 안전 + 단계별 활성화 규칙:
-    ///   - bus 미연결 → 시각만 (sim).
-    ///   - stop → 항상 실 송출 (walkReady) — 안전한 정지 자세 우선.
-    ///   - 방향 zone → `flags.dpadRealMotor` (v2) + gate.armed 일 때만 실 송출.
-    ///   - 실 송출 후 1초 뒤 walkReady 복귀 (한 발 흉내, walking IK 미완 보완).
+    ///   - stop → 항상 walkReady 시도 (bus 미연결이면 .notConnected toast).
+    ///   - 방향 zone → `dpadDirectionsActive` 일 때만 실 송출.
+    ///   - 그 외 → 명확한 toast 표시 (Codex P1 fix — 이전엔 silent return).
     private func handlePress(_ zone: DpadZone) {
-        guard store.bus != nil else { return }   // sim only.
-
         if zone == .stop {
-            // Stop 은 ARM 미가입이어도 항상 OK — 안전 우선.
+            // Stop 은 ARM 무관 항상 walkReady 시도. bus 미연결 시 결과로 surface.
             Task { @MainActor in
-                await store.applyPoseSmoothly(.walkReady)
+                let r = await store.applyPoseSmoothly(.walkReady)
+                if case .notConnected = r {
+                    showUnavailableToast("Stop 시뮬 — 실 로봇 미연결 (walkReady 시각만)")
+                }
             }
             return
         }
 
-        // 방향 zone — 단계별 활성화. v1.0 (dpadRealMotor=false) → sim only.
-        guard flags.dpadRealMotor else { return }
-        // ARM 통과 + (정비 거치 안전은 호출자가 ARM 시 책임).
-        guard gate.armed else { return }
+        guard dpadDirectionsActive else {
+            // 방향 zone 비활성 — 명확한 피드백 (이전 silent return).
+            showUnavailableToast(directionUnavailableReason())
+            return
+        }
 
         let target = zone.makePose()
         Task { @MainActor in
             await store.applyPoseSmoothly(target)
-            // 짧은 step 후 walkReady 로 복귀 — 진짜 walking IK 가 아니므로 안전.
             try? await Task.sleep(nanoseconds: 700_000_000)
             await store.applyPoseSmoothly(.walkReady)
+        }
+    }
+
+    /// 비활성 사유 toast — 3초 후 자동 dismiss.
+    private func showUnavailableToast(_ msg: String) {
+        unavailableToast = msg
+        withAnimation(.easeIn(duration: 0.2)) { unavailableToastVisible = true }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            withAnimation(.easeOut(duration: 0.3)) { unavailableToastVisible = false }
         }
     }
 }

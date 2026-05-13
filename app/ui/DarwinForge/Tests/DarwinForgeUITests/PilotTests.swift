@@ -61,18 +61,39 @@ final class PilotTests: XCTestCase {
     }
 
     func testFeatureFlagsProgressionMatrix() {
-        // PRD §1 단계별 활성화 매트릭스.
-        XCTAssertTrue(PilotFeatureFlags.v1_1.imuTelemetry)
-        XCTAssertTrue(PilotFeatureFlags.v1_1.headTracking)
-        XCTAssertFalse(PilotFeatureFlags.v1_1.camera)         // v1.5 활성
-        XCTAssertFalse(PilotFeatureFlags.v1_1.dpadRealMotor)  // v2 활성
-
-        XCTAssertTrue(PilotFeatureFlags.v1_5.camera)
+        // PRD §1 단계별 활성화 매트릭스 — v1.5 부터는 Codex 권고 (2026-05-13) 로
+        // "작동하는 것처럼 보이는 기능" 차단을 위해 안전 부분집합으로 재정의.
+        //
+        // v1.5 안전 범위:
+        //   - actionBarMore: 9 페이지 시트 활성 (단, 2개 slot 은 단발 자세, 2개는 chain 미구현 nil)
+        //   - bridgeNetwork: 네트워크 endpoint UI 노출 (forge serve 데몬 가정)
+        // v1.5 에서 여전히 OFF (별도 FFI / 데몬 필요):
+        //   - imuTelemetry / autoRecovery / headTracking / ballFollow / camera / hsvTuning / dpadRealMotor / pageChain / mp3Playback
         XCTAssertTrue(PilotFeatureFlags.v1_5.actionBarMore)
-        XCTAssertFalse(PilotFeatureFlags.v1_5.dpadRealMotor)  // 여전히 v2
+        XCTAssertTrue(PilotFeatureFlags.v1_5.bridgeNetwork)
+        XCTAssertFalse(PilotFeatureFlags.v1_5.camera)
+        XCTAssertFalse(PilotFeatureFlags.v1_5.imuTelemetry)
+        XCTAssertFalse(PilotFeatureFlags.v1_5.dpadRealMotor)
+        XCTAssertFalse(PilotFeatureFlags.v1_5.pageChain)
 
-        XCTAssertTrue(PilotFeatureFlags.v2.dpadRealMotor)
-        XCTAssertTrue(PilotFeatureFlags.v2.mp3Playback)
+        // v1_1_future / v2_future 는 미래 단계 placeholder — 실제 활성 시 별도 Sprint.
+        XCTAssertTrue(PilotFeatureFlags.v1_1_future.imuTelemetry)
+        XCTAssertTrue(PilotFeatureFlags.v1_1_future.autoRecovery)
+        XCTAssertTrue(PilotFeatureFlags.v1_1_future.headTracking)
+        XCTAssertFalse(PilotFeatureFlags.v1_1_future.dpadRealMotor)
+
+        XCTAssertTrue(PilotFeatureFlags.v2_future.dpadRealMotor)
+        XCTAssertTrue(PilotFeatureFlags.v2_future.camera)
+        XCTAssertTrue(PilotFeatureFlags.v2_future.mp3Playback)
+    }
+
+    // MARK: - PilotFeatureLevel picker (v1.5 신규)
+
+    func testFeatureLevelEnumMaps() {
+        XCTAssertEqual(PilotFeatureLevel.v1_0.rawValue, "v1.0")
+        XCTAssertEqual(PilotFeatureLevel.v1_5.rawValue, "v1.5")
+        XCTAssertEqual(PilotFeatureLevel.v1_0.flags.actionBarMore, false)
+        XCTAssertEqual(PilotFeatureLevel.v1_5.flags.actionBarMore, true)
     }
 
     // MARK: - PilotSafetyGate (3)
