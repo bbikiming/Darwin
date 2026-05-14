@@ -49,6 +49,73 @@ pub struct DetectResult {
     pub map: JointMap,
 }
 
+/// CM-730/740 의 IMU raw — gyro X/Y/Z + accel X/Y/Z (16-bit signed).
+///
+/// **공식 매핑** (ROBOTIS-OP2 LinuxCM730.cpp 기준):
+///   - 38 (Z low), 40 (Y low), 42 (X low) — gyro 6 byte 연속.
+///   - 44 (X low), 46 (Y low), 48 (Z low) — accel 6 byte 연속.
+///
+/// **변환** (CM-730 / MPU-9150 datasheet):
+///   - Gyro: full-scale ±2000°/s → 32767 LSB = 2000°/s. raw × 2000.0 / 32767 = °/s.
+///   - Accel: full-scale ±2g → 32767 LSB = 2g. raw × 2.0 / 32767 = g.
+///   - Tilt 근사: atan2(accel_y, accel_z) = roll, atan2(-accel_x, sqrt(y²+z²)) = pitch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImuRaw {
+    pub gyro_x: i16,
+    pub gyro_y: i16,
+    pub gyro_z: i16,
+    pub accel_x: i16,
+    pub accel_y: i16,
+    pub accel_z: i16,
+}
+
+impl ImuRaw {
+    /// Gyro X (°/s).
+    pub fn gyro_x_dps(&self) -> f32 {
+        self.gyro_x as f32 * 2000.0 / 32767.0
+    }
+    /// Gyro Y (°/s).
+    pub fn gyro_y_dps(&self) -> f32 {
+        self.gyro_y as f32 * 2000.0 / 32767.0
+    }
+    /// Gyro Z (°/s).
+    pub fn gyro_z_dps(&self) -> f32 {
+        self.gyro_z as f32 * 2000.0 / 32767.0
+    }
+    /// Accel X (g).
+    pub fn accel_x_g(&self) -> f32 {
+        self.accel_x as f32 * 2.0 / 32767.0
+    }
+    pub fn accel_y_g(&self) -> f32 {
+        self.accel_y as f32 * 2.0 / 32767.0
+    }
+    pub fn accel_z_g(&self) -> f32 {
+        self.accel_z as f32 * 2.0 / 32767.0
+    }
+    /// Roll (도) — accelerometer 기반 정적 tilt.
+    pub fn roll_degrees(&self) -> f32 {
+        let ay = self.accel_y as f32;
+        let az = self.accel_z as f32;
+        if az == 0.0 && ay == 0.0 {
+            0.0
+        } else {
+            ay.atan2(az) * 180.0 / std::f32::consts::PI
+        }
+    }
+    /// Pitch (도) — accelerometer 기반 정적 tilt.
+    pub fn pitch_degrees(&self) -> f32 {
+        let ax = self.accel_x as f32;
+        let ay = self.accel_y as f32;
+        let az = self.accel_z as f32;
+        let denom = (ay.powi(2) + az.powi(2)).sqrt();
+        if denom == 0.0 {
+            0.0
+        } else {
+            (-ax).atan2(denom) * 180.0 / std::f32::consts::PI
+        }
+    }
+}
+
 /// CM-730/740 wrapper. 내부적으로 `Bus`를 빌려 ID 200으로 통신.
 pub struct CmController<'a, P: SerialPort> {
     bus: &'a mut Bus<P>,
@@ -87,6 +154,50 @@ impl<'a, P: SerialPort> CmController<'a, P> {
     pub fn set_dxl_power(&mut self, on: bool) -> Result<()> {
         self.bus
             .write(CONTROLLER, cm_register::DXL_POWER, &[on as u8])
+    }
+
+    /// IMU raw 6 channels read — Phase D3 (Sprint 18).
+    ///
+    /// CM-730/740 의 register 38 (GYRO_Z low) 부터 12 byte 연속 read.
+    /// 순서: GYRO_Z, GYRO_Y, GYRO_X, ACCEL_X, ACCEL_Y, ACCEL_Z (각 2 byte little-endian).
+    /// 단일 burst read 라 forge-bridge ~1ms 응답.
+    ///
+    /// # Scale 변환의 정직성 (Codex 잔여 2 분석)
+    ///
+    /// 현재 `ImuRaw::gyro_x_dps()` 등은 MPU-6050 ±2000dps / ±2g full scale 을 가정:
+    ///     raw × 2000.0 / 32767 = °/s
+    ///     raw × 2.0  / 32767 = g
+    ///
+    /// **하지만 ROBOTIS-OP2 legacy code 와 차이 가능**:
+    ///   - `Framework/src/motion/MotionStatus.cpp` 의 `FB_GYRO`, `FB_ACCEL` 은
+    ///     `(BulkRead[H] << 8) | BulkRead[L]` — unsigned 16-bit composition.
+    ///   - MotionStatus 가 그 raw word 를 그대로 사용 (보통 512 center, 즉 10-bit ADC 결과).
+    ///   - 만약 CM-730/740 펌웨어가 10-bit ADC 결과를 register 에 그대로 쓴다면,
+    ///     우리 i16 ±32767 가정은 wrong → 변환식이 ÷ 32 만큼 부정확.
+    ///
+    /// **검증 방법**: Mac UI 의 `PilotImuRawDiagnosticsSheet` 의 "정지 측정" 으로
+    /// accel Z 가 ~1.0g (raw ~16384 if 16-bit, ~512 if 10-bit) 인지 확인.
+    /// - raw ~16384 → 16-bit signed 가정 OK. 변경 불필요.
+    /// - raw ~512   → 10-bit ADC. 변환식 정정 필요 (raw - 512) × scale.
+    ///
+    /// 실 로봇에서 측정 전까지 이 코드는 "추정 변환" 이며 사용자에게도 "정적 tilt"
+    /// 로 표시. v1.6 의 검증 결과에 따라 변환식 정정 예정.
+    pub fn read_imu(&mut self) -> Result<ImuRaw> {
+        // 12 byte 한 번 — GYRO_Z(38) → ACCEL_Z(48)+1.
+        let buf = self.bus.read(CONTROLLER, cm_register::GYRO_Z, 12)?;
+        if buf.len() < 12 {
+            return Err(crate::error::Error::Other(
+                "IMU read returned fewer than 12 bytes".into(),
+            ));
+        }
+        Ok(ImuRaw {
+            gyro_z: i16::from_le_bytes([buf[0], buf[1]]),
+            gyro_y: i16::from_le_bytes([buf[2], buf[3]]),
+            gyro_x: i16::from_le_bytes([buf[4], buf[5]]),
+            accel_x: i16::from_le_bytes([buf[6], buf[7]]),
+            accel_y: i16::from_le_bytes([buf[8], buf[9]]),
+            accel_z: i16::from_le_bytes([buf[10], buf[11]]),
+        })
     }
 
     /// 가슴 LED 비트 (3개).

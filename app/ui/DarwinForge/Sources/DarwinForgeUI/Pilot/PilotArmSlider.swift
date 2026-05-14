@@ -6,6 +6,9 @@ import SwiftUI
 public struct PilotArmSlider: View {
     @ObservedObject var channel: TeleopChannel
     @ObservedObject var gate: PilotSafetyGate
+    /// ROBOTIS 데모가 USB 점유 중인지 — true 면 ARM 슬라이더 자체를 비활성.
+    /// 모터 송출 자체가 불가능하므로 사용자가 ARM 시도하면 헛 동작.
+    let demoOccupiesBus: Bool
 
     @State private var offset: CGFloat = 0
 
@@ -13,17 +16,19 @@ public struct PilotArmSlider: View {
     private let trackHeight: CGFloat = 56
     private let armThreshold: CGFloat = 0.80
 
-    public init(channel: TeleopChannel, gate: PilotSafetyGate) {
+    public init(channel: TeleopChannel, gate: PilotSafetyGate,
+                demoOccupiesBus: Bool = false) {
         self.channel = channel
         self.gate = gate
+        self.demoOccupiesBus = demoOccupiesBus
     }
 
     public var body: some View {
         DFPanel(
             "안전 잠금",
-            subtitle: gate.armed ? "잠금 해제됨 — 동작 가능" : "잠금 — 우측으로 끌어 ARM",
+            subtitle: subtitleText,
             icon: gate.armed ? "lock.open.fill" : "lock.fill",
-            tint: gate.armed ? PilotColor.armLocked : PilotColor.armUnlocked,
+            tint: panelTint,
             trailing: {
                 if gate.armed {
                     DFButton(.ghost, size: .small) {
@@ -44,10 +49,24 @@ public struct PilotArmSlider: View {
                     sliderTrack(maxWidth: geo.size.width)
                 }
                 .frame(height: trackHeight)
+                .opacity(demoOccupiesBus ? DFOpacity.disabled : 1.0)
+                .allowsHitTesting(!demoOccupiesBus)
 
                 stageLabel
             }
         }
+    }
+
+    private var subtitleText: String {
+        if demoOccupiesBus {
+            return "🤖 데모 모드 활성 — 수동으로 전환해야 ARM 가능"
+        }
+        return gate.armed ? "잠금 해제됨 — 동작 가능" : "잠금 — 우측으로 끌어 ARM"
+    }
+
+    private var panelTint: Color {
+        if demoOccupiesBus { return DFColor.textSecondary }
+        return gate.armed ? PilotColor.armLocked : PilotColor.armUnlocked
     }
 
     @ViewBuilder

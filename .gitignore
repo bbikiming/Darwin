@@ -92,3 +92,6 @@ secrets/
 # Large vendor archives (firmware recovery images, etc.)
 *.zip
 ROBOTIS-OP2_Recovery_*.zip
+
+# ROBOTIS 공식 펌웨어 reference (read-only; commit 안 함)
+DARwIn-OP_ROBOTIS_v1.6.0/

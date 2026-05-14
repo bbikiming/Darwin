@@ -48,6 +48,32 @@ public final class ConnectionStore: ObservableObject {
     /// 마지막 boardSnapshot 호출의 측정 latency (ms). 없으면 nil.
     @Published public private(set) var lastRoundTripMs: Double?
 
+    // MARK: - IMU 전용 health (Codex 권고 — 잔여 2 잔여 4)
+    //
+    // IMU 는 board snapshot 과 별도 read — 같은 bus 라도 일부 펌웨어 / 모델은 IMU register
+    // 응답 안 함. 전체 watchdog 에 합치면 "연결 끊김" 으로 오진. 별도 카운터로 추적.
+    @Published public private(set) var lastImuSuccessAt: Date?
+    @Published public private(set) var imuConsecutiveFailures: Int = 0
+    @Published public private(set) var lastImuError: String?
+    /// Mac-side complementary filter (Sprint 18 Phase E, Codex 잔여 4 v1.5 minimal viable).
+    /// 5Hz IMU polling × tau=0.5s — alpha ≈ 0.71. 정적 tilt 보다 약간 개선.
+    @Published public private(set) var imuFilter: ImuFilter = ImuFilter()
+
+    /// IMU 가 5초 이상 응답 없으면 stale — UI 가 "IMU 오래됨" 라벨 표시.
+    public var isImuStale: Bool {
+        guard let at = lastImuSuccessAt else { return imuConsecutiveFailures > 0 }
+        return Date().timeIntervalSince(at) > 5.0
+    }
+
+    /// IMU 가 3회 연속 실패 + 마지막 성공이 없거나 30초 이상 전이면 unavailable —
+    /// 사용자에게 "IMU 사용 불가" 라고 명확히 표시.
+    public var isImuUnavailable: Bool {
+        if let at = lastImuSuccessAt {
+            return Date().timeIntervalSince(at) > 30.0 && imuConsecutiveFailures >= 3
+        }
+        return imuConsecutiveFailures >= 3
+    }
+
     /// 모터 이동 속도 프로파일 — Studio/Teach 의 자세 변경 시 사용.
     /// 기본: smooth (1초 보간).
     @Published public var motorSpeedProfile: MotorSpeedProfile = .smooth
@@ -970,6 +996,7 @@ public final class ConnectionStore: ObservableObject {
             // 연속 임계 도달 시 forceDisconnectWithError 가 status를 .error로 전환.
             var didFail = false
             var board: BoardSnapshot? = lastTelemetry?.board
+            var imu: ImuRaw? = lastTelemetry?.imu
             if tick % 5 == 0 {
                 let t0 = Date()
                 do {
@@ -982,6 +1009,23 @@ public final class ConnectionStore: ObservableObject {
                     didFail = true
                     self.failureCount &+= 1
                     handleBusError(error)
+                }
+            }
+
+            // IMU — Sprint 18 Phase E (Codex 잔여 3 v1.5 minimal viable): 매 tick 5Hz 폴링.
+            // 이전엔 board 와 같은 1Hz — gyro 적분 의미 없음. 5Hz 면 tau=0.5s 와 결합 시 약간 개선.
+            // global watchdog 트리거 안 함 — IMU register 미지원 펌웨어/모델 오진 방지.
+            if self.bus != nil, let busRef = self.bus {
+                do {
+                    let value = try busRef.readImu()
+                    imu = value
+                    self.imuFilter.update(value)
+                    self.lastImuSuccessAt = Date()
+                    self.imuConsecutiveFailures = 0
+                    self.lastImuError = nil
+                } catch {
+                    self.imuConsecutiveFailures &+= 1
+                    self.lastImuError = error.localizedDescription
                 }
             }
 
@@ -1004,7 +1048,7 @@ public final class ConnectionStore: ObservableObject {
             // 한 사이클 내 모든 호출이 성공하면 카운터 reset.
             if !didFail { resetBusFailureCounter() }
 
-            let snap = TelemetrySnapshot(board: board, joints: joints)
+            let snap = TelemetrySnapshot(board: board, joints: joints, imu: imu)
             self.lastTelemetry = snap
             // 주요 관절 캐시 업데이트.
             for (j, s) in joints { self.jointStates[j] = s }

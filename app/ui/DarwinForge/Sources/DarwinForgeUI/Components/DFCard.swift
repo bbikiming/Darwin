@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// 표준 카드 — surface.card + radius 16 + 그림자.
+/// 표준 카드 — Sprint A 이후 deprecated. `DFPanel` 또는 `DFPanel(variant: .modal)` 사용 권장.
 ///
-/// 근거: Apple HIG card pattern + LiquidGlassReference (본문은 솔리드).
+/// 기존 호출 측 호환을 위해 본 구조체는 유지하되, 내부 구현을 단순화하고
+/// 새 코드는 `DFPanel` 을 직접 쓰도록 안내한다.
+@available(*, deprecated, message: "Use DFPanel(variant: .modal) for shadowed cards, or DFPanel for standard cards.")
 public struct DFCard<Content: View>: View {
     private let padding: CGFloat
     private let content: () -> Content
@@ -21,33 +23,26 @@ public struct DFCard<Content: View>: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.lg, style: .continuous)
-                    .stroke(Color.primary.opacity(DFOpacity.o06), lineWidth: 0.5)
+                    .stroke(Color.primary.opacity(DFOpacity.o06), lineWidth: DFSize.borderHairline)
             )
             .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
     }
 }
 
-/// 상태 칩 — 좌측 SF Symbol + 라벨 + tint.
+/// 상태 칩 — `DFStatusPill` 의 legacy alias.
 ///
-/// 근거: KS S ISO 7010 색상 + Differentiate Without Color (색+아이콘+텍스트 3중).
+/// 기존 호출 측 호환을 위해 유지. 신규 코드는 `DFStatusPill` 사용.
+@available(*, deprecated, renamed: "DFStatusPill")
 public struct StatusPill: View {
     public enum Severity {
         case info, success, warning, danger
 
-        var color: Color {
+        var dfSeverity: DFStatusPill.Severity {
             switch self {
-            case .info: return DFColor.info
-            case .success: return DFColor.success
-            case .warning: return DFColor.warning
-            case .danger: return DFColor.danger
-            }
-        }
-        var icon: String {
-            switch self {
-            case .info: return "info.circle.fill"
-            case .success: return "checkmark.circle.fill"
-            case .warning: return "exclamationmark.triangle.fill"
-            case .danger: return "exclamationmark.octagon.fill"
+            case .info: return .info
+            case .success: return .success
+            case .warning: return .warning
+            case .danger: return .danger
             }
         }
     }
@@ -61,28 +56,6 @@ public struct StatusPill: View {
     }
 
     public var body: some View {
-        Label(label, systemImage: severity.icon)
-            .font(DFFont.caption.weight(.semibold))
-            .foregroundStyle(severity.color)
-            .padding(.horizontal, DFSpace.sm + 2)
-            .padding(.vertical, DFSpace.xs)
-            .background(
-                Capsule()
-                    .fill(severity.color.opacity(DFOpacity.o15))
-            )
-            .overlay(
-                Capsule().stroke(severity.color.opacity(DFOpacity.o30), lineWidth: 0.5)
-            )
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(severityLabel(severity)) — \(label)")
-    }
-
-    private func severityLabel(_ s: Severity) -> String {
-        switch s {
-        case .info: return "정보"
-        case .success: return "정상"
-        case .warning: return "주의"
-        case .danger: return "위험"
-        }
+        DFStatusPill(label, severity: severity.dfSeverity)
     }
 }

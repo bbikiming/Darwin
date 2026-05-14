@@ -5,11 +5,11 @@ import SwiftUI
 /// Walk Lab 의 ObservableObject — 현재 프리셋 / 고급 슬라이더 / 시뮬 결과 / 안전 상태.
 ///
 /// 시뮬 vs 실 송출 (Sprint 16+):
-///   - **프리셋 보행 cycle 실 송출 활성**: `WalkMotionLibrary.page(for:)` 로 합성한
+///   - **프리셋 보행 cycle 실 송출 활성**: `WalkMotionLibrary.page(for:tuning:)` 로 합성한
 ///     step 시퀀스를 `runWalkCycle` Task 가 `Bus.setPosition` 으로 직접 송출.
 ///     bus 연결 + cradleConfirmed + (highRisk → riskAck) 조건 모두 만족 시.
-///   - 슬라이더 (보폭/측면/회전/주기) → 여전히 sim only. walk::engine 의 실 IK 가
-///     완성될 때 까지 슬라이더 값은 `WalkEngine` 시뮬 영향만 (BLOCKER C3).
+///   - 고급 슬라이더 (보폭/측면/회전/주기/발 들기/균형) → 시뮬 엔진과 실 송출 page 모두에 반영.
+///     ROBOTIS walking module 기반 keyframe을 재합성하고, 진행 중이면 짧게 debounce 후 재시작.
 ///   - 시뮬 50ms tick (foot trail / IMU / 온도) 는 기존대로 simTimer 가 갱신.
 ///   - `attach(store:)` 호출 전이면 송출 skip (테스트 / preview / 연결 전).
 ///   - emergencyStop / 균형 손실 / 온도 임계 시 walkCycleTask 즉시 cancel + walkReady 복귀.
@@ -164,6 +164,8 @@ public final class WalkLabSession: ObservableObject {
     private var simSwayPhase: Double = 0
     /// 실 보행 cycle Task — start(preset) 시 시작, stop / emergency 시 cancel.
     private var walkCycleTask: Task<Void, Never>?
+    /// 고급 슬라이더 연속 drag 중 실 보행 page 재합성을 debounce.
+    private var walkTuningRestartTask: Task<Void, Never>?
 
     /// Sim 한 tick 의 dt (s). 50 ms.
     private let tickDtSec: Double = 0.05
@@ -252,6 +254,25 @@ public final class WalkLabSession: ObservableObject {
         let cmd = effectiveCommand
         engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
         engine.setPeriodMs(effectivePeriodMs)
+
+        guard advanced, isRobotWalking, current != .idle else { return }
+        guard stabilityScore.category != .critical else {
+            cancelWalkCycle(eventLabel: "고급 슬라이더 위험도 critical — 보행 중단")
+            return
+        }
+
+        let preset = current
+        walkTuningRestartTask?.cancel()
+        walkTuningRestartTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard let self,
+                  !Task.isCancelled,
+                  self.advanced,
+                  self.isRobotWalking,
+                  self.current == preset else { return }
+            self.startWalkCycle(preset)
+            self.lastRobotEvent = "🤖 고급 슬라이더 반영 — \(preset.label)"
+        }
     }
 
     /// 정지 — 시뮬 멈춤, 기록 누적, 실 보행 cycle cancel + walkReady 복귀.
@@ -276,6 +297,8 @@ public final class WalkLabSession: ObservableObject {
         if wasRunning {
             cancelWalkCycle(eventLabel: "정지 — 직립 자세 복귀")
         }
+        walkTuningRestartTask?.cancel()
+        walkTuningRestartTask = nil
     }
 
     /// 비상 정지 — Stop + risk reset + 실 로봇 토크 OFF.
@@ -283,6 +306,8 @@ public final class WalkLabSession: ObservableObject {
         // 1. 보행 cycle 즉시 cancel — 모터 송출 중지.
         walkCycleTask?.cancel()
         walkCycleTask = nil
+        walkTuningRestartTask?.cancel()
+        walkTuningRestartTask = nil
         isRobotWalking = false
         // 2. 토크 OFF — 토크 OFF 가 들어가야 임의 모터 명령 잔여를 무력화.
         store?.emergencyStop()
@@ -299,7 +324,7 @@ public final class WalkLabSession: ObservableObject {
     }
 
     /// 실 로봇에 정적 자세 송출. bus 미연결 / cradle 미확인 / cancelled 시 skip.
-    /// 슬라이더 보행 명령은 v1.5 IK 까지 sim only — 본 메서드는 자세 전환 only.
+    /// 단발 자세 송출. 반복 보행은 `startWalkCycle` 경로가 담당.
     private func sendRobotPose(_ pose: RobotPose, eventLabel: String) {
         guard let store = store, store.bus != nil else {
             lastRobotEvent = "ℹ️ 시뮬 모드 — 로봇 미연결 (\(eventLabel))"
@@ -338,7 +363,7 @@ public final class WalkLabSession: ObservableObject {
             lastRobotEvent = f.userMessage + " (\(preset.label))"
             return
         }
-        guard let page = WalkMotionLibrary.page(for: preset) else {
+        guard let page = WalkMotionLibrary.page(for: preset, tuning: currentWalkTuning()) else {
             // idle 등 — 합성 페이지 없음. 정적 walkReady 만 송출.
             sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(preset.label)")
             return
@@ -360,6 +385,7 @@ public final class WalkLabSession: ObservableObject {
         let maxDurationSec = preset.maxDurationSec
         let presetLabel = preset.label
         let lowerBody = Self.lowerBodyJoints
+        let shouldLoop = preset != .jog
 
         walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
             // 이전 cycle 이 walkReady 복귀까지 마치도록 대기 — 동시 IO 방지.
@@ -367,7 +393,8 @@ public final class WalkLabSession: ObservableObject {
             let result = await Self.runWalkCycle(
                 bus: bus, page: page,
                 maxDurationSec: maxDurationSec,
-                lowerBodyJoints: lowerBody
+                lowerBodyJoints: lowerBody,
+                loop: shouldLoop
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -380,6 +407,18 @@ public final class WalkLabSession: ObservableObject {
                 }
             }
         }
+    }
+
+    private func currentWalkTuning() -> WalkMotionLibrary.AdvancedTuning? {
+        guard advanced else { return nil }
+        return WalkMotionLibrary.AdvancedTuning(
+            strideMm: strideMm,
+            sideMm: sideMm,
+            turnDeg: turnDeg,
+            periodMs: customPeriodMs,
+            footHeightMm: footHeightMm,
+            balanceGain: balanceGain
+        )
     }
 
     /// Preflight: dxl_power ON + 모든 토크 ON. 하체 실패 / 상체 4개+ 실패 시 차단.
@@ -415,6 +454,8 @@ public final class WalkLabSession: ObservableObject {
         guard let task = walkCycleTask else { return }
         task.cancel()
         walkCycleTask = nil
+        walkTuningRestartTask?.cancel()
+        walkTuningRestartTask = nil
         isRobotWalking = false
         sendRobotPose(.walkReady, eventLabel: eventLabel)
     }
@@ -433,7 +474,8 @@ public final class WalkLabSession: ObservableObject {
     /// - Task.detached 이므로 main thread block 없음.
     private static func runWalkCycle(
         bus: Bus, page: MotionPage, maxDurationSec: Int,
-        lowerBodyJoints: Set<JointID>
+        lowerBodyJoints: Set<JointID>,
+        loop: Bool = true
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -459,7 +501,7 @@ public final class WalkLabSession: ObservableObject {
         var endReason: WalkCycleResult.EndReason = .completedMaxDuration
         var cancelledMidStep = false
 
-        cycleLoop: while !Task.isCancelled {
+        cycleLoop: repeat {
             for step in page.steps {
                 if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
                 if let end = endDate, Date() >= end { break cycleLoop }
@@ -495,7 +537,7 @@ public final class WalkLabSession: ObservableObject {
                 let ns = UInt64(totalMs) * 1_000_000
                 try? await Task.sleep(nanoseconds: ns)
             }
-        }
+        } while loop && !Task.isCancelled
         if endReason == .completedMaxDuration && (cancelledMidStep || Task.isCancelled) {
             endReason = .userCancelled
         }

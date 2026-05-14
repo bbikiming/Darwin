@@ -25,7 +25,7 @@ public enum PilotFeatureLevel: String, CaseIterable, Sendable, Identifiable {
         case .v1_0:
             return "Action Bar 7 메인 페이지만 활성. 진단/추가 페이지 비활성."
         case .v1_5:
-            return "v1.0 + 진단 패널 + 안전한 추가 페이지 (head/arm 단발). IMU/카메라/D-pad 실송출은 별도 Sprint."
+            return "v1.0 + 진단 패널 + 안전한 추가 페이지 + 공식 8080 카메라 미리보기."
         }
     }
 
@@ -94,21 +94,30 @@ public struct PilotFeatureFlags: Sendable, Equatable {
         pageChain: false,     mp3Playback: false
     )
 
-    /// v1.5 — Sprint 17 안전 범위 (Codex 권고 반영).
+    /// v1.5 — Sprint 17~18 안전 범위 (Codex 권고 반영 + Phase D 확장).
     ///
     /// **활성**:
     ///   - `actionBarMore`: + 더 보기 9 페이지 시트 (단, 7 개는 v1TargetPoseID nil 이라 거부됨)
     ///   - `bridgeNetwork`: 네트워크 endpoint UI 노출 — robot 측 `forge serve` 데몬 가정.
+    ///   - `camera`: ROBOTIS official camera_tutorial/demo 의 8080 snapshot endpoint 폴링.
+    ///   - `ballFollow`: ROBOTIS `demo` 의 soccer 모드 위임 (Sprint 18 Phase B) — Mac 은 명령만 발송.
+    ///   - `imuTelemetry`: CM-730/740 register 38..49 raw read (Sprint 18 Phase D3) — `fc_bus_read_imu` FFI.
+    ///   - `headTracking`: Mac 측 head pan/tilt PID — ARM + 수동 모드 + 카메라 ball detection (Sprint 18 Phase D5).
     ///
     /// **여전히 OFF** (별도 FFI / 외부 데몬 필요, "작동하는 것처럼 보이는" 위험 차단):
-    ///   - `imuTelemetry` / `autoRecovery` / `headTracking` / `ballFollow`: CmController::read_imu 미구현.
-    ///   - `camera` / `hsvTuning`: robot 측 mjpg-streamer 셋업 가이드 별도.
-    ///   - `dpadRealMotor`: BLOCKER C3 (실 IK) 미해결.
+    ///   - `autoRecovery`: IMU 는 있으나 page 10/11 chain 재생 = motion_play 라이브러리 추출 필요.
+    ///   - `hsvTuning`: httpd command UI/검출 파라미터 write 는 별도 검증 필요.
+    ///   - `dpadRealMotor`: BLOCKER C3 (실 IK) 미해결 — D-pad 는 lock visual 유지.
     ///   - `pageChain` / `mp3Playback`: motion_play 라이브러리 추출 필요 + 라이선스.
     public static let v1_5: PilotFeatureFlags = {
         var f = v1_0
         f.actionBarMore = true
+        f.camera = true
         f.bridgeNetwork = true
+        f.ballFollow = true
+        f.imuTelemetry = true
+        f.headTracking = true
+        f.hsvTuning = true   // Phase E: HSV preset + robot ini sync (Codex 잔여 3 v1.5).
         return f
     }()
 

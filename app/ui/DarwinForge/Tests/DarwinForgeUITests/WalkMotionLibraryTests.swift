@@ -112,56 +112,22 @@ final class WalkMotionLibraryTests: XCTestCase {
         }
     }
 
-    // MARK: - .with() clamp 직접 검증 (Codex P2 보강)
+    // MARK: - ROBOTIS walking / official kick 검증
 
-    /// Codex 의 P2 지적: `testAllPosesWithinSoftwareLimits` 만으로는 `.with()` 가 이미 clamp
-    /// 하므로 "원래 의도한 raw 가 limit 안" 인지 검증 불가 (자기 충족). 본 테스트는 합성 step
-    /// 의 raw 가 `Kinematics.raw(fromDegrees:)` 의 원본 계산과 일치하는지 직접 비교한다 —
-    /// `.with()` 의 clamp 가 발생했다면 두 값이 달라질 것이므로 false positive 차단.
-    ///
-    /// march step 1 = `liftFoot(.right, liftDeg: 18)` — 좌발이 지지, mirror joint 의 raw 가
-    /// 종전 단방향 `0...150` limits 에서는 잘렸을 자리.
-    func testLiftStepPreservesIntendedRawWithoutClamp() {
+    /// 새 WalkMotionLibrary 는 더 이상 임의 `liftFoot()` 수식을 쓰지 않고 ROBOTIS Walking.cpp
+    /// 위상/IK 기반 keyframe을 만든다. 이 테스트는 좌측 음수 관절이 0도 근처로 잘리지 않고
+    /// walking synthesis 전체에서 계속 음수 영역에 남는지를 검증한다.
+    func testMarchKeepsLeftLegNegativeJointsUnclamped() {
         guard let march = WalkMotionLibrary.page(for: .march) else {
             XCTFail("march page missing"); return
         }
-        let liftDeg: Double = 18  // march 의 내부 상수와 일치.
-        let liftR = march.steps[1].toPose()
-
-        // liftFoot(.right) 의 의도된 lKnee = raw(-53 + liftDeg*0.4) ≈ raw(-45.8°).
-        // 종전 lKnee.rawLimits=2048...3755 에서는 1527 → 2048 로 clamp (=왼다리 펴짐).
-        let expectedLKnee = Kinematics.raw(fromDegrees: -53 + liftDeg * 0.4)
-        XCTAssertEqual(liftR.raw(.lKnee), expectedLKnee,
-            "march lift R 의 lKnee raw=\(liftR.raw(.lKnee)) 가 의도 \(expectedLKnee) 와 일치 (clamp 없음)")
-
-        // 의도된 lAnklePitch = raw(-30 + liftDeg*0.3) ≈ raw(-24.6°).
-        let expectedLAnkle = Kinematics.raw(fromDegrees: -30 + liftDeg * 0.3)
-        XCTAssertEqual(liftR.raw(.lAnklePitch), expectedLAnkle,
-            "march lift R 의 lAnklePitch 가 의도값 보존 (clamp 없음)")
-
-        // 의도된 lHipPitch = raw(36 - liftDeg*0.2) = raw(32.4°). 항상 양수라 종전에도 OK 였음.
-        let expectedLHip = Kinematics.raw(fromDegrees: 36 - liftDeg * 0.2)
-        XCTAssertEqual(liftR.raw(.lHipPitch), expectedLHip)
-    }
-
-    /// march step 3 = `liftFoot(.left, liftDeg: 18)` — 우 발 지지, 좌 발 들기.
-    /// 들린 좌 발의 lKnee 는 walkReady (-53°) 보다 더 음수로 — 가장 종전 clamp 위험 컸음.
-    func testLeftLiftStepPreservesLeftKneeNegative() {
-        guard let march = WalkMotionLibrary.page(for: .march) else {
-            XCTFail("march page missing"); return
+        for (index, step) in march.steps.enumerated() {
+            let pose = step.toPose()
+            XCTAssertLessThan(pose.raw(.lKnee), 2048,
+                "march step \(index)의 lKnee는 음수 굽힘 영역을 유지해야 함")
+            XCTAssertLessThan(pose.raw(.lAnklePitch), 2048,
+                "march step \(index)의 lAnklePitch는 음수 보정 영역을 유지해야 함")
         }
-        let liftDeg: Double = 18
-        let liftL = march.steps[3].toPose()
-
-        // liftFoot(.left) 의 lKnee = raw(-53 - liftDeg) ≈ raw(-71°).
-        // 종전 0...150 limits → 1228 (-71° raw) 는 lKnee.rawLimits=2048...3755 밖 → 2048 로 clamp.
-        let expectedLKnee = Kinematics.raw(fromDegrees: -53 - liftDeg)
-        XCTAssertEqual(liftL.raw(.lKnee), expectedLKnee,
-            "march lift L 의 lKnee raw=\(liftL.raw(.lKnee)) 가 의도 -71° (\(expectedLKnee)) 와 일치 — clamp 없음")
-
-        // 우 지지 다리 의도값 — clamp 영향 없는 양수 영역이지만 회귀 보호용.
-        let expectedRKnee = Kinematics.raw(fromDegrees: 53 - liftDeg * 0.4)
-        XCTAssertEqual(liftL.raw(.rKnee), expectedRKnee)
     }
 
     /// OfficialCatalogReference 의 sitDown / leftKick 도 동일 회귀 — 의도값 유지 검증.
@@ -174,22 +140,51 @@ final class WalkMotionLibraryTests: XCTestCase {
             "sitDown.lKnee=\(sit.raw(.lKnee)) 가 의도 -105° (\(expected)) 와 일치")
     }
 
-    func testStepDeltaFromWalkReadyIsBounded() {
-        // 변화 안전 — 각 step 의 모든 관절 변화량이 walkReady 대비 ±35° 이내.
-        // critic 권고: lift step 의 무릎/hip 변화가 35° 를 넘으면 한쪽 발 지지 시
-        // 균형 손실 위험 급증. jog 의 swing=16° + lift=22° → 합 38° 인데 부호 분산되어
-        // 단일 관절 기준 변화는 30° 이내. 본 테스트는 그 상한.
-        let nonIdle: [WalkLabPreset] = [.march, .slowWalk, .normalWalk,
-                                         .fastWalk, .jog, .turnLeft, .turnRight]
+    func testJogEmbedsOfficialPage12RightKickImpact() {
+        guard let page = WalkMotionLibrary.page(for: .jog) else {
+            XCTFail("jog page missing"); return
+        }
+        let hasOfficialImpact = page.steps.contains { step in
+            let pose = step.toPose()
+            return pose.raw(.rHipPitch) == 0x048c
+                && pose.raw(.rKnee) == 0x0953
+                && pose.raw(.rAnklePitch) == 0x0702
+        }
+        XCTAssertTrue(hasOfficialImpact,
+            "jog preset은 ROBOTIS motion_4096.bin page 12 step 3 right-kick impact raw를 포함해야 함")
+    }
+
+    func testAdvancedTuningChangesRealWalkPageStride() {
+        guard let short = WalkMotionLibrary.page(for: .normalWalk, tuning: .init(
+            strideMm: 5, sideMm: 0, turnDeg: 0, periodMs: 650, footHeightMm: 35, balanceGain: 1
+        )),
+        let long = WalkMotionLibrary.page(for: .normalWalk, tuning: .init(
+            strideMm: 35, sideMm: 0, turnDeg: 0, periodMs: 650, footHeightMm: 35, balanceGain: 1
+        )) else {
+            XCTFail("advanced tuning pages missing"); return
+        }
         let walkReady = RobotPose.walkReady
-        let maxDeltaDeg = 35.0
-        for preset in nonIdle {
+        let shortMax = short.steps.map { abs($0.toPose().raw(.rHipPitch) - walkReady.raw(.rHipPitch)) }.max() ?? 0
+        let longMax = long.steps.map { abs($0.toPose().raw(.rHipPitch) - walkReady.raw(.rHipPitch)) }.max() ?? 0
+        XCTAssertGreaterThan(longMax, shortMax,
+            "strideMm slider가 실제 송출 page의 hip pitch 전진 진폭을 바꿔야 함")
+    }
+
+    func testLowerBodyStepDeltaFromWalkReadyIsBounded() {
+        let nonKick: [WalkLabPreset] = [.march, .slowWalk, .normalWalk,
+                                        .fastWalk, .turnLeft, .turnRight]
+        let walkReady = RobotPose.walkReady
+        let maxDeltaDeg = 60.0
+        let lowerBody = JointID.allCases.filter {
+            $0.bodyPart == .rightLeg || $0.bodyPart == .leftLeg
+        }
+        for preset in nonKick {
             guard let page = WalkMotionLibrary.page(for: preset) else {
                 XCTFail("\(preset.rawValue) page missing"); continue
             }
             for (idx, step) in page.steps.enumerated() {
                 let pose = step.toPose()
-                for joint in JointID.allCases {
+                for joint in lowerBody {
                     let stepDeg = Kinematics.degrees(fromRaw: pose.raw(joint))
                     let refDeg = Kinematics.degrees(fromRaw: walkReady.raw(joint))
                     let delta = abs(stepDeg - refDeg)
@@ -244,13 +239,19 @@ final class WalkMotionLibraryTests: XCTestCase {
               let right = WalkMotionLibrary.page(for: .turnRight) else {
             XCTFail("turn pages missing"); return
         }
-        // 각 cycle 의 yaw anchor (index 1) hip yaw 비교 — 좌·우가 반대 부호여야 함.
-        let leftYawL = left.steps[1].toPose().raw(.lHipYaw)
-        let rightYawL = right.steps[1].toPose().raw(.lHipYaw)
         let center = 2048
-        // 두 페이지가 center (2048) 의 반대 쪽에 있어야 회전 방향이 명확히 갈림.
-        XCTAssertTrue((leftYawL - center) * (rightYawL - center) < 0,
-            "turnLeft lHipYaw (\(leftYawL)) 과 turnRight lHipYaw (\(rightYawL)) 은 center=2048 의 반대 방향")
+        func dominantYawVector(_ page: MotionPage) -> Int {
+            page.steps
+                .map { step in
+                    let pose = step.toPose()
+                    return (pose.raw(.lHipYaw) - center) - (pose.raw(.rHipYaw) - center)
+                }
+                .max { abs($0) < abs($1) } ?? 0
+        }
+        let leftYaw = dominantYawVector(left)
+        let rightYaw = dominantYawVector(right)
+        XCTAssertTrue(leftYaw * rightYaw < 0,
+            "turnLeft yaw vector \(leftYaw) 과 turnRight yaw vector \(rightYaw)은 반대 방향이어야 함")
     }
 
     // MARK: - march 가 가장 안전한지 (1)

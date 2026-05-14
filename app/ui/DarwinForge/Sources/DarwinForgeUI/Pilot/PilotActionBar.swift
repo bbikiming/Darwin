@@ -13,14 +13,19 @@ public struct PilotActionBar: View {
     @ObservedObject var channel: TeleopChannel
     @ObservedObject var gate: PilotSafetyGate
     let flags: PilotFeatureFlags
+    /// 공 자동 추적 / walk demo 등 robot 측 데모가 USB bus 를 점유 중인지.
+    /// true 면 Action Bar 의 모든 모션 송출 비활성 (USB 충돌 방지).
+    let demoOccupiesBus: Bool
 
     @State private var pendingConfirm: MotionPageMetadata?
     @State private var showMoreSheet: Bool = false
 
-    public init(channel: TeleopChannel, gate: PilotSafetyGate, flags: PilotFeatureFlags) {
+    public init(channel: TeleopChannel, gate: PilotSafetyGate, flags: PilotFeatureFlags,
+                demoOccupiesBus: Bool = false) {
         self.channel = channel
         self.gate = gate
         self.flags = flags
+        self.demoOccupiesBus = demoOccupiesBus
     }
 
     /// 실 로봇 미연결 — sim 미리보기 모드. ARM 없이도 버튼 활성 (Codex P1 권고).
@@ -64,8 +69,11 @@ public struct PilotActionBar: View {
         [GridItem(.adaptive(minimum: 110, maximum: 200), spacing: 8, alignment: .top)]
     }
 
-    /// Action Bar 의 상태별 부제목 — sim 미연결 / ARM 전 / ARM 후 명확.
+    /// Action Bar 의 상태별 부제목 — sim 미연결 / demo 점유 / ARM 전/후 분리.
     private var subtitleText: String {
+        if demoOccupiesBus {
+            return "🤖 ROBOTIS 데모가 USB 점유 중 — 수동 모드로 전환해야 송출 가능"
+        }
         if isSimMode {
             return "시뮬 미리보기 — 실 로봇 미연결 (자세 미리보기만)"
         }
@@ -79,9 +87,12 @@ public struct PilotActionBar: View {
     private func actionButton(_ meta: MotionPageMetadata, keyIndex: Int) -> some View {
         let isPlaying = channel.playingSlot == meta.slot
         let isV1Sendable = meta.v1TargetPoseID != nil
-        // Codex P1 fix (2026-05-13 3차): `gate.armed || !gate.armed` 는 무의미한 boolean.
-        // 실 로봇 모드면 gate.armed 필요. sim 모드면 ARM 없이 미리보기 허용.
-        let isEnabled = isV1Sendable && (isSimMode || gate.armed)
+        // Sprint 18: demo 가 USB bus 점유 중이면 실 송출 불가. sim 모드(bus nil)도 동일하게 disable.
+        // 단, sim 미리보기 자체는 demo 와 무관하니 sim 모드는 그대로 enable.
+        // Codex P1 fix (2026-05-13): `gate.armed || !gate.armed` 무의미 boolean 제거.
+        let isEnabled = isV1Sendable
+            && !demoOccupiesBus
+            && (isSimMode || gate.armed)
         let safetyTint: Color = safetyColor(meta.safetyClass)
 
         Button {

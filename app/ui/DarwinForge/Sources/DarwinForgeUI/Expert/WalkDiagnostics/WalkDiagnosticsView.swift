@@ -74,20 +74,20 @@ public struct WalkDiagnosticsView: View {
             VStack(spacing: DFSpace.none) {
                 toolbar
                     .padding(.horizontal, DFSpace.md)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, DFSpace.sm)
                     .background(DFColor.elev2)
                     .overlay(Divider(), alignment: .bottom)
 
                 HStack(alignment: .top, spacing: DFSpace.md) {
                     if regular {
                         leftPanel
-                            .frame(width: 280)
+                            .frame(width: DFLayout.diagnosticLeft)
                     }
                     centerPanel
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if wide {
                         rightPanel
-                            .frame(width: 300)
+                            .frame(width: DFLayout.diagnosticRight)
                     }
                 }
                 .padding(DFSpace.md)
@@ -108,6 +108,7 @@ public struct WalkDiagnosticsView: View {
         }
         .background(DFColor.canvas)
         .overlay(toast, alignment: .top)
+        .dfDensity(.dataDense)
         .onDisappear { stop() }
     }
 
@@ -662,16 +663,19 @@ public struct WalkDiagnosticsView: View {
 
     // MARK: - Channel colors
 
-    private var gyroX_color: Color { Color(red: 0.95, green: 0.40, blue: 0.30) }   // red
-    private var gyroY_color: Color { Color(red: 0.20, green: 0.80, blue: 0.40) }   // green
-    private var gyroZ_color: Color { Color(red: 0.30, green: 0.55, blue: 0.95) }   // blue
-    private var accelX_color: Color { Color(red: 0.95, green: 0.65, blue: 0.20) }  // orange
-    private var accelY_color: Color { Color(red: 0.55, green: 0.85, blue: 0.50) }  // light green
-    private var accelZ_color: Color { Color(red: 0.45, green: 0.70, blue: 0.95) }  // light blue
-    private var filterRoll_color: Color { Color(red: 0.85, green: 0.30, blue: 0.70) } // magenta
-    private var filterPitch_color: Color { Color(red: 0.55, green: 0.85, blue: 0.95) }// cyan
-    private var accRoll_color: Color { Color(red: 0.85, green: 0.30, blue: 0.70).opacity(0.55) }
-    private var accPitch_color: Color { Color(red: 0.55, green: 0.85, blue: 0.95).opacity(0.55) }
+    // DFChartPalette 의미 팔레트 사용 — Sprint D 통합 (이전 로컬 RGB 제거).
+    private var gyroX_color: Color { DFChartPalette.gyroX }
+    private var gyroY_color: Color { DFChartPalette.gyroY }
+    private var gyroZ_color: Color { DFChartPalette.gyroZ }
+    private var accelX_color: Color { DFChartPalette.accelX }
+    private var accelY_color: Color { DFChartPalette.accelY }
+    private var accelZ_color: Color { DFChartPalette.accelZ }
+    /// Filter 추정 roll/pitch — 보조 magenta/cyan.
+    private var filterRoll_color: Color { DFColor.torque }
+    private var filterPitch_color: Color { DFColor.info }
+    /// Accelerometer 추정 (필터 전) — filter 색상의 dim 버전.
+    private var accRoll_color: Color { DFColor.torque.opacity(DFOpacity.o45) }
+    private var accPitch_color: Color { DFColor.info.opacity(DFOpacity.o45) }
 }
 
 // MARK: - Units

@@ -92,6 +92,51 @@ public struct JointState: Sendable, Equatable {
     }
 }
 
+/// CM-730/CM-740 IMU raw + accel 기반 roll/pitch 도 — Sprint 18 Phase D3.
+///
+/// Rust `CmController::read_imu` 의 결과. accelerometer 기반 정적 tilt 추정 — 빠른 동작 중엔
+/// drift 가능. 정밀 자세 추정은 walk::imu::ComplementaryFilter 필요.
+public struct ImuRaw: Sendable, Equatable {
+    public let gyroX: Int16
+    public let gyroY: Int16
+    public let gyroZ: Int16
+    public let accelX: Int16
+    public let accelY: Int16
+    public let accelZ: Int16
+    public let rollDeg: Double
+    public let pitchDeg: Double
+
+    /// raw → °/s. ±2000 dps / 32767.
+    public var gyroXDps: Double { Double(gyroX) * 2000.0 / 32767.0 }
+    public var gyroYDps: Double { Double(gyroY) * 2000.0 / 32767.0 }
+    public var gyroZDps: Double { Double(gyroZ) * 2000.0 / 32767.0 }
+
+    /// 테스트 / 시뮬레이션용 public init.
+    public init(gyroX: Int16, gyroY: Int16, gyroZ: Int16,
+                accelX: Int16, accelY: Int16, accelZ: Int16,
+                rollDeg: Double, pitchDeg: Double) {
+        self.gyroX = gyroX
+        self.gyroY = gyroY
+        self.gyroZ = gyroZ
+        self.accelX = accelX
+        self.accelY = accelY
+        self.accelZ = accelZ
+        self.rollDeg = rollDeg
+        self.pitchDeg = pitchDeg
+    }
+
+    init(_ ffi: fc_imu_raw) {
+        self.gyroX = ffi.gyro_x
+        self.gyroY = ffi.gyro_y
+        self.gyroZ = ffi.gyro_z
+        self.accelX = ffi.accel_x
+        self.accelY = ffi.accel_y
+        self.accelZ = ffi.accel_z
+        self.rollDeg = Double(ffi.roll_deg)
+        self.pitchDeg = Double(ffi.pitch_deg)
+    }
+}
+
 /// CM-730/CM-740 보드 스냅샷.
 public struct BoardSnapshot: Sendable, Equatable {
     public let modelNumber: UInt16
@@ -193,6 +238,14 @@ public final class Bus: @unchecked Sendable {
         var ffi = fc_board_snapshot()
         try checkForgeReturn(fc_bus_board_snapshot(raw(), &ffi))
         return BoardSnapshot(ffi)
+    }
+
+    /// CM-730/740 IMU read — 한 번에 gyro X/Y/Z + accel X/Y/Z + roll/pitch 도.
+    /// Phase D3 (Sprint 18) — `fc_bus_read_imu` FFI 호출.
+    public func readImu() throws -> ImuRaw {
+        var ffi = fc_imu_raw()
+        try checkForgeReturn(fc_bus_read_imu(raw(), &ffi))
+        return ImuRaw(ffi)
     }
 
     /// CM의 Dynamixel 전원 게이트 set.

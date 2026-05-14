@@ -12,42 +12,51 @@ public struct StrategyView: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DFSpace.md) {
-            Text("Strategy FSM").font(.title)
-            Text("forge-core::strategy의 결정성 전이를 step 단위로 시뮬레이션. 실 카메라/모터 명령 X.")
-                .font(.callout).foregroundStyle(.secondary)
+        DFPageScaffold(
+            "Strategy FSM",
+            subtitle: "forge-core::strategy 결정성 전이 시뮬 (실 카메라/모터 명령 X)",
+            icon: "flowchart.fill",
+            tint: DFColor.accent
+        ) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DFSpace.md) {
+                    currentStateBadge
 
-            currentStateBadge
+                    DFPanel("Inputs", icon: "slider.horizontal.3") {
+                        VStack(alignment: .leading, spacing: DFSpace.sm) {
+                            sliderRow("Ball pixel_count", value: $ballPixelCount, range: 0...3000, format: "%.0f")
+                            sliderRow("Since kick (ms)", value: $sinceKickMs, range: 0...3000, format: "%.0f")
+                            Toggle("Abort", isOn: $abort)
+                                .font(.system(size: DFFontSize.s12))
+                        }
+                    }
 
-            GroupBox("Inputs") {
-                VStack(alignment: .leading) {
-                    sliderRow("Ball pixel_count", value: $ballPixelCount, range: 0...3000, format: "%.0f")
-                    sliderRow("Since kick (ms)", value: $sinceKickMs, range: 0...3000, format: "%.0f")
-                    Toggle("Abort", isOn: $abort)
+                    HStack(spacing: DFSpace.sm) {
+                        Button("Step") { advance() }
+                            .buttonStyle(.glassNeon(tint: DFColor.accent))
+                        Button("Reset") {
+                            state = .idle
+                            history = []
+                        }
+                        Spacer()
+                        Button("Auto run 6 steps") { autoRun() }
+                    }
+
+                    historyView
+
+                    Spacer(minLength: DFSpace.md)
                 }
+                .padding(DFSpace.md)
             }
-
-            HStack {
-                Button("Step") { advance() }
-                    .buttonStyle(.glassNeon(tint: DFColor.accent))
-                Button("Reset") {
-                    state = .idle
-                    history = []
-                }
-                Spacer()
-                Button("Auto run 6 steps") { autoRun() }
-            }
-
-            historyView
-
-            Spacer()
         }
-        .padding()
+        .dfDensity(.compact)
     }
 
     private func sliderRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, format: String) -> some View {
-        HStack {
-            Text(label).frame(width: 160, alignment: .leading)
+        HStack(spacing: DFSpace.sm) {
+            Text(label)
+                .font(.system(size: DFFontSize.s12))
+                .frame(width: 160, alignment: .leading)
             Slider(value: value, in: range)
             StepperField(
                 value: value,
@@ -61,19 +70,26 @@ public struct StrategyView: View {
     }
 
     private var currentStateBadge: some View {
-        HStack {
+        HStack(spacing: DFSpace.sm) {
             Image(systemName: stateIcon)
-                .font(.title)
+                .font(.system(size: DFFontSize.s22, weight: .semibold))
                 .foregroundStyle(stateColor)
-            VStack(alignment: .leading) {
-                Text(state.label).font(.title3)
-                Text("Current state").font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
+                Text(state.label)
+                    .font(.system(size: DFFontSize.s20, weight: .semibold))
+                Text("Current state")
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.textSecondary)
             }
             Spacer()
         }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(DFSpace.md)
+        .background(DFColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: DFSize.borderHairline)
+        )
     }
 
     private var stateIcon: String {
@@ -86,32 +102,38 @@ public struct StrategyView: View {
         }
     }
 
+    /// 상태별 색상 — 의미 매핑: idle=비활성, look=정보, approach=진행, kick=위험경고, cooldown=주의.
     private var stateColor: Color {
         switch state {
-        case .idle:            return .gray
-        case .lookingForBall:  return .blue
-        case .approachingBall: return .orange
-        case .kicking:         return .red
-        case .cooldown:        return .purple
+        case .idle:            return DFColor.textSecondary
+        case .lookingForBall:  return DFColor.info
+        case .approachingBall: return DFColor.forge
+        case .kicking:         return DFColor.danger
+        case .cooldown:        return DFColor.torque
         }
     }
 
     @ViewBuilder
     private var historyView: some View {
         if !history.isEmpty {
-            GroupBox("Trace") {
+            DFPanel("Trace", icon: "list.bullet.indent") {
                 ScrollView(.horizontal) {
-                    HStack {
+                    HStack(spacing: DFSpace.xs2) {
                         ForEach(Array(history.enumerated()), id: \.offset) { idx, s in
                             VStack(spacing: DFSpace.micro2) {
-                                Text("\(idx + 1)").font(.caption2).foregroundStyle(.secondary)
-                                Text(s.label).font(.caption).fontDesign(.monospaced)
+                                Text("\(idx + 1)")
+                                    .font(.system(size: DFFontSize.s10))
+                                    .foregroundStyle(DFColor.textSecondary)
+                                Text(s.label)
+                                    .font(.system(size: DFFontSize.s11, design: .monospaced))
                             }
-                            .padding(6)
-                            .background(Color(NSColor.controlBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .padding(DFSpace.xs2)
+                            .background(DFColor.elev2)
+                            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                             if idx + 1 < history.count {
-                                Image(systemName: "chevron.right").font(.caption2)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: DFFontSize.s10))
+                                    .foregroundStyle(DFColor.textSecondary)
                             }
                         }
                     }

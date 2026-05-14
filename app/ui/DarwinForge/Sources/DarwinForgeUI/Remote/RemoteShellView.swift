@@ -7,7 +7,9 @@ import SwiftUI
 ///   - 중앙: 명령 입력 (multi-line) + 자주 쓰는 프리셋 칩
 ///   - 하단: 실행 기록 (명령 + 결과 + 경과 시간)
 public struct RemoteShellView: View {
-    @StateObject private var shell = RemoteShell()
+    // RemoteShell 은 RootView 가 환경에 주입 (Sprint 18) — Pilot 등 다른 화면이
+    // 같은 인스턴스를 공유하여 명령 히스토리가 통합됨.
+    @EnvironmentObject private var shell: RemoteShell
     @State private var inputText: String = ""
     @State private var copyToast: String?
     @State private var confirmAction: QuickAction?
@@ -131,7 +133,7 @@ public struct RemoteShellView: View {
                         quickActionButton(action)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, DFSpace.micro2)
             }
         }
         .padding(.horizontal, DFSpace.md)
@@ -165,13 +167,13 @@ public struct RemoteShellView: View {
                     .foregroundStyle(DFColor.textSecondary)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .padding(.horizontal, DFSpace.sm)
+            .padding(.vertical, DFSpace.xs2 - 1)
             .frame(minWidth: 130, alignment: .leading)
             .background(action.category.tint.opacity(DFOpacity.ghost))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: DFRadius.xs2)
                     .stroke(action.category.tint.opacity(DFOpacity.o25), lineWidth: 0.5)
             )
         }
@@ -190,7 +192,7 @@ public struct RemoteShellView: View {
             Label(shouldShowSetupWizard ? "셸 모드" : "셋업 가이드",
                   systemImage: shouldShowSetupWizard ? "terminal" : "sparkles")
                 .font(DFFont.caption)
-                .padding(.horizontal, 8).padding(.vertical, 4)
+                .padding(.horizontal, DFSpace.sm).padding(.vertical, DFSpace.xs)
                 .background(DFColor.card)
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 0.5))
@@ -205,7 +207,7 @@ public struct RemoteShellView: View {
                 Label(URL(fileURLWithPath: path).lastPathComponent,
                       systemImage: "externaldrive.fill")
                     .font(DFFont.caption.monospaced())
-                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .padding(.horizontal, DFSpace.xs2).padding(.vertical, DFSpace.micro2 + 1)
                     .background(DFColor.textSecondary.opacity(DFOpacity.o10))
                     .foregroundStyle(DFColor.textSecondary)
                     .clipShape(Capsule())
@@ -224,7 +226,7 @@ public struct RemoteShellView: View {
         }()
         return Label(text, systemImage: icon)
             .font(.system(size: DFFontSize.s10, weight: .semibold))
-            .padding(.horizontal, 6).padding(.vertical, 3)
+            .padding(.horizontal, DFSpace.xs2).padding(.vertical, DFSpace.micro2 + 1)
             .background(tint.opacity(0.14))
             .foregroundStyle(tint)
             .clipShape(Capsule())
@@ -286,7 +288,7 @@ public struct RemoteShellView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copyToast = nil }
                 } label: {
                     Label("셋업 명령 복사", systemImage: "doc.on.clipboard.fill")
-                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .padding(.horizontal, DFSpace.sm3).padding(.vertical, DFSpace.sm)
                         .background(DFColor.forge)
                         .foregroundStyle(.white)
                         .clipShape(Capsule())
@@ -303,14 +305,14 @@ public struct RemoteShellView: View {
                 Text(RobotSetupCommand.remoteShellSetup)
                     .font(.system(size: DFFontSize.s10, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .padding(DFSpace.sm)
                     .background(DFColor.elev2)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                     .textSelection(.enabled)
             }
             .font(DFFont.caption)
 
-            Divider().padding(.vertical, 4)
+            Divider().padding(.vertical, DFSpace.xs)
 
             // SSH 채널 추가 셋업 — 30배 빠른 응답.
             Label("⚡ 30배 빠른 응답 — SSH key 셋업", systemImage: "bolt.fill")
@@ -331,7 +333,7 @@ public struct RemoteShellView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copyToast = nil }
                 } label: {
                     Label("SSH key 셋업 복사", systemImage: "key.fill")
-                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .padding(.horizontal, DFSpace.sm2).padding(.vertical, DFSpace.xs2)
                         .background(DFColor.success)
                         .foregroundStyle(.white)
                         .clipShape(Capsule())
@@ -343,7 +345,7 @@ public struct RemoteShellView: View {
                 } label: {
                     Label("채널 재탐색", systemImage: "arrow.clockwise")
                         .font(DFFont.caption)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .padding(.horizontal, DFSpace.sm2).padding(.vertical, DFSpace.xs2)
                         .background(DFColor.card)
                         .clipShape(Capsule())
                         .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 0.5))
@@ -352,7 +354,7 @@ public struct RemoteShellView: View {
                 Spacer()
             }
 
-            Divider().padding(.vertical, 6)
+            Divider().padding(.vertical, DFSpace.xs2)
 
             Text("💡 빠르게 시도해 보기")
                 .font(DFFont.bodyEmph)
@@ -382,27 +384,27 @@ public struct RemoteShellView: View {
             }
             Text(ex.command)
                 .font(.system(size: DFFontSize.s12, design: .monospaced))
-                .padding(8)
+                .padding(DFSpace.sm)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(DFColor.elev2)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                 .textSelection(.enabled)
 
             if let err = ex.error {
                 Label(err, systemImage: "xmark.octagon.fill")
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.danger)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, DFSpace.xs)
             } else if let result = ex.result {
                 Text("결과")
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)
                 Text(result)
                     .font(.system(size: DFFontSize.s11, design: .monospaced))
-                    .padding(8)
+                    .padding(DFSpace.sm)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DFColor.success.opacity(DFOpacity.o06))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                     .textSelection(.enabled)
             } else {
                 HStack(spacing: DFSpace.xs2) {
@@ -411,10 +413,10 @@ public struct RemoteShellView: View {
                         .font(DFFont.caption)
                         .foregroundStyle(DFColor.textSecondary)
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, DFSpace.xs)
             }
         }
-        .padding(10)
+        .padding(DFSpace.sm2)
         .background(DFColor.card)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
@@ -434,9 +436,9 @@ public struct RemoteShellView: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...6)
                     .font(.system(size: DFFontSize.s13, design: .monospaced))
-                    .padding(8)
+                    .padding(DFSpace.sm)
                     .background(DFColor.elev2)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                     .onSubmit { sendNow() }
 
                 Button {
@@ -479,7 +481,7 @@ public struct RemoteShellView: View {
         } label: {
             Text(label)
                 .font(.system(size: DFFontSize.s10))
-                .padding(.horizontal, 8).padding(.vertical, 3)
+                .padding(.horizontal, DFSpace.sm).padding(.vertical, DFSpace.micro2 + 1)
                 .background(DFColor.accent.opacity(DFOpacity.o10))
                 .foregroundStyle(DFColor.accent)
                 .clipShape(Capsule())

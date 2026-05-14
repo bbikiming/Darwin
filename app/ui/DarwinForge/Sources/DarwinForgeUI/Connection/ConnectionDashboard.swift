@@ -190,7 +190,7 @@ public struct ConnectionDashboardView: View {
                 )
             }
         }
-        .padding(12)
+        .padding(DFSpace.sm3)
         .background(DFColor.card)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
         .overlay(
@@ -222,7 +222,7 @@ public struct ConnectionDashboardView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }
-            .padding(10)
+            .padding(DFSpace.sm2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(tint.opacity(DFOpacity.o06))
             .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
@@ -252,7 +252,7 @@ public struct ConnectionDashboardView: View {
     // MARK: - 보드 정보 카드
 
     private var boardInfoCard: some View {
-        DashboardCard(title: "보드", icon: "cpu.fill", tint: DFColor.forge) {
+        DFMetricCard(title: "보드", icon: "cpu.fill", tint: DFColor.forge) {
             if case .connected(let s) = store.status {
                 VStack(alignment: .leading, spacing: DFSpace.sm) {
                     metricRow(label: "컨트롤러", value: s.controllerLabel)
@@ -278,7 +278,7 @@ public struct ConnectionDashboardView: View {
     // MARK: - 배터리 카드
 
     private var batteryCard: some View {
-        DashboardCard(title: "배터리", icon: batteryIcon, tint: batteryColor) {
+        DFMetricCard(title: "배터리", icon: batteryIcon, tint: batteryColor) {
             if let v = store.lastTelemetry?.board?.voltageVolts {
                 VStack(alignment: .leading, spacing: DFSpace.sm) {
                     HStack(alignment: .firstTextBaseline, spacing: DFSpace.xs) {
@@ -325,7 +325,7 @@ public struct ConnectionDashboardView: View {
         return Text(text)
             .font(.system(size: DFFontSize.s10, weight: .bold))
             .padding(.horizontal, DFSpace.xs2)
-            .padding(.vertical, 2)
+            .padding(.vertical, DFSpace.micro2)
             .background(tint.opacity(0.16))
             .foregroundStyle(tint)
             .clipShape(Capsule())
@@ -334,9 +334,9 @@ public struct ConnectionDashboardView: View {
         let frac = max(0, min(1, (v - 8.0) / (12.6 - 8.0)))
         return GeometryReader { geo in
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3)
+                RoundedRectangle(cornerRadius: DFRadius.xs - 1)
                     .fill(DFColor.elev2)
-                RoundedRectangle(cornerRadius: 3)
+                RoundedRectangle(cornerRadius: DFRadius.xs - 1)
                     .fill(LinearGradient(
                         colors: [batteryColor.opacity(DFOpacity.o70), batteryColor],
                         startPoint: .leading, endPoint: .trailing))
@@ -355,7 +355,7 @@ public struct ConnectionDashboardView: View {
     // MARK: - 연결 정보 카드
 
     private var connectionInfoCard: some View {
-        DashboardCard(title: "연결", icon: connectionInfoIcon, tint: DFColor.accent) {
+        DFMetricCard(title: "연결", icon: connectionInfoIcon, tint: DFColor.accent) {
             if let ep = store.activeEndpoint {
                 VStack(alignment: .leading, spacing: DFSpace.sm) {
                     metricRow(label: "방식", value: ep.kindLabel)
@@ -389,7 +389,7 @@ public struct ConnectionDashboardView: View {
     // MARK: - 통신 통계 카드
 
     private var communicationStatsCard: some View {
-        DashboardCard(title: "통신 통계", icon: "waveform.path.ecg", tint: DFColor.success) {
+        DFMetricCard(title: "통신 통계", icon: "waveform.path.ecg", tint: DFColor.success) {
             VStack(alignment: .leading, spacing: DFSpace.sm) {
                 if let rtt = store.lastRoundTripMs {
                     HStack(alignment: .firstTextBaseline, spacing: DFSpace.xs) {
@@ -434,7 +434,7 @@ public struct ConnectionDashboardView: View {
         return Text(text)
             .font(.system(size: DFFontSize.s10, weight: .bold))
             .padding(.horizontal, DFSpace.xs2)
-            .padding(.vertical, 2)
+            .padding(.vertical, DFSpace.micro2)
             .background(tint.opacity(0.16))
             .foregroundStyle(tint)
             .clipShape(Capsule())
@@ -469,7 +469,7 @@ public struct ConnectionDashboardView: View {
     }
 
     private func sparklineCard(title: String, tint: Color, values: [Double], unit: String, format: String) -> some View {
-        DashboardCard(title: title, icon: "chart.xyaxis.line", tint: tint, expanded: true) {
+        DFMetricCard(title: title, icon: "chart.xyaxis.line", tint: tint, expanded: true) {
             VStack(alignment: .leading, spacing: DFSpace.xs2) {
                 if let last = values.last {
                     HStack(alignment: .firstTextBaseline) {
@@ -565,39 +565,8 @@ public struct ConnectionDashboardView: View {
     }
 }
 
-/// 대시보드 통일 카드 — title + icon + content. 시각적 일관성을 위해 한 곳에서 정의.
-private struct DashboardCard<Content: View>: View {
-    let title: String
-    let icon: String
-    let tint: Color
-    var expanded: Bool = false
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: DFSpace.sm2) {
-            HStack(spacing: DFSpace.xs2) {
-                Image(systemName: icon)
-                    .font(.system(size: DFFontSize.s11, weight: .semibold))
-                    .foregroundStyle(tint)
-                Text(title)
-                    .font(.system(size: DFFontSize.s11, weight: .semibold))
-                    .foregroundStyle(DFColor.textSecondary)
-                    .textCase(.uppercase)
-                Spacer()
-            }
-            content()
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: expanded ? 90 : 132)
-        .background(DFColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.md)
-                .stroke(DFColor.textSecondary.opacity(DFOpacity.o10), lineWidth: DFSize.borderHairline)
-        )
-    }
-}
+// DashboardCard 는 디자인 시스템의 DFMetricCard 로 통합됨 (Sprint A).
+// 이전 로컬 구현은 제거.
 
 /// 60 sample 시계열을 부드러운 stroke + 면 채움으로.
 private struct MiniSparkline: View {
@@ -640,7 +609,7 @@ private struct MiniSparkline: View {
                     strokePath.stroke(tint, lineWidth: 1.5)
                 }
             } else {
-                RoundedRectangle(cornerRadius: 3)
+                RoundedRectangle(cornerRadius: DFRadius.xs - 1)
                     .fill(DFColor.elev2)
                     .overlay(
                         Text("샘플 수집 중…")
