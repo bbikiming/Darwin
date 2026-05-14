@@ -363,11 +363,6 @@ public final class WalkLabSession: ObservableObject {
             lastRobotEvent = f.userMessage + " (\(preset.label))"
             return
         }
-        guard let page = WalkMotionLibrary.page(for: preset, tuning: currentWalkTuning()) else {
-            // idle 등 — 합성 페이지 없음. 정적 walkReady 만 송출.
-            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(preset.label)")
-            return
-        }
 
         // Preflight — dxl_power ON + 모든 토크 ON. 하체 1개라도 실패면 차단.
         if let failure = preflightForWalkCycle(bus: bus) {
@@ -377,24 +372,62 @@ public final class WalkLabSession: ObservableObject {
         }
         lastPreflightFailure = nil
 
-        // 이전 task 가 있으면 cancel — 새 task 가 prev?.value 로 완료 대기.
+        // **Phase G10 (2026-05-15)**: 보행 모드 분기.
+        //   - 연속 보행 가능 preset (march/slowWalk/normalWalk/fastWalk/turnLeft/turnRight)
+        //     → continuousWalkPlan + runContinuousWalk (entry → 무한 cycle → exit).
+        //     매 cycle 끝마다 walkReady 자세로 돌아가지 않음 → 자연스러운 보행.
+        //   - jog → page(for:tuning:) + runWalkCycle(loop=false) (기존 동작 — kick chain).
+        //   - idle → 정적 walkReady.
         let prev = walkCycleTask
         prev?.cancel()
-        isRobotWalking = true
-        lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(preset.label)"
-        let maxDurationSec = preset.maxDurationSec
         let presetLabel = preset.label
+        let maxDurationSec = preset.maxDurationSec
         let lowerBody = Self.lowerBodyJoints
-        let shouldLoop = preset != .jog
 
+        if preset == .idle {
+            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(presetLabel)")
+            return
+        }
+
+        // 연속 보행 plan 시도.
+        if let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: currentWalkTuning()) {
+            isRobotWalking = true
+            lastRobotEvent = "🤖 연속 보행 시작 — \(presetLabel)"
+            walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
+                await prev?.value
+                let result = await Self.runContinuousWalk(
+                    bus: bus, plan: plan,
+                    maxDurationSec: maxDurationSec,
+                    lowerBodyJoints: lowerBody
+                )
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.isRobotWalking = false
+                    self.lastCycleResult = result
+                    if result.isSuccess {
+                        self.lastRobotEvent = "✅ \(result.userMessage) — walkReady 복귀 (\(presetLabel))"
+                    } else {
+                        self.lastRobotEvent = "🛑 \(result.userMessage) (\(presetLabel))"
+                    }
+                }
+            }
+            return
+        }
+
+        // jog (kick chain) — 단발 page + oneShot.
+        guard let page = WalkMotionLibrary.page(for: preset, tuning: currentWalkTuning()) else {
+            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(presetLabel)")
+            return
+        }
+        isRobotWalking = true
+        lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(presetLabel)"
         walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
-            // 이전 cycle 이 walkReady 복귀까지 마치도록 대기 — 동시 IO 방지.
             await prev?.value
             let result = await Self.runWalkCycle(
                 bus: bus, page: page,
                 maxDurationSec: maxDurationSec,
                 lowerBodyJoints: lowerBody,
-                loop: shouldLoop
+                loop: false   // jog 는 kick chain 끝나면 종료.
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -458,6 +491,133 @@ public final class WalkLabSession: ObservableObject {
         walkTuningRestartTask = nil
         isRobotWalking = false
         sendRobotPose(.walkReady, eventLabel: eventLabel)
+    }
+
+    /// **Phase G10 (2026-05-15)** — 연속 보행 실제 송출 루프.
+    ///
+    /// 한 cycle 끝마다 walkReady 자세로 돌아가지 않고 phase[5] → phase[0] 으로 직접
+    /// 이어붙임. 사용자 체감: 끊김 없는 자연스러운 보행.
+    ///
+    /// 흐름:
+    ///   1. moving speed 설정 (1회).
+    ///   2. **entry** step 송출 (walkReady → phase[0] 전환, longer playMs).
+    ///   3. **cycle** step 무한 반복:
+    ///      - 6 phase 송출 (anchor 없음)
+    ///      - phase[5] 끝나면 다음 iter 의 phase[0] 으로 자연 wrap
+    ///        (모터 trapezoidal motion 이 playMs 안에서 보간)
+    ///      - cancel / maxDuration / 하체 통신 실패 시 break.
+    ///   4. **exit** step — walkReady 안전 복귀.
+    private static func runContinuousWalk(
+        bus: Bus, plan: WalkMotionLibrary.ContinuousWalkPlan, maxDurationSec: Int,
+        lowerBodyJoints: Set<JointID>
+    ) async -> WalkCycleResult {
+        var speedFailures = 0
+        var positionFailures = 0
+        var lowerBodyPositionFails: Set<JointID> = []
+        var sampleError: String? = nil
+        var stepsExecuted = 0
+
+        // 1. moving speed 설정 (1회).
+        let cycleSpeed: UInt16 = 256
+        for joint in JointID.allCases {
+            do { try bus.setMovingSpeed(joint, speed: cycleSpeed) }
+            catch {
+                speedFailures += 1
+                sampleError = "\(joint.name) 속도쓰기: \(error.localizedDescription)"
+            }
+        }
+
+        var previous: RobotPose = .walkReady
+        let endDate: Date? = maxDurationSec > 0
+            ? Date().addingTimeInterval(TimeInterval(maxDurationSec))
+            : nil
+        var endReason: WalkCycleResult.EndReason = .completedMaxDuration
+        var cancelledMidStep = false
+
+        // 한 step 송출 helper — closure 캡처 X (concurrency 안전).
+        func sendStep(_ step: MotionStep, previousIn: RobotPose) async -> RobotPose {
+            let target = step.toPose()
+            let changed = target.changedJoints(from: previousIn)
+            for joint in changed {
+                let rawVal = UInt16(clamping: target.raw(joint))
+                do { _ = try bus.setPosition(joint, raw: rawVal) }
+                catch {
+                    positionFailures += 1
+                    sampleError = "\(joint.name) 위치쓰기: \(error.localizedDescription)"
+                    if lowerBodyJoints.contains(joint) {
+                        lowerBodyPositionFails.insert(joint)
+                    }
+                }
+            }
+            let totalMs = max(80, step.playMs + step.pauseMs)
+            let ns = UInt64(totalMs) * 1_000_000
+            try? await Task.sleep(nanoseconds: ns)
+            return target
+        }
+
+        // 2. Entry — walkReady → phase[0] (1회만).
+        entryLoop: for step in plan.entry {
+            if Task.isCancelled { cancelledMidStep = true; break entryLoop }
+            previous = await sendStep(step, previousIn: previous)
+            stepsExecuted += 1
+            if !lowerBodyPositionFails.isEmpty {
+                endReason = .lowerBodyWriteFailure
+                break entryLoop
+            }
+        }
+
+        // 3. Cycle — 6 phase 무한 반복 (anchor 없음 → 매 cycle 끝마다 phase[5] → phase[0] wrap).
+        if endReason == .completedMaxDuration && !cancelledMidStep && lowerBodyPositionFails.isEmpty {
+            cycleLoop: while !Task.isCancelled {
+                if let end = endDate, Date() >= end { break cycleLoop }
+                for step in plan.cycle {
+                    if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
+                    if let end = endDate, Date() >= end { break cycleLoop }
+                    previous = await sendStep(step, previousIn: previous)
+                    stepsExecuted += 1
+
+                    if !lowerBodyPositionFails.isEmpty {
+                        endReason = .lowerBodyWriteFailure
+                        break cycleLoop
+                    }
+                    if positionFailures > max(3, JointID.allCases.count / 2) {
+                        endReason = .bulkWriteFailure
+                        break cycleLoop
+                    }
+                }
+            }
+        }
+        if endReason == .completedMaxDuration && (cancelledMidStep || Task.isCancelled) {
+            endReason = .userCancelled
+        }
+
+        // 4. Exit — walkReady 안전 복귀. cancel 후에도 토크 OFF 보다는 복귀가 안전 (낙상 risk).
+        for step in plan.exit {
+            let target = step.toPose()
+            let changedFinal = target.changedJoints(from: previous)
+            for joint in changedFinal {
+                let rawVal = UInt16(clamping: target.raw(joint))
+                do { _ = try bus.setPosition(joint, raw: rawVal) }
+                catch {
+                    positionFailures += 1
+                    sampleError = "\(joint.name) 복귀쓰기: \(error.localizedDescription)"
+                }
+            }
+            // Exit 의 playMs 동안 모터가 walkReady 도달하도록 대기.
+            let totalMs = max(80, step.playMs + step.pauseMs)
+            let ns = UInt64(totalMs) * 1_000_000
+            try? await Task.sleep(nanoseconds: ns)
+            previous = target
+        }
+
+        return WalkCycleResult(
+            reason: endReason,
+            stepsExecuted: stepsExecuted,
+            speedWriteFailures: speedFailures,
+            positionWriteFailures: positionFailures,
+            lowerBodyPositionFails: Array(lowerBodyPositionFails),
+            sampleError: sampleError
+        )
     }
 
     /// 보행 cycle 실제 송출 루프 — `Task.detached` 내부 실행.

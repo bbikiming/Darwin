@@ -55,6 +55,61 @@ public enum WalkMotionLibrary {
         page(for: preset, tuning: nil)
     }
 
+    /// **Phase G10 (2026-05-15)** — 연속 보행 계획.
+    ///
+    /// 한 cycle 끝마다 walkReady 자세를 거치는 끊김 (anchor flap) 을 제거하기 위해
+    /// **entry / cycle / exit** 의 3 segment 로 분리:
+    ///   - `entry`: walkReady → 첫 phase 자세로 진입 (longer playMs 로 안전).
+    ///     보행 시작 시 **1회만** 송출.
+    ///   - `cycle`: 6 phase 의 sparse keyframe — walkReady anchor 없음.
+    ///     `runContinuousWalk` 가 **무한 반복** 송출. phase[5] → phase[0] (wrap-around)
+    ///     은 모터 trapezoidal motion 이 자연 보간 (period=600 ms × 11% = ~66 ms 거리
+    ///     를 playMs=100 ms 동안 1 step 으로 보간).
+    ///   - `exit`: 마지막 phase → walkReady (사용자 정지 시 안전 복귀).
+    ///
+    /// **jog 제외** — jog 는 kick chain 으로 끝나는 단발 시퀀스라 `page(for:tuning:)`
+    /// 그대로 사용. nil 반환.
+    public struct ContinuousWalkPlan: Equatable, Sendable {
+        public let entry: [MotionStep]
+        public let cycle: [MotionStep]
+        public let exit: [MotionStep]
+    }
+
+    public static func continuousWalkPlan(for preset: WalkLabPreset,
+                                          tuning customTuning: AdvancedTuning? = nil) -> ContinuousWalkPlan? {
+        // jog (kick chain) 와 idle 은 연속 보행 plan 없음.
+        switch preset {
+        case .idle, .jog:
+            return nil
+        case .march, .slowWalk, .normalWalk, .fastWalk, .turnLeft, .turnRight:
+            break
+        }
+        let tuning = resolvedTuning(for: preset, custom: customTuning)
+        let period = tuning.periodMs.clamped(to: 350...1000)
+        let samplePhases: [Double] = [0.03, 0.18, 0.42, 0.52, 0.68, 0.92]
+        let playMs = max(80, Int((period / Double(samplePhases.count)).rounded()))
+
+        // 6 cycle phase steps — anchor 없음. 연속 반복 시 phase[5] → phase[0] 자연 wrap.
+        let cycle: [MotionStep] = samplePhases.map { phase in
+            let timeMs = phase * period
+            let pose = robotisWalkingApproxPose(timeMs: timeMs, tuning: tuning) ?? .walkReady
+            return .from(pose: pose, playMs: playMs, pauseMs: 0)
+        }
+
+        // Entry — walkReady → phase[0] transition. playMs 길게 (안전).
+        let entryPlayMs = max(240, playMs * 2)
+        let entry: [MotionStep] = [
+            .from(pose: .walkReady, playMs: entryPlayMs, pauseMs: 0)
+        ]
+        // Exit — phase[5] → walkReady. 약간 더 길게 + pause 로 정지 명확화.
+        let exitPlayMs = max(240, playMs * 2)
+        let exit: [MotionStep] = [
+            .from(pose: .walkReady, playMs: exitPlayMs, pauseMs: 40)
+        ]
+
+        return ContinuousWalkPlan(entry: entry, cycle: cycle, exit: exit)
+    }
+
     /// 한 프리셋의 보행 사이클 페이지 반환. nil 이면 송출 불가 (`idle`).
     public static func page(for preset: WalkLabPreset, tuning customTuning: AdvancedTuning?) -> MotionPage? {
         switch preset {

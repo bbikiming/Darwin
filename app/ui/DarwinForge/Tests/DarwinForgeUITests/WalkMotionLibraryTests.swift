@@ -397,4 +397,83 @@ final class WalkMotionLibraryTests: XCTestCase {
             "page 38 raw name 공식 bin = 'd2' (display name 만 'Bye Bye')")
         XCTAssertEqual(bye.displayNameKo, "손 흔들기")  // display 는 자유 — 한국어 라벨 유지
     }
+
+    // MARK: - Phase G10 (2026-05-15): 연속 보행 (Continuous Walking)
+
+    /// **Phase G10**: continuousWalkPlan 이 walking preset (jog 제외) 에 대해 nil 아닌 결과 반환.
+    /// jog 와 idle 만 nil.
+    func testContinuousWalkPlanAvailableForAllWalkingPresets() {
+        let walking: [WalkLabPreset] = [.march, .slowWalk, .normalWalk, .fastWalk, .turnLeft, .turnRight]
+        for preset in walking {
+            let plan = WalkMotionLibrary.continuousWalkPlan(for: preset)
+            XCTAssertNotNil(plan, "\(preset.rawValue) 는 연속 보행 plan 이 있어야 함")
+        }
+        // jog 는 kick chain 으로 종료되는 단발 — nil.
+        XCTAssertNil(WalkMotionLibrary.continuousWalkPlan(for: .jog),
+            "jog 는 단발 kick chain — 연속 보행 plan nil")
+        // idle 은 합성 페이지 자체가 없음.
+        XCTAssertNil(WalkMotionLibrary.continuousWalkPlan(for: .idle))
+    }
+
+    /// **Phase G10 핵심**: cycle 부분에 walkReady anchor 가 없어야 함 (매 cycle 끝 끊김 차단).
+    /// 6 phase keyframe step 만 — period=600ms 기준 step 마다 100ms playMs.
+    func testContinuousWalkPlanCycleHasNoWalkReadyAnchor() {
+        let plan = WalkMotionLibrary.continuousWalkPlan(for: .normalWalk)!
+        XCTAssertEqual(plan.cycle.count, 6, "cycle = 6 phase keyframe (anchor 없음)")
+
+        let walkReadyPose = RobotPose.walkReady
+        for (i, step) in plan.cycle.enumerated() {
+            let pose = step.toPose()
+            // 자세가 walkReady 와 정확히 일치하지 않아야 함 (그러면 phase keyframe 의미 X).
+            // 최소 한 관절은 차이가 있어야 — sparse keyframe 의 의도.
+            let allSame = JointID.allCases.allSatisfy { joint in
+                pose.raw(joint) == walkReadyPose.raw(joint)
+            }
+            XCTAssertFalse(allSame,
+                "cycle step \(i) 자세가 walkReady 와 동일 — anchor flap 회귀")
+        }
+    }
+
+    /// **Phase G10**: entry 는 walkReady 자세 (보행 시작 전 자세 정렬) — 1 step.
+    /// exit 도 walkReady (보행 종료 후 안전 복귀) — 1 step.
+    func testContinuousWalkPlanEntryAndExitAreWalkReadyAnchors() {
+        let plan = WalkMotionLibrary.continuousWalkPlan(for: .normalWalk)!
+        XCTAssertEqual(plan.entry.count, 1, "entry = walkReady → phase[0] transition 1 step")
+        XCTAssertEqual(plan.exit.count, 1, "exit = phase[5] → walkReady 1 step")
+
+        // entry step 의 자세 = walkReady (실제 모터 transition 은 trapezoidal motion).
+        let entryPose = plan.entry[0].toPose()
+        let walkReadyPose = RobotPose.walkReady
+        for joint in JointID.allCases {
+            XCTAssertEqual(entryPose.raw(joint), walkReadyPose.raw(joint),
+                "entry 자세 — walkReady 와 동일 (\(joint.name))")
+        }
+        // exit 도 동일.
+        let exitPose = plan.exit[0].toPose()
+        for joint in JointID.allCases {
+            XCTAssertEqual(exitPose.raw(joint), walkReadyPose.raw(joint),
+                "exit 자세 — walkReady 와 동일 (\(joint.name))")
+        }
+    }
+
+    /// **Phase G10 핵심**: phase 0 (시작) 과 phase 5 (끝) 사이 거리가 매끄러운 wrap 범위.
+    /// period=600 ms × 11% (0.92→0.03 사이) ≈ 66 ms 시간 폭 안에서 보간 가능해야.
+    /// 너무 큰 차이는 jerk 유발.
+    func testContinuousWalkPlanCycleWrapDistanceWithinModerateRange() {
+        let plan = WalkMotionLibrary.continuousWalkPlan(for: .normalWalk)!
+        let firstPose = plan.cycle[0].toPose()
+        let lastPose = plan.cycle.last!.toPose()
+        // 주요 관절 (hip/knee/ankle) 의 raw 차이 — wrap 시 모터가 한 step 안에 보간해야 함.
+        let criticalJoints: [JointID] = [
+            .rHipPitch, .lHipPitch, .rKnee, .lKnee, .rAnklePitch, .lAnklePitch
+        ]
+        for joint in criticalJoints {
+            let diff = abs(Int(firstPose.raw(joint)) - Int(lastPose.raw(joint)))
+            // 한 cycle 의 wrap 거리 — phase[5]=0.92 → phase[0]=0.03 (대략 같은 위상).
+            // ROBOTIS Walking.cpp 의 wrap-around 가 매끄러우니 raw 차이 작아야 함.
+            // 500 raw (≈44°) 미만이면 playMs=100ms 안에 모터 trapezoidal 가능.
+            XCTAssertLessThan(diff, 500,
+                "\(joint.name) wrap 거리 \(diff) raw — 너무 크면 cycle 끊김. 6 sample phase 부족 가능성.")
+        }
+    }
 }
