@@ -456,6 +456,57 @@ final class WalkMotionLibraryTests: XCTestCase {
         }
     }
 
+    // MARK: - Phase G11 (2026-05-15): 3D 모델 시각화 동기화
+
+    /// **Phase G11**: `simWalkingPose` 가 보행 phase 따라 non-nil pose 반환.
+    /// 3D 모델 동기화의 핵심 — sim mode 에서도 모델이 보행 따라 움직이려면 이 함수가
+    /// non-trivial pose 반환해야 함.
+    func testSimWalkingPoseReturnsNonNilForValidTuning() {
+        let tuning = WalkMotionLibrary.AdvancedTuning(
+            strideMm: 25, sideMm: 0, turnDeg: 0,
+            periodMs: 600, footHeightMm: 40, balanceGain: 1.0
+        )
+        // period 600ms 의 phase=0.5 시각 → 한 cycle 중간.
+        let pose = WalkMotionLibrary.simWalkingPose(timeMs: 300, tuning: tuning)
+        XCTAssertNotNil(pose, "sim walking pose 합성 실패 — 3D 모델 정적 표시될 위험")
+    }
+
+    /// **Phase G11**: 다른 시각의 sim pose 는 서로 달라야 함 (정적 표시 회귀 차단).
+    func testSimWalkingPoseChangesOverTime() {
+        let tuning = WalkMotionLibrary.AdvancedTuning(
+            strideMm: 30, sideMm: 0, turnDeg: 0,
+            periodMs: 600, footHeightMm: 40, balanceGain: 1.0
+        )
+        let poseA = WalkMotionLibrary.simWalkingPose(timeMs: 100, tuning: tuning)!
+        let poseB = WalkMotionLibrary.simWalkingPose(timeMs: 300, tuning: tuning)!
+        let poseC = WalkMotionLibrary.simWalkingPose(timeMs: 500, tuning: tuning)!
+
+        // 적어도 하나의 다리/팔 관절은 시간에 따라 달라야 함 — 정적 X.
+        let mobile: [JointID] = [.rHipPitch, .lHipPitch, .rKnee, .lKnee, .rShoulderPitch, .lShoulderPitch]
+        var anyChange = false
+        for joint in mobile {
+            if poseA.raw(joint) != poseB.raw(joint) || poseB.raw(joint) != poseC.raw(joint) {
+                anyChange = true
+                break
+            }
+        }
+        XCTAssertTrue(anyChange,
+            "sim walking pose 가 시간에 따라 동일 — 3D 모델 정적 표시 회귀")
+    }
+
+    /// **Phase G11**: WalkLabSession 의 visualPose 초기값 = walkReady.
+    /// 보행 시작 전엔 정적 walkReady 자세로 3D 모델 표시.
+    @MainActor
+    func testWalkLabSessionInitialVisualPoseIsWalkReady() {
+        let session = WalkLabSession()
+        // 모든 관절이 walkReady 와 동일.
+        let walkReady = RobotPose.walkReady
+        for joint in JointID.allCases {
+            XCTAssertEqual(session.visualPose.raw(joint), walkReady.raw(joint),
+                "visualPose 초기값 \(joint.name) 이 walkReady 와 다름")
+        }
+    }
+
     /// **Phase G10 핵심**: phase 0 (시작) 과 phase 5 (끝) 사이 거리가 매끄러운 wrap 범위.
     /// period=600 ms × 11% (0.92→0.03 사이) ≈ 66 ms 시간 폭 안에서 보간 가능해야.
     /// 너무 큰 차이는 jerk 유발.

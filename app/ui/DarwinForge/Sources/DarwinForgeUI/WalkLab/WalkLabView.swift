@@ -165,10 +165,12 @@ public struct WalkLabView: View {
             }
 
             HStack(spacing: DFSpace.sm3) {
-                // Hero: 3D 모델 — pose 는 walkReady, footTrace 는 좌측 발 자취.
-                // 구 WalkLab.swift 의 RobotScene3D wiring 패턴 재사용.
+                // Hero: 3D 모델 — **Phase G11 (2026-05-15)**: pose 가 보행 cycle 마다 갱신.
+                // 실 로봇 송출 중: `runContinuousWalk` 의 onPose 가 매 step 마다 visualPose publish.
+                // sim mode: 50ms tick 이 phase 따라 합성 pose publish.
+                // footTrace 는 좌측 발 자취 (2D 캔버스와 동일 source).
                 RobotScene3D(
-                    pose: .walkReady,
+                    pose: session.visualPose,
                     footTrace: session.footTrail.map { $0.left }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

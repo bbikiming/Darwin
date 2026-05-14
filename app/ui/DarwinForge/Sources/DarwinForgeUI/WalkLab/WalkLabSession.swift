@@ -61,6 +61,12 @@ public final class WalkLabSession: ObservableObject {
     @Published public var maxMotorTemp: Double = 35.0
     @Published public var balanceLost: Bool = false
     @Published public var thermalAlarm: Bool = false
+    /// **Phase G11 (2026-05-15)**: 3D 모델 시각화용 현재 자세.
+    ///
+    /// 보행 중 매 step 갱신 (`runContinuousWalk` / `runWalkCycle` 에서 송출 직전 publish).
+    /// sim mode (실 로봇 미연결) 도 50ms tick 마다 phase pose 합성해서 갱신 →
+    /// `WalkLabView` 의 `RobotScene3D(pose: session.visualPose)` 가 받아서 모델 동작.
+    @Published public var visualPose: RobotPose = .walkReady
 
     // MARK: - 세션 기록
     @Published public var history: [WalkLabRecord] = []
@@ -389,6 +395,11 @@ public final class WalkLabSession: ObservableObject {
             return
         }
 
+        // Phase G11 — 3D 모델 동기화 closure. weak self 로 retain cycle 회피.
+        let onPose: @MainActor @Sendable (RobotPose) -> Void = { [weak self] pose in
+            self?.visualPose = pose
+        }
+
         // 연속 보행 plan 시도.
         if let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: currentWalkTuning()) {
             isRobotWalking = true
@@ -398,7 +409,8 @@ public final class WalkLabSession: ObservableObject {
                 let result = await Self.runContinuousWalk(
                     bus: bus, plan: plan,
                     maxDurationSec: maxDurationSec,
-                    lowerBodyJoints: lowerBody
+                    lowerBodyJoints: lowerBody,
+                    onPose: onPose
                 )
                 await MainActor.run { [weak self] in
                     guard let self else { return }
@@ -427,7 +439,8 @@ public final class WalkLabSession: ObservableObject {
                 bus: bus, page: page,
                 maxDurationSec: maxDurationSec,
                 lowerBodyJoints: lowerBody,
-                loop: false   // jog 는 kick chain 끝나면 종료.
+                loop: false,   // jog 는 kick chain 끝나면 종료.
+                onPose: onPose
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -509,7 +522,8 @@ public final class WalkLabSession: ObservableObject {
     ///   4. **exit** step — walkReady 안전 복귀.
     private static func runContinuousWalk(
         bus: Bus, plan: WalkMotionLibrary.ContinuousWalkPlan, maxDurationSec: Int,
-        lowerBodyJoints: Set<JointID>
+        lowerBodyJoints: Set<JointID>,
+        onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -537,6 +551,10 @@ public final class WalkLabSession: ObservableObject {
         // 한 step 송출 helper — closure 캡처 X (concurrency 안전).
         func sendStep(_ step: MotionStep, previousIn: RobotPose) async -> RobotPose {
             let target = step.toPose()
+            // **Phase G11**: 3D 모델 갱신 — main actor 로 publish (실 로봇 송출 전에).
+            if let onPose {
+                await onPose(target)
+            }
             let changed = target.changedJoints(from: previousIn)
             for joint in changed {
                 let rawVal = UInt16(clamping: target.raw(joint))
@@ -594,6 +612,10 @@ public final class WalkLabSession: ObservableObject {
         // 4. Exit — walkReady 안전 복귀. cancel 후에도 토크 OFF 보다는 복귀가 안전 (낙상 risk).
         for step in plan.exit {
             let target = step.toPose()
+            // Phase G11 — 3D 모델 갱신.
+            if let onPose {
+                await onPose(target)
+            }
             let changedFinal = target.changedJoints(from: previous)
             for joint in changedFinal {
                 let rawVal = UInt16(clamping: target.raw(joint))
@@ -635,7 +657,8 @@ public final class WalkLabSession: ObservableObject {
     private static func runWalkCycle(
         bus: Bus, page: MotionPage, maxDurationSec: Int,
         lowerBodyJoints: Set<JointID>,
-        loop: Bool = true
+        loop: Bool = true,
+        onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -667,6 +690,10 @@ public final class WalkLabSession: ObservableObject {
                 if let end = endDate, Date() >= end { break cycleLoop }
 
                 let target = step.toPose()
+                // Phase G11 — 3D 모델 갱신.
+                if let onPose {
+                    await onPose(target)
+                }
                 let changed = target.changedJoints(from: previous)
                 for joint in changed {
                     let rawVal = UInt16(clamping: target.raw(joint))
@@ -705,6 +732,10 @@ public final class WalkLabSession: ObservableObject {
         // 3. 종료 정리 — walkReady 안전 복귀. 하체 실패 후에도 토크 OFF 보다는
         // walkReady 시도가 안전 (낙상 risk 가 더 큼). 실패해도 결과에 반영.
         let walkReady = RobotPose.walkReady
+        // Phase G11 — 3D 모델 walkReady 복귀 시각화.
+        if let onPose {
+            await onPose(walkReady)
+        }
         let changedFinal = walkReady.changedJoints(from: previous)
         for joint in changedFinal {
             let rawVal = UInt16(clamping: walkReady.raw(joint))
@@ -739,6 +770,34 @@ public final class WalkLabSession: ObservableObject {
             right: foot.rightXYZ
         ))
         if footTrail.count > 200 { footTrail.removeFirst(footTrail.count - 200) }
+
+        // **Phase G11 (2026-05-15)**: sim mode 에서도 3D 모델 보행 시각화.
+        //
+        // 실 로봇 연결 안 됐을 때 (또는 ARM 안 된 상태) `isRobotWalking == false` 라
+        // `runContinuousWalk` 의 onPose 가 호출되지 않음. sim 50ms tick 으로 phase 보간 후
+        // visualPose 갱신해서 모델이 보행 따라 움직이도록.
+        //
+        // 실 로봇 송출 중 (`isRobotWalking == true`) 이면 onPose 가 권한 — sim 덮어쓰기 회피.
+        if !isRobotWalking, current != .idle {
+            let tuning = WalkMotionLibrary.AdvancedTuning(
+                strideMm: strideMm, sideMm: sideMm, turnDeg: turnDeg,
+                periodMs: customPeriodMs, footHeightMm: footHeightMm, balanceGain: balanceGain
+            )
+            // current preset 의 tuning 정합 (advanced 모드 X 면 default).
+            let effectiveTuning = advanced ? tuning : WalkMotionLibrary.AdvancedTuning(
+                strideMm: 25, sideMm: 0, turnDeg: 0,
+                periodMs: Double(current.periodMs), footHeightMm: 40, balanceGain: 1.0
+            )
+            let period = effectiveTuning.periodMs
+            let phaseFraction = (Double(elapsedMs).truncatingRemainder(dividingBy: period)) / period
+            let phasedTimeMs = phaseFraction * period
+            if let pose = WalkMotionLibrary.simWalkingPose(timeMs: phasedTimeMs, tuning: effectiveTuning) {
+                visualPose = pose
+            }
+        } else if current == .idle, !isRobotWalking {
+            // idle 상태 → walkReady 로 부드럽게 복귀 (sim).
+            visualPose = .walkReady
+        }
 
         updateSimIMU()
         updateSimThermal()

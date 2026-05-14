@@ -110,6 +110,14 @@ public enum WalkMotionLibrary {
         return ContinuousWalkPlan(entry: entry, cycle: cycle, exit: exit)
     }
 
+    /// **Phase G11 (2026-05-15)**: sim mode 의 phase pose 합성을 외부에 노출.
+    ///
+    /// `WalkLabSession` 의 50ms tick 이 실 로봇 미연결 상태에서도 3D 모델을 보행
+    /// 따라 움직이게 하려고 호출. internal `robotisWalkingApproxPose` 의 wrapper.
+    public static func simWalkingPose(timeMs: Double, tuning: AdvancedTuning) -> RobotPose? {
+        robotisWalkingApproxPose(timeMs: timeMs, tuning: tuning)
+    }
+
     /// 한 프리셋의 보행 사이클 페이지 반환. nil 이면 송출 불가 (`idle`).
     public static func page(for preset: WalkLabPreset, tuning customTuning: AdvancedTuning?) -> MotionPage? {
         switch preset {
