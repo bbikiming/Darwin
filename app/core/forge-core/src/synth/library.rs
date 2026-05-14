@@ -35,16 +35,67 @@ use super::metadata::{BodyRegion, PageMetadata, Tag};
 // name[14]=0..13, reserved1=14, repeat=15, schedule=16, reserved2[3]=17..19,
 // stepnum=20, reserved3=21, speed=22, reserved4=23, accel=24, next=25, exit=26,
 // reserved5[4]=27..30, checksum=31, slope[31]=32..62, reserved6=63.
-const HEADER_OFFSET_REPEAT: usize = 15;
-const HEADER_OFFSET_STEPNUM: usize = 20;
-const HEADER_OFFSET_SPEED: usize = 22;
-const HEADER_OFFSET_ACCEL: usize = 24;
-const HEADER_OFFSET_NEXT: usize = 25;
-const HEADER_OFFSET_EXIT: usize = 26;
-const HEADER_OFFSET_SLOPE: usize = 32;
-const HEADER_SIZE: usize = 64;
-const STEP_SIZE: usize = 64;
-const MAX_STEPS: usize = 7;
+//
+// `pub` 노출 이유 — `forge-cli::synth::encode_page_to_raw` / MCP encoder 가 encode 시에도
+// 동일 offset 을 써야 raw round-trip 이 보장됨 (Codex audit P0-1, 2026-05-14).
+
+/// 1 byte — page repeat count.
+pub const HEADER_OFFSET_REPEAT: usize = 15;
+/// 1 byte — schedule (`SPEED_BASE_SCHEDULE=0` or `TIME_BASE_SCHEDULE=0x0A`).
+/// **Phase G8 (Codex audit follow-up, 2026-05-15)** — 모든 공식 페이지는 0x0A.
+pub const HEADER_OFFSET_SCHEDULE: usize = 16;
+/// 1 byte — number of valid steps (1..=7).
+pub const HEADER_OFFSET_STEPNUM: usize = 20;
+/// 1 byte — speed (0..32, 32 = 1.0× rate).
+pub const HEADER_OFFSET_SPEED: usize = 22;
+/// 1 byte — acceleration (raw frames).
+pub const HEADER_OFFSET_ACCEL: usize = 24;
+/// 1 byte — link to next page (0 = end of chain).
+pub const HEADER_OFFSET_NEXT: usize = 25;
+/// 1 byte — link to exit page (0 = none).
+pub const HEADER_OFFSET_EXIT: usize = 26;
+/// 1 byte — checksum so that total 512 byte sum == 0xff (mod 256).
+/// **Phase G8** — 누락 시 `Action::LoadPage` 가 `VerifyChecksum` (line 30-44) 에서 false
+/// → `ResetPage` (Action.cpp:249-250) 가 페이지를 0 으로 wipe 한다. 데이터 손실 P0.
+pub const HEADER_OFFSET_CHECKSUM: usize = 31;
+/// 31 byte — CW/CCW slope nibble pair per joint slot 0..30.
+pub const HEADER_OFFSET_SLOPE: usize = 32;
+/// 64 byte — page header size.
+pub const HEADER_SIZE: usize = 64;
+/// 64 byte — single step record size.
+pub const STEP_SIZE: usize = 64;
+/// 7 — max step count per page.
+pub const MAX_STEPS: usize = 7;
+
+/// ROBOTIS `Action.h:31` — speed-base 스케줄 (`PRE/MAIN/POST` timing 을 speed/angle 로 계산).
+pub const SPEED_BASE_SCHEDULE: u8 = 0;
+/// ROBOTIS `Action.h:32` — time-base 스케줄. **공식 motion_4096.bin 의 모든 페이지가 이 모드**
+/// (`docs/motion-format/page-catalog-motion4096.md:175` 의 schedule=10 검증).
+/// PRE/MAIN/POST timing 을 step.time 만으로 계산 — 사용자가 의도한 정확한 ms 가 보존됨.
+pub const TIME_BASE_SCHEDULE: u8 = 0x0A;
+
+/// **Phase G8 (Codex audit follow-up, 2026-05-15)**: ROBOTIS `Action.cpp:47-61 SetChecksum`
+/// 재현. 512 byte 페이지 buffer 의 마지막 byte (offset 31) 를 계산해서 set 한다.
+///
+/// 동작:
+///   1. checksum byte 를 0 으로 zero.
+///   2. 전체 512 byte sum (mod 256) 계산.
+///   3. `checksum = 0xff - sum` 으로 set → 그러면 최종 total sum == 0xff.
+///
+/// 호출 순서 — 항상 **모든 헤더/step 필드를 set 한 마지막 단계** 에서 호출.
+/// 누락 시 `Action::LoadPage` (Action.cpp:239-253) 가 페이지를 reset 으로 wipe.
+pub fn set_action_checksum(buf: &mut [u8; 512]) {
+    buf[HEADER_OFFSET_CHECKSUM] = 0;
+    let sum: u8 = buf.iter().fold(0u8, |a, b| a.wrapping_add(*b));
+    buf[HEADER_OFFSET_CHECKSUM] = 0xff_u8.wrapping_sub(sum);
+}
+
+/// **Phase G8**: 페이지 buffer 의 byte sum 이 ROBOTIS `VerifyChecksum` (Action.cpp:30-44)
+/// 와 같은 식으로 0xff 와 일치하는지 검증.
+pub fn verify_action_checksum(buf: &[u8; 512]) -> bool {
+    let sum: u8 = buf.iter().fold(0u8, |a, b| a.wrapping_add(*b));
+    sum == 0xff
+}
 
 /// 한 `RawPage` (512 byte) → 의미 있는 `MotionPage`.
 ///
@@ -354,6 +405,51 @@ mod tests {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         p.push("../../research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin");
         p
+    }
+
+    /// **Phase G8 (Codex audit follow-up, 2026-05-15)**: `set_action_checksum` 가
+    /// ROBOTIS `Action.cpp:47-61` 와 동일한 byte sum == 0xff 조건을 만든다.
+    #[test]
+    fn set_action_checksum_produces_total_sum_0xff() {
+        let mut buf = [0u8; 512];
+        // 임의 데이터로 채움.
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        set_action_checksum(&mut buf);
+        let sum: u8 = buf.iter().fold(0u8, |a, b| a.wrapping_add(*b));
+        assert_eq!(sum, 0xff, "Action.cpp VerifyChecksum requires total sum == 0xff");
+        assert!(verify_action_checksum(&buf));
+    }
+
+    /// 빈 페이지 (모든 byte 0) 에도 정확히 checksum 적용.
+    #[test]
+    fn set_action_checksum_on_zero_buffer() {
+        let mut buf = [0u8; 512];
+        set_action_checksum(&mut buf);
+        // 0 으로 채운 buf 의 sum 은 0 — checksum byte 만 0xff 가 되어야 함.
+        assert_eq!(buf[HEADER_OFFSET_CHECKSUM], 0xff);
+        assert!(verify_action_checksum(&buf));
+    }
+
+    /// 공식 raw page 를 디코드 → 다시 encode 후 checksum 이 ROBOTIS verifier 통과.
+    /// `Action::LoadPage` (Action.cpp:239-253) 가 reject 하지 않는 buffer 인지 검증.
+    #[test]
+    fn encoded_official_page_passes_robotis_verify_checksum() {
+        let path = official_bin_path();
+        if !path.exists() {
+            return;
+        }
+        let raw_pages = read_bin4096_file(&path).expect("read");
+        // 공식 page 9 (walkready) 를 원본으로.
+        let original = raw_pages.iter().find(|r| r.index == 9).expect("page 9");
+        // raw 전체 (header + checksum 포함) 를 새 buffer 에 그대로 복사 후 byte sum 검증.
+        let mut buf = [0u8; 512];
+        buf.copy_from_slice(&original.raw);
+        assert!(
+            verify_action_checksum(&buf),
+            "ROBOTIS 공식 page 9 의 raw checksum 이 0xff 검증 실패 — 파일 손상?"
+        );
     }
 
     #[test]

@@ -92,17 +92,16 @@ pub fn parse_mtn(input: &str) -> Result<Motion, ParseError> {
                     return Err(ParseError::UnmatchedPage);
                 }
                 in_page = true;
+                // **Phase G8 (Codex audit follow-up, 2026-05-15)**: ROBOTIS 공식
+                // `ResetPage` (Action.cpp:73-79) 와 동일한 default 를 `MotionPage::default()`
+                // 가 보장 — slope=0x55, speed=32, accel=32. 이전엔 여기서 직접
+                // `compliance: [5]`, `accel: 0` 으로 override 해서 P2-8 의 default fix 가
+                // .mtn parser path 에서 무효화됐다.
                 current_page = Some(MotionPage {
                     id: 0,
                     name: String::new(),
-                    compliance: [5u8; NUM_JOINTS_IN_STEP],
-                    next_page: 0,
-                    exit_page: 0,
-                    repeat: 1,
-                    speed: 32,
-                    accel: 0,
                     steps: Vec::new(),
-                    safety_class: crate::motion::SafetyClass::Safe,
+                    ..MotionPage::default()
                 });
             }
             Some(("page_end", _)) => {
@@ -238,5 +237,30 @@ mod tests {
         let bad = "page_begin\nid=1\nstep=1 2 3\npage_end\n";
         let err = parse_mtn(bad).unwrap_err();
         assert!(matches!(err, ParseError::StepArity { .. }));
+    }
+
+    /// **Phase G8 (Codex audit follow-up, 2026-05-15)**: `compliance` 와 `accel` 이
+    /// .mtn 파일에 명시 안 됐을 때 ROBOTIS `ResetPage` (Action.cpp:73-79) 와 같은
+    /// default — slope=0x55, accel=32 — 가 적용. 이전엔 parser 가 직접 `compliance=[5],
+    /// accel=0` 으로 override 해서 page.rs Default 의 공식값 fix (P2-8) 가 무효화됐었음.
+    #[test]
+    fn page_without_explicit_compliance_or_accel_uses_robotis_defaults() {
+        // 단순 .mtn — id/name 만 명시, compliance/accel 명시 X.
+        let mtn = "page_begin\nid=42\nname=Test\npage_end\n";
+        let m = parse_mtn(mtn).expect("parse");
+        assert_eq!(m.pages.len(), 1);
+        let p = &m.pages[0];
+        assert_eq!(p.id, 42);
+        assert_eq!(p.name, "Test");
+        // ROBOTIS ResetPage default: slope[0..30] = 0x55.
+        assert!(
+            p.compliance.iter().all(|&c| c == 0x55),
+            "compliance default 가 ROBOTIS ResetPage 의 0x55 와 일치해야 함 — 발견: {:?}",
+            &p.compliance[..3]
+        );
+        // ROBOTIS ResetPage default: accel = 32, speed = 32.
+        assert_eq!(p.accel, 32, "accel default = 32 (Action.cpp:76)");
+        assert_eq!(p.speed, 32, "speed default = 32 (Action.cpp:75)");
+        assert_eq!(p.repeat, 1, "repeat default = 1 (Action.cpp:74)");
     }
 }

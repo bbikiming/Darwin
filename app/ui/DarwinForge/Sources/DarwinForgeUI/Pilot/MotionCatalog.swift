@@ -1,18 +1,25 @@
 import ForgeCore
 import Foundation
 
-/// `motion_4096.bin` 페이지 → UI 메타데이터 매핑.
+/// `motion_4096.bin` 페이지 메타데이터 + v1 single-pose approximation 매핑.
 ///
-/// Sprint 15 Remote Pilot v1.0 — Action Bar 의 7 메인 페이지 + 9 추가 페이지(v1.5).
-/// 모션 데이터 자체는 `docs/motion-format/page-metadata-motion4096.toml` 의 sidecar 와
-/// `motion_4096.bin` 의 byte-identical 페이지. 본 catalog 는 UI 매핑만 담당.
+/// ## ⚠️ 정확한 표현 (Codex audit P1-5, 2026-05-14)
 ///
-/// **현재(v1.0) 구현 메모**: forge-core 의 motion_4096.bin 페이지 step 디코더 +
-/// SYNC_WRITE goal_position 송출 경로가 아직 없다 (별도 PR — Sprint 15 Day 1-2).
-/// 따라서 v1.0 에서는 각 motion slot 을 **canonical target pose** (PoseLibrary 의
-/// 검증된 자세) 로 매핑하고, ConnectionStore.applyPoseSmoothly(_:) 의 검증된
-/// 안전 경로 (voltage / load / limit / split) 로 송출한다. 모션의 시간 곡선
-/// (4-step bow 등)이 아닌 **최종 자세 도달** 만 보장. v1.5 에서 raw step 송출 가능.
+/// 이 catalog 는 **공식 motion_4096.bin 메타데이터 + v1 single-pose approximation**
+/// 이다. byte-identical raw page 재생이 아니라:
+///
+/// 1. **메타데이터** (slot, name, safety class) 는 공식 `motion_4096.bin` 의 page
+///    header 와 `gui_motion.yaml` 의 안전 분류를 그대로 따른다.
+/// 2. **자세는 single target pose approximation** — `v1TargetPoseID` 가 가리키는
+///    `PoseLibrary` 의 검증된 단발 자세로 보내고, ConnectionStore.applyPoseSmoothly
+///    의 안전 경로 (voltage / load / limit / split) 로 전이.
+/// 3. **시간 곡선** (4-step bow 등) 은 현 v1 에서 재현 X. raw chain replay 는
+///    v1.6 `motion_play` 기반 별도 경로로 예정.
+///
+/// **chain page (24/38/54) 의 사용자 표시 시간**: `durationMs` 는 v1 단발 전이 추정,
+/// `rawChainDurationMs` 는 공식 chain 의 총 길이 (next_page 따라간 누계). UI 는
+/// "공식 모션 재생" 으로 라벨링되는 경우 `rawChainDurationMs` 를, "단발 자세" 로
+/// 라벨링되는 경우 `durationMs` 를 사용해야 한다.
 public enum SafetyClass: String, Sendable, Codable, Equatable {
     case safe
     case caution
@@ -41,8 +48,13 @@ public struct MotionPageMetadata: Sendable, Equatable, Identifiable {
     public let displayNameKo: String
     /// 안전 등급.
     public let safetyClass: SafetyClass
-    /// 예상 지속 시간 (ms).
+    /// **v1 single-pose 전이 시간** (ms) — `applyPoseSmoothly` 의 ramp 시간.
+    /// chain page 의 공식 총 시간이 아님. 사용자에게 보여줄 때 "단발 자세" 표시 필요.
     public let durationMs: UInt32
+    /// **Phase G5 (Codex audit P1-5)**: 공식 chain 의 총 지속 시간 (next_page 따라간 누계).
+    /// nil 이면 single page (durationMs 와 동일). chain 인 경우 `motion_4096.bin` 의
+    /// `decode_raw_page` 로 계산한 값.
+    public let rawChainDurationMs: UInt32?
     /// 동기 mp3 파일명 (v2 활성). nil = 음원 없음.
     public let mp3Sync: String?
     /// 영향 받는 신체 부위.
@@ -54,6 +66,33 @@ public struct MotionPageMetadata: Sendable, Equatable, Identifiable {
     public let v1TargetPoseID: String?
 
     public var id: UInt8 { slot }
+
+    /// **Phase G8 (Codex audit follow-up, 2026-05-15)**: chain page 여부.
+    /// `motion_4096.bin` 의 next_page 가 있는 페이지 (24/38/54) 면 true.
+    public var isChain: Bool { rawChainDurationMs != nil }
+
+    /// 사용자에게 표시할 "공식 모션 길이" — chain 페이지면 chain 총합, 아니면 단발.
+    /// **주의**: Mac v1 은 단발 자세 송출만 한다. 실제 progress ring 시간은 단발
+    /// `durationMs` 를 그대로 써야 — Mac 이 8 초 ring 돌리는데 실 송출은 끝났다고
+    /// 사용자가 혼동하지 않도록 (옵션 A). chain 표시는 caption / alert 보조 정보 용.
+    public var effectiveDurationMs: UInt32 { rawChainDurationMs ?? durationMs }
+
+    public init(slot: UInt8, rawName: String, displayName: String, displayNameKo: String,
+                safetyClass: SafetyClass, durationMs: UInt32, rawChainDurationMs: UInt32? = nil,
+                mp3Sync: String?, bodyRegions: [JointID.BodyPart], icon: String,
+                v1TargetPoseID: String?) {
+        self.slot = slot
+        self.rawName = rawName
+        self.displayName = displayName
+        self.displayNameKo = displayNameKo
+        self.safetyClass = safetyClass
+        self.durationMs = durationMs
+        self.rawChainDurationMs = rawChainDurationMs
+        self.mp3Sync = mp3Sync
+        self.bodyRegions = bodyRegions
+        self.icon = icon
+        self.v1TargetPoseID = v1TargetPoseID
+    }
 }
 
 public enum MotionCatalog {
@@ -97,10 +136,13 @@ public enum MotionCatalog {
         .init(slot: 13, rawName: "lk",
               displayName: "Left Kick", displayNameKo: "왼발 차기",
               safetyClass: .highRisk, durationMs: 1700,
+              rawChainDurationMs: nil, // single page (next_page=0)
               mp3Sync: "Left kick.mp3",
               bodyRegions: [.leftLeg],
               icon: "figure.kickboxing",
-              v1TargetPoseID: nil), // PoseLibrary 에 mirror 자세 없음 — v1.5 에서 raw step
+              // Phase G5 (Codex audit P1-5, 2026-05-14) — mirror pose 추가됨.
+              // 이전엔 nil 이라 메인 7 슬롯 중 Right Kick / Left Kick UX 비대칭.
+              v1TargetPoseID: "kick_forward_left"),
         .init(slot: 9, rawName: "walkready",
               displayName: "Walk Ready", displayNameKo: "보행 자세",
               safetyClass: .safe, durationMs: 1000,
@@ -154,24 +196,33 @@ public enum MotionCatalog {
               safetyClass: .safe, durationMs: 1000, mp3Sync: nil,
               bodyRegions: [.rightLeg, .leftLeg], icon: "arrow.up",
               v1TargetPoseID: "idle"),
+        // chain page (next=25) — 공식 chain duration 8192ms vs v1 single-pose 3600ms.
         .init(slot: 24, rawName: "d2",
               displayName: "Wow", displayNameKo: "감탄",
-              safetyClass: .safe, durationMs: 3600, mp3Sync: "Wow.mp3",
+              safetyClass: .safe, durationMs: 3600,
+              rawChainDurationMs: 8192,    // Codex audit P1-5: 24 → 25 chain 총 8192ms
+              mp3Sync: "Wow.mp3",
               bodyRegions: [.rightArm, .leftArm, .head], icon: "sparkles",
               v1TargetPoseID: "surprise"),
         .init(slot: 27, rawName: "d3",
               displayName: "Oops", displayNameKo: "실수",
-              safetyClass: .safe, durationMs: 3200, mp3Sync: nil,
+              safetyClass: .safe, durationMs: 3200, rawChainDurationMs: nil, mp3Sync: nil,
               bodyRegions: [.head, .rightArm], icon: "face.dashed",
               v1TargetPoseID: "shy"),
-        .init(slot: 38, rawName: "d2 bye",
+        // Phase G5 (Codex audit P1-5): 공식 bin 의 page 38 name 은 "d2" (정량 검증).
+        // 이전엔 "d2 bye" 였는데 라벨 가공 — 공식 raw name 그대로 보존.
+        .init(slot: 38, rawName: "d2",
               displayName: "Bye Bye", displayNameKo: "손 흔들기",
-              safetyClass: .safe, durationMs: 3600, mp3Sync: nil,
+              safetyClass: .safe, durationMs: 3600,
+              rawChainDurationMs: 7696,    // Codex audit P1-5: 38 → 39 chain 7696ms
+              mp3Sync: nil,
               bodyRegions: [.rightArm], icon: "hand.wave.fill",
               v1TargetPoseID: "wave_right"),
         .init(slot: 54, rawName: "int",
               displayName: "Clap Please", displayNameKo: "박수 요청",
-              safetyClass: .safe, durationMs: 2000, mp3Sync: nil,
+              safetyClass: .safe, durationMs: 2000,
+              rawChainDurationMs: 8296,    // Codex audit P1-5: 54 → 55 → 56 → 58 chain 8296ms
+              mp3Sync: nil,
               bodyRegions: [.rightArm, .leftArm], icon: "hands.sparkles",
               v1TargetPoseID: "clap_ready"),
     ]

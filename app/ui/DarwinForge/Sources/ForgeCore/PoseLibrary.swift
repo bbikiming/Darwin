@@ -327,6 +327,18 @@ public enum PoseLibrary {
                     .rShoulderPitch: +30, .lShoulderPitch: -30
                   ])),
 
+        /// Phase G5 (Codex audit P1-5, 2026-05-14): page 13 메인 7 슬롯에 대응하는
+        /// 좌우 mirror pose. ROBOTIS L/R pair 부호 반전 규약 (hip_pitch, ankle_pitch 등).
+        NamedPose(id: "kick_forward_left", displayName: "발차기 (왼발 앞)",
+                  category: .sport,
+                  description: "왼발 앞으로 차기 — 충격 순간 (kick_forward_right mirror)",
+                  keywords: ["발차기", "kick forward", "왼발"],
+                  pose: pose([
+                    .lHipPitch: +60, .lKnee: 0, .lAnklePitch: -20,
+                    .rHipRoll: +15,
+                    .lShoulderPitch: -30, .rShoulderPitch: +30
+                  ])),
+
         NamedPose(id: "punch_right", displayName: "오른손 펀치",
                   category: .sport,
                   description: "오른손 정면 펀치",

@@ -1,15 +1,28 @@
 import ForgeCore
 import Foundation
 
-/// Walk Lab 프리셋용 보행 step 시퀀스 합성.
+/// Walk Lab 프리셋용 보행 step 시퀀스 합성 — **ROBOTIS Walking.cpp inspired
+/// sparse keyframe approximation** (Codex audit P1-7, 2026-05-14).
 ///
-/// ROBOTIS 공식 데모의 SOCCER 흐름은 `Walking::GetInstance()`로 공을 따라 접근하고,
-/// 가까워지면 action page 12/13으로 킥한다. 이 파일은 기존의 임의 hip/knee 흔들기 대신
-/// ROBOTIS DARwIn-OP `Walking.cpp`의 기본 파라미터와 위상식을 따라 keyframe을 만든다.
+/// ## ⚠️ 공식 Walking module 이 아니다
 ///
-/// 제한: 아직 8 ms 실시간 SyncWrite/IMU closed loop는 아니므로 완전한 공식 walking module은
-/// 아니다. 다만 joint-space 임의 포즈보다 근거가 분명하고, 고급 슬라이더가 실제 송출 페이지에
-/// 반영된다.
+/// ROBOTIS `Framework/src/motion/modules/Walking.cpp` 의 실 walking 은 **8 ms 루프
+/// 안에서 phase update + IK + gyro balance + P/I/D gain** 을 한다. 이 모듈은 그것의
+/// **6 sample phase keyframe approximation** — `[0.03, 0.18, 0.42, 0.52, 0.68, 0.92]`
+/// 위상으로만 sparse 하게 sample 한다.
+///
+/// 공식 vs 이 모듈:
+///
+/// | 항목 | 공식 Walking.cpp | 이 모듈 |
+/// |---|---|---|
+/// | sample rate | 8 ms (125 Hz) | 6 phase / period (~10 Hz 등가) |
+/// | IMU balance closed-loop | ✓ (gyro_x/y P+I+D) | ✗ (없음) |
+/// | IK 정밀도 | 분석적 inverse kinematics | 단순화된 X/Y/Z swap |
+/// | constants | `X_OFFSET=-10`, `HIP_PITCH_OFFSET=13`, `ARM_SWING_GAIN=1.5` | 동일 (소스에서 옮김) |
+///
+/// **그래서 어디 쓰면 좋은가**: 슬라이더-driven preview / Walk Lab UI 의 step 시퀀스.
+/// 실시간 안정 보행이 필요하면 ROBOTIS demo SOCCER 모드 → `Walking::GetInstance()`
+/// 위임 (Pilot v1.5 의 ball-tracker 흐름 그대로).
 public enum WalkMotionLibrary {
 
     /// Walk Lab 고급 슬라이더가 실제 보행 page에 주입되는 값.
@@ -49,25 +62,25 @@ public enum WalkMotionLibrary {
             return nil
         case .march:
             let tuning = resolvedTuning(for: preset, custom: customTuning)
-            return walkingPage(id: 200, name: "WalkLab march — ROBOTIS 제자리 보행", tuning: tuning)
+            return walkingPage(id: 200, name: "WalkLab march — ROBOTIS approx 제자리 보행", tuning: tuning)
         case .slowWalk:
             let tuning = resolvedTuning(for: preset, custom: customTuning)
-            return walkingPage(id: 201, name: "WalkLab slowWalk — ROBOTIS 전진 보행", tuning: tuning)
+            return walkingPage(id: 201, name: "WalkLab slowWalk — ROBOTIS approx 전진 보행", tuning: tuning)
         case .normalWalk:
             let tuning = resolvedTuning(for: preset, custom: customTuning)
-            return walkingPage(id: 202, name: "WalkLab normalWalk — ROBOTIS 전진 보행", tuning: tuning)
+            return walkingPage(id: 202, name: "WalkLab normalWalk — ROBOTIS approx 전진 보행", tuning: tuning)
         case .fastWalk:
             let tuning = resolvedTuning(for: preset, custom: customTuning)
-            return walkingPage(id: 203, name: "WalkLab fastWalk — ROBOTIS 전진 보행", tuning: tuning)
+            return walkingPage(id: 203, name: "WalkLab fastWalk — ROBOTIS approx 전진 보행", tuning: tuning)
         case .jog:
             let tuning = resolvedTuning(for: preset, custom: customTuning)
             return goalFollowKickPage(tuning: tuning)
         case .turnLeft:
             let tuning = resolvedTuning(for: preset, custom: customTuning)
-            return walkingPage(id: 205, name: "WalkLab turnLeft — ROBOTIS 좌회전 보행", tuning: tuning)
+            return walkingPage(id: 205, name: "WalkLab turnLeft — ROBOTIS approx 좌회전 보행", tuning: tuning)
         case .turnRight:
             let tuning = resolvedTuning(for: preset, custom: customTuning)
-            return walkingPage(id: 206, name: "WalkLab turnRight — ROBOTIS 우회전 보행", tuning: tuning)
+            return walkingPage(id: 206, name: "WalkLab turnRight — ROBOTIS approx 우회전 보행", tuning: tuning)
         }
     }
 
@@ -124,7 +137,7 @@ public enum WalkMotionLibrary {
         let kick = officialRightKickSteps()
         return MotionPage(
             id: 204,
-            name: "WalkLab goal-follow kick — ROBOTIS walking + page 12 right kick",
+            name: "WalkLab goal-follow kick — ROBOTIS approx walking + page 12 right kick",
             repeat: 1,
             speed: 32,
             accel: 32,
@@ -147,7 +160,7 @@ public enum WalkMotionLibrary {
 
         for phase in samplePhases {
             let timeMs = phase * period
-            let pose = officialWalkingPose(timeMs: timeMs, tuning: tuning) ?? .walkReady
+            let pose = robotisWalkingApproxPose(timeMs: timeMs, tuning: tuning) ?? .walkReady
             steps.append(.from(pose: pose, playMs: playMs, pauseMs: 0))
         }
 
@@ -242,7 +255,7 @@ public enum WalkMotionLibrary {
         }
     }
 
-    private static func officialWalkingPose(timeMs rawTimeMs: Double, tuning: AdvancedTuning) -> RobotPose? {
+    private static func robotisWalkingApproxPose(timeMs rawTimeMs: Double, tuning: AdvancedTuning) -> RobotPose? {
         let state = RobotisWalkingState(tuning: tuning)
         let time = rawTimeMs.truncatingRemainder(dividingBy: state.periodTime)
 
@@ -560,13 +573,16 @@ public enum WalkMotionLibrary {
                 0x4000,
             ],
         ]
+        // Phase G6 (Codex audit P1-6, 2026-05-14): 공식 motion_4096.bin page 12 timing.
+        // 이전 값 (step 3-6 의 play 160ms) 은 +312 ms (+18.8%) 더 길어서 사용자 인지
+        // 와 motion replay 가 공식과 어긋났음. ROBOTIS Action.cpp 의 step.time × 8 ms.
         let timing: [(play: Int, pause: Int)] = [
             (496, 0),
             (200, 0),
-            (160, 0),
-            (160, 144),
-            (160, 0),
-            (160, 0),
+            (72, 0),
+            (72, 144),
+            (72, 0),
+            (112, 0),
             (496, 0),
         ]
 

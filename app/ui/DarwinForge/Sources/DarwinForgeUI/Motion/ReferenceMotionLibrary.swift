@@ -28,9 +28,15 @@ public enum ReferenceMotionLibrary {
 
     // MARK: - 1. Walk Progression Test (Sprint 5 진입 전 검증)
     //
-    // `motions/test/walk-progression-v1.bin` 과 동일한 의도이지만, .bin 파일이 사용하는
-    // 정확한 darwinop-ens page 9 의 비대칭 raw 값 대신 Swift `RobotPose.walkReady` (대칭
-    // 표준) 을 베이스로 사용. 각 페이지는 motion primitive 한 가지만 격리 검증.
+    // `motions/test/walk-progression-v1.bin` 과 동일한 의도. 베이스 자세는 Swift
+    // `RobotPose.walkReady` — **Action page 9 step 0 raw** (ROBOTIS `motion_4096.bin`
+    // page 9). darwinop-ens 의 비대칭 raw 와 동일 출처라 페어 sum 도 동일 (R+L sum ≈
+    // 4015~4096 의 캘리브레이션 잔차 포함). 각 페이지는 motion primitive 한 가지만
+    // 격리 검증.
+    //
+    // **Phase G8 (Codex audit follow-up, 2026-05-15)**: 이전 주석은 "대칭 표준"이라
+    // 라벨했지만 사실은 page 9 raw 의 캘리브레이션 잔차로 일부 관절 R+L sum != 4096
+    // (예: shoulder_pitch R+L=4016). `forge_core::motion::walkready` 모듈 doc 참조.
     //
     // 사용 절차: `docs/walk-lab/WALK_PROGRESSION_TEST.md` (페이지별 합격 기준 + abort
     // 임계).

@@ -16,6 +16,7 @@ pub use page::{Motion, MotionPage, MotionStep, SafetyClass, NUM_JOINTS_IN_STEP};
 pub use parser::{parse_mtn, ParseError};
 pub use timeline::{interpolate, sample_at_ms, Easing};
 pub use walkready::{
-    is_walkready_anchor, rms_distance_from_walkready, walkready_step, WALKREADY_RAW,
+    action_page9_walkready_step, is_walkready_anchor, rms_distance_from_walkready,
+    ACTION_PAGE9_WALKREADY_RAW,
 };
 pub use writer::write_mtn;

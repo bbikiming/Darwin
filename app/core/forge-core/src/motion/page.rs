@@ -6,9 +6,17 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 한 Step에 들어가는 관절 슬롯 수. RoboPlus는 항상 31 슬롯이지만 실제로
-/// 사용되는 slot은 ID 1..6, 11..18, 19..20 (= 16개). 호환성을 위해
-/// 31 slot 모두 보존.
+/// 한 Step에 들어가는 관절 슬롯 수. ROBOTIS-OP2 의 실제 사용 slot 은 **ID 1..=20 (20개)**:
+///   - 1..6 : 어깨/팔꿈치 (R/L shoulder_pitch, shoulder_roll, elbow)
+///   - 7..10 : 골반 (R/L hip_yaw, hip_roll)
+///   - 11..18 : 다리 (hip_pitch, knee, ankle_pitch, ankle_roll)
+///   - 19..20 : 머리 (head_pan, head_tilt)
+///
+/// 슬롯 0 은 reserved, 21..30 은 spare. 호환성을 위해 31 slot 모두 보존.
+///
+/// **Phase G6 (Codex audit P2-8, 2026-05-14)**: 이전 주석은 "1..6, 11..18, 19..20 (16개)"
+/// 라고 hip_yaw / hip_roll 4개를 누락. ROBOTIS `Action.h` STEP::position[31] 은 모든
+/// ID 1..=20 을 사용한다 — 6 + 4 + 8 + 2 = 20 개.
 pub const NUM_JOINTS_IN_STEP: usize = 31;
 
 /// 한 Step (keyframe).
@@ -71,7 +79,14 @@ pub struct MotionPage {
     pub id: u8,
     /// 사람이 읽는 라벨. 14 bytes max in `.mtn`.
     pub name: String,
-    /// 31개 관절의 P-gain compliance 0..7 (보통 5).
+    /// 31개 관절의 **CW/CCW slope nibble pair byte** (공식 `Action.h::slope[31]`).
+    ///
+    /// 의미: 각 byte 의 high nibble = CW slope, low nibble = CCW slope.
+    /// `m_Joint.SetSlope(bID, 1<<(slope>>4), 1<<(slope&0x0f))` (Action.cpp:406).
+    /// ROBOTIS `ResetPage` 의 default 는 `0x55` (5/5 = 32/32 raw).
+    ///
+    /// **이름이 `compliance` 인 이유** — Sprint 3 초기 RoboPlus 용어를 따랐음.
+    /// 실제 의미는 slope byte. 변경 시 외부 JSON 호환 영향이 있어 보존.
     pub compliance: [u8; NUM_JOINTS_IN_STEP],
     /// 다음 자동 재생 페이지. 0 = 없음.
     pub next_page: u8,
@@ -81,7 +96,7 @@ pub struct MotionPage {
     pub repeat: u8,
     /// 재생 속도 (0..32, 32 = 1.0배).
     pub speed: u8,
-    /// 가속도 (0..255, 0 = 즉시).
+    /// 가속도 (0..255). ROBOTIS `ResetPage` default 는 32 (Action.cpp:76).
     pub accel: u8,
     /// 1..7 step.
     pub steps: Vec<MotionStep>,
@@ -91,16 +106,26 @@ pub struct MotionPage {
 }
 
 impl Default for MotionPage {
+    /// **Phase G6 (Codex audit P2-8, 2026-05-14)**: ROBOTIS `Action.cpp::ResetPage`
+    /// (Action.cpp:73-79) 와 동일한 default 로 정정.
+    ///   - slope (compliance) `0x55` (이전 `5`)
+    ///   - accel `32` (이전 `0`)
+    ///   - speed `32` (그대로)
+    ///   - repeat `1` (그대로)
+    ///
+    /// 호환 영향: 옛 JSON 의 `compliance` 또는 `accel` 필드가 명시 안 됐던 경우
+    /// (deserialize 시 fallback) — `#[serde(default)]` 가 없으므로 영향 X.
+    /// 새 모션 페이지 생성 시 자동 ROBOTIS 호환 default 사용.
     fn default() -> Self {
         Self {
             id: 1,
             name: String::new(),
-            compliance: [5u8; NUM_JOINTS_IN_STEP],
+            compliance: [0x55u8; NUM_JOINTS_IN_STEP],
             next_page: 0,
             exit_page: 0,
             repeat: 1,
             speed: 32,
-            accel: 0,
+            accel: 32,
             steps: vec![MotionStep::default()],
             safety_class: SafetyClass::Safe,
         }

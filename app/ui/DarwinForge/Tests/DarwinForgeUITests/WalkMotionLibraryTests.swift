@@ -196,8 +196,10 @@ final class WalkMotionLibraryTests: XCTestCase {
     }
 
     func testStepDurationsAreReasonable() {
-        // playMs + pauseMs 가 80..1000 사이 — 모터 trapezoidal motion 의 적정 범위.
-        // 너무 짧으면 모터 한계 초과, 너무 길면 정적 lift 로 균형 손실.
+        // playMs + pauseMs 가 적정 범위 — 모터 trapezoidal motion.
+        // **Phase G6 (Codex audit P1-6)**: 임계 80→64 — ROBOTIS 공식 page 12 right kick
+        // 의 step 3/5 는 72ms (raw 9 × 8ms) 인데 이전 80ms 임계가 공식 raw 와 충돌.
+        // 64ms (raw 8) 는 ROBOTIS 합리적 하한 — MX-28 trapezoidal 의 짧은 swing.
         let nonIdle: [WalkLabPreset] = [.march, .slowWalk, .normalWalk,
                                          .fastWalk, .jog, .turnLeft, .turnRight]
         for preset in nonIdle {
@@ -206,7 +208,7 @@ final class WalkMotionLibraryTests: XCTestCase {
             }
             for (idx, step) in page.steps.enumerated() {
                 let total = step.playMs + step.pauseMs
-                XCTAssertGreaterThanOrEqual(total, 80,
+                XCTAssertGreaterThanOrEqual(total, 64,
                     "\(preset.rawValue) step \(idx) 너무 빠름 (\(total)ms)")
                 XCTAssertLessThanOrEqual(total, 1500,
                     "\(preset.rawValue) step \(idx) 너무 느림 (\(total)ms)")
@@ -274,5 +276,125 @@ final class WalkMotionLibraryTests: XCTestCase {
         }.max() ?? 0
         XCTAssertLessThan(marchMaxDelta, walkMaxDelta,
             "march(\(marchMaxDelta)) 의 hip pitch 변화는 normalWalk(\(walkMaxDelta)) 보다 작아야 함 — 전진 swing 없음")
+    }
+
+    // MARK: - Phase G6 (Codex audit P1-6): page 12 official timing
+
+    /// **GPT audit P1-6 (2026-05-14)**: jog preset 의 embedded right kick (page 12) 의
+    /// step play/pause 시간이 공식 motion_4096.bin 과 일치해야 한다.
+    ///
+    /// 공식 timing (`Action.cpp` step.time × 8 ms / step.pause × 8 ms):
+    /// | step | play | pause | total |
+    /// | 1 | 496 | 0 | 496 |
+    /// | 2 | 200 | 0 | 200 |
+    /// | 3 | 72 | 0 | 72 |
+    /// | 4 | 72 | 144 | 216 |
+    /// | 5 | 72 | 0 | 72 |
+    /// | 6 | 112 | 0 | 112 |
+    /// | 7 | 496 | 0 | 496 |
+    /// | sum | 1520 | 144 | **1664** |
+    ///
+    /// 이전 버전은 step 3-6 의 play 가 160ms 였음 → 총 1976ms = +312ms (+18.75%) 더 길었음.
+    func testJogPageEmbedsOfficialPage12KickTiming() {
+        guard let jog = WalkMotionLibrary.page(for: .jog) else {
+            XCTFail("jog page missing"); return
+        }
+        // jog page 구조: walkReady anchor + walking 6 phase + page 12 kick 7 step + walkReady anchor
+        // = 1 + 6 + 7 + 1 = 15 step. Kick step 은 index 7..=13.
+        XCTAssertEqual(jog.steps.count, 15,
+            "jog page = 1 anchor + 6 walking phase + 7 kick step + 1 anchor")
+
+        // Step 7~13 이 kick steps — 공식 timing 검증.
+        let expectedTiming: [(play: Int, pause: Int)] = [
+            (496, 0),     // step 1 — kick 시작
+            (200, 0),     // step 2
+            (72, 0),      // step 3 — 공식 짧은 빠른 swing
+            (72, 144),    // step 4 — 충격 + 144ms hold
+            (72, 0),      // step 5
+            (112, 0),     // step 6
+            (496, 0),     // step 7 — kick 종료
+        ]
+        let kickSteps = Array(jog.steps[7...13])
+        XCTAssertEqual(kickSteps.count, 7)
+        for (i, step) in kickSteps.enumerated() {
+            XCTAssertEqual(step.playMs, expectedTiming[i].play,
+                "kick step \(i+1) play time — 공식: \(expectedTiming[i].play)ms")
+            XCTAssertEqual(step.pauseMs, expectedTiming[i].pause,
+                "kick step \(i+1) pause time — 공식: \(expectedTiming[i].pause)ms")
+        }
+
+        // 총 kick duration 1664ms (공식).
+        let kickTotalMs = kickSteps.reduce(0) { $0 + $1.playMs + $1.pauseMs }
+        XCTAssertEqual(kickTotalMs, 1664,
+            "공식 page 12 kick total = 1520 play + 144 pause = 1664 ms")
+    }
+
+    // MARK: - Phase G5 (Codex audit P1-5): MotionCatalog chain duration parity
+
+    /// **GPT audit P1-5**: chain page (24, 38, 54) 의 rawChainDurationMs 가 공식
+    /// motion_4096.bin 의 next_page chain 총 시간과 일치해야 한다. 사용자에게 보일 때
+    /// "공식 모션" 라벨이면 이 시간 사용 — 단발 자세 durationMs 와 별도.
+    func testMotionCatalogChainDurationParity() {
+        let chainExpected: [(slot: UInt8, chainMs: UInt32)] = [
+            (24, 8192),  // d2 → d2 (chain)
+            (38, 7696),  // d2 (=bye bye) chain
+            (54, 8296),  // int → 55 → 56 → 58 chain
+        ]
+        for (slot, expectedChain) in chainExpected {
+            guard let meta = MotionCatalog.find(slot: slot) else {
+                XCTFail("slot \(slot) missing in catalog"); continue
+            }
+            XCTAssertEqual(meta.rawChainDurationMs, expectedChain,
+                "slot \(slot) (\(meta.rawName)) — 공식 chain duration \(expectedChain)ms")
+            // 단발 transition durationMs 는 chain 보다 짧아야 함 — 사용자 혼동 방지.
+            XCTAssertLessThan(meta.durationMs, expectedChain,
+                "slot \(slot) v1 single-pose durationMs (\(meta.durationMs)) 는 chain (\(expectedChain)) 보다 짧아야 함")
+        }
+        // single page (next_page=0) 는 rawChainDurationMs = nil 이어야 함.
+        for slot: UInt8 in [1, 4, 9, 12, 13, 15] {
+            let meta = MotionCatalog.find(slot: slot)!
+            XCTAssertNil(meta.rawChainDurationMs,
+                "slot \(slot) is single page — rawChainDurationMs must be nil")
+        }
+    }
+
+    /// **Phase G8 (Codex audit follow-up, 2026-05-15) — 옵션 A**: chain page 의
+    /// `isChain` 과 `effectiveDurationMs` computed property 검증. UI 가 caption /
+    /// alert 에서 사용.
+    func testMotionCatalogChainHelperProperties() {
+        // chain page 들 — isChain == true, effectiveDurationMs == rawChainDurationMs.
+        for (slot, expectedChain): (UInt8, UInt32) in [(24, 8192), (38, 7696), (54, 8296)] {
+            let meta = MotionCatalog.find(slot: slot)!
+            XCTAssertTrue(meta.isChain, "slot \(slot) is chain page")
+            XCTAssertEqual(meta.effectiveDurationMs, expectedChain,
+                "effectiveDurationMs uses chain duration when available")
+        }
+        // single page — isChain == false, effectiveDurationMs == durationMs.
+        for slot: UInt8 in [1, 4, 9, 12, 13, 15] {
+            let meta = MotionCatalog.find(slot: slot)!
+            XCTAssertFalse(meta.isChain, "slot \(slot) is single page")
+            XCTAssertEqual(meta.effectiveDurationMs, meta.durationMs,
+                "effectiveDurationMs falls back to durationMs for single page")
+        }
+    }
+
+    /// **GPT audit P1-5**: page 13 Left Kick 도 v1TargetPoseID 가 있어야 함.
+    /// 이전엔 nil 이어서 Right Kick / Left Kick UX 비대칭이었음.
+    func testPage13LeftKickHasV1TargetPose() {
+        let lk = MotionCatalog.find(slot: 13)!
+        XCTAssertNotNil(lk.v1TargetPoseID,
+            "page 13 Left Kick v1TargetPoseID 누락 — Pilot 메인 7 비대칭 UX")
+        XCTAssertEqual(lk.v1TargetPoseID, "kick_forward_left")
+        // PoseLibrary 에 실제로 등록돼 있어야 함.
+        XCTAssertNotNil(PoseLibrary.get("kick_forward_left"),
+            "kick_forward_left pose 가 PoseLibrary 에 누락")
+    }
+
+    /// **GPT audit P1-5**: page 38 raw name 은 공식 bin 에서 `d2` — 이전 `d2 bye` 는 잘못.
+    func testPage38RawNameMatchesOfficialBin() {
+        let bye = MotionCatalog.find(slot: 38)!
+        XCTAssertEqual(bye.rawName, "d2",
+            "page 38 raw name 공식 bin = 'd2' (display name 만 'Bye Bye')")
+        XCTAssertEqual(bye.displayNameKo, "손 흔들기")  // display 는 자유 — 한국어 라벨 유지
     }
 }

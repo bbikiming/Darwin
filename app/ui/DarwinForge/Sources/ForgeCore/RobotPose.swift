@@ -18,7 +18,23 @@ public struct RobotPose: Sendable, Equatable, Codable {
         return RobotPose(positions: dict)
     }()
 
-    /// **ROBOTIS 공식 walkready** — `motion_4096.bin` 의 page 9 step 0 그대로.
+    /// **Action page 9 walkready** — `motion_4096.bin` 의 page 9 step 0 raw 그대로.
+    ///
+    /// ## ⚠️ 이건 "공식 walkReady" 두 가지 중 하나다 (Codex audit P0-3, 2026-05-14)
+    ///
+    /// ROBOTIS-OP2 에는 walkReady 라는 이름의 자세가 **두 곳에** 존재한다:
+    ///
+    /// | anchor | 출처 | hip pitch | knee | ankle |
+    /// |---|---|---:|---:|---:|
+    /// | **이 `walkReady`** (Action page 9) | `motion_4096.bin` page 9 step 0 | ±36° | ±53° | ±30° |
+    /// | OP2 manager init pose (Rust 만 사용) | `op2_manager/config/ini_pose.yaml` | ±65° | ±130° | ±70° |
+    /// | 차이 | | **29°** | **77°** | **40°** |
+    ///
+    /// **이 자세는 Action 기반 단발 anchor** — Pilot teleop ARM, BalanceCritical 안전
+    /// 검증, Motion Studio 의 walk_ready 슬롯 모두 page 9 자세를 가리킨다.
+    /// 걷기 시작 자세 (`op2_manager init pose`) 와 혼동하지 말 것 — 그쪽은 Rust
+    /// `walk::ini_pose::OP2_MANAGER_INI_POSE_DEGREES` 에 있으며 SOCCER demo 의
+    /// 6 초 부드러운 진입에만 쓴다.
     ///
     /// 깊은 squat 자세: hip pitch ±36° / knee ±53° / ankle pitch ±30°.
     /// 무릎을 크게 굽혀 무게중심(CoM) 을 양 발 위에 정확히 정렬한다.

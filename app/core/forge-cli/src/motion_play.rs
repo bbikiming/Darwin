@@ -1,10 +1,26 @@
 //! `forge motion play` — 모션 페이지를 실 robot 에 송출 (Sprint 13).
 //!
-//! 안전 기본값:
+//! ## ⚠️ 공식 Action player 와 동등하지 않음 (Codex audit P1-4, 2026-05-14)
+//!
+//! 이 모듈은 **raw step coarse playback** 이다 — 공식 `Action.cpp` 의 PRE/MAIN/POST/
+//! PAUSE section + speed/accel/slope 기반 trapezoid 보간을 재현하지 않는다.
+//! 각 step 은 `set_positions_many` 한 번 + `sleep(play_ms + pause_ms)` 만 한다.
+//!
+//! 의미:
+//! - Bus traffic 패턴 / 모터 부하 곡선이 공식과 다름.
+//! - Joint compliance(slope) 가 적용 안 됨.
+//! - 짧은 play_time 의 빠른 step 에서 jerk 발생 가능.
+//!
+//! 정확한 공식 재생이 필요하면 별도 replayer 가 필요 — `forge motion replay-official`
+//! (계획됨). 현재는 step 자세 시퀀스 확인 + low-risk 단발 자세 전이용.
+//!
+//! ## 안전 기본값
 //! - **`--dry-run`** (기본 ON) → 패킷 stdout 출력만, 실 모터 송출 X
 //! - `--engage` → 실 모터 송출 (사용자 명시)
 //! - `precheck_motion` 자동 — V1/V3 통과 못 한 페이지는 거부
-//! - Ctrl+C 시그널 → `emergency_stop()` (torque OFF 다관절)
+//! - Ctrl+C 시그널 처리: **현재 placeholder**. 실 emergency stop 구현 전까지
+//!   사용자가 USB 케이블을 뽑거나 robot 측에서 직접 처리해야 함. P1 항목으로
+//!   `signal-hook` 도입 예정.
 //!
 //! 페이지 source:
 //! - `--slot <n>` — `motion_4096.bin` 슬롯
@@ -137,17 +153,20 @@ fn load_from_json(path: &std::path::Path) -> anyhow::Result<Vec<MotionPage>> {
 
 /// 한 step 의 positions 를 `[(JointId, u16)]` 로 디코드.
 ///
-/// 제외 조건:
-/// - INVALID flag (`0x4000`) — 페이지 헤더에서 미사용 마킹
-/// - TORQUE_OFF flag (`0x2000`) — 해당 관절 토크 OFF 의도
-/// - raw == 0 — unused 슬롯 (positions 배열 default)
+/// 제외 조건 (Phase G4 — Codex audit P1-4, 2026-05-14 정정):
+/// - INVALID flag (`0x4000`, Action.h:37) — 페이지 헤더에서 미사용 마킹
+/// - TORQUE_OFF flag (`0x2000`, Action.h:38) — 해당 관절 토크 OFF 의도
+///
+/// **이전 버전은 `raw == 0` 도 skip 했음** → 12-bit position 0 은 valid (MX-28 의
+/// 한 끝 위치) 이므로 잘못된 제외. ROBOTIS 공식도 raw==0 은 skip 하지 않는다.
 ///
 /// ROBOTIS PageData 의 `positions[0]` 은 reserved 라 `slot in 1..=20`.
 pub fn step_to_targets(step: &MotionStep) -> Vec<(JointId, u16)> {
     let mut out = Vec::new();
     for slot in 1..=NUM_JOINTS_IN_STEP.min(20) {
         let raw = step.positions[slot];
-        if raw == 0 || (raw & INVALID_BIT) != 0 || (raw & TORQUE_OFF_BIT) != 0 {
+        // INVALID / TORQUE_OFF flag bit 만 체크. raw==0 은 valid 12-bit position.
+        if (raw & INVALID_BIT) != 0 || (raw & TORQUE_OFF_BIT) != 0 {
             continue;
         }
         let Some(joint) = JointId::from_byte(slot as u8) else {
@@ -339,8 +358,13 @@ fn resolve_bin_path(arg: Option<&std::path::Path>) -> anyhow::Result<PathBuf> {
 }
 
 fn setup_ctrlc_handler() -> Result<(), Box<dyn std::error::Error>> {
-    // std-only. 실제 emergency_stop은 메인 thread 가 처리 — flag 시그널만 받음.
-    // 본 구현은 placeholder; 실 사용 시 `signal-hook` 같은 crate 권장.
+    // **Phase G4 (Codex audit P1-4)**: 현재 구현은 placeholder — std-only 로는
+    // SIGINT 후 자원 정리가 어렵다. `signal-hook` crate 도입 전까지 Ctrl+C 는
+    // 일반 종료 (자세 hold) 만 됨. emergency stop 보장 X.
+    //
+    // 사용자 안내: 위급 시 USB 케이블 분리 또는 robot 후면 reset.
+    // 향후 `signal-hook::iterator::Signals` 로 SIGINT 받아서 메인 thread 에 flag
+    // → 다음 step 직전 torque OFF + bus 종료.
     Ok(())
 }
 
@@ -349,8 +373,11 @@ mod tests {
     use super::*;
     use forge_core::motion::MotionStep;
 
+    /// Phase G4 (Codex audit P1-4): default 는 INVALID_BIT 로 채워서 "valid 인 slot 만
+    /// 명시적으로 set" 시나리오를 만든다. 이전엔 default 0 이라 raw==0 skip 가정에 의존.
     fn step_with(values: &[(usize, u16)]) -> MotionStep {
-        let mut positions = [0u16; NUM_JOINTS_IN_STEP];
+        let mut positions = [INVALID_BIT; NUM_JOINTS_IN_STEP];
+        positions[0] = 0; // slot 0 reserved
         for &(i, v) in values {
             positions[i] = v;
         }
@@ -361,6 +388,8 @@ mod tests {
         }
     }
 
+    /// **Phase G4 (Codex audit P1-4, 2026-05-14)**: INVALID/TORQUE_OFF flag bit 만
+    /// skip. raw==0 은 valid 12-bit position 이므로 통과해야 함 (이전 잘못된 skip 회귀 방지).
     #[test]
     fn step_to_targets_filters_invalid_flag_slots() {
         let s = step_with(&[
@@ -384,6 +413,17 @@ mod tests {
         let t = step_to_targets(&s);
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].1, 0x0FFF);
+    }
+
+    /// **Phase G4 (Codex audit P1-4)**: raw==0 은 valid position 이라 출력에 포함.
+    /// 이전엔 `raw == 0` skip 조건 때문에 falsely 제외됐던 회귀 방지.
+    #[test]
+    fn step_to_targets_includes_raw_zero_as_valid_position() {
+        let s = step_with(&[(1, 0)]); // raw==0 — valid 12-bit position
+        let t = step_to_targets(&s);
+        assert_eq!(t.len(), 1, "raw==0 must be a valid target (Codex P1-4)");
+        assert_eq!(t[0].0 as u8, 1);
+        assert_eq!(t[0].1, 0);
     }
 
     #[test]

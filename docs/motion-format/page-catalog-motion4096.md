@@ -174,7 +174,7 @@
 | `repeat` 분포 | 1(대부분), 4(239/240), 6(237), 20(241) |
 | `schedule` | 전부 10 = **TIME_BASE_SCHEDULE** |
 | chain 최대 길이 | 7 (Introduction: 41→47) |
-| stepnum=7 (포화) | 6 페이지 (`6 talk1`, `12 rk`, `13 lk`, `17 mul1`, `18 mul2`, `45 talk2`, `70 rPASS`, `71 lPASS`) |
+| stepnum=7 (포화) | 8 페이지 (`6 talk1`, `12 rk`, `13 lk`, `17 mul1`, `18 mul2`, `45 talk2`, `70 rPASS`, `71 lPASS`) [Phase G7 — Codex audit P2-10 정정] |
 | `exit` ≠ 0 | 0개 (현재 펌웨어는 미사용) |
 
 ## 9. 검증 노트

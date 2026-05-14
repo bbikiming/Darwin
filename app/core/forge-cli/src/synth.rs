@@ -877,44 +877,66 @@ fn current_iso8601_for_filename() -> String {
 }
 
 /// `MotionPage` → 512-byte `motion_4096.bin` 슬롯 페이로드.
+///
+/// PAGEHEADER offsets — `DARwIn-OP_ROBOTIS_v1.6.0/Framework/include/Action.h:41-59`
+/// 와 `forge_core::synth::library::decode_raw_page` 가 사용하는 정식 offset.
+///   name=0..13, reserved1=14, repeat=15, schedule=16, reserved2[3]=17..19,
+///   stepnum=20, reserved3=21, speed=22, reserved4=23, accel=24, next=25, exit=26,
+///   reserved5[4]=27..30, checksum=31, slope[31]=32..62, reserved6=63.
+///
+/// **Phase G1 (2026-05-14)**: 이전 버전은 stepnum=19/speed=21/accel=23/next=24/
+/// exit=25/slope=28 로 1~4 byte 시프트돼 있었음 — `forge synth commit` 으로 쓰면
+/// ROBOTIS Action player 가 stepnum/speed/accel/slope 를 잘못 읽어서 실제로
+/// motion 이 깨질 수 있는 P0 버그였다. Codex audit 2026-05-14 에서 발견.
+///
+/// **Phase G8 (2026-05-15)**: schedule(offset 16) = `TIME_BASE_SCHEDULE` (0x0A) 추가
+/// + 최종 checksum 계산 추가. 이전엔 둘 다 누락 → ROBOTIS `Action::LoadPage` (Action.cpp:
+/// 239-253) 의 `VerifyChecksum` 이 false → `ResetPage` 가 페이지를 0 으로 wipe →
+/// 사용자가 commit 한 모션이 실 로봇에서 빈 페이지로 사라지는 P0 데이터 손실 버그.
 fn encode_page_to_raw(page: &MotionPage, slot: u8) -> anyhow::Result<[u8; 512]> {
+    use forge_core::synth::library::{
+        set_action_checksum, HEADER_OFFSET_ACCEL, HEADER_OFFSET_EXIT, HEADER_OFFSET_NEXT,
+        HEADER_OFFSET_REPEAT, HEADER_OFFSET_SCHEDULE, HEADER_OFFSET_SLOPE, HEADER_OFFSET_SPEED,
+        HEADER_OFFSET_STEPNUM, HEADER_SIZE, STEP_SIZE, TIME_BASE_SCHEDULE,
+    };
+
     let mut buf = [0u8; 512];
 
-    // name[14]
+    // name[0..13]
     let name_bytes = page.name.as_bytes();
     let n = name_bytes.len().min(14);
     buf[..n].copy_from_slice(&name_bytes[..n]);
 
-    // PAGEHEADER offsets (motion::library decode_raw_page 와 정확히 mirror).
-    buf[15] = page.repeat;
-    buf[19] = page.steps.len() as u8;
-    buf[21] = page.speed;
-    buf[23] = page.accel;
-    buf[24] = page.next_page;
-    buf[25] = page.exit_page;
-    for (i, &c) in page.compliance.iter().enumerate() {
-        let off = 28 + i;
-        if off < 64 {
-            buf[off] = c;
-        }
+    buf[HEADER_OFFSET_REPEAT] = page.repeat;
+    // Phase G8 — 공식 motion_4096.bin 의 모든 페이지가 TIME_BASE.
+    buf[HEADER_OFFSET_SCHEDULE] = TIME_BASE_SCHEDULE;
+    buf[HEADER_OFFSET_STEPNUM] = page.steps.len() as u8;
+    buf[HEADER_OFFSET_SPEED] = page.speed;
+    buf[HEADER_OFFSET_ACCEL] = page.accel;
+    buf[HEADER_OFFSET_NEXT] = page.next_page;
+    buf[HEADER_OFFSET_EXIT] = page.exit_page;
+    // slope[31] = 32..62 (31 byte). compliance 배열이 31 길이라 그대로 매핑.
+    for (i, &c) in page.compliance.iter().enumerate().take(31) {
+        buf[HEADER_OFFSET_SLOPE + i] = c;
     }
     // slot id is preserved by file offset (no byte in header for it).
     let _ = slot;
 
-    // Steps: 64 byte each, max 7.
+    // Steps: 64 byte each, max 7. position[31] at offset 0..61, pause=62, time=63.
     for (s_idx, step) in page.steps.iter().take(7).enumerate() {
-        let base = 64 + s_idx * 64;
-        for (i, &pos) in step.positions.iter().enumerate() {
+        let base = HEADER_SIZE + s_idx * STEP_SIZE;
+        for (i, &pos) in step.positions.iter().enumerate().take(31) {
             let off = base + i * 2;
-            if off + 1 < base + 62 {
-                buf[off] = (pos & 0xFF) as u8;
-                buf[off + 1] = (pos >> 8) as u8;
-            }
+            buf[off] = (pos & 0xFF) as u8;
+            buf[off + 1] = (pos >> 8) as u8;
         }
         buf[base + 62] = step.pause_time;
         buf[base + 63] = step.play_time;
     }
 
+    // Phase G8 — 모든 필드 set 한 후 마지막 단계로 checksum 계산. 누락 시 ROBOTIS
+    // demo 가 페이지를 ResetPage 로 wipe → 사용자 작업 손실.
+    set_action_checksum(&mut buf);
     Ok(buf)
 }
 
@@ -943,13 +965,18 @@ fn simulate_ascii(pages: &[MotionPage]) -> anyhow::Result<()> {
             let pause_ms = step.pause_ms() as u32;
             elapsed_ms += play_ms + pause_ms;
             println!("  step {i}: t+{elapsed_ms:>5}ms  play={play_ms:>4}ms  pause={pause_ms:>4}ms");
-            // 핵심 4 관절 표시 (어깨, 골반, 무릎, 발목)
-            let head_tilt = step.positions[19] & 0x0FFF;
-            let r_shoulder = step.positions[0] & 0x0FFF;
-            let r_knee = step.positions[12] & 0x0FFF;
-            let r_ankle = step.positions[14] & 0x0FFF;
+            // **Phase G8 (Codex audit follow-up, 2026-05-15)**: ROBOTIS 공식 joint ID
+            // 와 1:1 인덱싱 (slot 0 reserved). 이전 [0/12/14/19] 는 P0-2 와 같은
+            // off-by-one — 사용자가 "R_KNEE" 라벨로 본 값이 실제로는 R_HIP_PITCH 였음.
+            //   R_SHOULDER_PITCH = 1, R_HIP_PITCH = 11, R_KNEE = 13,
+            //   R_ANKLE_PITCH = 15, HEAD_TILT = 20.
+            let r_shoulder = step.positions[1] & 0x0FFF;
+            let r_hip_pitch = step.positions[11] & 0x0FFF;
+            let r_knee = step.positions[13] & 0x0FFF;
+            let r_ankle = step.positions[15] & 0x0FFF;
+            let head_tilt = step.positions[20] & 0x0FFF;
             println!(
-                "          R_SH_PITCH={r_shoulder:>4}  R_KNEE={r_knee:>4}  R_ANKLE_PITCH={r_ankle:>4}  HEAD_TILT={head_tilt:>4}"
+                "          R_SH={r_shoulder:>4} R_HIP={r_hip_pitch:>4} R_KNEE={r_knee:>4} R_ANK={r_ankle:>4} HEAD={head_tilt:>4}"
             );
         }
         if page.next_page > 0 {
@@ -1044,8 +1071,12 @@ mod tests {
         std::env::remove_var("FORGE_MOTION_BIN");
     }
 
+    /// **Phase G1 (Codex audit 2026-05-14 P0-1)**: PAGEHEADER offset 검증.
+    ///
+    /// `Action.h:41-59` 의 공식 offset 으로 encode 했는지 byte 단위 확인 + decode
+    /// round-trip. 이전 회귀 (stepnum=19, speed=21 …)가 다시 들어오면 즉시 fail.
     #[test]
-    fn encode_page_round_trips_to_raw_size() {
+    fn encode_page_uses_official_action_h_offsets() {
         let lib_path = {
             let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             p.push(DEFAULT_BIN_RELATIVE);
@@ -1058,11 +1089,89 @@ mod tests {
         let page = lib.get(1).expect("page 1");
         let raw = encode_page_to_raw(page, 1).unwrap();
         assert_eq!(raw.len(), 512);
-        // 이름 14 byte 보존
+        // 이름 4 byte ("init") 보존
         assert_eq!(&raw[..4], b"init");
-        // stepnum offset 19
-        assert_eq!(raw[19], page.steps.len() as u8);
-        // speed offset 21
-        assert_eq!(raw[21], page.speed);
+        // Action.h:48-54 offsets (공식). 이전 1~4 byte 시프트되어 있던 P0 버그 회귀 방지.
+        assert_eq!(raw[15], page.repeat, "repeat byte must be at offset 15");
+        assert_eq!(raw[20], page.steps.len() as u8, "stepnum at offset 20 (was 19 — pre-G1 bug)");
+        assert_eq!(raw[22], page.speed, "speed at offset 22 (was 21 — pre-G1 bug)");
+        assert_eq!(raw[24], page.accel, "accel at offset 24 (was 23 — pre-G1 bug)");
+        assert_eq!(raw[25], page.next_page, "next at offset 25 (was 24 — pre-G1 bug)");
+        assert_eq!(raw[26], page.exit_page, "exit at offset 26 (was 25 — pre-G1 bug)");
+        // slope[31] = 32..62. compliance[0] 이 byte 32 에 들어가야 함.
+        assert_eq!(raw[32], page.compliance[0], "slope[0] at offset 32 (was 28 — pre-G1 bug)");
+        if page.compliance.len() > 1 {
+            assert_eq!(raw[33], page.compliance[1], "slope[1] at offset 33");
+        }
+    }
+
+    /// 공식 raw page 를 그대로 encode 한 후 다시 decode 해서 헤더 필드가 모두
+    /// 보존되는지 검증 (lossless round-trip).
+    #[test]
+    fn encode_then_decode_preserves_header_fields() {
+        use forge_core::motion::bin4096::RawPage;
+        use forge_core::synth::library::decode_raw_page;
+        use forge_core::motion::SafetyClass;
+
+        let lib_path = {
+            let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            p.push(DEFAULT_BIN_RELATIVE);
+            p
+        };
+        if !lib_path.exists() {
+            return;
+        }
+        let lib = PageLibrary::from_official_bin(&lib_path).unwrap();
+        // chain page 24 (d2, next=25) 로 round-trip — next_page 검증 위해.
+        let page = lib.get(24).expect("page 24");
+        let raw_bytes = encode_page_to_raw(page, 24).unwrap();
+        let round = RawPage {
+            index: 24,
+            name: page.name.clone(),
+            raw: raw_bytes.to_vec(),
+        };
+        let decoded = decode_raw_page(&round, SafetyClass::Safe).expect("decode");
+        assert_eq!(decoded.repeat, page.repeat);
+        assert_eq!(decoded.speed, page.speed);
+        assert_eq!(decoded.accel, page.accel);
+        assert_eq!(decoded.next_page, page.next_page, "next_page round-trip");
+        assert_eq!(decoded.exit_page, page.exit_page);
+        assert_eq!(decoded.steps.len(), page.steps.len());
+        // 첫 step 의 첫 관절 position round-trip.
+        if !page.steps.is_empty() {
+            assert_eq!(decoded.steps[0].positions[1], page.steps[0].positions[1]);
+            assert_eq!(decoded.steps[0].play_time, page.steps[0].play_time);
+        }
+    }
+
+    /// **Phase G8 (Codex audit follow-up, 2026-05-15)**: encoded buffer 가
+    /// ROBOTIS `Action::VerifyChecksum` (Action.cpp:30-44) 의 byte-sum==0xff 조건을
+    /// 만족 + schedule = TIME_BASE_SCHEDULE (0x0A). 누락 시 ROBOTIS demo 가 페이지를
+    /// reset 으로 wipe 하는 P0 회귀 방지.
+    #[test]
+    fn encode_page_passes_robotis_verify_checksum_and_time_base_schedule() {
+        use forge_core::synth::library::{
+            verify_action_checksum, HEADER_OFFSET_SCHEDULE, TIME_BASE_SCHEDULE,
+        };
+
+        let lib_path = {
+            let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            p.push(DEFAULT_BIN_RELATIVE);
+            p
+        };
+        if !lib_path.exists() {
+            return;
+        }
+        let lib = PageLibrary::from_official_bin(&lib_path).unwrap();
+        let page = lib.get(1).expect("page 1");
+        let raw = encode_page_to_raw(page, 1).unwrap();
+        assert_eq!(
+            raw[HEADER_OFFSET_SCHEDULE], TIME_BASE_SCHEDULE,
+            "schedule byte must be TIME_BASE (0x0A) — ROBOTIS 공식 motion 의 schedule"
+        );
+        assert!(
+            verify_action_checksum(&raw),
+            "encoded buffer must pass ROBOTIS VerifyChecksum — 누락 시 LoadPage 가 ResetPage 호출 (Action.cpp:249)"
+        );
     }
 }

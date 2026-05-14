@@ -73,15 +73,31 @@ impl Library {
         self.by_id.is_empty()
     }
 
-    /// ROBOTIS-OP2 공식 카탈로그 import.
+    /// ROBOTIS-OP2 공식 카탈로그 import (**legacy stub** — placeholder steps).
     ///
-    /// `motion_4096.bin` 의 raw 페이지 + [`OFFICIAL_CATALOG`] 의 ID·이름·안전
-    /// 분류를 결합해 등록. 등록되는 모션:
+    /// ## ⚠️ Phase G7 (Codex audit P2-9, 2026-05-14): legacy / placeholder path
+    ///
+    /// 이 함수는 **raw page 의 step 본문을 디코드하지 않는다** — `steps: Vec::new()`
+    /// 빈 벡터와 placeholder header (compliance=[5;31], accel=0) 만 등록한다.
+    /// `MotionRecord` 의 이름/안전 분류 검색용 인덱스로만 의미가 있다.
+    ///
+    /// **실 raw step 이 필요하면** [`crate::synth::library::PageLibrary::from_official_bin`]
+    /// 사용. 그쪽은 `decode_raw_page` 로 31 슬롯 position + 7 step 모두 복원한다.
+    ///
+    /// 두 경로의 차이:
+    ///
+    /// | 함수 | steps 본문 | header (slope/accel) | metadata |
+    /// |---|---|---|---|
+    /// | `with_official_catalog` (이 함수) | 비어있음 | placeholder | display_name + safety |
+    /// | `PageLibrary::from_official_bin` | 7 step 모두 디코드 | 공식 raw 그대로 | tags + body_regions + duration |
+    ///
+    /// 등록되는 모션:
     /// - **Safe** (11개): Stand up, Walk ready, Yes, No, Thank you, Sit down,
     ///   Yes Go!, Wow!, Oops, Clap please, Bye bye.
     /// - **Caution** (2개): Get up (Front), Get up (Back).
     /// - **HighRisk** (3개): Right Kick, Left Kick, Hand Standing — 사용자
     ///   confirmation 후에만 실행.
+    #[deprecated(since = "0.2.0", note = "Use synth::library::PageLibrary::from_official_bin for full raw page decode")]
     pub fn with_official_catalog(raw_pages: &[RawPage]) -> Self {
         let mut lib = Self::new();
         for entry in OFFICIAL_CATALOG {

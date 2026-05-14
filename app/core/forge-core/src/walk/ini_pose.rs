@@ -1,4 +1,20 @@
-//! 공식 walkReady 자세 — ROBOTIS-OP2 `op2_manager/config/ini_pose.yaml` 1:1.
+//! **OP2 manager init pose** — ROBOTIS-OP2 `op2_manager/config/ini_pose.yaml` 1:1.
+//!
+//! ## 중요: 이건 "공식 walkReady" 두 가지 중 하나다 (Codex audit P0-3, 2026-05-14)
+//!
+//! | anchor | 출처 | hip pitch | knee | ankle |
+//! |---|---|---:|---:|---:|
+//! | **OP2 manager init** (이 모듈) | `op2_manager/config/ini_pose.yaml:47-52` | ±65° | ±130° | ±70° |
+//! | **Action page 9** ([`crate::motion::walkready`]) | `motion_4096.bin` page 9 step 0 | ±36° | ±53° | ±30° |
+//! | **차이** | 두 자세는 의미가 다름 | **29°** | **77°** | **40°** |
+//!
+//! 이 모듈은 **OP2 manager init pose** — `op2_manager` 의 walk 시작 자세이며 6 초 동안
+//! 부드럽게 진입한다 (`mov_time = 6.0`). deep squat 이 강해서 SOCCER demo / walk_tuner 의
+//! 보행 시작 자세로 적합.
+//!
+//! **Action 기반 단발 자세 anchor 는 [`crate::motion::walkready`]** —
+//! `ACTION_PAGE9_WALKREADY_RAW`. UI `RobotPose.walkReady`, Pilot teleop ARM 상태,
+//! BalanceCritical 안전 검증은 모두 page 9 자세를 가리킨다.
 //!
 //! 모든 20관절의 목표 각도를 도(degree) 단위로 정의하고, MX-28 raw로 변환한
 //! `(JointId, u16)` 시퀀스를 제공한다. 토크 ramp + 부드러운 보간으로 적용하는
@@ -12,10 +28,12 @@
 
 use crate::joint::{degrees_to_position, JointId};
 
-/// 공식 walkReady 자세. 20관절 도 단위.
+/// **OP2 manager init pose** — `ini_pose.yaml` tar_pose. 20관절 도 단위.
 ///
-/// 각 entry는 `ini_pose.yaml` 의 `tar_pose:` 와 같은 순서·값.
-pub const WALK_READY_DEGREES: [(JointId, f64); 20] = [
+/// 각 entry는 `op2_manager/config/ini_pose.yaml:36-56` 의 `tar_pose:` 와 같은 순서·값.
+/// hip ±65° / knee ±130° / ankle ±70° — Action page 9 (`ACTION_PAGE9_WALKREADY_RAW`) 보다
+/// **deep squat 강도가 약 2배** 라서 SOCCER demo 의 보행 시작 자세로 적합.
+pub const OP2_MANAGER_INI_POSE_DEGREES: [(JointId, f64); 20] = [
     (JointId::RShoulderPitch, -48.0),
     (JointId::LShoulderPitch, 48.0),
     (JointId::RShoulderRoll, -20.0),
@@ -47,14 +65,18 @@ pub fn neutral_targets() -> [(JointId, u16); 20] {
     out
 }
 
-/// walkReady의 raw 위치 — `(JointId, raw u16)` 20개.
-pub fn walk_ready_targets() -> [(JointId, u16); 20] {
+/// **OP2 manager init pose** 의 raw 위치 — `(JointId, raw u16)` 20개.
+pub fn op2_manager_ini_pose_targets() -> [(JointId, u16); 20] {
     let mut out = [(JointId::HeadPan, 2048u16); 20];
-    for (i, (j, deg)) in WALK_READY_DEGREES.iter().enumerate() {
+    for (i, (j, deg)) in OP2_MANAGER_INI_POSE_DEGREES.iter().enumerate() {
         out[i] = (*j, degrees_to_position(*deg));
     }
     out
 }
+
+// Phase G3 (Codex audit P0-3, 2026-05-14): `walk_ready_targets` / `OP2_MANAGER_INI_POSE_DEGREES`
+// 옛 이름은 외부 사용처 (forge-cli main.rs, walk/mod.rs re-export) 정리 후 완전 제거.
+// 현재는 새 이름만 노출 — pub use 로 backward compat 제공.
 
 /// 두 자세 사이를 t∈[0,1]로 선형 보간.
 ///
@@ -104,15 +126,15 @@ mod tests {
 
     #[test]
     fn walk_ready_has_20_joints() {
-        assert_eq!(WALK_READY_DEGREES.len(), 20);
-        assert_eq!(walk_ready_targets().len(), 20);
+        assert_eq!(OP2_MANAGER_INI_POSE_DEGREES.len(), 20);
+        assert_eq!(op2_manager_ini_pose_targets().len(), 20);
     }
 
     #[test]
     fn walk_ready_joint_order_matches_official() {
         // ini_pose.yaml 의 1..20 순서 그대로.
         let expected_order: [JointId; 20] = JointId::ALL;
-        for (i, (j, _)) in WALK_READY_DEGREES.iter().enumerate() {
+        for (i, (j, _)) in OP2_MANAGER_INI_POSE_DEGREES.iter().enumerate() {
             assert_eq!(*j, expected_order[i]);
         }
     }
@@ -120,7 +142,7 @@ mod tests {
     #[test]
     fn walk_ready_critical_angles_match_yaml() {
         let map: std::collections::HashMap<JointId, f64> =
-            WALK_READY_DEGREES.iter().copied().collect();
+            OP2_MANAGER_INI_POSE_DEGREES.iter().copied().collect();
         // ini_pose.yaml:47-52
         assert!((map[&JointId::RHipPitch] - -65.0).abs() < 1e-9);
         assert!((map[&JointId::LHipPitch] - 65.0).abs() < 1e-9);
@@ -137,7 +159,7 @@ mod tests {
     #[test]
     fn walk_ready_raw_values_within_limits() {
         use crate::joint::JointLimits;
-        for (j, raw) in walk_ready_targets() {
+        for (j, raw) in op2_manager_ini_pose_targets() {
             let limits = JointLimits::for_joint(j);
             let clamped = limits.clamp_position(raw);
             assert_eq!(
@@ -158,7 +180,7 @@ mod tests {
     #[test]
     fn interpolate_endpoints() {
         let from = neutral_targets();
-        let to = walk_ready_targets();
+        let to = op2_manager_ini_pose_targets();
         let at_zero = interpolate(&from, &to, 0.0);
         assert_eq!(at_zero, from);
         let at_one = interpolate(&from, &to, 1.0);
@@ -168,7 +190,7 @@ mod tests {
     #[test]
     fn interpolate_midpoint_is_average() {
         let from = neutral_targets();
-        let to = walk_ready_targets();
+        let to = op2_manager_ini_pose_targets();
         let mid = interpolate(&from, &to, 0.5);
         for i in 0..20 {
             let avg = ((from[i].1 as u32 + to[i].1 as u32) / 2) as u16;

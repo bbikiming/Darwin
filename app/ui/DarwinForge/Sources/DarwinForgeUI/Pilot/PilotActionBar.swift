@@ -52,9 +52,16 @@ public struct PilotActionBar: View {
             }
         }
         .alert(item: $pendingConfirm) { meta in
-            Alert(
+            // **Phase G8 (Codex audit follow-up, 2026-05-15) — 옵션 A**: chain page 면
+            // 공식 demo 의 chain 길이 (8초+) 도 함께 표시. Mac v1 은 단발 자세만 송출 —
+            // 사용자가 "왜 송출이 일찍 끝나지?" 혼동 방지.
+            let chainNote: String = {
+                guard meta.isChain, let chainMs = meta.rawChainDurationMs else { return "" }
+                return "\n\n📎 참고: ROBOTIS 공식 chain 모션은 \(String(format: "%.1f", Double(chainMs)/1000.0))초 입니다. Mac 은 v1 에서 단발 자세만 보내고 끝납니다 (chain 재생은 ROBOTIS demo 위임)."
+            }()
+            return Alert(
                 title: Text("위험 동작 확인"),
-                message: Text("\(meta.displayNameKo)\n실행하면 \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초 동안 \(meta.bodyRegions.first?.rawValue ?? "관절") 가(이) 움직입니다.\n\ncradle 거치를 확인했나요?"),
+                message: Text("\(meta.displayNameKo)\n실행하면 \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초 동안 \(meta.bodyRegions.first?.rawValue ?? "관절") 가(이) 움직입니다.\(chainNote)\n\ncradle 거치를 확인했나요?"),
                 primaryButton: .destructive(Text("확인 후 실행")) {
                     Task { _ = await channel.sendMotion(slot: meta.slot, confirmRisk: true) }
                 },
@@ -130,6 +137,14 @@ public struct PilotActionBar: View {
                     Text(String(format: "%.1fs", Double(meta.durationMs)/1000.0))
                         .font(.system(size: DFFontSize.s9, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
+                    // **Phase G8 (Codex audit follow-up, 2026-05-15) — 옵션 A**:
+                    // chain page 면 공식 demo 의 chain 길이도 caption 표시.
+                    // Mac v1 은 단발 자세 송출만 — chain 재생은 ROBOTIS demo 위임.
+                    if let chainMs = meta.rawChainDurationMs {
+                        Text("(공식 \(String(format: "%.1f", Double(chainMs)/1000.0))s)")
+                            .font(.system(size: DFFontSize.s9, design: .monospaced))
+                            .foregroundStyle(DFColor.info.opacity(DFOpacity.o70))
+                    }
                 }
                 .lineLimit(1)
 
