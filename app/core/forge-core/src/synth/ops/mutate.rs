@@ -141,7 +141,13 @@ pub fn apply_mutation(page: &mut MotionPage, mutation: &Mutation) -> Result<()> 
                         "AmplitudeScale: invalid joint id {jid}"
                     )));
                 }
-                let idx = (*jid - 1) as usize;
+                // **Phase G9 (Codex audit 3rd pass, 2026-05-15)**: ROBOTIS 공식 인덱싱
+                // `positions[joint_id]` 1:1. 이전엔 `(*jid - 1)` off-by-one 이라 같은
+                // 파일의 `JointOffset` (line 109) 와 다른 슬롯을 건드렸음:
+                //   joint_id=13 (R_KNEE) → idx=12 (L_HIP_PITCH) 잘못 변경
+                //   CLI/MCP 의 `1..=20` 전체 amplitude → slot 0 reserved 건드림 +
+                //   slot 20 HEAD_TILT 누락. 사용자 합성 결과가 의도와 다른 P1 실버그였다.
+                let idx = *jid as usize;
                 for step in page.steps.iter_mut() {
                     step.positions[idx] = apply_amplitude_scale(step.positions[idx], *factor);
                 }
@@ -331,11 +337,15 @@ mod tests {
 
     // ---- AmplitudeScale ----
 
+    /// **Phase G9 (Codex audit 3rd pass, 2026-05-15)**: ROBOTIS 공식 인덱싱
+    /// `positions[joint_id]` 1:1 (slot 0 reserved). 이전 테스트는 R_KNEE 라고
+    /// 라벨링하면서 실제로는 `positions[12]` (L_HIP_PITCH) 를 검증해서 off-by-one
+    /// 버그를 가렸다. 이제 `joint_id=13` → `positions[13]` 만 검증.
     #[test]
     fn amplitude_scale_50pct_halves_joint_motion() {
-        // page 12 right kick 의 R_KNEE (id 13, idx 12) — 큰 변화 있는 관절.
+        // page 12 right kick 의 R_KNEE (id 13, positions[13]) — 큰 변화 있는 관절.
         let mut p = page_12_right_kick();
-        let before_step3 = p.steps[3].positions[12] & POSITION_MASK; // step 3 = kick impact
+        let before_step3 = p.steps[3].positions[13] & POSITION_MASK; // step 3 = kick impact
         apply_mutation(
             &mut p,
             &Mutation::AmplitudeScale {
@@ -344,7 +354,7 @@ mod tests {
             },
         )
         .expect("apply");
-        let after_step3 = p.steps[3].positions[12] & POSITION_MASK;
+        let after_step3 = p.steps[3].positions[13] & POSITION_MASK;
 
         // 중심점(2048)에서의 거리가 절반이 되어야 한다.
         let before_dist = (before_step3 as i32 - 2048).abs();
@@ -352,6 +362,77 @@ mod tests {
         assert!(
             (after_dist as f32 - before_dist as f32 * 0.5).abs() < 2.0,
             "before_dist={before_dist} after_dist={after_dist} should ratio ≈ 0.5"
+        );
+    }
+
+    /// **Phase G9 (Codex audit 3rd pass)**: AmplitudeScale 회귀 가드 — joint_id=13
+    /// 으로 scale 하면 `positions[13]` (R_KNEE) 만 건드리고 `positions[12]`
+    /// (L_HIP_PITCH) 는 그대로. 이전 off-by-one 부활 시 즉시 fail.
+    #[test]
+    fn amplitude_scale_touches_only_target_joint_id_slot() {
+        let mut p = page_12_right_kick();
+        let before_12 = p.steps[3].positions[12]; // L_HIP_PITCH — 안 건드려야 함
+        let before_14 = p.steps[3].positions[14]; // L_KNEE — 안 건드려야 함
+
+        apply_mutation(
+            &mut p,
+            &Mutation::AmplitudeScale {
+                joint_ids: vec![13], // R_KNEE
+                factor: 0.5,
+            },
+        )
+        .expect("apply");
+
+        assert_eq!(
+            p.steps[3].positions[12], before_12,
+            "joint_id=13 amplitude scale 이 positions[12] (L_HIP_PITCH) 를 건드림 — off-by-one 회귀"
+        );
+        assert_eq!(
+            p.steps[3].positions[14], before_14,
+            "joint_id=13 amplitude scale 이 positions[14] (L_KNEE) 를 건드림 — overrun"
+        );
+    }
+
+    /// **Phase G9 (Codex audit 3rd pass)**: CLI/MCP 가 흔히 쓰는 전체 amplitude
+    /// (`joint_ids: (1u8..=20).collect()`) 가:
+    ///   1. `positions[0]` (reserved slot) 은 절대 건드리지 않음.
+    ///   2. `positions[20]` (HEAD_TILT) 도 정확히 변경 (이전 off-by-one 으로 누락됐던 슬롯).
+    #[test]
+    fn amplitude_scale_full_1_to_20_respects_reserved_slot_and_includes_head_tilt() {
+        // factor != 1.0 일 때 모든 valid slot 의 값이 (중심 거리 기준) 변하도록.
+        // page 9 walkready 는 모든 valid joint 에 non-2048 값.
+        let mut p = page_9_walkready();
+        let before_slot_0 = p.steps[0].positions[0];      // reserved — 안 건드려야 함
+        let before_slot_20 = p.steps[0].positions[20];    // HEAD_TILT — 건드려야 함
+
+        apply_mutation(
+            &mut p,
+            &Mutation::AmplitudeScale {
+                joint_ids: (1u8..=20).collect(),
+                factor: 0.5,
+            },
+        )
+        .expect("apply");
+
+        assert_eq!(
+            p.steps[0].positions[0], before_slot_0,
+            "전체 amplitude scale 이 slot 0 reserved 를 건드림 — 공식 규약 위반"
+        );
+
+        // HEAD_TILT (id 20) 의 12-bit value 가 중심에서 절반 거리로 줄었어야 함.
+        let head_before_val = (before_slot_20 & POSITION_MASK) as i32;
+        let head_after_val = (p.steps[0].positions[20] & POSITION_MASK) as i32;
+        let before_dist = (head_before_val - 2048).abs();
+        let after_dist = (head_after_val - 2048).abs();
+        // page 9 의 HEAD_TILT = 2161 → 거리 113 → 절반 ≈ 56.
+        assert!(
+            before_dist > 5,
+            "HEAD_TILT 가 walkready 에서 충분히 큰 변화여야 검증 의미 — before_dist={before_dist}"
+        );
+        assert!(
+            (after_dist as f32 - before_dist as f32 * 0.5).abs() < 2.0,
+            "HEAD_TILT (slot 20) amplitude 가 적용 안 됨 — off-by-one 으로 slot 19 까지만 처리한 회귀? \
+             before_dist={before_dist} after_dist={after_dist}"
         );
     }
 
@@ -408,10 +489,11 @@ mod tests {
         assert_eq!(out[0].id, p.id); // ID 보존
     }
 
+    /// **Phase G9 (Codex audit 3rd pass, 2026-05-15)**: AmplitudeScale 가 12-bit
+    /// value 만 건드리고 상위 flag bit (0x4000 INVALID / 0x2000 TORQUE_OFF) 는 보존.
+    /// 라벨 정정 — ROBOTIS 공식 `positions[joint_id]` 1:1 (slot 0 reserved).
     #[test]
     fn mutate_preserves_invalid_flag_bits() {
-        // page 12 step 0 의 idx 21..=25 (unused) 는 0x4000 (INVALID), idx 0 의
-        // R_SHOULDER_PITCH 도 0x4000 — mutation 후에도 상위 4 bit 보존되어야 함.
         let p = page_12_right_kick();
         let op = Mutate;
         let params = MutateParams {
@@ -429,10 +511,15 @@ mod tests {
             let after = out[0].steps[0].positions[i] & FLAG_MASK;
             assert_eq!(before, after, "slot {i} flag bits must be preserved");
         }
-        // body joint (id 1, idx 0) 의 flag bit 도 보존.
-        let before_id1 = p.steps[0].positions[0] & FLAG_MASK;
-        let after_id1 = out[0].steps[0].positions[0] & FLAG_MASK;
-        assert_eq!(before_id1, after_id1, "id 1 flag bits must be preserved");
+        // R_SHOULDER_PITCH (id 1, positions[1]) 의 flag bit 도 보존.
+        let before_id1 = p.steps[0].positions[1] & FLAG_MASK;
+        let after_id1 = out[0].steps[0].positions[1] & FLAG_MASK;
+        assert_eq!(before_id1, after_id1, "id 1 (R_SHOULDER_PITCH) flag bits must be preserved");
+        // slot 0 (reserved) 는 mutation 자체가 안 닿음.
+        assert_eq!(
+            p.steps[0].positions[0], out[0].steps[0].positions[0],
+            "slot 0 reserved 는 amplitude scale 이 건드리지 않음 (Phase G9)"
+        );
     }
 
     #[test]
