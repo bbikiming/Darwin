@@ -507,6 +507,82 @@ final class WalkMotionLibraryTests: XCTestCase {
         }
     }
 
+    // MARK: - Phase G12 (Codex audit 4th pass, 2026-05-15): preset 별 시각화 차이
+
+    /// **Phase G12 P0 회귀 가드**: 각 preset 의 defaultTuning 이 정확히 다른 값을 가진다.
+    /// 이전 버그는 `WalkLabSession.tick` sim mode 가 모든 preset 에 `strideMm: 25` 하드코드
+    /// → 어떤 preset 을 선택해도 모델 애니메이션 동일했음. defaultTuning 의 정량 차이가
+    /// preset 별 시각화 차이의 근거.
+    func testWalkMotionDefaultTuningDiffersPerPreset() {
+        // 정량 — 각 preset 의 design intent.
+        let expected: [(preset: WalkLabPreset, stride: Double, turn: Double, period: Double)] = [
+            (.march,      0,  0,    650),
+            (.slowWalk,   15, 0,    700),
+            (.normalWalk, 25, 0,    600),
+            (.fastWalk,   32, 0,    500),
+            (.turnLeft,   0,  10,   650),
+            (.turnRight,  0,  -10,  650),
+        ]
+        for e in expected {
+            let t = WalkMotionLibrary.defaultTuning(for: e.preset)
+            XCTAssertEqual(t.strideMm, e.stride, accuracy: 0.01,
+                "\(e.preset.rawValue) stride 가 design intent (\(e.stride)) 와 다름")
+            XCTAssertEqual(t.turnDeg, e.turn, accuracy: 0.01,
+                "\(e.preset.rawValue) turn 이 design intent (\(e.turn)°) 와 다름")
+            XCTAssertEqual(t.periodMs, e.period, accuracy: 0.01,
+                "\(e.preset.rawValue) period 가 design intent (\(e.period)ms) 와 다름")
+        }
+    }
+
+    /// **Phase G12 P0 회귀 가드**: preset 별 simWalkingPose 가 서로 다른 자세 합성.
+    /// 같은 시각 (timeMs=300ms) 에서 march vs normalWalk 의 hip_pitch / knee 가 raw 단위로
+    /// 식별 가능한 차이를 보임. 동일 결과 = 옛 하드코드 회귀.
+    func testWalkMotionSimPosesDifferAcrossPresets() {
+        let timeMs = 300.0   // 한 cycle 의 절반 지점.
+        let presets: [WalkLabPreset] = [.march, .slowWalk, .normalWalk, .fastWalk]
+        var hipPitchByPreset: [WalkLabPreset: Int] = [:]
+        for p in presets {
+            let tuning = WalkMotionLibrary.defaultTuning(for: p)
+            let pose = WalkMotionLibrary.simWalkingPose(timeMs: timeMs, tuning: tuning)!
+            hipPitchByPreset[p] = pose.raw(.rHipPitch)
+        }
+
+        // march (stride=0) 와 fastWalk (stride=32) 의 hip_pitch 가 명확히 다름.
+        // strideMm 차이가 32mm — 보행 진폭 차이로 hip 자세 raw 가 최소 5 raw (~0.4°) 이상.
+        let marchHip = hipPitchByPreset[.march]!
+        let fastHip = hipPitchByPreset[.fastWalk]!
+        XCTAssertGreaterThanOrEqual(abs(marchHip - fastHip), 5,
+            "march vs fastWalk hip_pitch 차이 < 5 raw — preset 효과가 안 나타남 (옛 하드코드 회귀)")
+
+        // turnLeft vs turnRight 도 검증 — yaw command 가 부호 반대.
+        let leftTuning = WalkMotionLibrary.defaultTuning(for: .turnLeft)
+        let rightTuning = WalkMotionLibrary.defaultTuning(for: .turnRight)
+        let leftPose = WalkMotionLibrary.simWalkingPose(timeMs: timeMs, tuning: leftTuning)!
+        let rightPose = WalkMotionLibrary.simWalkingPose(timeMs: timeMs, tuning: rightTuning)!
+        // hip_yaw 가 좌우 회전에서 부호 반대 또는 다른 값이어야 함.
+        let leftYaw = leftPose.raw(.rHipYaw)
+        let rightYaw = rightPose.raw(.rHipYaw)
+        XCTAssertNotEqual(leftYaw, rightYaw,
+            "turnLeft vs turnRight 의 R_HIP_YAW raw 가 동일 — turn 효과가 안 나타남")
+    }
+
+    /// **Phase G12 회귀 가드**: continuousWalkPlan 도 preset 별 다른 cycle 자세 합성.
+    /// `WalkMotionLibrary.continuousWalkPlan(for:tuning:)` 의 cycle step 자세 차이로 검증.
+    func testContinuousWalkPlanCyclesDifferAcrossPresets() {
+        let marchPlan = WalkMotionLibrary.continuousWalkPlan(for: .march)!
+        let fastPlan = WalkMotionLibrary.continuousWalkPlan(for: .fastWalk)!
+        // 두 plan 모두 6 phase 의 cycle.
+        XCTAssertEqual(marchPlan.cycle.count, 6)
+        XCTAssertEqual(fastPlan.cycle.count, 6)
+        // 같은 phase index 의 자세가 stride 차이로 인해 달라야 함.
+        let marchPhase0 = marchPlan.cycle[0].toPose()
+        let fastPhase0 = fastPlan.cycle[0].toPose()
+        let marchHip = marchPhase0.raw(.rHipPitch)
+        let fastHip = fastPhase0.raw(.rHipPitch)
+        XCTAssertGreaterThanOrEqual(abs(marchHip - fastHip), 5,
+            "march vs fastWalk continuousWalkPlan phase[0] hip 자세 동일 — 하드코드 회귀")
+    }
+
     /// **Phase G10 핵심**: phase 0 (시작) 과 phase 5 (끝) 사이 거리가 매끄러운 wrap 범위.
     /// period=600 ms × 11% (0.92→0.03 사이) ≈ 66 ms 시간 폭 안에서 보간 가능해야.
     /// 너무 큰 차이는 jerk 유발.

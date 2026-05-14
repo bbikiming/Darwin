@@ -161,7 +161,13 @@ public enum WalkMotionLibrary {
         )
     }
 
-    private static func defaultTuning(for preset: WalkLabPreset) -> AdvancedTuning {
+    /// preset 별 default tuning — sim/실 송출 양쪽에서 동일 합성 결과 보장.
+    ///
+    /// **Phase G12 (Codex audit 4th pass, 2026-05-15)**: 이전 `WalkLabSession.tick`
+    /// 의 sim mode 가 이 함수 대신 `(strideMm: 25, sideMm: 0, turnDeg: 0)` 하드코드를
+    /// 써서 **모든 preset 이 동일 보행 자세** 로 시각화됐던 P0 버그를 차단. public 노출로
+    /// 단일 source-of-truth.
+    public static func defaultTuning(for preset: WalkLabPreset) -> AdvancedTuning {
         switch preset {
         case .idle:
             return AdvancedTuning(strideMm: 0, sideMm: 0, turnDeg: 0, periodMs: 600, footHeightMm: 40, balanceGain: 1.0)

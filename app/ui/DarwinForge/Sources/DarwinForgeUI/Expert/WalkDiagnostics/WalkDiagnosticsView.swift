@@ -22,6 +22,8 @@ public struct WalkDiagnosticsView: View {
     @State private var cmdY: Double = 0.0
     @State private var cmdA: Double = 0.0
     @State private var enabled: Bool = false
+    /// **Phase G12 (2026-05-15)**: preset quick-select — nil 이면 manual 입력 중.
+    @State private var activePreset: WalkLabPreset? = nil
 
     // MARK: - State (IMU synthesis params)
     @State private var gyroNoiseSigma: Double = 0.02
@@ -237,19 +239,71 @@ public struct WalkDiagnosticsView: View {
     private var commandCard: some View {
         DFPanel(
             "Walk Command",
-            subtitle: "x · y · a (per cycle)",
+            subtitle: "preset 또는 직접 입력",
             icon: "figure.walk",
             tint: DFColor.accent
         ) {
             VStack(alignment: .leading, spacing: DFSpace.sm) {
+                // **Phase G12 (Codex audit 4th pass, 2026-05-15)**: preset quick-select.
+                // 사용자가 보행 진단 의도를 명확히 — 6개 preset 클릭 시 cmdX/Y/A 자동 채움.
+                Text("PRESET")
+                    .font(.system(size: DFFontSize.s9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(DFColor.textSecondary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 68), spacing: 4)], spacing: 4) {
+                    ForEach(WalkLabPreset.allCases) { preset in
+                        Button(action: { applyPreset(preset) }) {
+                            VStack(spacing: 2) {
+                                Image(systemName: preset.icon)
+                                    .font(.system(size: DFFontSize.s10))
+                                Text(preset.label)
+                                    .font(.system(size: DFFontSize.s9, design: .monospaced))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 6)
+                            .frame(maxWidth: .infinity)
+                            .background(activePreset == preset
+                                ? DFColor.accent.opacity(DFOpacity.o20)
+                                : DFColor.elev2)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DFRadius.xs)
+                                    .stroke(activePreset == preset
+                                        ? DFColor.accent
+                                        : DFColor.textSecondary.opacity(DFOpacity.o20),
+                                            lineWidth: 0.5)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Divider().padding(.vertical, 2)
+                Text("MANUAL")
+                    .font(.system(size: DFFontSize.s9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(DFColor.textSecondary)
                 numericRow(label: "x", unit: "m/cyc", value: $cmdX, range: -0.05...0.05, step: 0.005, fmt: "%+.3f")
                 numericRow(label: "y", unit: "m/cyc", value: $cmdY, range: -0.03...0.03, step: 0.005, fmt: "%+.3f")
                 numericRow(label: "a", unit: "rad/cyc", value: $cmdA, range: -0.3...0.3, step: 0.01, fmt: "%+.3f")
             }
-            .onChange(of: cmdX) { _, _ in pushCommand() }
-            .onChange(of: cmdY) { _, _ in pushCommand() }
-            .onChange(of: cmdA) { _, _ in pushCommand() }
+            .onChange(of: cmdX) { _, _ in pushCommand(); activePreset = nil }
+            .onChange(of: cmdY) { _, _ in pushCommand(); activePreset = nil }
+            .onChange(of: cmdA) { _, _ in pushCommand(); activePreset = nil }
         }
+    }
+
+    /// **Phase G12 (2026-05-15)**: preset 클릭 시 cmdX/Y/A 를 preset 의 walk command 로 자동
+    /// 채움. WalkLabPreset.command 의 (x, y, a) 가 cycle 당 이동량 — diagnostic engine 의
+    /// numeric input 과 단위 호환.
+    private func applyPreset(_ preset: WalkLabPreset) {
+        let cmd = preset.command
+        cmdX = cmd.x
+        cmdY = cmd.y
+        cmdA = cmd.a
+        activePreset = preset
+        // onChange 가 activePreset 을 nil 로 되돌릴 수 있어 다시 설정.
+        DispatchQueue.main.async { activePreset = preset }
+        pushCommand()
     }
 
     private var noiseCard: some View {

@@ -778,16 +778,18 @@ public final class WalkLabSession: ObservableObject {
         // visualPose 갱신해서 모델이 보행 따라 움직이도록.
         //
         // 실 로봇 송출 중 (`isRobotWalking == true`) 이면 onPose 가 권한 — sim 덮어쓰기 회피.
+        //
+        // **Phase G12 (Codex audit 4th pass, 2026-05-15)**: 이전 sim mode 가
+        // `(strideMm: 25, sideMm: 0, turnDeg: 0)` 하드코드 → preset 무시 → 모든 preset 이
+        // 동일 보행 자세로 시각화됐던 P0 버그. `defaultTuning(for: current)` 로 정정해서
+        // march/slowWalk/normalWalk/fastWalk/turnLeft/turnRight 가 각각 다른 보행 자세.
         if !isRobotWalking, current != .idle {
-            let tuning = WalkMotionLibrary.AdvancedTuning(
-                strideMm: strideMm, sideMm: sideMm, turnDeg: turnDeg,
-                periodMs: customPeriodMs, footHeightMm: footHeightMm, balanceGain: balanceGain
-            )
-            // current preset 의 tuning 정합 (advanced 모드 X 면 default).
-            let effectiveTuning = advanced ? tuning : WalkMotionLibrary.AdvancedTuning(
-                strideMm: 25, sideMm: 0, turnDeg: 0,
-                periodMs: Double(current.periodMs), footHeightMm: 40, balanceGain: 1.0
-            )
+            let effectiveTuning: WalkMotionLibrary.AdvancedTuning = advanced
+                ? WalkMotionLibrary.AdvancedTuning(
+                    strideMm: strideMm, sideMm: sideMm, turnDeg: turnDeg,
+                    periodMs: customPeriodMs, footHeightMm: footHeightMm, balanceGain: balanceGain
+                  )
+                : WalkMotionLibrary.defaultTuning(for: current)
             let period = effectiveTuning.periodMs
             let phaseFraction = (Double(elapsedMs).truncatingRemainder(dividingBy: period)) / period
             let phasedTimeMs = phaseFraction * period
