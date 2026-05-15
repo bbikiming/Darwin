@@ -19,6 +19,7 @@ item_types = ["enums", "structs", "opaque", "functions", "constants"]
 "FfiJointState"     = "fc_joint_state"
 "FfiBlobResult"     = "fc_blob_result"
 "FfiFootTargets"    = "fc_foot_targets"
+"FfiImuRaw"         = "fc_imu_raw"
 "FcBus"             = "fc_bus"
 "FcWalk"            = "fc_walk"
 

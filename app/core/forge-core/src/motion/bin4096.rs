@@ -7,10 +7,12 @@
 //!
 //! # 디자인
 //!
-//! Phase B 1차 목표는 **byte-preserving round-trip** + name 추출. 페이지 내부의
-//! step / compliance / play_param 의 정확한 offset 은 RoboPlus Action.cpp
-//! (vendor pending) 가 확정될 때까지 raw payload 로 보존한다. 의미 해석은
-//! 별도 PR.
+//! 이 모듈은 **byte-preserving round-trip** + name 추출 담당. 페이지 내부의
+//! step / compliance / play_param 의미 해석은 [`crate::synth::library::decode_raw_page`]
+//! 가 한다 (ROBOTIS `Framework/include/Action.h:41-59` 의 PAGEHEADER offset 사용).
+//!
+//! **Phase G7 (Codex audit P2-10, 2026-05-14)**: 이전 주석은 "step offsets pending"
+//! 라고 했지만 이미 `synth::library` 가 디코더를 제공한다. 정정.
 
 use std::io::{self, Read, Write};
 

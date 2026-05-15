@@ -11,47 +11,57 @@ public struct BoardStatusView: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DFSpace.md) {
-            Text("Board Status")
-                .font(.title)
-                .padding(.bottom, 4)
-
-            if let snap = snapshot {
-                Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
-                    GridRow {
-                        Text("Controller").foregroundStyle(.secondary)
-                        Text(snap.controllerLabel).fontDesign(.monospaced)
-                    }
-                    GridRow {
-                        Text("Firmware Version").foregroundStyle(.secondary)
-                        Text("\(snap.version)").fontDesign(.monospaced)
-                    }
-                    GridRow {
-                        Text("Battery").foregroundStyle(.secondary)
-                        HStack {
-                            Text(String(format: "%.1f V", snap.voltageVolts))
-                                .fontDesign(.monospaced)
-                            voltageBadge(snap.voltageVolts)
+        DFPageScaffold(
+            "보드 상태",
+            subtitle: "CM-730 / CM-740 컨트롤러 폴링 (1 Hz)",
+            icon: "cpu.fill",
+            tint: DFColor.forge
+        ) {
+            VStack(alignment: .leading, spacing: DFSpace.md) {
+                if let snap = snapshot {
+                    Grid(alignment: .leading, horizontalSpacing: DFSpace.lg, verticalSpacing: DFSpace.sm) {
+                        GridRow {
+                            Text("Controller").foregroundStyle(DFColor.textSecondary)
+                            Text(snap.controllerLabel).fontDesign(.monospaced)
+                        }
+                        GridRow {
+                            Text("Firmware Version").foregroundStyle(DFColor.textSecondary)
+                            Text("\(snap.version)").fontDesign(.monospaced)
+                        }
+                        GridRow {
+                            Text("Battery").foregroundStyle(DFColor.textSecondary)
+                            HStack(spacing: DFSpace.sm) {
+                                Text(String(format: "%.1f V", snap.voltageVolts))
+                                    .fontDesign(.monospaced)
+                                voltageBadge(snap.voltageVolts)
+                            }
+                        }
+                        GridRow {
+                            Text("Button bits").foregroundStyle(DFColor.textSecondary)
+                            Text(String(format: "0x%02X", snap.button)).fontDesign(.monospaced)
                         }
                     }
-                    GridRow {
-                        Text("Button bits").foregroundStyle(.secondary)
-                        Text(String(format: "0x%02X", snap.button)).fontDesign(.monospaced)
-                    }
+                    .padding(DFSpace.md)
+                    .background(DFColor.card)
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DFRadius.sm)
+                            .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: DFSize.borderHairline)
+                    )
+                } else {
+                    ProgressView("Reading board…")
                 }
-                .padding()
-                .background(Color(NSColor.controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                ProgressView("Reading board…")
-            }
 
-            if let err = lastError {
-                Text(err).foregroundStyle(.red).font(.caption)
+                if let err = lastError {
+                    Text(err)
+                        .foregroundStyle(DFColor.danger)
+                        .font(DFFont.caption)
+                }
+                Spacer()
             }
-            Spacer()
+            .padding(DFSpace.md)
         }
-        .padding()
+        .dfDensity(.regular)
         .onAppear { startPolling() }
         .onDisappear { stopPolling() }
         .onChange(of: store.status) { _, _ in pollOnce() }
@@ -80,14 +90,15 @@ public struct BoardStatusView: View {
         }
     }
 
+    /// 전압 상태 배지 — 11.1V 이상 정상, 9.5V 이상 주의, 미만 위험.
     @ViewBuilder
     private func voltageBadge(_ v: Double) -> some View {
         if v >= 11.1 {
-            Label("Healthy", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            DFStatusPill("정상", severity: .success, compact: true)
         } else if v >= 9.5 {
-            Label("Low", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            DFStatusPill("부족", severity: .warning, compact: true)
         } else {
-            Label("Critical", systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+            DFStatusPill("위험", severity: .danger, compact: true)
         }
     }
 }

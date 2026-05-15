@@ -1,10 +1,47 @@
 import Foundation
 
+/// Pilot feature 활성 단계 — UserDefaults `df.pilot.featureLevel` 의 enum 표현.
+///
+/// **Codex 권고 (2026-05-13)**: 이전 v1.0 은 `static let active` 라 앱 재시작 전까지 고정.
+/// v1.5 부터는 `@AppStorage("df.pilot.featureLevel")` 로 즉시 반영. UI 의 feature picker
+/// 가 raw value 를 set 하면 `RemotePilotView` 가 즉시 새 flags 로 rebuild.
+public enum PilotFeatureLevel: String, CaseIterable, Sendable, Identifiable {
+    case v1_0 = "v1.0"
+    case v1_5 = "v1.5"
+
+    public var id: String { rawValue }
+
+    /// 사용자 표시 라벨.
+    public var label: String {
+        switch self {
+        case .v1_0: return "v1.0 안정"
+        case .v1_5: return "v1.5 진단+안전"
+        }
+    }
+
+    /// 한 줄 설명 — tooltip.
+    public var subtitle: String {
+        switch self {
+        case .v1_0:
+            return "Action Bar 7 메인 페이지만 활성. 진단/추가 페이지 비활성."
+        case .v1_5:
+            return "v1.0 + 진단 패널 + 안전한 추가 페이지 + 공식 8080 카메라 미리보기."
+        }
+    }
+
+    public var flags: PilotFeatureFlags {
+        switch self {
+        case .v1_0: return .v1_0
+        case .v1_5: return .v1_5
+        }
+    }
+}
+
 /// Remote Pilot v1.0~v2 단계별 활성화 플래그.
 ///
 /// PRD §4.1 "한 번 설계, 단계별 활성화" 원칙. 같은 UI 코드가 빌드 변경 한 줄로
-/// v1.0 → v1.1 → v1.5 → v2 로 점진 활성화. UserDefaults
-/// `df.pilot.featureLevel` 로 베타/개발 빌드에서 override 가능.
+/// v1.0 → v1.5 로 점진 활성화. v1.1 / v2 의 IMU/카메라/D-pad 실송출 등 FFI 필요 기능은
+/// 별도 Sprint 에서 활성 — v1.5 에 임시로 켜면 "작동하는 것처럼 보이는 기능" 위험 (Codex 권고).
 public struct PilotFeatureFlags: Sendable, Equatable {
     public var actionBarMain: Bool
     public var actionBarMore: Bool
@@ -57,44 +94,50 @@ public struct PilotFeatureFlags: Sendable, Equatable {
         pageChain: false,     mp3Playback: false
     )
 
-    /// v1.1 — IMU 텔레메트리 + 자동 낙상 복구 + head 추적 추가.
-    public static let v1_1: PilotFeatureFlags = {
+    /// v1.5 — Sprint 17~18 안전 범위 (Codex 권고 반영 + Phase D 확장).
+    ///
+    /// **활성**:
+    ///   - `actionBarMore`: + 더 보기 9 페이지 시트 (단, 7 개는 v1TargetPoseID nil 이라 거부됨)
+    ///   - `bridgeNetwork`: 네트워크 endpoint UI 노출 — robot 측 `forge serve` 데몬 가정.
+    ///   - `camera`: ROBOTIS official camera_tutorial/demo 의 8080 snapshot endpoint 폴링.
+    ///   - `ballFollow`: ROBOTIS `demo` 의 soccer 모드 위임 (Sprint 18 Phase B) — Mac 은 명령만 발송.
+    ///   - `imuTelemetry`: CM-730/740 register 38..49 raw read (Sprint 18 Phase D3) — `fc_bus_read_imu` FFI.
+    ///   - `headTracking`: Mac 측 head pan/tilt PID — ARM + 수동 모드 + 카메라 ball detection (Sprint 18 Phase D5).
+    ///
+    /// **여전히 OFF** (별도 FFI / 외부 데몬 필요, "작동하는 것처럼 보이는" 위험 차단):
+    ///   - `autoRecovery`: IMU 는 있으나 page 10/11 chain 재생 = motion_play 라이브러리 추출 필요.
+    ///   - `hsvTuning`: httpd command UI/검출 파라미터 write 는 별도 검증 필요.
+    ///   - `dpadRealMotor`: BLOCKER C3 (실 IK) 미해결 — D-pad 는 lock visual 유지.
+    ///   - `pageChain` / `mp3Playback`: motion_play 라이브러리 추출 필요 + 라이선스.
+    public static let v1_5: PilotFeatureFlags = {
         var f = v1_0
+        f.actionBarMore = true
+        f.camera = true
+        f.bridgeNetwork = true
+        f.ballFollow = true
+        f.imuTelemetry = true
+        f.headTracking = true
+        f.hsvTuning = true   // Phase E: HSV preset + robot ini sync (Codex 잔여 3 v1.5).
+        return f
+    }()
+
+    /// 미래 단계 placeholder — 실제 활성 시 별도 PRD + Sprint.
+    public static let v1_1_future: PilotFeatureFlags = {
+        var f = v1_5
         f.imuTelemetry = true
         f.autoRecovery = true
         f.headTracking = true
-        f.ballFollow = true   // head 추적만, walk OFF — engine 내부 분기
+        f.ballFollow = true
         return f
     }()
 
-    /// v1.5 — 카메라, HSV 튜닝, bridge, "+ 더 보기", page chain 활성.
-    public static let v1_5: PilotFeatureFlags = {
-        var f = v1_1
-        f.actionBarMore = true
+    public static let v2_future: PilotFeatureFlags = {
+        var f = v1_1_future
         f.camera = true
         f.hsvTuning = true
-        f.bridgeNetwork = true
-        f.pageChain = true
-        return f
-    }()
-
-    /// v2 — D-pad 실 모터 송출 + mp3 동기.
-    public static let v2: PilotFeatureFlags = {
-        var f = v1_5
         f.dpadRealMotor = true
+        f.pageChain = true
         f.mp3Playback = true
         return f
-    }()
-
-    /// 런타임 active level — UserDefaults override 가능.
-    public static let active: PilotFeatureFlags = {
-        let raw = UserDefaults.standard.string(forKey: "df.pilot.featureLevel")
-        switch raw {
-        case "v1.1": return .v1_1
-        case "v1.5": return .v1_5
-        case "v2":   return .v2
-        case "v1.0", nil, .some(""): return .v1_0
-        default: return .v1_0
-        }
     }()
 }

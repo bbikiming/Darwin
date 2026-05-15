@@ -764,36 +764,48 @@ fn tool_commit(args: &Value, engine: &Engine) -> Result<String, ToolError> {
     Ok(report)
 }
 
+/// `MotionPage` → 512-byte raw page payload — ROBOTIS Action 호환.
+///
+/// **Phase G8 (Codex audit follow-up, 2026-05-15)**: 마지막 `set_action_checksum`
+/// 호출 추가. 누락 시 `Action::LoadPage` (Action.cpp:239-253) 가 페이지를 reset 으로
+/// wipe → MCP 로 commit 한 모션이 실 로봇에서 사라지는 P0 데이터 손실 버그.
 fn encode_page_to_raw(page: &MotionPage) -> [u8; 512] {
+    use forge_core::synth::library::{
+        set_action_checksum, HEADER_OFFSET_ACCEL, HEADER_OFFSET_EXIT, HEADER_OFFSET_NEXT,
+        HEADER_OFFSET_REPEAT, HEADER_OFFSET_SCHEDULE, HEADER_OFFSET_SLOPE, HEADER_OFFSET_SPEED,
+        HEADER_OFFSET_STEPNUM, HEADER_SIZE, STEP_SIZE, TIME_BASE_SCHEDULE,
+    };
+
     let mut buf = [0u8; 512];
     let name_bytes = page.name.as_bytes();
     let n = name_bytes.len().min(14);
     buf[..n].copy_from_slice(&name_bytes[..n]);
 
-    // ROBOTIS Action.h PAGEHEADER (line 41-59) 오프셋 그대로.
-    buf[15] = page.repeat;
-    buf[16] = 0x0A; // schedule = TIME_BASE
-    buf[20] = page.steps.len() as u8;
-    buf[22] = page.speed;
-    buf[24] = page.accel;
-    buf[25] = page.next_page;
-    buf[26] = page.exit_page;
+    // ROBOTIS Action.h PAGEHEADER (line 41-59) 오프셋 — synth/library 공통 const 사용.
+    buf[HEADER_OFFSET_REPEAT] = page.repeat;
+    buf[HEADER_OFFSET_SCHEDULE] = TIME_BASE_SCHEDULE;
+    buf[HEADER_OFFSET_STEPNUM] = page.steps.len() as u8;
+    buf[HEADER_OFFSET_SPEED] = page.speed;
+    buf[HEADER_OFFSET_ACCEL] = page.accel;
+    buf[HEADER_OFFSET_NEXT] = page.next_page;
+    buf[HEADER_OFFSET_EXIT] = page.exit_page;
     for (i, &c) in page.compliance.iter().enumerate().take(31) {
-        buf[32 + i] = c;
+        buf[HEADER_OFFSET_SLOPE + i] = c;
     }
     // Steps: 64 byte 각, 최대 7.
     for (s_idx, step) in page.steps.iter().take(7).enumerate() {
-        let base = 64 + s_idx * 64;
-        for (i, &pos) in step.positions.iter().enumerate() {
+        let base = HEADER_SIZE + s_idx * STEP_SIZE;
+        for (i, &pos) in step.positions.iter().enumerate().take(31) {
             let off = base + i * 2;
-            if off + 1 < base + 62 {
-                buf[off] = (pos & 0xFF) as u8;
-                buf[off + 1] = (pos >> 8) as u8;
-            }
+            buf[off] = (pos & 0xFF) as u8;
+            buf[off + 1] = (pos >> 8) as u8;
         }
         buf[base + 62] = step.pause_time;
         buf[base + 63] = step.play_time;
     }
+
+    // Phase G8 — 모든 필드 set 한 후 마지막 단계로 checksum 계산.
+    set_action_checksum(&mut buf);
     buf
 }
 
@@ -847,11 +859,14 @@ fn preview_ascii(motion: &Motion) -> String {
             out.push_str(&format!(
                 "  step {i}: t+{elapsed:>5}ms  play={play_ms:>4}ms  pause={pause_ms:>4}ms\n"
             ));
-            let head_tilt = step.positions[19] & 0x0FFF;
-            let r_shoulder = step.positions[0] & 0x0FFF;
-            let r_knee = step.positions[12] & 0x0FFF;
+            // **Phase G8 (Codex audit follow-up, 2026-05-15)**: ROBOTIS 공식 joint ID
+            // 1:1 (slot 0 reserved). 이전 [0/12/19] off-by-one fix.
+            let r_shoulder = step.positions[1] & 0x0FFF;
+            let r_hip_pitch = step.positions[11] & 0x0FFF;
+            let r_knee = step.positions[13] & 0x0FFF;
+            let head_tilt = step.positions[20] & 0x0FFF;
             out.push_str(&format!(
-                "          R_SH_PITCH={r_shoulder:>4}  R_KNEE={r_knee:>4}  HEAD_TILT={head_tilt:>4}\n"
+                "          R_SH={r_shoulder:>4} R_HIP={r_hip_pitch:>4} R_KNEE={r_knee:>4} HEAD={head_tilt:>4}\n"
             ));
         }
         if page.next_page > 0 {
@@ -1121,7 +1136,8 @@ mod tests {
         let json = motion_to_json(&motion_from_pages(vec![page])).unwrap();
         let r = call_tool("preview", &json!({"motion_json": json}), &e).unwrap();
         assert!(r.contains("step 0"));
-        assert!(r.contains("R_SH_PITCH"));
+        // Phase G8 (Codex audit follow-up, 2026-05-15) — 라벨이 R_SH/R_HIP/R_KNEE/HEAD 로 통일.
+        assert!(r.contains("R_SH="));
     }
 
     #[test]
@@ -1158,5 +1174,57 @@ mod tests {
         assert_eq!(raw[16], 0x0A);
         // stepnum offset 20 = page.steps.len()
         assert_eq!(raw[20], page.steps.len() as u8);
+    }
+
+    /// **Phase G8 (Codex audit follow-up, 2026-05-15)**: encoded buffer 가 ROBOTIS
+    /// `VerifyChecksum` (Action.cpp:30-44) 의 byte-sum==0xff 조건 통과. 누락 시
+    /// `LoadPage` 가 페이지를 reset 으로 wipe — P0 데이터 손실.
+    #[test]
+    fn encode_page_passes_robotis_verify_checksum() {
+        use forge_core::synth::library::verify_action_checksum;
+        let mut page = MotionPage::default();
+        page.name = "init".to_string();
+        let mut buf = [0u8; 512];
+        buf.copy_from_slice(&encode_page_to_raw(&page));
+        assert!(
+            verify_action_checksum(&buf),
+            "encoded buffer must pass ROBOTIS VerifyChecksum"
+        );
+    }
+
+    /// **Phase G8 (Codex audit follow-up, 2026-05-15)**: preview_ascii 가 ROBOTIS
+    /// 공식 joint ID 와 1:1 인덱싱 사용 — 이전엔 [0/12/19] off-by-one 으로 사용자가
+    /// "R_KNEE=X" 라벨로 본 값이 실제로는 R_HIP_PITCH 였음.
+    ///
+    /// 검증 방법: positions 의 각 ID 슬롯에 알려진 unique 값을 set 한 후,
+    /// preview output 에 그 값이 올바른 라벨로 나타나는지 확인.
+    #[test]
+    fn preview_ascii_uses_official_joint_indexing() {
+        use forge_core::motion::Motion;
+        let mut page = MotionPage::default();
+        page.id = 1;
+        page.name = "test".to_string();
+        // 각 관절에 unique 식별 값 — output 에서 라벨 매칭 검증용. 12-bit 범위 (0..4095).
+        page.steps[0].positions[1] = 1111;  // R_SH_PITCH
+        page.steps[0].positions[11] = 2222; // R_HIP_PITCH
+        page.steps[0].positions[13] = 3333; // R_KNEE
+        page.steps[0].positions[20] = 2700; // HEAD_TILT (12-bit max=4095)
+        let motion = Motion {
+            version: 1,
+            robot_generation: "op2".to_string(),
+            pages: vec![page],
+        };
+        let out = preview_ascii(&motion);
+
+        // 라벨 + 값 짝이 정확히 표시돼야 함.
+        assert!(out.contains("R_SH=1111"), "preview missing R_SH=1111: {out}");
+        assert!(out.contains("R_HIP=2222"), "preview missing R_HIP=2222: {out}");
+        assert!(out.contains("R_KNEE=3333"), "preview missing R_KNEE=3333: {out}");
+        assert!(out.contains("HEAD=2700"), "preview missing HEAD=2700: {out}");
+        // 회귀 가드 — 이전 off-by-one 인덱스가 다시 들어오면 fail.
+        assert!(
+            !out.contains("R_KNEE=2222"),
+            "회귀: R_KNEE 가 positions[11] (R_HIP_PITCH 값) 을 표시 — off-by-one 부활"
+        );
     }
 }

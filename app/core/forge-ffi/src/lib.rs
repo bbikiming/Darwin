@@ -17,7 +17,10 @@ use std::ptr;
 use std::time::Duration;
 
 use forge_core::control::JointController;
-use forge_core::controller::{cm::BoardSnapshot, CmController};
+use forge_core::controller::{
+    cm::{BoardSnapshot, ImuRaw},
+    CmController,
+};
 use forge_core::dynamixel::Bus;
 use forge_core::joint::{JointId, JointState};
 use forge_core::motion::{parse_mtn, write_mtn, Motion};
@@ -371,6 +374,68 @@ pub unsafe extern "C" fn fc_bus_board_snapshot(
         ) -> c_int {
             let mut cm = CmController::new(b);
             match cm.snapshot() {
+                Ok(s) => {
+                    unsafe {
+                        *out = s.into();
+                    }
+                    FC_OK
+                }
+                Err(e) => err_code(&e),
+            }
+        }
+        match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, out),
+            BusBackend::Loopback(b) => run(b, out),
+            BusBackend::Tcp(b) => run(b, out),
+        }
+    })
+}
+
+/// CM-730/740 IMU raw — Phase D3 (Sprint 18).
+///
+/// 한 번 호출에 gyro (X/Y/Z) + accel (X/Y/Z) 의 raw 16-bit signed 6개 + accel 기반
+/// roll/pitch 도(°) 가 계산되어 노출. Mac 측 PilotHudStrip 이 직접 사용.
+#[repr(C)]
+pub struct FfiImuRaw {
+    pub gyro_x: i16,
+    pub gyro_y: i16,
+    pub gyro_z: i16,
+    pub accel_x: i16,
+    pub accel_y: i16,
+    pub accel_z: i16,
+    pub roll_deg: f32,
+    pub pitch_deg: f32,
+}
+
+impl From<ImuRaw> for FfiImuRaw {
+    fn from(s: ImuRaw) -> Self {
+        Self {
+            gyro_x: s.gyro_x,
+            gyro_y: s.gyro_y,
+            gyro_z: s.gyro_z,
+            accel_x: s.accel_x,
+            accel_y: s.accel_y,
+            accel_z: s.accel_z,
+            roll_deg: s.roll_degrees(),
+            pitch_deg: s.pitch_degrees(),
+        }
+    }
+}
+
+/// CM-730/740 IMU read — 한 번에 gyro + accel + roll/pitch.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_read_imu(handle: *mut FcBus, out: *mut FfiImuRaw) -> c_int {
+    if handle.is_null() || out.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            out: *mut FfiImuRaw,
+        ) -> c_int {
+            let mut cm = CmController::new(b);
+            match cm.read_imu() {
                 Ok(s) => {
                     unsafe {
                         *out = s.into();

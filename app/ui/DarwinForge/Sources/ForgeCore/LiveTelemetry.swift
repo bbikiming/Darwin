@@ -1,17 +1,21 @@
 import Foundation
 
-/// 한 사이클의 텔레메트리 스냅샷 — 보드 + 관절 일부.
+/// 한 사이클의 텔레메트리 스냅샷 — 보드 + 관절 일부 + IMU (Sprint 18 Phase D3).
 public struct TelemetrySnapshot: Sendable, Equatable {
     public let timestamp: Date
     public let board: BoardSnapshot?
     public let joints: [JointID: JointState]
+    /// CM-730/740 IMU read 결과 — 1Hz 폴링. nil = 아직 못 읽음.
+    public let imu: ImuRaw?
 
     public init(timestamp: Date = .init(),
                 board: BoardSnapshot? = nil,
-                joints: [JointID: JointState] = [:]) {
+                joints: [JointID: JointState] = [:],
+                imu: ImuRaw? = nil) {
         self.timestamp = timestamp
         self.board = board
         self.joints = joints
+        self.imu = imu
     }
 
     /// 빠른 액세스: 가장 뜨거운 관절.

@@ -54,12 +54,13 @@ public struct MotionLibraryView: View {
                     Section("사용자 import (.mtn)") {
                         ForEach(imported) { m in
                             VStack(alignment: .leading) {
-                                Text(m.name).font(.headline)
+                                Text(m.name)
+                                    .font(.system(size: DFFontSize.s13, weight: .semibold))
                                 Text(m.sourcePath)
-                                    .font(.caption)
+                                    .font(.system(size: DFFontSize.s10))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DFColor.textSecondary)
                             }
                             .tag(Selection.imported(m.id))
                         }
@@ -117,11 +118,11 @@ public struct MotionLibraryView: View {
                 .frame(width: DFSize.indicatorSm, height: DFSize.indicatorSm)
             VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text(entry.page.name)
-                    .font(.system(.body, design: .default))
+                    .font(.system(size: DFFontSize.s13))
                     .lineLimit(1)
                 Text("ID \(entry.page.id) · \(entry.page.steps.count) step")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: DFFontSize.s10))
+                    .foregroundStyle(DFColor.textSecondary)
             }
         }
     }
@@ -172,16 +173,17 @@ struct StarterEntry: Identifiable {
     let page: MotionPage
 
     /// 페이지 ID 범위 + 이름 기반 안전 분류 (시각적 색 indicator).
+    /// DFMotionSafetyColor 의미 팔레트 사용.
     var safetyColor: Color {
         let pid = Int(page.id)
         // ROBOTIS 공식 16 카탈로그 — gui_motion.yaml 기준 safety class.
         let highRisk: Set<Int> = [12, 13, 17]      // Right/Left Kick, Hand Standing
         let caution: Set<Int> = [10, 11]           // Get Up Front / Back
-        if highRisk.contains(pid) { return .red }
-        if caution.contains(pid) { return .orange }
-        // 50-55 walk progression — Safe (모두 walkReady anchor 검증됨)
-        // 60+ ergonomic / greeting / social — Safe
-        return .green
+        if highRisk.contains(pid) { return DFMotionSafetyColor.dangerous }
+        if caution.contains(pid) { return DFMotionSafetyColor.unverified }
+        // 50-55 walk progression — Verified (모두 walkReady anchor 검증됨)
+        // 60+ ergonomic / greeting / social — Verified
+        return DFMotionSafetyColor.verified
     }
 }
 
@@ -193,9 +195,12 @@ struct StarterMotionDetailView: View {
         VStack(alignment: .leading, spacing: DFSpace.sm3) {
             HStack(spacing: DFSpace.sm) {
                 Circle().fill(entry.safetyColor).frame(width: DFSize.iconXs, height: DFSize.iconXs)
-                Text(entry.page.name).font(.title2)
+                Text(entry.page.name)
+                    .font(.system(size: DFFontSize.s22, weight: .semibold))
                 Spacer()
-                Text("ID \(entry.page.id)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text("ID \(entry.page.id)")
+                    .font(.system(size: DFFontSize.s11, design: .monospaced))
+                    .foregroundStyle(DFColor.textSecondary)
             }
             HStack(spacing: DFSpace.md) {
                 Label("\(entry.page.steps.count) step", systemImage: "list.number")
@@ -204,44 +209,46 @@ struct StarterMotionDetailView: View {
                     Label("\(entry.page.`repeat`) 회 반복", systemImage: "repeat")
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(.system(size: DFFontSize.s11))
+            .foregroundStyle(DFColor.textSecondary)
 
             Divider()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DFSpace.xs2) {
-                    Text("Step timeline").font(.caption.bold()).foregroundStyle(.secondary)
+                    Text("Step timeline")
+                        .font(.system(size: DFFontSize.s11, weight: .semibold))
+                        .foregroundStyle(DFColor.textSecondary)
                     ForEach(Array(entry.page.steps.enumerated()), id: \.offset) { idx, step in
                         HStack(spacing: DFSpace.sm) {
                             Text("\(idx)")
-                                .font(.caption.monospacedDigit())
+                                .font(.system(size: DFFontSize.s11, design: .monospaced))
                                 .frame(width: 24)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
                             Text("play \(step.playMs)ms")
-                                .font(.caption.monospacedDigit())
+                                .font(.system(size: DFFontSize.s11, design: .monospaced))
                                 .frame(width: 100, alignment: .leading)
                             if step.pauseMs > 0 {
                                 Text("pause \(step.pauseMs)ms")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: DFFontSize.s11, design: .monospaced))
+                                    .foregroundStyle(DFColor.textSecondary)
                             }
                             Spacer()
                         }
                     }
                 }
-                .padding(8)
-                .background(.thinMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(DFSpace.sm)
+                .background(DFColor.elev2)
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
             }
 
             Spacer()
 
             Text("💡 Motion Studio (⌘3) 에서 이 페이지를 선택하면 3D 뷰어로 재생 가능. 실 robot 송출은 `forge motion play` CLI.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DFFont.caption)
+                .foregroundStyle(DFColor.textSecondary)
         }
-        .padding()
+        .padding(DFSpace.md)
     }
 
     private var totalMs: Int {
@@ -264,8 +271,11 @@ struct MotionDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.sm3) {
-            Text(motion.name).font(.title2)
-            Text(motion.sourcePath).font(.caption).foregroundStyle(.secondary)
+            Text(motion.name)
+                .font(.system(size: DFFontSize.s22, weight: .semibold))
+            Text(motion.sourcePath)
+                .font(DFFont.caption)
+                .foregroundStyle(DFColor.textSecondary)
 
             Picker("View", selection: $showingMtn) {
                 Text("JSON (forge-core 내부 표현)").tag(false)
@@ -275,13 +285,13 @@ struct MotionDetailView: View {
 
             ScrollView {
                 Text(showingMtn ? motion.mtn : motion.json)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(size: DFFontSize.s11, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .padding(DFSpace.sm)
+                    .background(DFColor.elev2)
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
             }
         }
-        .padding()
+        .padding(DFSpace.md)
     }
 }

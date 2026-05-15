@@ -72,17 +72,63 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>원격 조종 화면에서 로봇의 제어 브리지와 8080 카메라 미리보기에 연결합니다.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
 </dict>
 </plist>
 PLIST
 
 # === AppIcon.icns 생성 ===
-# Swift script 로 AppIcon.swift 호출 → 각 size PNG 추출 → iconset → icns.
+# 우선순위 (Phase G13, 2026-05-15 — 영구 PNG 아이콘 적용):
+#   1. ICON_SOURCE env var 가 가리키는 PNG (명시 override)
+#   2. $REPO_ROOT/app/icon/AppIcon.png (표준 영구 경로)
+#   3. Swift 단일 실행기로 AppIcon.swift 의 기하학 도형 fallback (legacy)
 echo "▶ AppIcon.icns 생성..."
 ICONSET_DIR="$TMP_DIR/AppIcon.iconset"
 mkdir -p "$ICONSET_DIR"
 
-# Swift 단일 실행기 — DarwinForgeApp 빌드 결과를 재사용해 PNG 추출.
+# Phase G13 — 표준 영구 경로 자동 인식. ICON_SOURCE 명시 안 했고 표준 PNG 가 있으면 사용.
+DEFAULT_ICON_PATH="$REPO_ROOT/app/icon/AppIcon.png"
+if [ -z "${ICON_SOURCE:-}" ] && [ -f "$DEFAULT_ICON_PATH" ]; then
+    ICON_SOURCE="$DEFAULT_ICON_PATH"
+    echo "  ✓ 표준 영구 PNG 자동 사용: app/icon/AppIcon.png"
+fi
+
+# macOS iconset 표준 사이즈 — Apple HIG.
+ICONSET_SIZES=(
+    "icon_16x16.png 16"
+    "icon_16x16@2x.png 32"
+    "icon_32x32.png 32"
+    "icon_32x32@2x.png 64"
+    "icon_128x128.png 128"
+    "icon_128x128@2x.png 256"
+    "icon_256x256.png 256"
+    "icon_256x256@2x.png 512"
+    "icon_512x512.png 512"
+    "icon_512x512@2x.png 1024"
+)
+
+if [ -n "${ICON_SOURCE:-}" ] && [ -f "$ICON_SOURCE" ]; then
+    echo "  외부 아이콘 사용: $ICON_SOURCE"
+    for entry in "${ICONSET_SIZES[@]}"; do
+        name="${entry%% *}"
+        size="${entry##* }"
+        sips -s format png -z "$size" "$size" "$ICON_SOURCE" \
+            --out "$ICONSET_DIR/$name" >/dev/null 2>&1 \
+            || { echo "  error: sips 리사이즈 실패 ($name)" >&2; exit 1; }
+        echo "  ✓ $name (${size}×${size})"
+    done
+    # iconset → icns.
+    iconutil -c icns "$ICONSET_DIR" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+    echo "▶ AppIcon.icns 생성 완료 (외부 PNG 기반)"
+else
+
+# Swift 단일 실행기 — DarwinForgeApp 빌드 결과를 재사용해 PNG 추출 (fallback).
 ICON_TOOL="$TMP_DIR/icon-tool.swift"
 cat > "$ICON_TOOL" <<'SWIFT'
 import AppKit
@@ -181,6 +227,8 @@ ICONSET_DIR="$ICONSET_DIR" swift "$ICON_TOOL"
 
 # iconset → icns.
 iconutil -c icns "$ICONSET_DIR" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+
+fi  # end ICON_SOURCE branch
 
 # === /Applications 설치 ===
 echo "▶ /Applications/$APP_NAME.app 설치..."

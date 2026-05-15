@@ -269,7 +269,7 @@ public struct ConnectionWizardView: View {
                         Text(ip)
                             .font(.system(size: DFFontSize.s10, design: .monospaced))
                             .padding(.horizontal, DFSpace.xs2)
-                            .padding(.vertical, 2)
+                            .padding(.vertical, DFSpace.micro2)
                             .background(DFColor.card)
                             .clipShape(Capsule())
                             .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline))
@@ -316,7 +316,7 @@ public struct ConnectionWizardView: View {
                 .foregroundStyle(DFColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(8)
+        .padding(DFSpace.sm)
         .background(DFColor.elev2)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
     }
@@ -483,7 +483,7 @@ public struct ConnectionWizardView: View {
                             Text("재진단").font(.system(size: DFFontSize.s10))
                         }
                         .padding(.horizontal, DFSpace.xs2)
-                        .padding(.vertical, 3)
+                        .padding(.vertical, DFSpace.micro2 + 1)
                         .background(DFColor.card)
                         .clipShape(Capsule())
                         .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline))
@@ -493,7 +493,7 @@ public struct ConnectionWizardView: View {
                 }
             }
         }
-        .padding(8)
+        .padding(DFSpace.sm)
         .background(stageBackground(c.stage))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
@@ -550,8 +550,8 @@ public struct ConnectionWizardView: View {
     private func chipText(_ s: String, tint: Color, sym: String) -> some View {
         Text(s)
             .font(.system(size: DFFontSize.s9, weight: .semibold, design: .monospaced))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
+            .padding(.horizontal, DFSpace.xs2 - 1)
+            .padding(.vertical, DFSpace.micro)
             .background(tint.opacity(0.14))
             .foregroundStyle(tint)
             .clipShape(Capsule())
@@ -623,8 +623,8 @@ public struct ConnectionWizardView: View {
         }()
         return Text(text)
             .font(.system(size: DFFontSize.s9, weight: .bold))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
+            .padding(.horizontal, DFSpace.xs2 - 1)
+            .padding(.vertical, DFSpace.micro)
             .background(tint.opacity(0.16))
             .foregroundStyle(tint)
             .clipShape(Capsule())
@@ -694,7 +694,7 @@ public struct ConnectionWizardView: View {
                 Text(RobotSetupCommand.unifiedSetup)
                     .font(.system(size: DFFontSize.s10, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .padding(DFSpace.sm)
                     .background(DFColor.elev2)
                     .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                     .textSelection(.enabled)
@@ -791,7 +791,7 @@ public struct ConnectionWizardView: View {
                         .font(DFFont.caption)
                         .foregroundStyle(path.tint)
                         .padding(.horizontal, DFSpace.xs2)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, DFSpace.micro2)
                         .background(path.tint.opacity(DFOpacity.o10))
                         .clipShape(Capsule())
                 }
@@ -969,7 +969,7 @@ public struct ConnectionWizardView: View {
                             .font(DFFont.body.monospaced())
                         Spacer()
                     }
-                    .padding(8)
+                    .padding(DFSpace.sm)
                     .background(DFColor.card)
                     .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                 }
@@ -1130,7 +1130,7 @@ public struct ConnectionWizardView: View {
                     Text("기준: Atom Z530 (i686, 1GB) — Rust 빌드 어려움 → socat 권장.\nIntel NUC i3+ (x86_64, 4GB+) — forge serve 빌드 OK.")
                         .font(DFFont.caption.monospaced())
                         .foregroundStyle(DFColor.textSecondary)
-                        .padding(8)
+                        .padding(DFSpace.sm)
                         .background(DFColor.elev2)
                         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                 }
@@ -1217,8 +1217,8 @@ public struct ConnectionWizardView: View {
                 Text(step)
                     .font(.system(size: DFFontSize.s11, weight: .bold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, DFSpace.sm - 1)
+                    .padding(.vertical, DFSpace.micro2)
                     .background(DFColor.forge)
                     .clipShape(Capsule())
                 Text(title).font(DFFont.bodyEmph)
@@ -1230,7 +1230,7 @@ public struct ConnectionWizardView: View {
             HStack(alignment: .top, spacing: DFSpace.xs2) {
                 Text(command)
                     .font(.system(size: DFFontSize.s11, design: .monospaced))
-                    .padding(8)
+                    .padding(DFSpace.sm)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DFColor.elev2)
                     .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
@@ -1247,7 +1247,7 @@ public struct ConnectionWizardView: View {
                 .padding(.top, DFSpace.sm)
             }
         }
-        .padding(8)
+        .padding(DFSpace.sm)
         .background(DFColor.card)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
@@ -1326,7 +1326,7 @@ public struct ConnectionWizardView: View {
                     HStack(alignment: .top, spacing: DFSpace.xs2) {
                         Text(cmd)
                             .font(.system(size: DFFontSize.s11, design: .monospaced))
-                            .padding(8)
+                            .padding(DFSpace.sm)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(DFColor.elev2)
                             .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))

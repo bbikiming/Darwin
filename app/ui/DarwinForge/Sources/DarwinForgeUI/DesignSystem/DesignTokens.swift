@@ -350,7 +350,7 @@ public extension View {
 
 // MARK: - Color helpers (light/dark hex)
 
-private extension Color {
+extension Color {
     /// hex 문자열에서 light/dark 분기 색상 생성.
     init(light: String, dark: String) {
         #if canImport(AppKit)
@@ -380,7 +380,7 @@ private extension Color {
 
 #if canImport(AppKit)
 import AppKit
-private extension NSColor {
+extension NSColor {
     convenience init?(hex: String) {
         var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.hasPrefix("#") { s.removeFirst() }

@@ -1,0 +1,13 @@
+# DarwinForge UI Token Baseline
+# Generated: 2026-05-13 21:58:29 KST
+# 각 패턴의 현재 위반 카운트. PR 이 본 숫자를 늘리면 CI fail.
+
+raw_color=11
+ns_color=3
+rounded_rect=22
+corner_radius_int=22
+padding_int=16
+padding_h_int=21
+padding_v_int=38
+raw_font=30
+raw_fg_secondary=17

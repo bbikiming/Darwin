@@ -1066,7 +1066,7 @@ fn handle_walk_ready(
 ) -> anyhow::Result<()> {
     use forge_core::joint::JointMap;
     use forge_core::safety::{TorqueRampProfile, TorqueRamper};
-    use forge_core::walk::ini_pose::{interpolate, neutral_targets, walk_ready_targets};
+    use forge_core::walk::ini_pose::{interpolate, neutral_targets, op2_manager_ini_pose_targets};
 
     let map = match joint_map_kind {
         "official" => JointMap::official(),
@@ -1078,7 +1078,7 @@ fn handle_walk_ready(
     };
 
     let ramp_profile = TorqueRampProfile::gentle();
-    let target = walk_ready_targets();
+    let target = op2_manager_ini_pose_targets();
     let start = neutral_targets();
 
     println!("== walkReady 자세 적용 ==");

@@ -14,6 +14,6 @@ pub mod preset;
 
 pub use engine::{WalkCommand, WalkEngine, WalkPhase};
 pub use imu::{ComplementaryFilter, ImuSample};
-pub use ini_pose::{walk_ready_targets, WALK_READY_DEGREES};
+pub use ini_pose::{op2_manager_ini_pose_targets, OP2_MANAGER_INI_POSE_DEGREES};
 pub use params::WalkParams;
 pub use preset::{WalkPreset, WalkSafety};

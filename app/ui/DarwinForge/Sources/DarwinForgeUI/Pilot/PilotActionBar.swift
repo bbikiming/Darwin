@@ -9,23 +9,32 @@ import SwiftUI
 ///   - Safe/Caution/HighRisk DFChip 으로 시각 위계.
 ///   - 키 1..7 (no modifier) — Pilot 화면 활성 시만 작동.
 public struct PilotActionBar: View {
+    @EnvironmentObject private var store: ConnectionStore
     @ObservedObject var channel: TeleopChannel
     @ObservedObject var gate: PilotSafetyGate
     let flags: PilotFeatureFlags
+    /// 공 자동 추적 / walk demo 등 robot 측 데모가 USB bus 를 점유 중인지.
+    /// true 면 Action Bar 의 모든 모션 송출 비활성 (USB 충돌 방지).
+    let demoOccupiesBus: Bool
 
     @State private var pendingConfirm: MotionPageMetadata?
     @State private var showMoreSheet: Bool = false
 
-    public init(channel: TeleopChannel, gate: PilotSafetyGate, flags: PilotFeatureFlags) {
+    public init(channel: TeleopChannel, gate: PilotSafetyGate, flags: PilotFeatureFlags,
+                demoOccupiesBus: Bool = false) {
         self.channel = channel
         self.gate = gate
         self.flags = flags
+        self.demoOccupiesBus = demoOccupiesBus
     }
+
+    /// 실 로봇 미연결 — sim 미리보기 모드. ARM 없이도 버튼 활성 (Codex P1 권고).
+    private var isSimMode: Bool { store.bus == nil }
 
     public var body: some View {
         DFPanel(
             "Action Bar",
-            subtitle: gate.armed ? "키 1..7 / 클릭 — 7 페이지 송출 가능" : "ARM 후 활성화",
+            subtitle: subtitleText,
             icon: "play.rectangle.on.rectangle",
             tint: DFColor.accent,
             trailing: {
@@ -43,9 +52,16 @@ public struct PilotActionBar: View {
             }
         }
         .alert(item: $pendingConfirm) { meta in
-            Alert(
+            // **Phase G8 (Codex audit follow-up, 2026-05-15) — 옵션 A**: chain page 면
+            // 공식 demo 의 chain 길이 (8초+) 도 함께 표시. Mac v1 은 단발 자세만 송출 —
+            // 사용자가 "왜 송출이 일찍 끝나지?" 혼동 방지.
+            let chainNote: String = {
+                guard meta.isChain, let chainMs = meta.rawChainDurationMs else { return "" }
+                return "\n\n📎 참고: ROBOTIS 공식 chain 모션은 \(String(format: "%.1f", Double(chainMs)/1000.0))초 입니다. Mac 은 v1 에서 단발 자세만 보내고 끝납니다 (chain 재생은 ROBOTIS demo 위임)."
+            }()
+            return Alert(
                 title: Text("위험 동작 확인"),
-                message: Text("\(meta.displayNameKo)\n실행하면 \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초 동안 \(meta.bodyRegions.first?.rawValue ?? "관절") 가(이) 움직입니다.\n\ncradle 거치를 확인했나요?"),
+                message: Text("\(meta.displayNameKo)\n실행하면 \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초 동안 \(meta.bodyRegions.first?.rawValue ?? "관절") 가(이) 움직입니다.\(chainNote)\n\ncradle 거치를 확인했나요?"),
                 primaryButton: .destructive(Text("확인 후 실행")) {
                     Task { _ = await channel.sendMotion(slot: meta.slot, confirmRisk: true) }
                 },
@@ -60,11 +76,30 @@ public struct PilotActionBar: View {
         [GridItem(.adaptive(minimum: 110, maximum: 200), spacing: 8, alignment: .top)]
     }
 
+    /// Action Bar 의 상태별 부제목 — sim 미연결 / demo 점유 / ARM 전/후 분리.
+    private var subtitleText: String {
+        if demoOccupiesBus {
+            return "🤖 ROBOTIS 데모가 USB 점유 중 — 수동 모드로 전환해야 송출 가능"
+        }
+        if isSimMode {
+            return "시뮬 미리보기 — 실 로봇 미연결 (자세 미리보기만)"
+        }
+        if gate.armed {
+            return "키 1..7 / 클릭 — 7 페이지 송출 가능"
+        }
+        return "🔒 ARM 슬라이더 잠금 해제 후 활성"
+    }
+
     @ViewBuilder
     private func actionButton(_ meta: MotionPageMetadata, keyIndex: Int) -> some View {
         let isPlaying = channel.playingSlot == meta.slot
         let isV1Sendable = meta.v1TargetPoseID != nil
-        let isEnabled = isV1Sendable && (gate.armed || !gate.armed)  // 시뮬에서도 시각만 동작
+        // Sprint 18: demo 가 USB bus 점유 중이면 실 송출 불가. sim 모드(bus nil)도 동일하게 disable.
+        // 단, sim 미리보기 자체는 demo 와 무관하니 sim 모드는 그대로 enable.
+        // Codex P1 fix (2026-05-13): `gate.armed || !gate.armed` 무의미 boolean 제거.
+        let isEnabled = isV1Sendable
+            && !demoOccupiesBus
+            && (isSimMode || gate.armed)
         let safetyTint: Color = safetyColor(meta.safetyClass)
 
         Button {
@@ -102,6 +137,14 @@ public struct PilotActionBar: View {
                     Text(String(format: "%.1fs", Double(meta.durationMs)/1000.0))
                         .font(.system(size: DFFontSize.s9, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
+                    // **Phase G8 (Codex audit follow-up, 2026-05-15) — 옵션 A**:
+                    // chain page 면 공식 demo 의 chain 길이도 caption 표시.
+                    // Mac v1 은 단발 자세 송출만 — chain 재생은 ROBOTIS demo 위임.
+                    if let chainMs = meta.rawChainDurationMs {
+                        Text("(공식 \(String(format: "%.1f", Double(chainMs)/1000.0))s)")
+                            .font(.system(size: DFFontSize.s9, design: .monospaced))
+                            .foregroundStyle(DFColor.info.opacity(DFOpacity.o70))
+                    }
                 }
                 .lineLimit(1)
 
@@ -145,14 +188,18 @@ public struct PilotActionBar: View {
     }
 
     private func tooltip(_ meta: MotionPageMetadata) -> String {
-        [
+        // Codex P0/A3 권고 (2026-05-13 3차): "source: motion_4096.bin page N" 은
+        // raw page chain 재생을 암시하지만, 현재 구현은 단일 PoseLibrary target.
+        // 사용자 오해 방지 — 명시적으로 "단일 pose preview" 와 매핑 ID 노출.
+        let renderingMode = meta.v1TargetPoseID.map { "단일 pose preview → PoseLibrary.\($0)" }
+            ?? "준비 중 — raw page chain 재생 (별도 Sprint, motion_4096.bin page \(meta.slot) chain)"
+        return [
             "[\(meta.displayNameKo)] (\(meta.displayName))",
-            "raw_name: \(meta.rawName)",
+            "원본: motion_4096.bin page \(meta.slot) (raw_name: \(meta.rawName))",
             "duration: \(meta.durationMs) ms",
             "safety: \(meta.safetyClass.koreanLabel)",
-            "mp3: \(meta.mp3Sync ?? "—")",
-            "source: motion_4096.bin page \(meta.slot)",
-            meta.v1TargetPoseID != nil ? "v1.0 활성" : "v1.5 활성 (raw step 경로 필요)",
+            "mp3: \(meta.mp3Sync ?? "—") (재생 비활성 — v2)",
+            "재생 방식: \(renderingMode)",
         ].joined(separator: "\n")
     }
 

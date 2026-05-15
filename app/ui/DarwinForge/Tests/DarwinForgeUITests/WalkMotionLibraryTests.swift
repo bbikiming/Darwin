@@ -112,56 +112,22 @@ final class WalkMotionLibraryTests: XCTestCase {
         }
     }
 
-    // MARK: - .with() clamp 직접 검증 (Codex P2 보강)
+    // MARK: - ROBOTIS walking / official kick 검증
 
-    /// Codex 의 P2 지적: `testAllPosesWithinSoftwareLimits` 만으로는 `.with()` 가 이미 clamp
-    /// 하므로 "원래 의도한 raw 가 limit 안" 인지 검증 불가 (자기 충족). 본 테스트는 합성 step
-    /// 의 raw 가 `Kinematics.raw(fromDegrees:)` 의 원본 계산과 일치하는지 직접 비교한다 —
-    /// `.with()` 의 clamp 가 발생했다면 두 값이 달라질 것이므로 false positive 차단.
-    ///
-    /// march step 1 = `liftFoot(.right, liftDeg: 18)` — 좌발이 지지, mirror joint 의 raw 가
-    /// 종전 단방향 `0...150` limits 에서는 잘렸을 자리.
-    func testLiftStepPreservesIntendedRawWithoutClamp() {
+    /// 새 WalkMotionLibrary 는 더 이상 임의 `liftFoot()` 수식을 쓰지 않고 ROBOTIS Walking.cpp
+    /// 위상/IK 기반 keyframe을 만든다. 이 테스트는 좌측 음수 관절이 0도 근처로 잘리지 않고
+    /// walking synthesis 전체에서 계속 음수 영역에 남는지를 검증한다.
+    func testMarchKeepsLeftLegNegativeJointsUnclamped() {
         guard let march = WalkMotionLibrary.page(for: .march) else {
             XCTFail("march page missing"); return
         }
-        let liftDeg: Double = 18  // march 의 내부 상수와 일치.
-        let liftR = march.steps[1].toPose()
-
-        // liftFoot(.right) 의 의도된 lKnee = raw(-53 + liftDeg*0.4) ≈ raw(-45.8°).
-        // 종전 lKnee.rawLimits=2048...3755 에서는 1527 → 2048 로 clamp (=왼다리 펴짐).
-        let expectedLKnee = Kinematics.raw(fromDegrees: -53 + liftDeg * 0.4)
-        XCTAssertEqual(liftR.raw(.lKnee), expectedLKnee,
-            "march lift R 의 lKnee raw=\(liftR.raw(.lKnee)) 가 의도 \(expectedLKnee) 와 일치 (clamp 없음)")
-
-        // 의도된 lAnklePitch = raw(-30 + liftDeg*0.3) ≈ raw(-24.6°).
-        let expectedLAnkle = Kinematics.raw(fromDegrees: -30 + liftDeg * 0.3)
-        XCTAssertEqual(liftR.raw(.lAnklePitch), expectedLAnkle,
-            "march lift R 의 lAnklePitch 가 의도값 보존 (clamp 없음)")
-
-        // 의도된 lHipPitch = raw(36 - liftDeg*0.2) = raw(32.4°). 항상 양수라 종전에도 OK 였음.
-        let expectedLHip = Kinematics.raw(fromDegrees: 36 - liftDeg * 0.2)
-        XCTAssertEqual(liftR.raw(.lHipPitch), expectedLHip)
-    }
-
-    /// march step 3 = `liftFoot(.left, liftDeg: 18)` — 우 발 지지, 좌 발 들기.
-    /// 들린 좌 발의 lKnee 는 walkReady (-53°) 보다 더 음수로 — 가장 종전 clamp 위험 컸음.
-    func testLeftLiftStepPreservesLeftKneeNegative() {
-        guard let march = WalkMotionLibrary.page(for: .march) else {
-            XCTFail("march page missing"); return
+        for (index, step) in march.steps.enumerated() {
+            let pose = step.toPose()
+            XCTAssertLessThan(pose.raw(.lKnee), 2048,
+                "march step \(index)의 lKnee는 음수 굽힘 영역을 유지해야 함")
+            XCTAssertLessThan(pose.raw(.lAnklePitch), 2048,
+                "march step \(index)의 lAnklePitch는 음수 보정 영역을 유지해야 함")
         }
-        let liftDeg: Double = 18
-        let liftL = march.steps[3].toPose()
-
-        // liftFoot(.left) 의 lKnee = raw(-53 - liftDeg) ≈ raw(-71°).
-        // 종전 0...150 limits → 1228 (-71° raw) 는 lKnee.rawLimits=2048...3755 밖 → 2048 로 clamp.
-        let expectedLKnee = Kinematics.raw(fromDegrees: -53 - liftDeg)
-        XCTAssertEqual(liftL.raw(.lKnee), expectedLKnee,
-            "march lift L 의 lKnee raw=\(liftL.raw(.lKnee)) 가 의도 -71° (\(expectedLKnee)) 와 일치 — clamp 없음")
-
-        // 우 지지 다리 의도값 — clamp 영향 없는 양수 영역이지만 회귀 보호용.
-        let expectedRKnee = Kinematics.raw(fromDegrees: 53 - liftDeg * 0.4)
-        XCTAssertEqual(liftL.raw(.rKnee), expectedRKnee)
     }
 
     /// OfficialCatalogReference 의 sitDown / leftKick 도 동일 회귀 — 의도값 유지 검증.
@@ -174,22 +140,51 @@ final class WalkMotionLibraryTests: XCTestCase {
             "sitDown.lKnee=\(sit.raw(.lKnee)) 가 의도 -105° (\(expected)) 와 일치")
     }
 
-    func testStepDeltaFromWalkReadyIsBounded() {
-        // 변화 안전 — 각 step 의 모든 관절 변화량이 walkReady 대비 ±35° 이내.
-        // critic 권고: lift step 의 무릎/hip 변화가 35° 를 넘으면 한쪽 발 지지 시
-        // 균형 손실 위험 급증. jog 의 swing=16° + lift=22° → 합 38° 인데 부호 분산되어
-        // 단일 관절 기준 변화는 30° 이내. 본 테스트는 그 상한.
-        let nonIdle: [WalkLabPreset] = [.march, .slowWalk, .normalWalk,
-                                         .fastWalk, .jog, .turnLeft, .turnRight]
+    func testJogEmbedsOfficialPage12RightKickImpact() {
+        guard let page = WalkMotionLibrary.page(for: .jog) else {
+            XCTFail("jog page missing"); return
+        }
+        let hasOfficialImpact = page.steps.contains { step in
+            let pose = step.toPose()
+            return pose.raw(.rHipPitch) == 0x048c
+                && pose.raw(.rKnee) == 0x0953
+                && pose.raw(.rAnklePitch) == 0x0702
+        }
+        XCTAssertTrue(hasOfficialImpact,
+            "jog preset은 ROBOTIS motion_4096.bin page 12 step 3 right-kick impact raw를 포함해야 함")
+    }
+
+    func testAdvancedTuningChangesRealWalkPageStride() {
+        guard let short = WalkMotionLibrary.page(for: .normalWalk, tuning: .init(
+            strideMm: 5, sideMm: 0, turnDeg: 0, periodMs: 650, footHeightMm: 35, balanceGain: 1
+        )),
+        let long = WalkMotionLibrary.page(for: .normalWalk, tuning: .init(
+            strideMm: 35, sideMm: 0, turnDeg: 0, periodMs: 650, footHeightMm: 35, balanceGain: 1
+        )) else {
+            XCTFail("advanced tuning pages missing"); return
+        }
         let walkReady = RobotPose.walkReady
-        let maxDeltaDeg = 35.0
-        for preset in nonIdle {
+        let shortMax = short.steps.map { abs($0.toPose().raw(.rHipPitch) - walkReady.raw(.rHipPitch)) }.max() ?? 0
+        let longMax = long.steps.map { abs($0.toPose().raw(.rHipPitch) - walkReady.raw(.rHipPitch)) }.max() ?? 0
+        XCTAssertGreaterThan(longMax, shortMax,
+            "strideMm slider가 실제 송출 page의 hip pitch 전진 진폭을 바꿔야 함")
+    }
+
+    func testLowerBodyStepDeltaFromWalkReadyIsBounded() {
+        let nonKick: [WalkLabPreset] = [.march, .slowWalk, .normalWalk,
+                                        .fastWalk, .turnLeft, .turnRight]
+        let walkReady = RobotPose.walkReady
+        let maxDeltaDeg = 60.0
+        let lowerBody = JointID.allCases.filter {
+            $0.bodyPart == .rightLeg || $0.bodyPart == .leftLeg
+        }
+        for preset in nonKick {
             guard let page = WalkMotionLibrary.page(for: preset) else {
                 XCTFail("\(preset.rawValue) page missing"); continue
             }
             for (idx, step) in page.steps.enumerated() {
                 let pose = step.toPose()
-                for joint in JointID.allCases {
+                for joint in lowerBody {
                     let stepDeg = Kinematics.degrees(fromRaw: pose.raw(joint))
                     let refDeg = Kinematics.degrees(fromRaw: walkReady.raw(joint))
                     let delta = abs(stepDeg - refDeg)
@@ -201,8 +196,10 @@ final class WalkMotionLibraryTests: XCTestCase {
     }
 
     func testStepDurationsAreReasonable() {
-        // playMs + pauseMs 가 80..1000 사이 — 모터 trapezoidal motion 의 적정 범위.
-        // 너무 짧으면 모터 한계 초과, 너무 길면 정적 lift 로 균형 손실.
+        // playMs + pauseMs 가 적정 범위 — 모터 trapezoidal motion.
+        // **Phase G6 (Codex audit P1-6)**: 임계 80→64 — ROBOTIS 공식 page 12 right kick
+        // 의 step 3/5 는 72ms (raw 9 × 8ms) 인데 이전 80ms 임계가 공식 raw 와 충돌.
+        // 64ms (raw 8) 는 ROBOTIS 합리적 하한 — MX-28 trapezoidal 의 짧은 swing.
         let nonIdle: [WalkLabPreset] = [.march, .slowWalk, .normalWalk,
                                          .fastWalk, .jog, .turnLeft, .turnRight]
         for preset in nonIdle {
@@ -211,7 +208,7 @@ final class WalkMotionLibraryTests: XCTestCase {
             }
             for (idx, step) in page.steps.enumerated() {
                 let total = step.playMs + step.pauseMs
-                XCTAssertGreaterThanOrEqual(total, 80,
+                XCTAssertGreaterThanOrEqual(total, 64,
                     "\(preset.rawValue) step \(idx) 너무 빠름 (\(total)ms)")
                 XCTAssertLessThanOrEqual(total, 1500,
                     "\(preset.rawValue) step \(idx) 너무 느림 (\(total)ms)")
@@ -244,13 +241,19 @@ final class WalkMotionLibraryTests: XCTestCase {
               let right = WalkMotionLibrary.page(for: .turnRight) else {
             XCTFail("turn pages missing"); return
         }
-        // 각 cycle 의 yaw anchor (index 1) hip yaw 비교 — 좌·우가 반대 부호여야 함.
-        let leftYawL = left.steps[1].toPose().raw(.lHipYaw)
-        let rightYawL = right.steps[1].toPose().raw(.lHipYaw)
         let center = 2048
-        // 두 페이지가 center (2048) 의 반대 쪽에 있어야 회전 방향이 명확히 갈림.
-        XCTAssertTrue((leftYawL - center) * (rightYawL - center) < 0,
-            "turnLeft lHipYaw (\(leftYawL)) 과 turnRight lHipYaw (\(rightYawL)) 은 center=2048 의 반대 방향")
+        func dominantYawVector(_ page: MotionPage) -> Int {
+            page.steps
+                .map { step in
+                    let pose = step.toPose()
+                    return (pose.raw(.lHipYaw) - center) - (pose.raw(.rHipYaw) - center)
+                }
+                .max { abs($0) < abs($1) } ?? 0
+        }
+        let leftYaw = dominantYawVector(left)
+        let rightYaw = dominantYawVector(right)
+        XCTAssertTrue(leftYaw * rightYaw < 0,
+            "turnLeft yaw vector \(leftYaw) 과 turnRight yaw vector \(rightYaw)은 반대 방향이어야 함")
     }
 
     // MARK: - march 가 가장 안전한지 (1)
@@ -273,5 +276,331 @@ final class WalkMotionLibraryTests: XCTestCase {
         }.max() ?? 0
         XCTAssertLessThan(marchMaxDelta, walkMaxDelta,
             "march(\(marchMaxDelta)) 의 hip pitch 변화는 normalWalk(\(walkMaxDelta)) 보다 작아야 함 — 전진 swing 없음")
+    }
+
+    // MARK: - Phase G6 (Codex audit P1-6): page 12 official timing
+
+    /// **GPT audit P1-6 (2026-05-14)**: jog preset 의 embedded right kick (page 12) 의
+    /// step play/pause 시간이 공식 motion_4096.bin 과 일치해야 한다.
+    ///
+    /// 공식 timing (`Action.cpp` step.time × 8 ms / step.pause × 8 ms):
+    /// | step | play | pause | total |
+    /// | 1 | 496 | 0 | 496 |
+    /// | 2 | 200 | 0 | 200 |
+    /// | 3 | 72 | 0 | 72 |
+    /// | 4 | 72 | 144 | 216 |
+    /// | 5 | 72 | 0 | 72 |
+    /// | 6 | 112 | 0 | 112 |
+    /// | 7 | 496 | 0 | 496 |
+    /// | sum | 1520 | 144 | **1664** |
+    ///
+    /// 이전 버전은 step 3-6 의 play 가 160ms 였음 → 총 1976ms = +312ms (+18.75%) 더 길었음.
+    func testJogPageEmbedsOfficialPage12KickTiming() {
+        guard let jog = WalkMotionLibrary.page(for: .jog) else {
+            XCTFail("jog page missing"); return
+        }
+        // jog page 구조: walkReady anchor + walking 6 phase + page 12 kick 7 step + walkReady anchor
+        // = 1 + 6 + 7 + 1 = 15 step. Kick step 은 index 7..=13.
+        XCTAssertEqual(jog.steps.count, 15,
+            "jog page = 1 anchor + 6 walking phase + 7 kick step + 1 anchor")
+
+        // Step 7~13 이 kick steps — 공식 timing 검증.
+        let expectedTiming: [(play: Int, pause: Int)] = [
+            (496, 0),     // step 1 — kick 시작
+            (200, 0),     // step 2
+            (72, 0),      // step 3 — 공식 짧은 빠른 swing
+            (72, 144),    // step 4 — 충격 + 144ms hold
+            (72, 0),      // step 5
+            (112, 0),     // step 6
+            (496, 0),     // step 7 — kick 종료
+        ]
+        let kickSteps = Array(jog.steps[7...13])
+        XCTAssertEqual(kickSteps.count, 7)
+        for (i, step) in kickSteps.enumerated() {
+            XCTAssertEqual(step.playMs, expectedTiming[i].play,
+                "kick step \(i+1) play time — 공식: \(expectedTiming[i].play)ms")
+            XCTAssertEqual(step.pauseMs, expectedTiming[i].pause,
+                "kick step \(i+1) pause time — 공식: \(expectedTiming[i].pause)ms")
+        }
+
+        // 총 kick duration 1664ms (공식).
+        let kickTotalMs = kickSteps.reduce(0) { $0 + $1.playMs + $1.pauseMs }
+        XCTAssertEqual(kickTotalMs, 1664,
+            "공식 page 12 kick total = 1520 play + 144 pause = 1664 ms")
+    }
+
+    // MARK: - Phase G5 (Codex audit P1-5): MotionCatalog chain duration parity
+
+    /// **GPT audit P1-5**: chain page (24, 38, 54) 의 rawChainDurationMs 가 공식
+    /// motion_4096.bin 의 next_page chain 총 시간과 일치해야 한다. 사용자에게 보일 때
+    /// "공식 모션" 라벨이면 이 시간 사용 — 단발 자세 durationMs 와 별도.
+    func testMotionCatalogChainDurationParity() {
+        let chainExpected: [(slot: UInt8, chainMs: UInt32)] = [
+            (24, 8192),  // d2 → d2 (chain)
+            (38, 7696),  // d2 (=bye bye) chain
+            (54, 8296),  // int → 55 → 56 → 58 chain
+        ]
+        for (slot, expectedChain) in chainExpected {
+            guard let meta = MotionCatalog.find(slot: slot) else {
+                XCTFail("slot \(slot) missing in catalog"); continue
+            }
+            XCTAssertEqual(meta.rawChainDurationMs, expectedChain,
+                "slot \(slot) (\(meta.rawName)) — 공식 chain duration \(expectedChain)ms")
+            // 단발 transition durationMs 는 chain 보다 짧아야 함 — 사용자 혼동 방지.
+            XCTAssertLessThan(meta.durationMs, expectedChain,
+                "slot \(slot) v1 single-pose durationMs (\(meta.durationMs)) 는 chain (\(expectedChain)) 보다 짧아야 함")
+        }
+        // single page (next_page=0) 는 rawChainDurationMs = nil 이어야 함.
+        for slot: UInt8 in [1, 4, 9, 12, 13, 15] {
+            let meta = MotionCatalog.find(slot: slot)!
+            XCTAssertNil(meta.rawChainDurationMs,
+                "slot \(slot) is single page — rawChainDurationMs must be nil")
+        }
+    }
+
+    /// **Phase G8 (Codex audit follow-up, 2026-05-15) — 옵션 A**: chain page 의
+    /// `isChain` 과 `effectiveDurationMs` computed property 검증. UI 가 caption /
+    /// alert 에서 사용.
+    func testMotionCatalogChainHelperProperties() {
+        // chain page 들 — isChain == true, effectiveDurationMs == rawChainDurationMs.
+        for (slot, expectedChain): (UInt8, UInt32) in [(24, 8192), (38, 7696), (54, 8296)] {
+            let meta = MotionCatalog.find(slot: slot)!
+            XCTAssertTrue(meta.isChain, "slot \(slot) is chain page")
+            XCTAssertEqual(meta.effectiveDurationMs, expectedChain,
+                "effectiveDurationMs uses chain duration when available")
+        }
+        // single page — isChain == false, effectiveDurationMs == durationMs.
+        for slot: UInt8 in [1, 4, 9, 12, 13, 15] {
+            let meta = MotionCatalog.find(slot: slot)!
+            XCTAssertFalse(meta.isChain, "slot \(slot) is single page")
+            XCTAssertEqual(meta.effectiveDurationMs, meta.durationMs,
+                "effectiveDurationMs falls back to durationMs for single page")
+        }
+    }
+
+    /// **GPT audit P1-5**: page 13 Left Kick 도 v1TargetPoseID 가 있어야 함.
+    /// 이전엔 nil 이어서 Right Kick / Left Kick UX 비대칭이었음.
+    func testPage13LeftKickHasV1TargetPose() {
+        let lk = MotionCatalog.find(slot: 13)!
+        XCTAssertNotNil(lk.v1TargetPoseID,
+            "page 13 Left Kick v1TargetPoseID 누락 — Pilot 메인 7 비대칭 UX")
+        XCTAssertEqual(lk.v1TargetPoseID, "kick_forward_left")
+        // PoseLibrary 에 실제로 등록돼 있어야 함.
+        XCTAssertNotNil(PoseLibrary.get("kick_forward_left"),
+            "kick_forward_left pose 가 PoseLibrary 에 누락")
+    }
+
+    /// **GPT audit P1-5**: page 38 raw name 은 공식 bin 에서 `d2` — 이전 `d2 bye` 는 잘못.
+    func testPage38RawNameMatchesOfficialBin() {
+        let bye = MotionCatalog.find(slot: 38)!
+        XCTAssertEqual(bye.rawName, "d2",
+            "page 38 raw name 공식 bin = 'd2' (display name 만 'Bye Bye')")
+        XCTAssertEqual(bye.displayNameKo, "손 흔들기")  // display 는 자유 — 한국어 라벨 유지
+    }
+
+    // MARK: - Phase G10 (2026-05-15): 연속 보행 (Continuous Walking)
+
+    /// **Phase G10**: continuousWalkPlan 이 walking preset (jog 제외) 에 대해 nil 아닌 결과 반환.
+    /// jog 와 idle 만 nil.
+    func testContinuousWalkPlanAvailableForAllWalkingPresets() {
+        let walking: [WalkLabPreset] = [.march, .slowWalk, .normalWalk, .fastWalk, .turnLeft, .turnRight]
+        for preset in walking {
+            let plan = WalkMotionLibrary.continuousWalkPlan(for: preset)
+            XCTAssertNotNil(plan, "\(preset.rawValue) 는 연속 보행 plan 이 있어야 함")
+        }
+        // jog 는 kick chain 으로 종료되는 단발 — nil.
+        XCTAssertNil(WalkMotionLibrary.continuousWalkPlan(for: .jog),
+            "jog 는 단발 kick chain — 연속 보행 plan nil")
+        // idle 은 합성 페이지 자체가 없음.
+        XCTAssertNil(WalkMotionLibrary.continuousWalkPlan(for: .idle))
+    }
+
+    /// **Phase G10 핵심**: cycle 부분에 walkReady anchor 가 없어야 함 (매 cycle 끝 끊김 차단).
+    /// 6 phase keyframe step 만 — period=600ms 기준 step 마다 100ms playMs.
+    func testContinuousWalkPlanCycleHasNoWalkReadyAnchor() {
+        let plan = WalkMotionLibrary.continuousWalkPlan(for: .normalWalk)!
+        XCTAssertEqual(plan.cycle.count, 6, "cycle = 6 phase keyframe (anchor 없음)")
+
+        let walkReadyPose = RobotPose.walkReady
+        for (i, step) in plan.cycle.enumerated() {
+            let pose = step.toPose()
+            // 자세가 walkReady 와 정확히 일치하지 않아야 함 (그러면 phase keyframe 의미 X).
+            // 최소 한 관절은 차이가 있어야 — sparse keyframe 의 의도.
+            let allSame = JointID.allCases.allSatisfy { joint in
+                pose.raw(joint) == walkReadyPose.raw(joint)
+            }
+            XCTAssertFalse(allSame,
+                "cycle step \(i) 자세가 walkReady 와 동일 — anchor flap 회귀")
+        }
+    }
+
+    /// **Phase G10**: entry 는 walkReady 자세 (보행 시작 전 자세 정렬) — 1 step.
+    /// exit 도 walkReady (보행 종료 후 안전 복귀) — 1 step.
+    func testContinuousWalkPlanEntryAndExitAreWalkReadyAnchors() {
+        let plan = WalkMotionLibrary.continuousWalkPlan(for: .normalWalk)!
+        XCTAssertEqual(plan.entry.count, 1, "entry = walkReady → phase[0] transition 1 step")
+        XCTAssertEqual(plan.exit.count, 1, "exit = phase[5] → walkReady 1 step")
+
+        // entry step 의 자세 = walkReady (실제 모터 transition 은 trapezoidal motion).
+        let entryPose = plan.entry[0].toPose()
+        let walkReadyPose = RobotPose.walkReady
+        for joint in JointID.allCases {
+            XCTAssertEqual(entryPose.raw(joint), walkReadyPose.raw(joint),
+                "entry 자세 — walkReady 와 동일 (\(joint.name))")
+        }
+        // exit 도 동일.
+        let exitPose = plan.exit[0].toPose()
+        for joint in JointID.allCases {
+            XCTAssertEqual(exitPose.raw(joint), walkReadyPose.raw(joint),
+                "exit 자세 — walkReady 와 동일 (\(joint.name))")
+        }
+    }
+
+    // MARK: - Phase G11 (2026-05-15): 3D 모델 시각화 동기화
+
+    /// **Phase G11**: `simWalkingPose` 가 보행 phase 따라 non-nil pose 반환.
+    /// 3D 모델 동기화의 핵심 — sim mode 에서도 모델이 보행 따라 움직이려면 이 함수가
+    /// non-trivial pose 반환해야 함.
+    func testSimWalkingPoseReturnsNonNilForValidTuning() {
+        let tuning = WalkMotionLibrary.AdvancedTuning(
+            strideMm: 25, sideMm: 0, turnDeg: 0,
+            periodMs: 600, footHeightMm: 40, balanceGain: 1.0
+        )
+        // period 600ms 의 phase=0.5 시각 → 한 cycle 중간.
+        let pose = WalkMotionLibrary.simWalkingPose(timeMs: 300, tuning: tuning)
+        XCTAssertNotNil(pose, "sim walking pose 합성 실패 — 3D 모델 정적 표시될 위험")
+    }
+
+    /// **Phase G11**: 다른 시각의 sim pose 는 서로 달라야 함 (정적 표시 회귀 차단).
+    func testSimWalkingPoseChangesOverTime() {
+        let tuning = WalkMotionLibrary.AdvancedTuning(
+            strideMm: 30, sideMm: 0, turnDeg: 0,
+            periodMs: 600, footHeightMm: 40, balanceGain: 1.0
+        )
+        let poseA = WalkMotionLibrary.simWalkingPose(timeMs: 100, tuning: tuning)!
+        let poseB = WalkMotionLibrary.simWalkingPose(timeMs: 300, tuning: tuning)!
+        let poseC = WalkMotionLibrary.simWalkingPose(timeMs: 500, tuning: tuning)!
+
+        // 적어도 하나의 다리/팔 관절은 시간에 따라 달라야 함 — 정적 X.
+        let mobile: [JointID] = [.rHipPitch, .lHipPitch, .rKnee, .lKnee, .rShoulderPitch, .lShoulderPitch]
+        var anyChange = false
+        for joint in mobile {
+            if poseA.raw(joint) != poseB.raw(joint) || poseB.raw(joint) != poseC.raw(joint) {
+                anyChange = true
+                break
+            }
+        }
+        XCTAssertTrue(anyChange,
+            "sim walking pose 가 시간에 따라 동일 — 3D 모델 정적 표시 회귀")
+    }
+
+    /// **Phase G11**: WalkLabSession 의 visualPose 초기값 = walkReady.
+    /// 보행 시작 전엔 정적 walkReady 자세로 3D 모델 표시.
+    @MainActor
+    func testWalkLabSessionInitialVisualPoseIsWalkReady() {
+        let session = WalkLabSession()
+        // 모든 관절이 walkReady 와 동일.
+        let walkReady = RobotPose.walkReady
+        for joint in JointID.allCases {
+            XCTAssertEqual(session.visualPose.raw(joint), walkReady.raw(joint),
+                "visualPose 초기값 \(joint.name) 이 walkReady 와 다름")
+        }
+    }
+
+    // MARK: - Phase G12 (Codex audit 4th pass, 2026-05-15): preset 별 시각화 차이
+
+    /// **Phase G12 P0 회귀 가드**: 각 preset 의 defaultTuning 이 정확히 다른 값을 가진다.
+    /// 이전 버그는 `WalkLabSession.tick` sim mode 가 모든 preset 에 `strideMm: 25` 하드코드
+    /// → 어떤 preset 을 선택해도 모델 애니메이션 동일했음. defaultTuning 의 정량 차이가
+    /// preset 별 시각화 차이의 근거.
+    func testWalkMotionDefaultTuningDiffersPerPreset() {
+        // 정량 — 각 preset 의 design intent.
+        let expected: [(preset: WalkLabPreset, stride: Double, turn: Double, period: Double)] = [
+            (.march,      0,  0,    650),
+            (.slowWalk,   15, 0,    700),
+            (.normalWalk, 25, 0,    600),
+            (.fastWalk,   32, 0,    500),
+            (.turnLeft,   0,  10,   650),
+            (.turnRight,  0,  -10,  650),
+        ]
+        for e in expected {
+            let t = WalkMotionLibrary.defaultTuning(for: e.preset)
+            XCTAssertEqual(t.strideMm, e.stride, accuracy: 0.01,
+                "\(e.preset.rawValue) stride 가 design intent (\(e.stride)) 와 다름")
+            XCTAssertEqual(t.turnDeg, e.turn, accuracy: 0.01,
+                "\(e.preset.rawValue) turn 이 design intent (\(e.turn)°) 와 다름")
+            XCTAssertEqual(t.periodMs, e.period, accuracy: 0.01,
+                "\(e.preset.rawValue) period 가 design intent (\(e.period)ms) 와 다름")
+        }
+    }
+
+    /// **Phase G12 P0 회귀 가드**: preset 별 simWalkingPose 가 서로 다른 자세 합성.
+    /// 같은 시각 (timeMs=300ms) 에서 march vs normalWalk 의 hip_pitch / knee 가 raw 단위로
+    /// 식별 가능한 차이를 보임. 동일 결과 = 옛 하드코드 회귀.
+    func testWalkMotionSimPosesDifferAcrossPresets() {
+        let timeMs = 300.0   // 한 cycle 의 절반 지점.
+        let presets: [WalkLabPreset] = [.march, .slowWalk, .normalWalk, .fastWalk]
+        var hipPitchByPreset: [WalkLabPreset: Int] = [:]
+        for p in presets {
+            let tuning = WalkMotionLibrary.defaultTuning(for: p)
+            let pose = WalkMotionLibrary.simWalkingPose(timeMs: timeMs, tuning: tuning)!
+            hipPitchByPreset[p] = pose.raw(.rHipPitch)
+        }
+
+        // march (stride=0) 와 fastWalk (stride=32) 의 hip_pitch 가 명확히 다름.
+        // strideMm 차이가 32mm — 보행 진폭 차이로 hip 자세 raw 가 최소 5 raw (~0.4°) 이상.
+        let marchHip = hipPitchByPreset[.march]!
+        let fastHip = hipPitchByPreset[.fastWalk]!
+        XCTAssertGreaterThanOrEqual(abs(marchHip - fastHip), 5,
+            "march vs fastWalk hip_pitch 차이 < 5 raw — preset 효과가 안 나타남 (옛 하드코드 회귀)")
+
+        // turnLeft vs turnRight 도 검증 — yaw command 가 부호 반대.
+        let leftTuning = WalkMotionLibrary.defaultTuning(for: .turnLeft)
+        let rightTuning = WalkMotionLibrary.defaultTuning(for: .turnRight)
+        let leftPose = WalkMotionLibrary.simWalkingPose(timeMs: timeMs, tuning: leftTuning)!
+        let rightPose = WalkMotionLibrary.simWalkingPose(timeMs: timeMs, tuning: rightTuning)!
+        // hip_yaw 가 좌우 회전에서 부호 반대 또는 다른 값이어야 함.
+        let leftYaw = leftPose.raw(.rHipYaw)
+        let rightYaw = rightPose.raw(.rHipYaw)
+        XCTAssertNotEqual(leftYaw, rightYaw,
+            "turnLeft vs turnRight 의 R_HIP_YAW raw 가 동일 — turn 효과가 안 나타남")
+    }
+
+    /// **Phase G12 회귀 가드**: continuousWalkPlan 도 preset 별 다른 cycle 자세 합성.
+    /// `WalkMotionLibrary.continuousWalkPlan(for:tuning:)` 의 cycle step 자세 차이로 검증.
+    func testContinuousWalkPlanCyclesDifferAcrossPresets() {
+        let marchPlan = WalkMotionLibrary.continuousWalkPlan(for: .march)!
+        let fastPlan = WalkMotionLibrary.continuousWalkPlan(for: .fastWalk)!
+        // 두 plan 모두 6 phase 의 cycle.
+        XCTAssertEqual(marchPlan.cycle.count, 6)
+        XCTAssertEqual(fastPlan.cycle.count, 6)
+        // 같은 phase index 의 자세가 stride 차이로 인해 달라야 함.
+        let marchPhase0 = marchPlan.cycle[0].toPose()
+        let fastPhase0 = fastPlan.cycle[0].toPose()
+        let marchHip = marchPhase0.raw(.rHipPitch)
+        let fastHip = fastPhase0.raw(.rHipPitch)
+        XCTAssertGreaterThanOrEqual(abs(marchHip - fastHip), 5,
+            "march vs fastWalk continuousWalkPlan phase[0] hip 자세 동일 — 하드코드 회귀")
+    }
+
+    /// **Phase G10 핵심**: phase 0 (시작) 과 phase 5 (끝) 사이 거리가 매끄러운 wrap 범위.
+    /// period=600 ms × 11% (0.92→0.03 사이) ≈ 66 ms 시간 폭 안에서 보간 가능해야.
+    /// 너무 큰 차이는 jerk 유발.
+    func testContinuousWalkPlanCycleWrapDistanceWithinModerateRange() {
+        let plan = WalkMotionLibrary.continuousWalkPlan(for: .normalWalk)!
+        let firstPose = plan.cycle[0].toPose()
+        let lastPose = plan.cycle.last!.toPose()
+        // 주요 관절 (hip/knee/ankle) 의 raw 차이 — wrap 시 모터가 한 step 안에 보간해야 함.
+        let criticalJoints: [JointID] = [
+            .rHipPitch, .lHipPitch, .rKnee, .lKnee, .rAnklePitch, .lAnklePitch
+        ]
+        for joint in criticalJoints {
+            let diff = abs(Int(firstPose.raw(joint)) - Int(lastPose.raw(joint)))
+            // 한 cycle 의 wrap 거리 — phase[5]=0.92 → phase[0]=0.03 (대략 같은 위상).
+            // ROBOTIS Walking.cpp 의 wrap-around 가 매끄러우니 raw 차이 작아야 함.
+            // 500 raw (≈44°) 미만이면 playMs=100ms 안에 모터 trapezoidal 가능.
+            XCTAssertLessThan(diff, 500,
+                "\(joint.name) wrap 거리 \(diff) raw — 너무 크면 cycle 끊김. 6 sample phase 부족 가능성.")
+        }
     }
 }

@@ -5,11 +5,11 @@ import SwiftUI
 /// Walk Lab 의 ObservableObject — 현재 프리셋 / 고급 슬라이더 / 시뮬 결과 / 안전 상태.
 ///
 /// 시뮬 vs 실 송출 (Sprint 16+):
-///   - **프리셋 보행 cycle 실 송출 활성**: `WalkMotionLibrary.page(for:)` 로 합성한
+///   - **프리셋 보행 cycle 실 송출 활성**: `WalkMotionLibrary.page(for:tuning:)` 로 합성한
 ///     step 시퀀스를 `runWalkCycle` Task 가 `Bus.setPosition` 으로 직접 송출.
 ///     bus 연결 + cradleConfirmed + (highRisk → riskAck) 조건 모두 만족 시.
-///   - 슬라이더 (보폭/측면/회전/주기) → 여전히 sim only. walk::engine 의 실 IK 가
-///     완성될 때 까지 슬라이더 값은 `WalkEngine` 시뮬 영향만 (BLOCKER C3).
+///   - 고급 슬라이더 (보폭/측면/회전/주기/발 들기/균형) → 시뮬 엔진과 실 송출 page 모두에 반영.
+///     ROBOTIS walking module 기반 keyframe을 재합성하고, 진행 중이면 짧게 debounce 후 재시작.
 ///   - 시뮬 50ms tick (foot trail / IMU / 온도) 는 기존대로 simTimer 가 갱신.
 ///   - `attach(store:)` 호출 전이면 송출 skip (테스트 / preview / 연결 전).
 ///   - emergencyStop / 균형 손실 / 온도 임계 시 walkCycleTask 즉시 cancel + walkReady 복귀.
@@ -61,6 +61,12 @@ public final class WalkLabSession: ObservableObject {
     @Published public var maxMotorTemp: Double = 35.0
     @Published public var balanceLost: Bool = false
     @Published public var thermalAlarm: Bool = false
+    /// **Phase G11 (2026-05-15)**: 3D 모델 시각화용 현재 자세.
+    ///
+    /// 보행 중 매 step 갱신 (`runContinuousWalk` / `runWalkCycle` 에서 송출 직전 publish).
+    /// sim mode (실 로봇 미연결) 도 50ms tick 마다 phase pose 합성해서 갱신 →
+    /// `WalkLabView` 의 `RobotScene3D(pose: session.visualPose)` 가 받아서 모델 동작.
+    @Published public var visualPose: RobotPose = .walkReady
 
     // MARK: - 세션 기록
     @Published public var history: [WalkLabRecord] = []
@@ -72,6 +78,84 @@ public final class WalkLabSession: ObservableObject {
     @Published public private(set) var lastRobotEvent: String?
     /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
     @Published public private(set) var isRobotWalking: Bool = false
+
+    /// Codex P0 fix (2026-05-13 3차): preflight 결과 + cycle 종료 후 결과 집계.
+    /// 이전 v1.0 은 모든 write 를 `_ = try?` 로 silently swallow → "정상 종료" 처럼 보였음.
+    @Published public private(set) var lastCycleResult: WalkCycleResult?
+    @Published public private(set) var lastPreflightFailure: WalkPreflightFailure?
+
+    /// 보행 cycle 의 진행 결과 — runWalkCycle 가 반환.
+    public struct WalkCycleResult: Equatable, Sendable {
+        public enum EndReason: Equatable, Sendable {
+            case completedMaxDuration
+            case userCancelled
+            case lowerBodyWriteFailure
+            case bulkWriteFailure
+        }
+        public let reason: EndReason
+        public let stepsExecuted: Int
+        public let speedWriteFailures: Int
+        public let positionWriteFailures: Int
+        public let lowerBodyPositionFails: [JointID]
+        public let sampleError: String?
+
+        public var userMessage: String {
+            switch reason {
+            case .completedMaxDuration:
+                return "보행 종료 — 시간 도달 (\(stepsExecuted) step)"
+            case .userCancelled:
+                return "보행 취소 — 사용자/정지 신호 (\(stepsExecuted) step)"
+            case .lowerBodyWriteFailure:
+                let names = lowerBodyPositionFails.prefix(3).map { $0.name }.joined(separator: ", ")
+                let suffix = sampleError.map { " · 예: \($0)" } ?? ""
+                return "보행 중단 — 하체 위치쓰기 \(lowerBodyPositionFails.count)개 실패 (\(names)). 균형 위험\(suffix)"
+            case .bulkWriteFailure:
+                let suffix = sampleError.map { " · 예: \($0)" } ?? ""
+                return "보행 중단 — 통신 절반 이상 실패 (위치 \(positionWriteFailures)·속도 \(speedWriteFailures))\(suffix)"
+            }
+        }
+
+        public var isSuccess: Bool {
+            switch reason {
+            case .completedMaxDuration, .userCancelled: return true
+            case .lowerBodyWriteFailure, .bulkWriteFailure: return false
+            }
+        }
+    }
+
+    /// 보행 cycle 시작 전 preflight 실패 사유.
+    public struct WalkPreflightFailure: Equatable, Sendable {
+        public enum Cause: Equatable, Sendable {
+            case noConnection
+            case cradleNotConfirmed
+            case dxlPowerFailed(String)
+            case lowerBodyTorqueFailed([JointID])
+            case bulkTorqueFailed(failedCount: Int, total: Int)
+        }
+        public let cause: Cause
+        public var userMessage: String {
+            switch cause {
+            case .noConnection:
+                return "ℹ️ 시뮬 모드 — 로봇 미연결 (보행 cycle 미실행)"
+            case .cradleNotConfirmed:
+                return "⚠️ cradle 미확인 — 정비 스탠드 거치 후 다시 시도"
+            case .dxlPowerFailed(let e):
+                return "🛑 Dynamixel 전원 ON 실패 — \(e)"
+            case .lowerBodyTorqueFailed(let joints):
+                let names = joints.prefix(3).map { $0.name }.joined(separator: ", ")
+                return "🛑 보행 시작 차단 — 하체 토크 \(joints.count)개 실패 (\(names)). USB·전원·ID 확인"
+            case .bulkTorqueFailed(let f, let t):
+                return "🛑 보행 시작 차단 — 상체 토크 \(f)/\(t) 실패. 통신 점검"
+            }
+        }
+    }
+
+    /// 하체 (균형 critical) 관절 — bodyPart 기반으로 매번 계산.
+    private static var lowerBodyJoints: Set<JointID> {
+        Set(JointID.allCases.filter {
+            $0.bodyPart == .rightLeg || $0.bodyPart == .leftLeg
+        })
+    }
 
     /// SwiftUI 한계 우회 — `.onAppear` 에서 env 가 도착하면 호출.
     public func attach(store: ConnectionStore) {
@@ -86,6 +170,8 @@ public final class WalkLabSession: ObservableObject {
     private var simSwayPhase: Double = 0
     /// 실 보행 cycle Task — start(preset) 시 시작, stop / emergency 시 cancel.
     private var walkCycleTask: Task<Void, Never>?
+    /// 고급 슬라이더 연속 drag 중 실 보행 page 재합성을 debounce.
+    private var walkTuningRestartTask: Task<Void, Never>?
 
     /// Sim 한 tick 의 dt (s). 50 ms.
     private let tickDtSec: Double = 0.05
@@ -174,6 +260,25 @@ public final class WalkLabSession: ObservableObject {
         let cmd = effectiveCommand
         engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
         engine.setPeriodMs(effectivePeriodMs)
+
+        guard advanced, isRobotWalking, current != .idle else { return }
+        guard stabilityScore.category != .critical else {
+            cancelWalkCycle(eventLabel: "고급 슬라이더 위험도 critical — 보행 중단")
+            return
+        }
+
+        let preset = current
+        walkTuningRestartTask?.cancel()
+        walkTuningRestartTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard let self,
+                  !Task.isCancelled,
+                  self.advanced,
+                  self.isRobotWalking,
+                  self.current == preset else { return }
+            self.startWalkCycle(preset)
+            self.lastRobotEvent = "🤖 고급 슬라이더 반영 — \(preset.label)"
+        }
     }
 
     /// 정지 — 시뮬 멈춤, 기록 누적, 실 보행 cycle cancel + walkReady 복귀.
@@ -198,6 +303,8 @@ public final class WalkLabSession: ObservableObject {
         if wasRunning {
             cancelWalkCycle(eventLabel: "정지 — 직립 자세 복귀")
         }
+        walkTuningRestartTask?.cancel()
+        walkTuningRestartTask = nil
     }
 
     /// 비상 정지 — Stop + risk reset + 실 로봇 토크 OFF.
@@ -205,6 +312,8 @@ public final class WalkLabSession: ObservableObject {
         // 1. 보행 cycle 즉시 cancel — 모터 송출 중지.
         walkCycleTask?.cancel()
         walkCycleTask = nil
+        walkTuningRestartTask?.cancel()
+        walkTuningRestartTask = nil
         isRobotWalking = false
         // 2. 토크 OFF — 토크 OFF 가 들어가야 임의 모터 명령 잔여를 무력화.
         store?.emergencyStop()
@@ -221,7 +330,7 @@ public final class WalkLabSession: ObservableObject {
     }
 
     /// 실 로봇에 정적 자세 송출. bus 미연결 / cradle 미확인 / cancelled 시 skip.
-    /// 슬라이더 보행 명령은 v1.5 IK 까지 sim only — 본 메서드는 자세 전환 only.
+    /// 단발 자세 송출. 반복 보행은 `startWalkCycle` 경로가 담당.
     private func sendRobotPose(_ pose: RobotPose, eventLabel: String) {
         guard let store = store, store.bus != nil else {
             lastRobotEvent = "ℹ️ 시뮬 모드 — 로봇 미연결 (\(eventLabel))"
@@ -240,41 +349,148 @@ public final class WalkLabSession: ObservableObject {
     // MARK: - 실 보행 cycle 송출 (Sprint 16+)
 
     /// `WalkMotionLibrary` 의 합성 step 시퀀스를 모터에 직접 송출 시작.
-    /// bus 미연결 / cradle 미확인 / preset 송출 미정의 시 skip (시뮬만 유지).
+    ///
+    /// **Codex P0 fix (2026-05-13 3차)**:
+    /// - cycle 시작 전 preflight (bus / cradle / dxl_power / 하체 토크) 강제 확인.
+    /// - 하체 토크 1개라도 실패면 cycle 차단 (silent failure 방지).
+    /// - runWalkCycle 가 `WalkCycleResult` 반환 — cycle 종료 사유 사용자에게 표시.
+    ///
     /// 이전 task 가 있으면 cancel + 완료 대기 후 새 cycle 시작 — preset 전환 race 방지.
     private func startWalkCycle(_ preset: WalkLabPreset) {
         guard let store = store, let bus = store.bus else {
-            lastRobotEvent = "ℹ️ 시뮬 모드 — 로봇 미연결 (\(preset.label))"
+            let f = WalkPreflightFailure(cause: .noConnection)
+            lastPreflightFailure = f
+            lastRobotEvent = f.userMessage + " (\(preset.label))"
             return
         }
         guard cradleConfirmed else {
-            lastRobotEvent = "⚠️ cradle 미확인 — 실 송출 차단 (\(preset.label))"
-            return
-        }
-        guard let page = WalkMotionLibrary.page(for: preset) else {
-            // idle 등 — 합성 페이지 없음. 정적 walkReady 만 송출.
-            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(preset.label)")
+            let f = WalkPreflightFailure(cause: .cradleNotConfirmed)
+            lastPreflightFailure = f
+            lastRobotEvent = f.userMessage + " (\(preset.label))"
             return
         }
 
-        // 이전 task 가 있으면 cancel — 새 task 가 prev?.value 로 완료 대기.
+        // Preflight — dxl_power ON + 모든 토크 ON. 하체 1개라도 실패면 차단.
+        if let failure = preflightForWalkCycle(bus: bus) {
+            lastPreflightFailure = failure
+            lastRobotEvent = failure.userMessage + " (\(preset.label))"
+            return
+        }
+        lastPreflightFailure = nil
+
+        // **Phase G10 (2026-05-15)**: 보행 모드 분기.
+        //   - 연속 보행 가능 preset (march/slowWalk/normalWalk/fastWalk/turnLeft/turnRight)
+        //     → continuousWalkPlan + runContinuousWalk (entry → 무한 cycle → exit).
+        //     매 cycle 끝마다 walkReady 자세로 돌아가지 않음 → 자연스러운 보행.
+        //   - jog → page(for:tuning:) + runWalkCycle(loop=false) (기존 동작 — kick chain).
+        //   - idle → 정적 walkReady.
         let prev = walkCycleTask
         prev?.cancel()
-        isRobotWalking = true
-        lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(preset.label)"
-        let maxDurationSec = preset.maxDurationSec
         let presetLabel = preset.label
+        let maxDurationSec = preset.maxDurationSec
+        let lowerBody = Self.lowerBodyJoints
 
+        if preset == .idle {
+            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(presetLabel)")
+            return
+        }
+
+        // Phase G11 — 3D 모델 동기화 closure. weak self 로 retain cycle 회피.
+        let onPose: @MainActor @Sendable (RobotPose) -> Void = { [weak self] pose in
+            self?.visualPose = pose
+        }
+
+        // 연속 보행 plan 시도.
+        if let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: currentWalkTuning()) {
+            isRobotWalking = true
+            lastRobotEvent = "🤖 연속 보행 시작 — \(presetLabel)"
+            walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
+                await prev?.value
+                let result = await Self.runContinuousWalk(
+                    bus: bus, plan: plan,
+                    maxDurationSec: maxDurationSec,
+                    lowerBodyJoints: lowerBody,
+                    onPose: onPose
+                )
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.isRobotWalking = false
+                    self.lastCycleResult = result
+                    if result.isSuccess {
+                        self.lastRobotEvent = "✅ \(result.userMessage) — walkReady 복귀 (\(presetLabel))"
+                    } else {
+                        self.lastRobotEvent = "🛑 \(result.userMessage) (\(presetLabel))"
+                    }
+                }
+            }
+            return
+        }
+
+        // jog (kick chain) — 단발 page + oneShot.
+        guard let page = WalkMotionLibrary.page(for: preset, tuning: currentWalkTuning()) else {
+            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(presetLabel)")
+            return
+        }
+        isRobotWalking = true
+        lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(presetLabel)"
         walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
-            // 이전 cycle 이 walkReady 복귀까지 마치도록 대기 — 동시 IO 방지.
             await prev?.value
-            await Self.runWalkCycle(bus: bus, page: page, maxDurationSec: maxDurationSec)
+            let result = await Self.runWalkCycle(
+                bus: bus, page: page,
+                maxDurationSec: maxDurationSec,
+                lowerBodyJoints: lowerBody,
+                loop: false,   // jog 는 kick chain 끝나면 종료.
+                onPose: onPose
+            )
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.isRobotWalking = false
-                self.lastRobotEvent = "✅ 보행 cycle 종료 — walkReady 복귀 (\(presetLabel))"
+                self.lastCycleResult = result
+                if result.isSuccess {
+                    self.lastRobotEvent = "✅ \(result.userMessage) — walkReady 복귀 (\(presetLabel))"
+                } else {
+                    self.lastRobotEvent = "🛑 \(result.userMessage) (\(presetLabel))"
+                }
             }
         }
+    }
+
+    private func currentWalkTuning() -> WalkMotionLibrary.AdvancedTuning? {
+        guard advanced else { return nil }
+        return WalkMotionLibrary.AdvancedTuning(
+            strideMm: strideMm,
+            sideMm: sideMm,
+            turnDeg: turnDeg,
+            periodMs: customPeriodMs,
+            footHeightMm: footHeightMm,
+            balanceGain: balanceGain
+        )
+    }
+
+    /// Preflight: dxl_power ON + 모든 토크 ON. 하체 실패 / 상체 4개+ 실패 시 차단.
+    /// Codex P0 권고: WalkLab cycle 이 torque OFF 상태에서 시작해도 silent 했던 버그 차단.
+    private func preflightForWalkCycle(bus: Bus) -> WalkPreflightFailure? {
+        // 1. dxl_power ON.
+        do { try bus.setDxlPower(true) }
+        catch { return WalkPreflightFailure(cause: .dxlPowerFailed(error.localizedDescription)) }
+
+        // 2. 모든 관절 토크 ON. 실패 카운트.
+        var failedJoints: [JointID] = []
+        for j in JointID.allCases {
+            do { try bus.setTorque(j, enable: true) }
+            catch { failedJoints.append(j) }
+        }
+        let lowerBodyFails = failedJoints.filter { Self.lowerBodyJoints.contains($0) }
+        if !lowerBodyFails.isEmpty {
+            return WalkPreflightFailure(cause: .lowerBodyTorqueFailed(lowerBodyFails))
+        }
+        if failedJoints.count > 3 {
+            return WalkPreflightFailure(cause: .bulkTorqueFailed(
+                failedCount: failedJoints.count,
+                total: JointID.allCases.count
+            ))
+        }
+        return nil
     }
 
     /// 보행 cycle cancel + walkReady 안전 복귀. stop / emergency / preset 전환 시 호출.
@@ -284,24 +500,180 @@ public final class WalkLabSession: ObservableObject {
         guard let task = walkCycleTask else { return }
         task.cancel()
         walkCycleTask = nil
+        walkTuningRestartTask?.cancel()
+        walkTuningRestartTask = nil
         isRobotWalking = false
         sendRobotPose(.walkReady, eventLabel: eventLabel)
     }
 
+    /// **Phase G10 (2026-05-15)** — 연속 보행 실제 송출 루프.
+    ///
+    /// 한 cycle 끝마다 walkReady 자세로 돌아가지 않고 phase[5] → phase[0] 으로 직접
+    /// 이어붙임. 사용자 체감: 끊김 없는 자연스러운 보행.
+    ///
+    /// 흐름:
+    ///   1. moving speed 설정 (1회).
+    ///   2. **entry** step 송출 (walkReady → phase[0] 전환, longer playMs).
+    ///   3. **cycle** step 무한 반복:
+    ///      - 6 phase 송출 (anchor 없음)
+    ///      - phase[5] 끝나면 다음 iter 의 phase[0] 으로 자연 wrap
+    ///        (모터 trapezoidal motion 이 playMs 안에서 보간)
+    ///      - cancel / maxDuration / 하체 통신 실패 시 break.
+    ///   4. **exit** step — walkReady 안전 복귀.
+    private static func runContinuousWalk(
+        bus: Bus, plan: WalkMotionLibrary.ContinuousWalkPlan, maxDurationSec: Int,
+        lowerBodyJoints: Set<JointID>,
+        onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil
+    ) async -> WalkCycleResult {
+        var speedFailures = 0
+        var positionFailures = 0
+        var lowerBodyPositionFails: Set<JointID> = []
+        var sampleError: String? = nil
+        var stepsExecuted = 0
+
+        // 1. moving speed 설정 (1회).
+        let cycleSpeed: UInt16 = 256
+        for joint in JointID.allCases {
+            do { try bus.setMovingSpeed(joint, speed: cycleSpeed) }
+            catch {
+                speedFailures += 1
+                sampleError = "\(joint.name) 속도쓰기: \(error.localizedDescription)"
+            }
+        }
+
+        var previous: RobotPose = .walkReady
+        let endDate: Date? = maxDurationSec > 0
+            ? Date().addingTimeInterval(TimeInterval(maxDurationSec))
+            : nil
+        var endReason: WalkCycleResult.EndReason = .completedMaxDuration
+        var cancelledMidStep = false
+
+        // 한 step 송출 helper — closure 캡처 X (concurrency 안전).
+        func sendStep(_ step: MotionStep, previousIn: RobotPose) async -> RobotPose {
+            let target = step.toPose()
+            // **Phase G11**: 3D 모델 갱신 — main actor 로 publish (실 로봇 송출 전에).
+            if let onPose {
+                await onPose(target)
+            }
+            let changed = target.changedJoints(from: previousIn)
+            for joint in changed {
+                let rawVal = UInt16(clamping: target.raw(joint))
+                do { _ = try bus.setPosition(joint, raw: rawVal) }
+                catch {
+                    positionFailures += 1
+                    sampleError = "\(joint.name) 위치쓰기: \(error.localizedDescription)"
+                    if lowerBodyJoints.contains(joint) {
+                        lowerBodyPositionFails.insert(joint)
+                    }
+                }
+            }
+            let totalMs = max(80, step.playMs + step.pauseMs)
+            let ns = UInt64(totalMs) * 1_000_000
+            try? await Task.sleep(nanoseconds: ns)
+            return target
+        }
+
+        // 2. Entry — walkReady → phase[0] (1회만).
+        entryLoop: for step in plan.entry {
+            if Task.isCancelled { cancelledMidStep = true; break entryLoop }
+            previous = await sendStep(step, previousIn: previous)
+            stepsExecuted += 1
+            if !lowerBodyPositionFails.isEmpty {
+                endReason = .lowerBodyWriteFailure
+                break entryLoop
+            }
+        }
+
+        // 3. Cycle — 6 phase 무한 반복 (anchor 없음 → 매 cycle 끝마다 phase[5] → phase[0] wrap).
+        if endReason == .completedMaxDuration && !cancelledMidStep && lowerBodyPositionFails.isEmpty {
+            cycleLoop: while !Task.isCancelled {
+                if let end = endDate, Date() >= end { break cycleLoop }
+                for step in plan.cycle {
+                    if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
+                    if let end = endDate, Date() >= end { break cycleLoop }
+                    previous = await sendStep(step, previousIn: previous)
+                    stepsExecuted += 1
+
+                    if !lowerBodyPositionFails.isEmpty {
+                        endReason = .lowerBodyWriteFailure
+                        break cycleLoop
+                    }
+                    if positionFailures > max(3, JointID.allCases.count / 2) {
+                        endReason = .bulkWriteFailure
+                        break cycleLoop
+                    }
+                }
+            }
+        }
+        if endReason == .completedMaxDuration && (cancelledMidStep || Task.isCancelled) {
+            endReason = .userCancelled
+        }
+
+        // 4. Exit — walkReady 안전 복귀. cancel 후에도 토크 OFF 보다는 복귀가 안전 (낙상 risk).
+        for step in plan.exit {
+            let target = step.toPose()
+            // Phase G11 — 3D 모델 갱신.
+            if let onPose {
+                await onPose(target)
+            }
+            let changedFinal = target.changedJoints(from: previous)
+            for joint in changedFinal {
+                let rawVal = UInt16(clamping: target.raw(joint))
+                do { _ = try bus.setPosition(joint, raw: rawVal) }
+                catch {
+                    positionFailures += 1
+                    sampleError = "\(joint.name) 복귀쓰기: \(error.localizedDescription)"
+                }
+            }
+            // Exit 의 playMs 동안 모터가 walkReady 도달하도록 대기.
+            let totalMs = max(80, step.playMs + step.pauseMs)
+            let ns = UInt64(totalMs) * 1_000_000
+            try? await Task.sleep(nanoseconds: ns)
+            previous = target
+        }
+
+        return WalkCycleResult(
+            reason: endReason,
+            stepsExecuted: stepsExecuted,
+            speedWriteFailures: speedFailures,
+            positionWriteFailures: positionFailures,
+            lowerBodyPositionFails: Array(lowerBodyPositionFails),
+            sampleError: sampleError
+        )
+    }
+
     /// 보행 cycle 실제 송출 루프 — `Task.detached` 내부 실행.
-    /// preset.maxDurationSec 도달 또는 `Task.cancel()` 시 종료. 종료 직전 walkReady 복귀.
+    ///
+    /// **Codex P0 fix (2026-05-13 3차)**:
+    /// - 모든 `try?` 제거 — speed/position write 실패 카운트 + 마지막 에러 sample.
+    /// - 하체 position write 실패 1개 이상 → 즉시 cycle 중단 (균형 위험).
+    /// - 결과를 `WalkCycleResult` 로 반환 — 호출자가 사용자에게 surface.
     ///
     /// 설계:
     /// - moving speed 1회만 설정 (매 step 호출 안 함 — 패킷 절약).
     /// - 변경된 관절만 setPosition — `RobotPose.changedJoints(from:)` 사용.
     /// - playMs + pauseMs 동안 모터의 trapezoidal motion 자체 보간을 신뢰 → 그 후 다음 step.
-    /// - Task.detached 이므로 main thread block 없음. ConnectionStore polling 과 IO 경합 가능,
-    ///   그러나 setPosition 한 번 ≈ 3ms 라 200ms tick 영향 미미.
-    private static func runWalkCycle(bus: Bus, page: MotionPage, maxDurationSec: Int) async {
+    /// - Task.detached 이므로 main thread block 없음.
+    private static func runWalkCycle(
+        bus: Bus, page: MotionPage, maxDurationSec: Int,
+        lowerBodyJoints: Set<JointID>,
+        loop: Bool = true,
+        onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil
+    ) async -> WalkCycleResult {
+        var speedFailures = 0
+        var positionFailures = 0
+        var lowerBodyPositionFails: Set<JointID> = []
+        var sampleError: String? = nil
+        var stepsExecuted = 0
+
         // 1. cycle 시작 — moving speed 1회 설정. RoboPlus 기본 32 ≈ 60 rpm 의 4배 — 빠른 보행 대응.
         let cycleSpeed: UInt16 = 256
         for joint in JointID.allCases {
-            _ = try? bus.setMovingSpeed(joint, speed: cycleSpeed)
+            do { try bus.setMovingSpeed(joint, speed: cycleSpeed) }
+            catch {
+                speedFailures += 1
+                sampleError = "\(joint.name) 속도쓰기: \(error.localizedDescription)"
+            }
         }
 
         // 2. step loop. walkReady 가 항상 prev — 변경된 관절만 차분 송출.
@@ -309,34 +681,79 @@ public final class WalkLabSession: ObservableObject {
         let endDate: Date? = maxDurationSec > 0
             ? Date().addingTimeInterval(TimeInterval(maxDurationSec))
             : nil
+        var endReason: WalkCycleResult.EndReason = .completedMaxDuration
+        var cancelledMidStep = false
 
-        cycleLoop: while !Task.isCancelled {
+        cycleLoop: repeat {
             for step in page.steps {
-                if Task.isCancelled { break cycleLoop }
+                if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
                 if let end = endDate, Date() >= end { break cycleLoop }
 
                 let target = step.toPose()
+                // Phase G11 — 3D 모델 갱신.
+                if let onPose {
+                    await onPose(target)
+                }
                 let changed = target.changedJoints(from: previous)
                 for joint in changed {
                     let rawVal = UInt16(clamping: target.raw(joint))
-                    _ = try? bus.setPosition(joint, raw: rawVal)
+                    do { _ = try bus.setPosition(joint, raw: rawVal) }
+                    catch {
+                        positionFailures += 1
+                        sampleError = "\(joint.name) 위치쓰기: \(error.localizedDescription)"
+                        if lowerBodyJoints.contains(joint) {
+                            lowerBodyPositionFails.insert(joint)
+                        }
+                    }
                 }
                 previous = target
+                stepsExecuted += 1
 
-                // playMs + pauseMs 동안 모터 trapezoidal motion 자체 보간 + pause.
+                // 하체 position write 실패 1개 이상 → 즉시 중단 (균형 위험).
+                if !lowerBodyPositionFails.isEmpty {
+                    endReason = .lowerBodyWriteFailure
+                    break cycleLoop
+                }
+                // 통신 죽음 — 한 step 안에 절반 이상 실패면 cycle 중단.
+                if positionFailures > max(3, JointID.allCases.count / 2) {
+                    endReason = .bulkWriteFailure
+                    break cycleLoop
+                }
+
                 let totalMs = max(80, step.playMs + step.pauseMs)
                 let ns = UInt64(totalMs) * 1_000_000
                 try? await Task.sleep(nanoseconds: ns)
             }
+        } while loop && !Task.isCancelled
+        if endReason == .completedMaxDuration && (cancelledMidStep || Task.isCancelled) {
+            endReason = .userCancelled
         }
 
-        // 3. 종료 정리 — walkReady 안전 복귀. cancel 후에도 동기 호출이라 잔여 명령 잔여 없음.
+        // 3. 종료 정리 — walkReady 안전 복귀. 하체 실패 후에도 토크 OFF 보다는
+        // walkReady 시도가 안전 (낙상 risk 가 더 큼). 실패해도 결과에 반영.
         let walkReady = RobotPose.walkReady
+        // Phase G11 — 3D 모델 walkReady 복귀 시각화.
+        if let onPose {
+            await onPose(walkReady)
+        }
         let changedFinal = walkReady.changedJoints(from: previous)
         for joint in changedFinal {
             let rawVal = UInt16(clamping: walkReady.raw(joint))
-            _ = try? bus.setPosition(joint, raw: rawVal)
+            do { _ = try bus.setPosition(joint, raw: rawVal) }
+            catch {
+                positionFailures += 1
+                sampleError = "\(joint.name) 복귀쓰기: \(error.localizedDescription)"
+            }
         }
+
+        return WalkCycleResult(
+            reason: endReason,
+            stepsExecuted: stepsExecuted,
+            speedWriteFailures: speedFailures,
+            positionWriteFailures: positionFailures,
+            lowerBodyPositionFails: Array(lowerBodyPositionFails),
+            sampleError: sampleError
+        )
     }
 
     private func tick() {
@@ -353,6 +770,36 @@ public final class WalkLabSession: ObservableObject {
             right: foot.rightXYZ
         ))
         if footTrail.count > 200 { footTrail.removeFirst(footTrail.count - 200) }
+
+        // **Phase G11 (2026-05-15)**: sim mode 에서도 3D 모델 보행 시각화.
+        //
+        // 실 로봇 연결 안 됐을 때 (또는 ARM 안 된 상태) `isRobotWalking == false` 라
+        // `runContinuousWalk` 의 onPose 가 호출되지 않음. sim 50ms tick 으로 phase 보간 후
+        // visualPose 갱신해서 모델이 보행 따라 움직이도록.
+        //
+        // 실 로봇 송출 중 (`isRobotWalking == true`) 이면 onPose 가 권한 — sim 덮어쓰기 회피.
+        //
+        // **Phase G12 (Codex audit 4th pass, 2026-05-15)**: 이전 sim mode 가
+        // `(strideMm: 25, sideMm: 0, turnDeg: 0)` 하드코드 → preset 무시 → 모든 preset 이
+        // 동일 보행 자세로 시각화됐던 P0 버그. `defaultTuning(for: current)` 로 정정해서
+        // march/slowWalk/normalWalk/fastWalk/turnLeft/turnRight 가 각각 다른 보행 자세.
+        if !isRobotWalking, current != .idle {
+            let effectiveTuning: WalkMotionLibrary.AdvancedTuning = advanced
+                ? WalkMotionLibrary.AdvancedTuning(
+                    strideMm: strideMm, sideMm: sideMm, turnDeg: turnDeg,
+                    periodMs: customPeriodMs, footHeightMm: footHeightMm, balanceGain: balanceGain
+                  )
+                : WalkMotionLibrary.defaultTuning(for: current)
+            let period = effectiveTuning.periodMs
+            let phaseFraction = (Double(elapsedMs).truncatingRemainder(dividingBy: period)) / period
+            let phasedTimeMs = phaseFraction * period
+            if let pose = WalkMotionLibrary.simWalkingPose(timeMs: phasedTimeMs, tuning: effectiveTuning) {
+                visualPose = pose
+            }
+        } else if current == .idle, !isRobotWalking {
+            // idle 상태 → walkReady 로 부드럽게 복귀 (sim).
+            visualPose = .walkReady
+        }
 
         updateSimIMU()
         updateSimThermal()

@@ -14,6 +14,10 @@ import SwiftUI
 public struct RootView: View {
     @StateObject private var store = ConnectionStore()
     @StateObject private var dispatcher: IntentDispatcher
+    // RemoteShell — 원격 명령 SSH/SMB 채널 (Sprint 18 환경 공유). Pilot 모드 picker
+    // 등 다른 화면이 같은 인스턴스로 명령을 보내고, RemoteShellView 가 그 히스토리를
+    // 보여준다.
+    @StateObject private var remoteShell = RemoteShell()
     private let commander: ClaudeCommander
 
     @State private var section: Section = .studio
@@ -107,8 +111,13 @@ public struct RootView: View {
             // ⌘⌃S 또는 메뉴 → 사이드바 강제 표시 (실수로 collapse 했을 때 복구).
             withAnimation { columnVisibility = .all }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .dfOpenConnectionWizard)) { _ in
+            // Pilot 카메라 패널 등에서 "연결 마법사로 가기" 요청.
+            wizardOpen = true
+        }
         .environmentObject(store)
         .environmentObject(dispatcher)
+        .environmentObject(remoteShell)
         // 글로벌 단축키 (메뉴와 같은 단축키 — 메뉴 enabled 일 때 메뉴가 우선 처리)
         .background(globalShortcuts)
     }
@@ -696,12 +705,12 @@ public struct RootView: View {
             Image(systemName: icon)
                 .font(.system(size: DFFontSize.s13, weight: .semibold))
                 .foregroundStyle(tint)
-                .frame(maxWidth: .infinity, minHeight: 28)
+                .frame(maxWidth: .infinity, minHeight: DFSize.buttonHMedium - DFSpace.micro2)
                 .background(tint.opacity(DFOpacity.o10))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(tint.opacity(DFOpacity.o25), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: DFRadius.xs2)
+                        .stroke(tint.opacity(DFOpacity.o25), lineWidth: DFSize.borderHairline)
                 )
         }
         .buttonStyle(.plain)
@@ -1035,6 +1044,8 @@ extension Notification.Name {
     public static let dfAutoConnect   = Notification.Name("DarwinForge.AutoConnect")
     public static let dfEmergencyStop = Notification.Name("DarwinForge.EmergencyStop")
     public static let dfShowSidebar   = Notification.Name("DarwinForge.ShowSidebar")
+    /// 다른 화면에서 연결 마법사 띄우기 — Pilot 카메라 패널 "연결 마법사로 가기" 등.
+    public static let dfOpenConnectionWizard = Notification.Name("DarwinForge.OpenConnectionWizard")
 
     /// 티칭 모드 → Studio 로 자세 전달. object 는 RobotPose.
     public static let dfTransferPoseToStudio = Notification.Name("DarwinForge.TransferPoseToStudio")

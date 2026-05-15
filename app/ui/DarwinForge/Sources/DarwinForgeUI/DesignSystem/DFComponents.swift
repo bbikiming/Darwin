@@ -278,13 +278,29 @@ public struct DFKeyboardHint: View {
 
 /// 모든 view 의 카드/패널이 따르는 표준 구조 — Linear / Vercel Geist 영감.
 /// header (icon + title + trailing) + content + (optional) footer.
+///
+/// 4가지 variant + density 옵션으로 화면 맥락에 맞춘다.
 public struct DFPanel<Content: View, Trailing: View, Footer: View>: View {
+    /// 패널 표면 variant.
+    public enum Variant {
+        /// 기본 — radius `md`, shadow 없음, 얇은 보더. (Linear/Vercel 표준)
+        case regular
+        /// 메트릭 카드 — 대시보드 KPI/통계용, height 고정 옵션 활용.
+        case metric
+        /// 모달/시트 — radius `lg`, shadow 있음, 더 진한 보더.
+        case modal
+        /// 인라인 — radius `sm`, 작은 카드 (검색결과/list cell 내부).
+        case inline
+    }
+
     public let title: String
     public let subtitle: String?
     public let icon: String?
     public let tint: Color
     public let height: CGFloat?
     public let prominent: Bool
+    public let variant: Variant
+    public let density: DFDensity?
     @ViewBuilder public let trailing: () -> Trailing
     @ViewBuilder public let content: () -> Content
     @ViewBuilder public let footer: () -> Footer
@@ -295,6 +311,8 @@ public struct DFPanel<Content: View, Trailing: View, Footer: View>: View {
                 tint: Color = DFColor.textPrimary,
                 height: CGFloat? = nil,
                 prominent: Bool = false,
+                variant: Variant = .regular,
+                density: DFDensity? = nil,
                 @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() },
                 @ViewBuilder content: @escaping () -> Content,
                 @ViewBuilder footer: @escaping () -> Footer = { EmptyView() }) {
@@ -304,32 +322,66 @@ public struct DFPanel<Content: View, Trailing: View, Footer: View>: View {
         self.tint = tint
         self.height = height
         self.prominent = prominent
+        self.variant = variant
+        self.density = density
         self.trailing = trailing
         self.content = content
         self.footer = footer
     }
 
+    @Environment(\.dfDensity) private var envDensity: DFDensity
+
+    private var resolvedDensity: DFDensity { density ?? envDensity }
+
+    private var radius: CGFloat {
+        switch variant {
+        case .regular, .metric: return DFRadius.md
+        case .modal: return DFRadius.lg
+        case .inline: return DFRadius.sm
+        }
+    }
+    private var hasShadow: Bool { variant == .modal }
+    private var innerSpacing: CGFloat {
+        switch variant {
+        case .inline: return DFSpace.xs2
+        default: return DFSpace.sm2
+        }
+    }
+    private var innerPadding: CGFloat {
+        switch variant {
+        case .inline: return DFSpace.sm
+        case .modal: return DFSpace.md2
+        default: return resolvedDensity.innerPadding
+        }
+    }
+
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: innerSpacing) {
             header
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
             footer()
         }
-        .padding(DFSpace.md - 4)
+        .padding(innerPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: height)
         .background(prominent ? tint.opacity(0.04) : DFColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+        .clipShape(RoundedRectangle(cornerRadius: radius))
         .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.md)
+            RoundedRectangle(cornerRadius: radius)
                 .stroke(prominent ? tint.opacity(0.25) : DFColor.textSecondary.opacity(DFOpacity.subtle),
                         lineWidth: prominent ? 0.8 : 0.5)
+        )
+        .shadow(
+            color: hasShadow ? DFShadow.modal.color : .clear,
+            radius: hasShadow ? DFShadow.modal.radius : 0,
+            x: hasShadow ? DFShadow.modal.x : 0,
+            y: hasShadow ? DFShadow.modal.y : 0
         )
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DFSpace.sm) {
             if let icon {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))

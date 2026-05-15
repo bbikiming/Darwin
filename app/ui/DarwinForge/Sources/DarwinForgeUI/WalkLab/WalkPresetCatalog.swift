@@ -21,7 +21,7 @@ public enum WalkLabPreset: String, CaseIterable, Identifiable, Hashable {
         case .slowWalk: return "천천히 걷기"
         case .normalWalk: return "보통 속도"
         case .fastWalk: return "빠르게 걷기"
-        case .jog: return "달리기"
+        case .jog: return "공 접근+오른발 킥"
         case .turnLeft: return "좌회전"
         case .turnRight: return "우회전"
         }
@@ -34,7 +34,7 @@ public enum WalkLabPreset: String, CaseIterable, Identifiable, Hashable {
         case .slowWalk: return "tortoise.fill"
         case .normalWalk: return "figure.walk"
         case .fastWalk: return "hare.fill"
-        case .jog: return "figure.run"
+        case .jog: return "soccerball"
         case .turnLeft: return "arrow.turn.up.left"
         case .turnRight: return "arrow.turn.up.right"
         }
@@ -48,7 +48,7 @@ public enum WalkLabPreset: String, CaseIterable, Identifiable, Hashable {
         case .slowWalk:   return (0.015, 0, 0, true)
         case .normalWalk: return (0.025, 0, 0, true)
         case .fastWalk:   return (0.035, 0, 0, true)
-        case .jog:        return (0.040, 0, 0, true)
+        case .jog:        return (0.024, 0, 0, true)
         case .turnLeft:   return (0.010, 0, 0.10, true)
         case .turnRight:  return (0.010, 0, -0.10, true)
         }
@@ -57,7 +57,7 @@ public enum WalkLabPreset: String, CaseIterable, Identifiable, Hashable {
     public var periodMs: UInt32 {
         switch self {
         case .fastWalk: return 500
-        case .jog:      return 450
+        case .jog:      return 620
         default:        return 600
         }
     }
@@ -80,7 +80,7 @@ public enum WalkLabPreset: String, CaseIterable, Identifiable, Hashable {
         case .march:                                     return 30
         case .slowWalk, .normalWalk:                     return 60
         case .fastWalk, .turnLeft, .turnRight:           return 30
-        case .jog:                                       return 15
+        case .jog:                                       return 4
         }
     }
 
@@ -89,7 +89,7 @@ public enum WalkLabPreset: String, CaseIterable, Identifiable, Hashable {
         case .fastWalk:
             return "ROBOTIS 기본 600ms → 500ms 단축 변형. 무릎/발목 부하 증가."
         case .jog:
-            return "ROBOTIS 원본에 없는 실험. 자기충돌·낙상 가능. 정비 스탠드 + 50cm 빈 공간 필수."
+            return "ROBOTIS SOCCER 데모 흐름: walking 접근 후 page 12 오른발 킥. 정비 스탠드 + 전방 50cm 빈 공간 필수."
         case .turnLeft, .turnRight:
             return "회전 시 좌·우 발 위상 차이로 균형 흔들림 가능."
         default:
