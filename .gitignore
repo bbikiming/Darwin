@@ -95,3 +95,9 @@ ROBOTIS-OP2_Recovery_*.zip
 
 # ROBOTIS 공식 펌웨어 reference (read-only; commit 안 함)
 DARwIn-OP_ROBOTIS_v1.6.0/
+
+# Phase G13 (2026-05-15) — 영구 PNG 아이콘은 commit 필요.
+# 위 line 5 의 'Icon' rule 이 macOS case-insensitive 로 `app/icon/` 디렉토리에 매치.
+# 디렉토리 + 파일 둘 다 exception 명시 (negation 은 parent dir 까지 거슬러 올라가야 효력).
+!app/icon/
+!app/icon/AppIcon.png

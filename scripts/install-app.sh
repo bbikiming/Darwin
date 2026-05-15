@@ -84,11 +84,20 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 PLIST
 
 # === AppIcon.icns 생성 ===
-# 우선 ICON_SOURCE env var 가 가리키는 PNG 가 있으면 sips 로 리사이즈해서 iconset 생성.
-# 없으면 Swift 단일 실행기로 AppIcon.swift 의 기하학 도형을 그려서 사용.
+# 우선순위 (Phase G13, 2026-05-15 — 영구 PNG 아이콘 적용):
+#   1. ICON_SOURCE env var 가 가리키는 PNG (명시 override)
+#   2. $REPO_ROOT/app/icon/AppIcon.png (표준 영구 경로)
+#   3. Swift 단일 실행기로 AppIcon.swift 의 기하학 도형 fallback (legacy)
 echo "▶ AppIcon.icns 생성..."
 ICONSET_DIR="$TMP_DIR/AppIcon.iconset"
 mkdir -p "$ICONSET_DIR"
+
+# Phase G13 — 표준 영구 경로 자동 인식. ICON_SOURCE 명시 안 했고 표준 PNG 가 있으면 사용.
+DEFAULT_ICON_PATH="$REPO_ROOT/app/icon/AppIcon.png"
+if [ -z "${ICON_SOURCE:-}" ] && [ -f "$DEFAULT_ICON_PATH" ]; then
+    ICON_SOURCE="$DEFAULT_ICON_PATH"
+    echo "  ✓ 표준 영구 PNG 자동 사용: app/icon/AppIcon.png"
+fi
 
 # macOS iconset 표준 사이즈 — Apple HIG.
 ICONSET_SIZES=(
