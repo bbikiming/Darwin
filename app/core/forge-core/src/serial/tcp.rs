@@ -39,6 +39,7 @@ impl TcpBus {
         })
     }
 
+    /// 연결된 endpoint label (`host:port`) — 로그 / 디버깅용.
     pub fn label(&self) -> &str {
         &self.label
     }

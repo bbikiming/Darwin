@@ -88,13 +88,18 @@ public struct RobotCameraWindow: View {
                     .frame(width: 140)
                     .font(DFFont.monoCaption)
                     .disabled(isLive)
+                    .accessibilityLabel("카메라 호스트 주소")
+                    .accessibilityHint("IPv4 또는 호스트명 — 기본 192.168.123.1")
                 Text(":")
                     .foregroundStyle(DFColor.textSecondary)
+                    .accessibilityHidden(true)
                 TextField("포트", value: $port, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 60)
                     .font(DFFont.monoCaption)
                     .disabled(isLive)
+                    .accessibilityLabel("카메라 포트")
+                    .accessibilityHint("mjpg-streamer 표준 8080. 1024–65535 범위.")
             }
 
             // 연결 / 정지 / 재연결 버튼.
@@ -106,6 +111,9 @@ public struct RobotCameraWindow: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(DFColor.danger)
+                .accessibilityLabel("카메라 스트림 정지")
+                .accessibilityHint("진행 중인 실시간 MJPEG 스트림 종료")
+                .help("실시간 스트림 정지")
             } else {
                 Button {
                     startStream()
@@ -114,11 +122,16 @@ public struct RobotCameraWindow: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(DFColor.accent)
+                .accessibilityLabel(connectButtonLabel == "재연결" ? "카메라 재연결" : "카메라 연결")
+                .accessibilityHint("\(host):\(port) 에 multipart/x-mixed-replace MJPEG 스트림 시작")
+                .help("\(host):\(port) 카메라 스트림 시작")
             }
         }
         .padding(.horizontal, DFSpace.md)
         .padding(.vertical, DFSpace.sm)
         .background(DFColor.elev2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("카메라 컨트롤 바")
     }
 
     // MARK: - Camera stage (image / overlay)
@@ -132,11 +145,13 @@ public struct RobotCameraWindow: View {
                     .resizable()
                     .interpolation(.medium)
                     .scaledToFit()
+                    .accessibilityLabel("실시간 카메라 frame — \(client.framesReceived) frame 수신")
             } else {
                 waitingPlaceholder
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
@@ -227,6 +242,8 @@ public struct RobotCameraWindow: View {
                 .font(DFFont.captionEmph.monospacedDigit())
                 .foregroundStyle(tint)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label) \(value)")
     }
 
     // MARK: - Actions

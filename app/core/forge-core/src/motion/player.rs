@@ -42,6 +42,7 @@ impl Default for MotionPlayer {
 }
 
 impl MotionPlayer {
+    /// 새 player — cancel flag false 로 초기화.
     pub fn new() -> Self {
         Self {
             cancel: Arc::new(AtomicBool::new(false)),
@@ -111,10 +112,12 @@ impl MotionPlayer {
 pub struct CancelHandle(Arc<AtomicBool>);
 
 impl CancelHandle {
+    /// player loop 에게 다음 8 ms tick 에 중단 요청 신호.
     pub fn cancel(&self) {
         self.0.store(true, Ordering::SeqCst);
     }
 
+    /// 이미 cancel 신호가 send 됐는지 확인.
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }

@@ -125,7 +125,11 @@ public struct FallPredictor {
         let tiltContrib = min(60, max(0, tiltNow / 30.0 * 60.0))
         let rateContrib = min(30, max(0, tiltRate / 60.0 * 30.0))
         let varContrib  = min(10, max(0, gyroVar / 1000.0 * 10.0))
-        let score = tiltContrib + rateContrib + varContrib
+        let scoreRaw = tiltContrib + rateContrib + varContrib
+        // 2026-05-17 fix: IEEE 754 fp 부정확 (예: 40/60 * 30 = 19.999...) 누적 시 의도된
+        // 정수 임계 (tilt 30° + rate 40 dps → 60 + 20 = 80) 가 79.99999988 로 fail.
+        // 정수 score 가 user-friendly + 임계 비교 안전 → `.rounded(.toNearestOrEven)`.
+        let score = scoreRaw.rounded(.toNearestOrEven)
 
         // 6. Emergency 권장.
         let recommend = (score >= emergencyScoreThreshold)

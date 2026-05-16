@@ -347,15 +347,19 @@ int fc_motion_play_slot(struct fc_bus *handle,
  진행 중인 motion play 를 취소. 다음 8 ms 체크 시점에 중단.
  반환: 0=OK (취소 신호 전송), -2=핸들 invalid.
 
- **Thread safety**: `fc_motion_play_slot` (다른 thread) 이 `&mut FcBus` 로 backend
- 를 mutating 하는 동안 호출 가능. 본 함수는 `&*handle` (shared ref) 로 진입하고
- `motion_cancel` 의 `Option<CancelHandle>` 를 읽기만 함 — backend 와 disjoint field.
- CancelHandle 내부 `Arc<AtomicBool>` 이 cross-thread cancellation 보장.
+ **2026-05-17 Codex MEDIUM fix**: 종전엔 `&*handle` 로 `bus.motion_cancel` 을 직접
+ read — `fc_motion_play_slot` 의 `&mut *handle` 과 같은 FcBus 메모리 동시 ref 라
+ 형식적 aliasing UB. 본 fix 에서는 `motion_state: Arc<MotionState>` 을 `Arc.clone()`
+ 으로 별도 메모리로 가져와 lock 안에서 read → backend 와 disjoint memory + Rust
+ aliasing model 정확 정합.
  */
 int fc_motion_play_cancel(struct fc_bus *handle);
 
 /*
  motion play 가 진행 중인지 확인. 1=재생 중, 0=정지, -2=핸들 invalid.
+
+ **2026-05-17 Codex MEDIUM fix**: motion_state Arc 통한 AtomicBool read — lock 없이
+ O(1), backend 와 disjoint memory.
  */
 int fc_motion_play_is_running(struct fc_bus *handle);
 

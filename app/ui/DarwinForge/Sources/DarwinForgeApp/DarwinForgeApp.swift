@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 첫 visible window 가 잡혔을 때 1회 추가 maximize 시도.
                 // didFinishLaunching 직후엔 window 가 아직 visible 아닐 수 있어 보강.
                 if let self = self, !self.didMaximizeOnLaunch, w.isVisible {
-                    self.maximizeWindow(w)
+                    self.maximizeWindow(w, isInitialLaunch: true)
                     self.didMaximizeOnLaunch = true
                 }
             }
@@ -43,16 +43,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // didBecomeKey observer 와 이중 안전망 — 둘 중 어느 쪽이든 먼저 잡으면 1회 적용.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self, !self.didMaximizeOnLaunch else { return }
-            self.maximizeMainWindow()
+            self.maximizeMainWindow(isInitialLaunch: true)
             self.didMaximizeOnLaunch = true
         }
     }
 
     /// 메인 윈도우를 모니터 visibleFrame 가득 채움 (zoom = maximize).
     /// 시스템 환경설정의 "Dock / Menu Bar" 영역 자동 회피.
-    func maximizeMainWindow() {
+    /// `isInitialLaunch: true` 면 첫 launch 의 SwiftUI Scene race 차단용 stage 3 적용.
+    func maximizeMainWindow(isInitialLaunch: Bool = false) {
         guard let w = NSApp.windows.first(where: { $0.isVisible }) else { return }
-        maximizeWindow(w)
+        maximizeWindow(w, isInitialLaunch: isInitialLaunch)
     }
 
     /// 지정 window 를 모니터 visibleFrame 가득 채움.
@@ -64,7 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///      자동 호출, visibleFrame 반환)
     ///   2. `setFrame(visibleFrame, animate: false)` 직접 호출 — performZoom 미반응 안전망
     ///   3. asyncAfter 0.2s 한 번 더 setFrame — SwiftUI re-layout 이후 override 차단
-    func maximizeWindow(_ w: NSWindow) {
+    ///
+    /// **2026-05-17 24차 cycle 2 fix**: `isInitialLaunch` 인자 추가. 첫 launch 시만
+    /// stage 3 적용 — 사용자가 메뉴 "창 최대화" / 명시 호출 시 0.2s 후 사용자 manual
+    /// resize 덮어쓰는 race 차단. flag check 는 stage 3 closure 안에서 추가 안전망.
+    func maximizeWindow(_ w: NSWindow, isInitialLaunch: Bool = false) {
         guard let screen = w.screen ?? NSScreen.main else { return }
         let target = screen.visibleFrame
 
@@ -78,11 +83,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.setFrame(target, display: true, animate: false)
         }
 
-        // Stage 3: SwiftUI Scene defaultSize 가 race 로 override 하는 경우 한 번 더.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            if w.frame != target {
-                w.setFrame(target, display: true, animate: false)
-            }
+        // Stage 3: 첫 launch 의 SwiftUI Scene defaultSize race 만 차단.
+        // 사용자 명시 호출 (메뉴 / 단축키) 시 skip — 사용자가 0.2s 안에 manual resize
+        // 한 경우 덮어쓰는 회귀 방지.
+        guard isInitialLaunch else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            // didMaximizeOnLaunch 이미 set 됐어도 사용자가 그 사이 resize 했을 수
+            // 있음 → frame == target 일 때만 한 번 더 강제.
+            guard self != nil, w.frame != target else { return }
+            w.setFrame(target, display: true, animate: false)
         }
     }
 

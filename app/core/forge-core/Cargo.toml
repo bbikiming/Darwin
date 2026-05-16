@@ -10,7 +10,10 @@ description = "Core library for DarwinForge — Dynamixel Protocol 1.0 + control
 
 [lib]
 name = "forge_core"
-crate-type = ["rlib", "staticlib"]
+# 2026-05-17: `staticlib` 제거 — `forge-ffi` package 의 동일 이름 `libforge_core.a`
+# 출력과 collision 차단. forge-core 는 rlib (Rust inter-crate link) 만 필요 —
+# forge-ffi 가 rlib 로 dependency 하고 자체 staticlib + cdylib 산출 (`libforge_core.a`).
+crate-type = ["rlib"]
 
 [dependencies]
 thiserror.workspace = true

@@ -849,7 +849,10 @@ fn handle_motion(action: MotionAction) -> anyhow::Result<()> {
         MotionAction::Play(args) => motion_play::handle(args)?,
         MotionAction::Catalog { bin } => {
             use forge_core::motion::library::OFFICIAL_CATALOG;
-            use forge_core::motion::{parse_bin4096, Library, SafetyClass};
+            use forge_core::motion::SafetyClass;
+            // 2026-05-17: `Library` / `parse_bin4096` import 제거 — deprecated
+            // `Library::with_official_catalog` 사용처를 `PageLibrary::from_official_bin`
+            // 로 교체했으므로 두 import 불필요.
 
             let bin_path = bin.unwrap_or_else(|| {
                 std::path::PathBuf::from(
@@ -878,15 +881,18 @@ fn handle_motion(action: MotionAction) -> anyhow::Result<()> {
             }
 
             // bin 이 있으면 매칭 검증.
-            if let Ok(bytes) = std::fs::read(&bin_path) {
-                if let Ok(raw_pages) = parse_bin4096(&bytes) {
-                    let lib = Library::with_official_catalog(&raw_pages);
-                    println!(
+            // 2026-05-17: deprecated `Library::with_official_catalog` 제거 →
+            // `synth::library::PageLibrary::from_official_bin` 로 교체 (full raw
+            // step 디코드 + metadata 합성).
+            if std::fs::metadata(&bin_path).is_ok() {
+                match forge_core::synth::library::PageLibrary::from_official_bin(&bin_path) {
+                    Ok(lib) => println!(
                         "\n  ✓ {} 페이지가 motion_4096.bin 에서 import 됨",
                         lib.len()
-                    );
-                } else {
-                    println!("\n  ⚠️  motion_4096.bin 파싱 실패 — 카탈로그 ID 표시만 제공");
+                    ),
+                    Err(_) => println!(
+                        "\n  ⚠️  motion_4096.bin 파싱 실패 — 카탈로그 ID 표시만 제공"
+                    ),
                 }
             } else {
                 println!(

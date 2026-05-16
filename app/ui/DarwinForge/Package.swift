@@ -37,6 +37,12 @@ let package = Package(
             name: "DarwinForgeUI",
             dependencies: ["ForgeCore"],
             path: "Sources/DarwinForgeUI",
+            // 2026-05-17 fix: 개발자용 마크다운 문서 명시 exclude — SwiftPM
+            // "found N file(s) which are unhandled" warning 제거.
+            exclude: [
+                "DesignSystem/DESIGN_TOKEN_GUIDE.md",
+                "Synth/README.md",
+            ],
             resources: [
                 .copy("Resources/Meshes"),
                 // 2026-05-16: Localization 스캐폴드 — ko / Base.

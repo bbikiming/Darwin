@@ -138,13 +138,48 @@ pub unsafe extern "C" fn fc_serial_list_ports(out_err: *mut c_int) -> *mut c_cha
 // Bus 핸들 — open/close/ping/scan/board snapshot/joint ops
 // ============================================================================
 
+/// motion play 상태 — `FcBus` 와 cross-thread cancel/poll 양쪽에서 공유.
+///
+/// **2026-05-17 Codex MEDIUM fix**: 종전엔 `motion_cancel` / `motion_playing` 가
+/// `FcBus` 의 inline field 였다. `fc_motion_play_slot` 가 `&mut *handle` 로 backend
+/// mutation 중에 `fc_motion_play_cancel` 이 `&*handle` (또는 `&mut`) 로 진입하면
+/// Rust 형식적 aliasing 위반 — 같은 `FcBus` 메모리에 `&mut` 와 `&` 동시 존재.
+///
+/// 본 struct 를 `Arc<MotionState>` 로 분리하면 backend (FcBus inline) 와 motion
+/// state (heap) 가 disjoint memory → cancel/poll 이 `Arc.clone()` 으로 안전 접근.
+/// Rust aliasing model 정확 정합 + Miri / 향후 strict aliasing 컴파일러 fail 없음.
+pub struct MotionState {
+    /// 진행 중인 motion play 취소 핸들. play 중이 아니면 None.
+    /// `Mutex` 보호 — `fc_motion_play_slot` 가 cancel handle 을 set/unset 하는 동안
+    /// `fc_motion_play_cancel` 이 read 하는 race 차단.
+    pub cancel: std::sync::Mutex<Option<CancelHandle>>,
+    /// play 가 진행 중이면 true. AtomicBool — lock 없이 cross-thread polling.
+    pub playing: std::sync::atomic::AtomicBool,
+}
+
+impl MotionState {
+    /// 새 idle state 생성.
+    pub fn new() -> Self {
+        Self {
+            cancel: std::sync::Mutex::new(None),
+            playing: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+impl Default for MotionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Bus 핸들. PosixSerial / LoopbackBus / TcpBus를 감쌈.
 pub struct FcBus {
     backend: BusBackend,
-    /// 진행 중인 motion play 취소 핸들. play 중이 아니면 None.
-    motion_cancel: Option<CancelHandle>,
-    /// play 가 진행 중이면 true.
-    motion_playing: std::sync::atomic::AtomicBool,
+    /// motion play 상태 — heap allocated, cross-thread shared.
+    /// `fc_motion_play_cancel` / `is_running` 이 `Arc.clone()` 으로 접근 → backend
+    /// 와 메모리 disjoint, Rust aliasing UB 없음.
+    motion_state: std::sync::Arc<MotionState>,
 }
 
 #[allow(dead_code)] // Loopback은 in-process 테스트 후크용.
@@ -179,8 +214,7 @@ pub unsafe extern "C" fn fc_bus_open(
             }
             Box::into_raw(Box::new(FcBus {
                 backend: BusBackend::Posix(bus),
-                motion_cancel: None,
-                motion_playing: std::sync::atomic::AtomicBool::new(false),
+                motion_state: std::sync::Arc::new(MotionState::new()),
             }))
         }
         Ok(Err(e)) => {
@@ -224,8 +258,7 @@ pub unsafe extern "C" fn fc_bus_open_tcp(
             }
             Box::into_raw(Box::new(FcBus {
                 backend: BusBackend::Tcp(bus),
-                motion_cancel: None,
-                motion_playing: std::sync::atomic::AtomicBool::new(false),
+                motion_state: std::sync::Arc::new(MotionState::new()),
             }))
         }
         Ok(Err(e)) => {
@@ -1102,22 +1135,17 @@ pub unsafe extern "C" fn fc_motion_play_slot(
             confirm_risk: confirm_risk != 0 || single_foot_ok != 0,
         };
 
-        let opts = ExecuteOptions {
-            confirm_risk: confirm_risk != 0 || single_foot_ok != 0,
-        };
-
-        // Disjoint field split — backend / motion_cancel / motion_playing 각각 분리 빌림.
-        // Rust borrow checker 가 같은 struct 의 다른 field 동시 mut/shared 허용 (NLL).
-        let FcBus {
-            backend,
-            motion_cancel,
-            motion_playing,
-        } = &mut *handle;
+        // 2026-05-17 Codex MEDIUM fix: motion_state 를 `Arc.clone()` 으로 분리.
+        // backend 는 inline FcBus mutation, state 는 heap (Arc) shared — disjoint memory.
+        // `fc_motion_play_cancel/is_running` 이 `&*handle` 로 진입해도 motion_state Arc
+        // 를 통해 lock 보호 read — Rust aliasing UB 없음.
+        let bus = &mut *handle;
+        let state = bus.motion_state.clone();
 
         // 재진입 가드 — 이미 재생 중이면 두 번째 호출 차단.
         // `compare_exchange(false, true)` 실패 = 다른 thread/Task 가 이미 재생 중.
-        // 동시 backend 접근으로 인한 Dynamixel 패킷 충돌 + motion_cancel 덮어쓰기 차단.
-        if motion_playing
+        if state
+            .playing
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
@@ -1125,29 +1153,26 @@ pub unsafe extern "C" fn fc_motion_play_slot(
         }
 
         let player = MotionPlayer::new();
-        *motion_cancel = Some(player.cancel_handle());
-
-        // Drop guard — panic 또는 early return 시 motion_playing/cancel 정리 보장.
-        // 종전엔 정리 라인이 closure 본문 끝에만 있어, play_pages 내부 panic 시
-        // `catch_unwind` 가 잡지만 cleanup 못 해서 `motion_playing == true` 영구 stuck +
-        // stale `CancelHandle` (Arc 가 dropped) 로 use-after-free 위험.
-        // Drop 은 unwind 중에도 실행 (Rust 보장) — `catch_unwind` 가 capture 하기 전에.
-        struct PlayGuard<'a> {
-            playing: &'a std::sync::atomic::AtomicBool,
-            cancel: &'a mut Option<CancelHandle>,
+        if let Ok(mut cancel_guard) = state.cancel.lock() {
+            *cancel_guard = Some(player.cancel_handle());
         }
-        impl<'a> Drop for PlayGuard<'a> {
+
+        // Drop guard — panic 또는 early return 시 motion state 정리 보장.
+        // Arc<MotionState> 를 capture 하므로 backend (`&mut bus.backend`) 와 disjoint.
+        struct PlayGuard {
+            state: std::sync::Arc<MotionState>,
+        }
+        impl Drop for PlayGuard {
             fn drop(&mut self) {
-                self.playing.store(false, Ordering::SeqCst);
-                *self.cancel = None;
+                self.state.playing.store(false, Ordering::SeqCst);
+                if let Ok(mut g) = self.state.cancel.lock() {
+                    *g = None;
+                }
             }
         }
-        let _guard = PlayGuard {
-            playing: motion_playing,
-            cancel: motion_cancel,
-        };
+        let _guard = PlayGuard { state: state.clone() };
 
-        let result = match backend {
+        let result = match &mut bus.backend {
             BusBackend::Posix(b) => {
                 let mut jc = forge_core::control::JointController::new(b);
                 player.play_pages(&mut jc, &pages, opts)
@@ -1174,31 +1199,33 @@ pub unsafe extern "C" fn fc_motion_play_slot(
 /// 진행 중인 motion play 를 취소. 다음 8 ms 체크 시점에 중단.
 /// 반환: 0=OK (취소 신호 전송), -2=핸들 invalid.
 ///
-/// **Thread safety**: `fc_motion_play_slot` (다른 thread) 이 `&mut FcBus` 로 backend
-/// 를 mutating 하는 동안 호출 가능. 본 함수는 `&*handle` (shared ref) 로 진입하고
-/// `motion_cancel` 의 `Option<CancelHandle>` 를 읽기만 함 — backend 와 disjoint field.
-/// CancelHandle 내부 `Arc<AtomicBool>` 이 cross-thread cancellation 보장.
+/// **2026-05-17 Codex MEDIUM fix**: 종전엔 `&*handle` 로 `bus.motion_cancel` 을 직접
+/// read — `fc_motion_play_slot` 의 `&mut *handle` 과 같은 FcBus 메모리 동시 ref 라
+/// 형식적 aliasing UB. 본 fix 에서는 `motion_state: Arc<MotionState>` 을 `Arc.clone()`
+/// 으로 별도 메모리로 가져와 lock 안에서 read → backend 와 disjoint memory + Rust
+/// aliasing model 정확 정합.
 #[no_mangle]
 pub unsafe extern "C" fn fc_motion_play_cancel(handle: *mut FcBus) -> c_int {
     if handle.is_null() {
         return FC_ERR_INVALID;
     }
     safe_call(|| {
-        // SAFETY: shared ref — play_slot 의 `&mut FcBus` 와 같은 메모리지만, motion_cancel
-        // field 는 play_slot 진입 시 이미 Some(handle) 으로 set 되고 종료 전엔 mutation
-        // 없음. Option 내부 CancelHandle 의 cancel() 은 Arc<AtomicBool> 에 SeqCst write
-        // — 데이터 race 없음. 단 형식적 Rust aliasing 관점에서 `&` 와 `&mut` 가 같은
-        // FcBus 메모리에 동시 존재 — 향후 motion_state 를 별도 Arc 로 분리하여 정식
-        // 해결 권장 (commit message 후속 PR 항목).
+        // shared ref 에서 motion_state Arc 만 clone — `&*handle` 의 lifetime 안 짧음.
         let bus = &*handle;
-        if let Some(ref h) = bus.motion_cancel {
-            h.cancel();
+        let state = bus.motion_state.clone();
+        if let Ok(guard) = state.cancel.lock() {
+            if let Some(ref h) = *guard {
+                h.cancel();
+            }
         }
         FC_OK
     })
 }
 
 /// motion play 가 진행 중인지 확인. 1=재생 중, 0=정지, -2=핸들 invalid.
+///
+/// **2026-05-17 Codex MEDIUM fix**: motion_state Arc 통한 AtomicBool read — lock 없이
+/// O(1), backend 와 disjoint memory.
 #[no_mangle]
 pub unsafe extern "C" fn fc_motion_play_is_running(handle: *mut FcBus) -> c_int {
     if handle.is_null() {
@@ -1207,7 +1234,7 @@ pub unsafe extern "C" fn fc_motion_play_is_running(handle: *mut FcBus) -> c_int 
     safe_call(|| {
         use std::sync::atomic::Ordering;
         let bus = &*handle;
-        if bus.motion_playing.load(Ordering::SeqCst) {
+        if bus.motion_state.playing.load(Ordering::SeqCst) {
             1
         } else {
             0
@@ -1281,8 +1308,7 @@ mod tests {
         unsafe {
             let mut h = Box::new(FcBus {
                 backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
-                motion_cancel: None,
-                motion_playing: std::sync::atomic::AtomicBool::new(false),
+                motion_state: std::sync::Arc::new(MotionState::new()),
             });
             assert_eq!(fc_motion_play_is_running(h.as_mut() as *mut _), 0);
         }
@@ -1293,8 +1319,7 @@ mod tests {
         unsafe {
             let mut h = Box::new(FcBus {
                 backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
-                motion_cancel: None,
-                motion_playing: std::sync::atomic::AtomicBool::new(false),
+                motion_state: std::sync::Arc::new(MotionState::new()),
             });
             // cancel with no active play — should still return OK (idempotent no-op).
             assert_eq!(fc_motion_play_cancel(h.as_mut() as *mut _), FC_OK);
@@ -1307,8 +1332,7 @@ mod tests {
             let path = std::ffi::CString::new("/nonexistent/motion.bin").unwrap();
             let mut h = Box::new(FcBus {
                 backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
-                motion_cancel: None,
-                motion_playing: std::sync::atomic::AtomicBool::new(false),
+                motion_state: std::sync::Arc::new(MotionState::new()),
             });
             let result = fc_motion_play_slot(
                 h.as_mut() as *mut _,

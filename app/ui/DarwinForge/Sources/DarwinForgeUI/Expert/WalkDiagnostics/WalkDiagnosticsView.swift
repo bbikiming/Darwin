@@ -164,9 +164,9 @@ public struct WalkDiagnosticsView: View {
             Image(systemName: "antenna.radiowaves.left.and.right.slash")
                 .foregroundStyle(DFColor.textSecondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Robot not connected")
+                Text("로봇이 연결되지 않았어요")
                     .font(.system(size: DFFontSize.s11, weight: .semibold))
-                Text("Open ‘원격 명령’ from the sidebar to connect — live IMU and motor data will appear here.")
+                Text("좌측의 ‘원격 명령’ 메뉴에서 로봇을 연결하면 실제 자세 센서와 모터 데이터가 여기 표시됩니다.")
                     .font(.system(size: DFFontSize.s9))
                     .foregroundStyle(DFColor.textSecondary)
             }
@@ -185,9 +185,9 @@ public struct WalkDiagnosticsView: View {
             Image(systemName: "sensor.tag.radiowaves.forward.slash")
                 .foregroundStyle(DFColor.warning)
             VStack(alignment: .leading, spacing: 2) {
-                Text("IMU not responding")
+                Text("자세 센서가 응답하지 않아요")
                     .font(.system(size: DFFontSize.s11, weight: .semibold))
-                Text("The robot is online but the CM-740 IMU registers (38–49) are silent. Check firmware version and controller model.")
+                Text("로봇은 연결됐지만 CM-740 IMU 레지스터(38–49번)가 응답하지 않습니다. 펌웨어 버전이나 컨트롤러 모델을 확인해 주세요.")
                     .font(.system(size: DFFontSize.s9))
                     .foregroundStyle(DFColor.textSecondary)
             }
@@ -267,10 +267,10 @@ public struct WalkDiagnosticsView: View {
                     .frame(width: 86)
                     .onChange(of: sampleRateHz) { _, _ in if enabled { restart() } }
                 } else {
-                    Text("5 Hz")
+                    Text("초당 5회")
                         .font(.system(size: DFFontSize.s10, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
-                        .help("Live mode polls the robot at a fixed 5 Hz")
+                        .help("실측 모드는 초당 5회 고정으로 로봇 상태를 읽어옵니다")
                 }
             }
 
@@ -317,15 +317,15 @@ public struct WalkDiagnosticsView: View {
     private var statusPill: some View {
         let on = enabled
         let modeTint: Color = source == .preview ? DFColor.info : DFColor.success
-        let modeTag: String = source == .preview ? "PREVIEW" : "LIVE"
+        let modeTag: String = source == .preview ? "미리보기" : "실측"
         return HStack(spacing: DFSpace.xs2) {
             // 모드 배지 — 합성/실측 구분.
             Text(modeTag)
-                .font(.system(size: DFFontSize.s9, weight: .black, design: .monospaced))
+                .font(.system(size: DFFontSize.s9, weight: .bold))
                 .foregroundStyle(modeTint)
-                .padding(.horizontal, 4).padding(.vertical, 1)
+                .padding(.horizontal, 5).padding(.vertical, 1)
                 .background(
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: 3)
                         .stroke(modeTint, lineWidth: 0.8)
                 )
             Text("·").foregroundStyle(DFColor.textSecondary)
@@ -334,15 +334,15 @@ public struct WalkDiagnosticsView: View {
                 .fill(on ? DFColor.success : DFColor.textSecondary)
                 .frame(width: 7, height: 7)
                 .shadow(color: on ? DFColor.success.opacity(DFOpacity.o70) : .clear, radius: 3)
-            Text(on ? "RUNNING" : "PAUSED")
-                .font(.system(size: DFFontSize.s10, weight: .bold, design: .monospaced))
+            Text(on ? "기록 중" : "멈춤")
+                .font(.system(size: DFFontSize.s10, weight: .semibold))
                 .foregroundStyle(on ? DFColor.success : DFColor.textSecondary)
             Text("·").foregroundStyle(DFColor.textSecondary)
-            Text("t=\(String(format: "%6.3fs", simTime))")
+            Text(String(format: "%.1f초", simTime))
                 .font(.system(size: DFFontSize.s10, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
             Text("·").foregroundStyle(DFColor.textSecondary)
-            Text("n=\(data.gyroX.samples.count)")
+            Text("\(data.gyroX.samples.count)샘플")
                 .font(.system(size: DFFontSize.s10, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
         }
@@ -374,17 +374,21 @@ public struct WalkDiagnosticsView: View {
 
     // MARK: - Live mode data cards
     //
-    // **UX writing**: each card uses a single noun-phrase title and short English
-    // labels (1-2 words) followed by monospaced numeric values + units. Status pills
-    // use plain words ("Good", "Low", "Critical"). No jargon when avoidable.
+    // **UX 라이팅 원칙**:
+    //   - 카드 제목: 한 단어 명사 (배터리·연결·자세 센서·모터·메인보드)
+    //   - 라벨: 2~4글자 친근한 명사 (전압·통신·온도·펌웨어)
+    //   - 값: 숫자 + 단위 monospaced (11.8 V, 5.2 ms, 47 °C)
+    //   - 상태 칩: 일상 표현 (양호 / 부족 / 위험, 방금 / 12초 전, 모두 꺼짐 / 16개 켜짐)
+    //   - 빈 상태: 진행형 안내 ("데이터 모으는 중…", "응답 기다리는 중…")
+    //   - 단위 기호는 영문 (V, ms, °C, Hz) 유지 — 한글 단어보다 짧고 즉시 인식.
 
-    /// Battery voltage with quality pill + 60-sample sparkline.
+    /// 배터리 — 전압 큰 숫자 + 등급 칩 + 60초 sparkline.
     private var powerCard: some View {
         let voltage = store.lastTelemetry?.board?.voltageVolts
         let level = batteryLevel(voltage)
         return DFPanel(
-            "Battery",
-            subtitle: "Pack voltage & trend",
+            "배터리",
+            subtitle: "전압과 흐름",
             icon: level.icon,
             tint: level.tint
         ) {
@@ -398,19 +402,19 @@ public struct WalkDiagnosticsView: View {
                         .foregroundStyle(DFColor.textSecondary)
                     Spacer()
                     Text(level.label)
-                        .font(.system(size: DFFontSize.s9, weight: .bold, design: .monospaced))
+                        .font(.system(size: DFFontSize.s9, weight: .bold))
                         .foregroundStyle(level.tint)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .overlay(Capsule().stroke(level.tint, lineWidth: 0.8))
                 }
                 if store.voltageHistory.count > 1 {
                     voltageSparkline.frame(height: 28)
-                    Text("Last \(store.voltageHistory.count)s")
-                        .font(.system(size: DFFontSize.s9, design: .monospaced))
+                    Text("최근 \(store.voltageHistory.count)초")
+                        .font(.system(size: DFFontSize.s9))
                         .foregroundStyle(DFColor.textSecondary)
                 } else {
-                    Text("Collecting samples…")
-                        .font(.system(size: DFFontSize.s9, design: .monospaced))
+                    Text("데이터 모으는 중…")
+                        .font(.system(size: DFFontSize.s9))
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
@@ -444,30 +448,30 @@ public struct WalkDiagnosticsView: View {
 
     private struct BatteryLevel { let label: String; let tint: Color; let icon: String }
 
-    /// Voltage thresholds — ROBOTIS-OP2 nominal 12.6V (fully charged 3S Li-ion ≈ 12.6V,
-    /// safe min ≈ 10.5V before brown-out).
+    /// 배터리 등급 기준 — ROBOTIS-OP2 (3S Li-ion, 만충 12.6V, 안전 하한 10.5V).
     private func batteryLevel(_ v: Double?) -> BatteryLevel {
-        guard let v else { return .init(label: "Unknown", tint: DFColor.textSecondary, icon: "battery.0percent") }
-        if v >= 11.5 { return .init(label: "Good", tint: DFColor.success, icon: "battery.100percent") }
-        if v >= 10.5 { return .init(label: "Low", tint: DFColor.warning, icon: "battery.50percent") }
-        return .init(label: "Critical", tint: DFColor.danger, icon: "battery.25percent")
+        guard let v else { return .init(label: "확인 중", tint: DFColor.textSecondary, icon: "battery.0percent") }
+        if v >= 11.5 { return .init(label: "양호", tint: DFColor.success, icon: "battery.100percent") }
+        if v >= 10.5 { return .init(label: "부족", tint: DFColor.warning, icon: "battery.50percent") }
+        return .init(label: "위험", tint: DFColor.danger, icon: "battery.25percent")
     }
 
-    /// Connection link — address, uptime, latency, success rate.
+    /// 연결 — 주소, 연결 시간, 응답 속도, 통신 성공률.
     private var linkCard: some View {
         DFPanel(
-            "Link",
-            subtitle: "Robot connection",
+            "연결",
+            subtitle: "로봇과의 통신 상태",
             icon: "network",
             tint: DFColor.accent
         ) {
             VStack(alignment: .leading, spacing: DFSpace.xs) {
-                metaRow("Address", endpointLabel(store.activeEndpoint))
-                metaRow("Uptime", store.connectedAt.map { Self.fmtDuration(-$0.timeIntervalSinceNow) } ?? "—")
-                metaRow("Latency",
+                metaRow("주소", endpointLabel(store.activeEndpoint))
+                metaRow("연결 시간", store.connectedAt.map { Self.fmtDuration(-$0.timeIntervalSinceNow) } ?? "—")
+                metaRow("응답 속도",
                         store.lastRoundTripMs.map { String(format: "%.1f ms", $0) } ?? "—",
                         color: rttColor(store.lastRoundTripMs))
-                metaRow("Reads", "\(store.successCount) ok · \(store.failureCount) fail",
+                metaRow("통신",
+                        "성공 \(store.successCount)회 · 실패 \(store.failureCount)회",
                         color: store.failureCount == 0 ? DFColor.textPrimary : DFColor.warning)
             }
         }
@@ -477,7 +481,7 @@ public struct WalkDiagnosticsView: View {
         guard let ep else { return "—" }
         switch ep {
         case .usbSerial(let path):
-            // 사용자에게 보이는 짧은 라벨 — 풀 path 는 너무 길어서 마지막 segment 만.
+            // 풀 path 는 너무 길어서 마지막 segment 만. 사용자에겐 그게 더 식별성 높음.
             let comp = (path as NSString).lastPathComponent
             return "USB · \(comp)"
         case .network(let host, let port):
@@ -493,29 +497,30 @@ public struct WalkDiagnosticsView: View {
         return DFColor.danger
     }
 
-    /// CM-740 IMU source + health.
+    /// 자세 센서 — CM-740 IMU 의 출처/주기/응답 상태.
     private var imuCard: some View {
         DFPanel(
-            "IMU",
-            subtitle: "CM-740 inertial sensor",
+            "자세 센서",
+            subtitle: "CM-740 IMU",
             icon: "gyroscope",
             tint: DFColor.success
         ) {
             VStack(alignment: .leading, spacing: DFSpace.xs) {
-                metaRow("Source", "Registers 38–49")
-                metaRow("Rate", "5 Hz")
-                metaRow("Last reading",
-                        store.lastImuSuccessAt.map { Self.fmtRel($0) } ?? "no signal",
+                metaRow("출처", "레지스터 38–49번")
+                metaRow("갱신", "초당 5회")
+                metaRow("마지막 수신",
+                        store.lastImuSuccessAt.map { Self.fmtRel($0) } ?? "신호 없음",
                         color: store.isImuStale ? DFColor.warning : DFColor.textPrimary)
-                metaRow("Samples", "\(data.gyroX.samples.count)")
+                metaRow("수집 샘플", "\(data.gyroX.samples.count)개")
                 if store.imuConsecutiveFailures > 0 {
-                    metaRow("Failures", "\(store.imuConsecutiveFailures) in a row",
+                    metaRow("연속 실패",
+                            "\(store.imuConsecutiveFailures)회",
                             color: DFColor.danger)
                 }
-                metaRow("Scale", "±2000 °/s · ±2 g")
+                metaRow("측정 범위", "±2000 °/s · ±2 g")
                 Divider().padding(.vertical, 2)
-                Text("Scale assumes a 16-bit signed range. We will confirm against the real robot in v1.6 — see cm.rs:166.")
-                    .font(.system(size: DFFontSize.s9, design: .monospaced))
+                Text("측정 범위는 16비트 정수 기준으로 가정한 값입니다. 실제 로봇에서 검증 후 정정 예정 (cm.rs:166).")
+                    .font(.system(size: DFFontSize.s9))
                     .foregroundStyle(DFColor.textSecondary)
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
@@ -523,7 +528,7 @@ public struct WalkDiagnosticsView: View {
         }
     }
 
-    /// Joint summary — count, torque, average + hottest motor.
+    /// 모터(관절) — 응답 개수, 토크 상태, 평균/최고 온도.
     private var motorsCard: some View {
         let joints = store.lastTelemetry?.joints ?? [:]
         let total = joints.count
@@ -534,21 +539,22 @@ public struct WalkDiagnosticsView: View {
             .max { $0.value.presentTemperature < $1.value.presentTemperature }
             .map { ($0.key, $0.value) }
         return DFPanel(
-            "Motors",
-            subtitle: "Joint state",
+            "모터",
+            subtitle: "관절 상태",
             icon: "gearshape.2",
             tint: DFColor.torque
         ) {
             VStack(alignment: .leading, spacing: DFSpace.xs) {
-                metaRow("Online", "\(total) of 20")
-                metaRow("Torque", torqueOn == 0 ? "All off" : "\(torqueOn) on",
+                metaRow("응답 중", "20개 중 \(total)개")
+                metaRow("힘 들어감",
+                        torqueOn == 0 ? "모두 꺼짐" : "\(torqueOn)개 켜짐",
                         color: torqueOn == 0 ? DFColor.textSecondary : DFColor.torque)
                 if let t = avgTempInt {
-                    metaRow("Avg temp", "\(t) °C", color: tempColor(Double(t)))
+                    metaRow("평균 온도", "\(t) °C", color: tempColor(Double(t)))
                 }
                 if let (jid, j) = hottest {
-                    metaRow("Hottest",
-                            jid.name.replacingOccurrences(of: "_", with: " ").capitalized,
+                    metaRow("가장 뜨거운",
+                            jointShortName(jid),
                             color: tempColor(Double(j.presentTemperature)))
                     HStack {
                         Spacer()
@@ -558,11 +564,37 @@ public struct WalkDiagnosticsView: View {
                     }
                 }
                 if total == 0 {
-                    Text("Waiting for the first joint sample…")
-                        .font(.system(size: DFFontSize.s9, design: .monospaced))
+                    Text("관절 응답 기다리는 중…")
+                        .font(.system(size: DFFontSize.s9))
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
+        }
+    }
+
+    /// 관절 ID 의 사용자 친화적 짧은 이름. `R_KNEE` → `오른 무릎`.
+    private func jointShortName(_ id: JointID) -> String {
+        switch id {
+        case .rShoulderPitch: return "오른 어깨 앞뒤"
+        case .lShoulderPitch: return "왼 어깨 앞뒤"
+        case .rShoulderRoll:  return "오른 어깨 옆"
+        case .lShoulderRoll:  return "왼 어깨 옆"
+        case .rElbow:         return "오른 팔꿈치"
+        case .lElbow:         return "왼 팔꿈치"
+        case .rHipYaw:        return "오른 골반 회전"
+        case .lHipYaw:        return "왼 골반 회전"
+        case .rHipRoll:       return "오른 골반 옆"
+        case .lHipRoll:       return "왼 골반 옆"
+        case .rHipPitch:      return "오른 골반 앞뒤"
+        case .lHipPitch:      return "왼 골반 앞뒤"
+        case .rKnee:          return "오른 무릎"
+        case .lKnee:          return "왼 무릎"
+        case .rAnklePitch:    return "오른 발목 앞뒤"
+        case .lAnklePitch:    return "왼 발목 앞뒤"
+        case .rAnkleRoll:     return "오른 발목 옆"
+        case .lAnkleRoll:     return "왼 발목 옆"
+        case .headPan:        return "머리 좌우"
+        case .headTilt:       return "머리 위아래"
         }
     }
 
@@ -573,38 +605,39 @@ public struct WalkDiagnosticsView: View {
         return DFColor.success
     }
 
-    /// Sub-controller board info.
+    /// 메인보드 — CM-730/740 모델, 펌웨어 버전, 버튼 상태.
     private var boardCard: some View {
         let board = store.lastTelemetry?.board
         return DFPanel(
-            "Controller",
-            subtitle: "Sub-controller board",
+            "메인보드",
+            subtitle: "로봇 컨트롤러",
             icon: "cpu",
             tint: DFColor.info
         ) {
             VStack(alignment: .leading, spacing: DFSpace.xs) {
-                metaRow("Model", board.map { boardModelLabel($0.modelNumber) } ?? "—")
-                metaRow("Firmware", board.map { "v\($0.version)" } ?? "—")
-                metaRow("Button", board.map { buttonLabel($0.button) } ?? "—")
+                metaRow("모델", board.map { boardModelLabel($0.modelNumber) } ?? "—")
+                metaRow("펌웨어", board.map { "v\($0.version)" } ?? "—")
+                metaRow("버튼", board.map { buttonLabel($0.button) } ?? "—")
             }
         }
     }
 
     private func boardModelLabel(_ model: UInt16) -> String {
         switch model {
-        case 730: return "CM-730 · 1st gen"
-        case 740: return "CM-740 · 2nd gen"
-        default:  return "Model \(model)"
+        case 730: return "CM-730 · 1세대"
+        case 740: return "CM-740 · 2세대"
+        default:  return "모델 \(model)"
         }
     }
 
     private func buttonLabel(_ bits: UInt8) -> String {
-        // CM-740 buttons: bit 0 = MODE, bit 1 = START, bit 2 = USER (펌웨어에 따라 다름).
+        // CM-740 펌웨어: bit 0 = MODE, bit 1 = START, bit 2 = USER.
+        // 버튼 이름은 로봇 본체에 인쇄된 문구 그대로 (사용자가 보고 그대로 인식).
         var labels: [String] = []
         if bits & 0b001 != 0 { labels.append("MODE") }
         if bits & 0b010 != 0 { labels.append("START") }
         if bits & 0b100 != 0 { labels.append("USER") }
-        return labels.isEmpty ? "None pressed" : labels.joined(separator: " + ")
+        return labels.isEmpty ? "안 눌림" : labels.joined(separator: " + ")
     }
 
     /// Generic compact key-value row used across all live cards.
@@ -624,17 +657,17 @@ public struct WalkDiagnosticsView: View {
 
     private static func fmtRel(_ d: Date) -> String {
         let secs = -d.timeIntervalSinceNow
-        if secs < 1 { return "just now" }
-        if secs < 60 { return String(format: "%.0fs ago", secs) }
-        if secs < 3600 { return String(format: "%.0fm ago", secs / 60) }
-        return String(format: "%.0fh ago", secs / 3600)
+        if secs < 1 { return "방금" }
+        if secs < 60 { return String(format: "%.0f초 전", secs) }
+        if secs < 3600 { return String(format: "%.0f분 전", secs / 60) }
+        return String(format: "%.0f시간 전", secs / 3600)
     }
 
     private static func fmtDuration(_ secs: TimeInterval) -> String {
         let s = max(0, Int(secs))
-        if s < 60 { return "\(s)s" }
-        if s < 3600 { return "\(s / 60)m \(s % 60)s" }
-        return "\(s / 3600)h \(s / 60 % 60)m"
+        if s < 60 { return "\(s)초" }
+        if s < 3600 { return "\(s / 60)분 \(s % 60)초" }
+        return "\(s / 3600)시간 \(s / 60 % 60)분"
     }
 
     private var commandCard: some View {

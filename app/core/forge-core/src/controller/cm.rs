@@ -61,11 +61,17 @@ pub struct DetectResult {
 ///   - Tilt 근사: atan2(accel_y, accel_z) = roll, atan2(-accel_x, sqrt(y²+z²)) = pitch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImuRaw {
+    /// Gyro X 16-bit raw (LSB). 변환 `× 2000/32767 = °/s`.
     pub gyro_x: i16,
+    /// Gyro Y 16-bit raw (LSB).
     pub gyro_y: i16,
+    /// Gyro Z 16-bit raw (LSB).
     pub gyro_z: i16,
+    /// Accel X 16-bit raw (LSB). 변환 `× 2/32767 = g`.
     pub accel_x: i16,
+    /// Accel Y 16-bit raw (LSB).
     pub accel_y: i16,
+    /// Accel Z 16-bit raw (LSB).
     pub accel_z: i16,
 }
 
@@ -86,9 +92,11 @@ impl ImuRaw {
     pub fn accel_x_g(&self) -> f32 {
         self.accel_x as f32 * 2.0 / 32767.0
     }
+    /// Accel Y (g).
     pub fn accel_y_g(&self) -> f32 {
         self.accel_y as f32 * 2.0 / 32767.0
     }
+    /// Accel Z (g).
     pub fn accel_z_g(&self) -> f32 {
         self.accel_z as f32 * 2.0 / 32767.0
     }

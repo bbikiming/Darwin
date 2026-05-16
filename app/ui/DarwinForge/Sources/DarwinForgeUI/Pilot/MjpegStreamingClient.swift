@@ -79,6 +79,11 @@ public final class MjpegStreamingClient: ObservableObject {
     private let session: URLSession
     private var task: Task<Void, Never>?
     private var endpoint: PilotCameraEndpoint?
+    /// 2026-05-17: Codex LOW fix — `URLSession.AsyncBytes.task` (URLSessionDataTask) 명시 보관.
+    /// `stop()` 시 Swift Task cancel + URLSessionDataTask cancel **둘 다** 호출 →
+    /// connection 즉시 drop, byte iterator buffered drain 차단. 종전엔 Task cancel 만
+    /// 호출 → AsyncBytes iterator 가 다음 byte 받을 때까지 정지 안 함.
+    private var dataTask: URLSessionDataTask?
 
     public convenience init() {
         let config = URLSessionConfiguration.ephemeral
@@ -127,8 +132,13 @@ public final class MjpegStreamingClient: ObservableObject {
     }
 
     public func stop(resetImage: Bool = true) {
+        // 2026-05-17 강화: Swift Task + URLSessionDataTask 둘 다 cancel.
+        // - task.cancel(): byte iterator 가 CancellationError throw (다음 await 시점)
+        // - dataTask.cancel(): TCP connection 즉시 drop — buffered byte drain 차단
         task?.cancel()
         task = nil
+        dataTask?.cancel()
+        dataTask = nil
         endpoint = nil
         phase = .idle
         framesReceived = 0
@@ -157,6 +167,13 @@ public final class MjpegStreamingClient: ObservableObject {
             // session 은 immutable property — nonisolated 안전 capture.
             let session = self.session
             let (bytes, response) = try await session.bytes(for: request)
+            // 2026-05-17: AsyncBytes.task (URLSessionDataTask) 명시 보관 → stop() 시 즉시 cancel.
+            let underlyingTask = bytes.task
+            await self.storeDataTask(underlyingTask)
+            defer {
+                // runStream 종료 시 dataTask 정리 — instance 변수 잔존 방지.
+                Task { @MainActor [weak self] in self?.dataTask = nil }
+            }
             guard let http = response as? HTTPURLResponse else {
                 await reportPhase(.failed(.other("응답 형식 오류")))
                 return
@@ -188,6 +205,11 @@ public final class MjpegStreamingClient: ObservableObject {
     /// MainActor hop helper — nonisolated background 가 `@Published phase` 갱신용.
     private func reportPhase(_ newValue: Phase) {
         self.phase = newValue
+    }
+
+    /// MainActor hop helper — nonisolated background 가 `dataTask` 보관용.
+    private func storeDataTask(_ t: URLSessionDataTask) {
+        self.dataTask = t
     }
 
     // MARK: - Multipart parser (background)
