@@ -1,0 +1,88 @@
+# DarwinForge SwiftLint config — Design system 강제 + Apple HIG 정합.
+#
+# 2026-05-16: 초기 스캐폴드 — WalkLab 영역 우선 (other 영역 점진 추가).
+#
+# 사용:
+#   $ brew install swiftlint
+#   $ swiftlint lint --strict
+#
+# CI 통합 (별도 PR): GitHub Actions workflow 에 swiftlint step 추가.
+
+# MARK: - Paths
+included:
+  - app/ui/DarwinForge/Sources
+excluded:
+  - app/ui/DarwinForge/Vendor
+  - app/ui/DarwinForge/Sources/DarwinForgeUI/Resources
+
+# MARK: - Disabled rules (project convention)
+disabled_rules:
+  - line_length              # 한국어 docstring 길어짐
+  - trailing_whitespace
+  - todo                     # WIP markers 허용
+  - identifier_name          # 짧은 이름 허용 (x, y, p 등)
+  - type_body_length         # WalkLabSession 등 길이 허용
+  - file_length              # 큰 view 파일 허용
+  - function_body_length     # 큰 view body 허용
+  - function_parameter_count
+
+# MARK: - Opt-in rules
+opt_in_rules:
+  - explicit_init
+  - first_where
+  - sorted_first_last
+  - contains_over_first_not_nil
+  - empty_count
+  - prefer_zero_over_explicit_init
+
+# MARK: - Custom rules (DarwinForge design system 강제)
+custom_rules:
+  df_no_raw_padding:
+    name: "Raw padding 값 사용 금지"
+    regex: '\.padding\(\s*[0-9]+(?:\.[0-9]+)?\s*\)'
+    message: "DFSpace 토큰 사용: .padding(DFSpace.sm) 등"
+    severity: warning
+    excluded:
+      - ".*Tests.*"
+      - ".*\\.previews\\.*"
+
+  df_no_raw_spacing:
+    name: "Raw spacing 값 사용 금지"
+    regex: 'spacing:\s*[0-9]+(?:\.[0-9]+)?\s*[,\)]'
+    message: "DFSpace 토큰 사용: spacing: DFSpace.xs 등"
+    severity: warning
+    excluded:
+      - ".*Tests.*"
+      - ".*DesignTokens\\.swift"  # 토큰 자체 정의는 제외
+      - ".*DesignSystem.*"        # design system 내부 raw 허용
+
+  df_no_raw_corner_radius:
+    name: "Raw cornerRadius 값 사용 금지"
+    regex: 'cornerRadius:\s*[0-9]+(?:\.[0-9]+)?\s*[,\)]'
+    message: "DFRadius 토큰 사용: cornerRadius: DFRadius.xs2 등"
+    severity: warning
+    excluded:
+      - ".*Tests.*"
+      - ".*DesignTokens\\.swift"
+      - ".*DesignSystem.*"
+
+  df_no_raw_opacity:
+    name: "Raw opacity 값 사용 금지"
+    regex: '\.opacity\(\s*0\.[0-9]+\s*\)'
+    message: "DFOpacity 토큰 사용: .opacity(DFOpacity.o25) 등"
+    severity: warning
+    excluded:
+      - ".*Tests.*"
+      - ".*DesignTokens\\.swift"
+      - ".*DesignSystem.*"
+
+  df_prefer_dfcolor_over_system_named:
+    name: "system named color (.red, .green 등) 대신 DFColor 사용"
+    regex: '\.foregroundStyle\(\.(red|green|yellow|blue|orange|purple)\)|\.fill\(\.(red|green|yellow|blue|orange|purple)\)'
+    message: "DFColor.danger / .success / .warning / .info / .torque 등 semantic 토큰 사용"
+    severity: warning
+    excluded:
+      - ".*Tests.*"
+
+# MARK: - Reporter
+reporter: "xcode"   # Xcode 빌드 시 inline 경고

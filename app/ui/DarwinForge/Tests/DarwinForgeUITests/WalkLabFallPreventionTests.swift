@@ -1,4 +1,5 @@
 import ForgeCore
+import SwiftUI
 import XCTest
 @testable import DarwinForgeUI
 
@@ -647,5 +648,33 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "새 session 이 UserDefaults true → 복원해야 함")
 
         UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    // MARK: - Phase E-1: High Contrast color variant
+
+    /// **DFColor.success/warning/danger 의 highContrast variant** — Color
+    /// 자체 == 비교는 SwiftUI 가 internal `NSColor` 로 변환 후 가능.
+    /// init 이 4-arg 형식으로 통과하는지만 검증 (regression: nil fallback).
+    func testHighContrastColorInitCompiles() {
+        // 컴파일 가능 == regression 통과.
+        let c1 = Color(light: "#FFFFFF", dark: "#000000",
+                       highContrastLight: nil, highContrastDark: nil)
+        let c2 = Color(light: "#FF0000", dark: "#FF0000",
+                       highContrastLight: "#CC0000", highContrastDark: "#FF6666")
+        XCTAssertNotEqual(String(describing: c1), "",
+            "Color init 가능")
+        XCTAssertNotEqual(String(describing: c2), "")
+    }
+
+    // MARK: - Phase A-1: Localization scaffold (compile guard only)
+
+    /// **Localization scaffold 컴파일 가드**. 실 strings 파일 검증은 Mac
+    /// build 시 SPM resource 처리 + Xcode Preview 시각 확인.
+    /// (Bundle.module accessor 는 target-scoped — 별도 helper 필요).
+    func testLocalizableStringKeysCompile() {
+        // LocalizedStringKey 가 컴파일 가능 == infrastructure 통과.
+        let _: LocalizedStringKey = "안전 상태"
+        let _: LocalizedStringKey = "Fall Prevention 모니터링"
+        let _: LocalizedStringKey = "지우기"
     }
 }

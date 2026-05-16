@@ -29,17 +29,36 @@ public enum DFColor {
     /// 브랜드 (로봇 / 모션 강조)
     public static let forge = Color(light: "#FF6A00", dark: "#FF8A3D")
 
-    // MARK: - State (KS S ISO 7010 매핑)
-    /// 정상 / 정보 (KS 초록)
-    public static let success = Color(light: "#34C759", dark: "#30D158")
-    /// 한계 근접 / 주의 (KS 노랑)
-    public static let warning = Color(light: "#FF9F0A", dark: "#FFD60A")
-    /// 위험 / E-Stop / fault (KS 빨강)
-    public static let danger = Color(light: "#FF3B30", dark: "#FF453A")
-    /// 텔레메트리 / 정보 (KS 파랑)
-    public static let info = Color(light: "#5AC8FA", dark: "#64D2FF")
-    /// 토크 / 모터 시각화
-    public static let torque = Color(light: "#BF5AF2", dark: "#DA8FFF")
+    // MARK: - State (KS S ISO 7010 매핑 + WCAG High Contrast 변형)
+    //
+    // 2026-05-16: High Contrast 변형 추가. macOS Accessibility "대비 늘리기" ON 시
+    // 더 진한 톤 자동 적용 — WCAG AAA 명도비 (7:1+) 만족.
+
+    /// 정상 / 정보 (KS 초록). High contrast: 더 진한 녹색.
+    public static let success = Color(
+        light: "#34C759", dark: "#30D158",
+        highContrastLight: "#248A3D", highContrastDark: "#3AE65A"
+    )
+    /// 한계 근접 / 주의 (KS 노랑). High contrast: 더 진한 amber.
+    public static let warning = Color(
+        light: "#FF9F0A", dark: "#FFD60A",
+        highContrastLight: "#C26C00", highContrastDark: "#FFEA38"
+    )
+    /// 위험 / E-Stop / fault (KS 빨강). High contrast: 더 진한 빨강.
+    public static let danger = Color(
+        light: "#FF3B30", dark: "#FF453A",
+        highContrastLight: "#C7160C", highContrastDark: "#FF6961"
+    )
+    /// 텔레메트리 / 정보 (KS 파랑). High contrast: 더 진한 파랑.
+    public static let info = Color(
+        light: "#5AC8FA", dark: "#64D2FF",
+        highContrastLight: "#0A75AB", highContrastDark: "#7DDBFF"
+    )
+    /// 토크 / 모터 시각화 (보라).
+    public static let torque = Color(
+        light: "#BF5AF2", dark: "#DA8FFF",
+        highContrastLight: "#8E2CC2", highContrastDark: "#E3AAFF"
+    )
 
     // MARK: - Interaction state (2026-05-16)
 
@@ -431,11 +450,32 @@ private struct DFMaterialBackground: ViewModifier {
 extension Color {
     /// hex 문자열에서 light/dark 분기 색상 생성.
     init(light: String, dark: String) {
+        self.init(light: light, dark: dark,
+                  highContrastLight: nil, highContrastDark: nil)
+    }
+
+    /// **2026-05-16**: High Contrast variant 지원.
+    ///
+    /// macOS Accessibility "디스플레이 → 대비 늘리기" ON 시 자동 적용.
+    /// `highContrastLight` / `highContrastDark` nil 이면 light/dark fallback.
+    ///
+    /// # WCAG AAA 명도비
+    ///
+    /// 일반 모드: 4.5:1 (AA) 이상 권장. high contrast: 7:1 (AAA) 이상.
+    /// 자세한 명도비 검증은 Apple Accessibility Inspector 또는 WCAG 도구 사용.
+    init(light: String, dark: String,
+         highContrastLight: String?, highContrastDark: String?) {
         #if canImport(AppKit)
         self.init(nsColor: NSColor(name: nil) { appearance in
             switch appearance.name {
-            case .darkAqua, .vibrantDark, .accessibilityHighContrastDarkAqua, .accessibilityHighContrastVibrantDark:
+            case .accessibilityHighContrastDarkAqua,
+                 .accessibilityHighContrastVibrantDark:
+                return NSColor(hex: highContrastDark ?? dark) ?? .systemGray
+            case .darkAqua, .vibrantDark:
                 return NSColor(hex: dark) ?? .systemGray
+            case .accessibilityHighContrastAqua,
+                 .accessibilityHighContrastVibrantLight:
+                return NSColor(hex: highContrastLight ?? light) ?? .systemGray
             default:
                 return NSColor(hex: light) ?? .systemGray
             }

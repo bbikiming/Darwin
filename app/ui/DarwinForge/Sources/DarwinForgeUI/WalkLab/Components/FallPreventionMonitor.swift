@@ -69,6 +69,13 @@ struct FallPreventionMonitor: View {
                 .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
                         lineWidth: DFSize.borderHairline)
         )
+        // **2026-05-16 Phase B-1**: Dynamic Type cap — `xxxLarge` 까지 허용.
+        // Apple HIG: monitoring dashboard 같은 dense layout 은 큰 텍스트
+        // 모드에서 부서질 위험. `xxxLarge` 가 안전한 상한 (사용자 가독성 ↑ +
+        // layout 무결성). 그 이상 (`accessibility1`~`accessibility5`) 차단.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Fall Prevention 모니터링 대시보드")
     }
 
     // MARK: - 1. Hero status banner

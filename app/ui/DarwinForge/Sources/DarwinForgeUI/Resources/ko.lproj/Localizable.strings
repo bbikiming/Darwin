@@ -1,0 +1,24 @@
+/* DarwinForge — 한국어 (default locale).
+
+   2026-05-16: KEY = 한국어 본문 = VALUE — defaultLocalization "ko" 일 때 fallback.
+   영어 locale 사용자는 Base.lproj 의 영문 번역 사용.
+
+   이 파일은 *명시화 목적* — 한국어 키가 한국어로 매핑됨을 documenting.
+   비어 있어도 SwiftUI 가 키를 그대로 사용하므로 동일 동작.
+*/
+
+// MARK: - WalkLab Monitor (sections)
+"안전 상태" = "안전 상태";
+"6-Layer 안전 시스템" = "6-Layer 안전 시스템";
+"최근 10초 — Roll / Pitch / Predictor Score" = "최근 10초 — Roll / Pitch / Predictor Score";
+"자세 보정 delta (8 관절)" = "자세 보정 delta (8 관절)";
+"이벤트 로그" = "이벤트 로그";
+"(아직 이벤트 없음 — 보행 시작 시 로그 누적)" = "(아직 이벤트 없음 — 보행 시작 시 로그 누적)";
+"지우기" = "지우기";
+
+// MARK: - Toggle bar
+"Fall Prevention 모니터링" = "Fall Prevention 모니터링";
+"6-Layer 상태 + 시계열 + 이벤트 로그 표시 중" = "6-Layer 상태 + 시계열 + 이벤트 로그 표시 중";
+"펼치면 6-Layer 안전 시스템 + 시계열 그래프 + 이벤트 로그" = "펼치면 6-Layer 안전 시스템 + 시계열 그래프 + 이벤트 로그";
+"펼치기" = "펼치기";
+"접기" = "접기";

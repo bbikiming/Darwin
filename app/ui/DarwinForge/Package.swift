@@ -9,6 +9,9 @@ import PackageDescription
 
 let package = Package(
     name: "DarwinForge",
+    // 2026-05-16: default localization — 한국어 사용자 우선.
+    // 다른 locale 미지원 시 ko 사용. Base.lproj = English fallback.
+    defaultLocalization: "ko",
     platforms: [
         .macOS(.v14)
     ],
@@ -35,7 +38,11 @@ let package = Package(
             dependencies: ["ForgeCore"],
             path: "Sources/DarwinForgeUI",
             resources: [
-                .copy("Resources/Meshes")
+                .copy("Resources/Meshes"),
+                // 2026-05-16: Localization 스캐폴드 — ko / Base.
+                // 향후 영어/일본어 등 추가 가능.
+                .process("Resources/ko.lproj"),
+                .process("Resources/Base.lproj"),
             ]
         ),
         .executableTarget(

@@ -1,0 +1,74 @@
+/* DarwinForge — Base localization (English fallback when locale unsupported).
+
+   2026-05-16: 초기 스캐폴드 — WalkLab fall prevention 모니터링 영역.
+
+   KEY = 한국어 본문 (Swift source 에 그대로 사용 — defaultLocalization = "ko").
+   VALUE = 영문 번역.
+
+   사용:
+   ```swift
+   Text("안전 상태")  // ko.lproj: "안전 상태", Base.lproj: "Safety State"
+   ```
+*/
+
+// MARK: - WalkLab Monitor (sections)
+"안전 상태" = "Safety State";
+"6-Layer 안전 시스템" = "6-Layer Safety System";
+"최근 10초 — Roll / Pitch / Predictor Score" = "Last 10s — Roll / Pitch / Predictor Score";
+"자세 보정 delta (8 관절)" = "Posture Correction Delta (8 joints)";
+"이벤트 로그" = "Event Log";
+"(아직 이벤트 없음 — 보행 시작 시 로그 누적)" = "(No events yet — log accumulates during walk)";
+"지우기" = "Clear";
+
+// MARK: - Toggle bar
+"Fall Prevention 모니터링" = "Fall Prevention Monitoring";
+"6-Layer 상태 + 시계열 + 이벤트 로그 표시 중" = "Showing 6-Layer state + time series + event log";
+"펼치면 6-Layer 안전 시스템 + 시계열 그래프 + 이벤트 로그" = "Expand to see 6-Layer safety system + time-series + event log";
+"펼치기" = "Expand";
+"접기" = "Collapse";
+
+// MARK: - Balance states
+"정상" = "Normal";
+"주의" = "Caution";
+"경고" = "Warning";
+"위험" = "Danger";
+"비상" = "Emergency";
+
+// MARK: - Source labels
+"시뮬" = "Sim";
+"실 IMU" = "Real IMU";
+"실 모터" = "Real Motor";
+"지연" = "Stale";
+"IMU 지연" = "IMU Stale";
+
+// MARK: - WalkLab cards
+"안전 상태: %@" = "Safety State: %@";
+"자동 균형 보정" = "Auto Balance Correction";
+"자세 보정 (실험)" = "Posture Correction (Experimental)";
+
+// MARK: - Layer threshold labels
+"정비 스탠드 거치 필수" = "Maintenance stand required";
+"≥ 80 = critical 차단" = "≥ 80 = critical blocked";
+"고급 모드 OFF" = "Advanced mode OFF";
+"15/22/28/30° 5단계" = "15/22/28/30° 5-tier";
+"≥ 80 = 선제 정지" = "≥ 80 = preemptive stop";
+"토글 OFF" = "Toggle OFF";
+"≥ 60°C = 자동 정지" = "≥ 60°C = auto-stop";
+
+// MARK: - Layer names
+"L1 Cradle" = "L1 Cradle";
+"L2 Stability" = "L2 Stability";
+"L3 IMU Tilt" = "L3 IMU Tilt";
+"L4 Predictor" = "L4 Predictor";
+"L5 Corrector" = "L5 Corrector";
+"L6 Thermal" = "L6 Thermal";
+
+"확인" = "Confirmed";
+"미확인" = "Unconfirmed";
+
+// MARK: - State messages
+"기울기 22°+ — 보행 속도 70% 자동 감속" = "Tilt 22°+ — walking speed auto-reduced to 70%";
+"기울기 28°+ — 자세 동결 (lastSafePose 유지)" = "Tilt 28°+ — posture frozen (lastSafePose hold)";
+"기울기 30°+ — 토크 OFF + walkReady 복귀" = "Tilt 30°+ — torque OFF + walkReady recovery";
+"임계 미초과 — 정상 보행" = "Below threshold — normal walking";
+"기울기 15°+ — 모니터링 강화" = "Tilt 15°+ — increased monitoring";
