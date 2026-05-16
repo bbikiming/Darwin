@@ -89,14 +89,12 @@ struct FallPreventionMonitor: View {
                     Text("안전 상태")
                         .font(.system(size: DFFontSize.s10))
                         .foregroundStyle(DFColor.textSecondary)
-                    Spacer()
-                    Text(session.imuSource.label)
-                        .font(.system(size: DFFontSize.s10, design: .monospaced))
-                        .foregroundStyle(imuSourceColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(imuSourceColor.opacity(DFOpacity.o10))
-                        .clipShape(Capsule())
+                    Spacer(minLength: DFSpace.xs)
+                    // 데이터 source 요약 — 사용자가 한 눈에 "실 robot vs sim 데이터" 식별.
+                    dataSourcePill(label: "IMU \(session.imuSource.label)",
+                                   color: imuSourceColor)
+                    dataSourcePill(label: "모터 \(session.motorTempSource.label)",
+                                   color: motorTempSourceColor)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: DFSpace.sm) {
                     Text(state.label)
@@ -170,6 +168,18 @@ struct FallPreventionMonitor: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
+                // 데이터 source pill (실 IMU / 실 모터 / 시뮬 / 지연).
+                // **2026-05-16**: 사용자가 "실 데이터 / sim 데이터" 즉시 구분 가능.
+                if let label = l.dataSourceLabel, let color = l.dataSourceColor {
+                    Text(label)
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundStyle(color)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 0.5)
+                        .background(color.opacity(DFOpacity.o15))
+                        .clipShape(Capsule())
+                        .layoutPriority(1)
+                }
             }
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(l.valueLabel)
@@ -203,16 +213,18 @@ struct FallPreventionMonitor: View {
     }
 
     private func currentLayers() -> [LayerStatus] {
-        // L1 — 정비 스탠드 (사이드바 토글).
+        // L1 — 정비 스탠드 (사이드바 토글). UI-only — source 라벨 없음.
         let l1 = LayerStatus(
             id: "L1", name: "L1 Cradle",
             icon: session.cradleConfirmed ? "checkmark.shield.fill" : "shield",
             valueLabel: session.cradleConfirmed ? "확인" : "미확인",
             unit: nil,
             thresholdLabel: "정비 스탠드 거치 필수",
-            color: session.cradleConfirmed ? DFColor.success : DFColor.warning
+            color: session.cradleConfirmed ? DFColor.success : DFColor.warning,
+            dataSourceLabel: nil,
+            dataSourceColor: nil
         )
-        // L2 — 슬라이더 stability score (advanced 모드일 때만 의미).
+        // L2 — 슬라이더 stability score (advanced 모드일 때만 의미). UI-only.
         let stab = session.advanced ? session.stabilityScore.score : 0
         let stabColor: Color = {
             if !session.advanced { return DFColor.textSecondary }
@@ -228,9 +240,11 @@ struct FallPreventionMonitor: View {
             valueLabel: session.advanced ? String(format: "%.0f", stab) : "—",
             unit: session.advanced ? "/100" : nil,
             thresholdLabel: session.advanced ? "≥ 80 = critical 차단" : "고급 모드 OFF",
-            color: stabColor
+            color: stabColor,
+            dataSourceLabel: nil,
+            dataSourceColor: nil
         )
-        // L3 — IMU tilt (max|roll/pitch|).
+        // L3 — IMU tilt (max|roll/pitch|). data = imuSource.
         let tiltMax = max(abs(session.imuRollDeg), abs(session.imuPitchDeg))
         let tiltColor: Color = {
             if tiltMax >= 30 { return DFColor.danger }
@@ -245,9 +259,11 @@ struct FallPreventionMonitor: View {
             valueLabel: String(format: "%.1f", tiltMax),
             unit: "°",
             thresholdLabel: "15/22/28/30° 5단계",
-            color: tiltColor
+            color: tiltColor,
+            dataSourceLabel: session.imuSource.label,
+            dataSourceColor: imuSourceColor
         )
-        // L4 — Predictor score.
+        // L4 — Predictor score. data = imuSource (gyro + tilt 둘 다 IMU).
         let score = session.fallPrediction.score
         let scoreColor: Color = {
             if score >= 80 { return DFColor.danger }
@@ -263,9 +279,11 @@ struct FallPreventionMonitor: View {
             thresholdLabel: session.fallPrediction.etaMs.map {
                 String(format: "ETA %.0fms", $0)
             } ?? "≥ 80 = 선제 정지",
-            color: scoreColor
+            color: scoreColor,
+            dataSourceLabel: session.imuSource.label,
+            dataSourceColor: imuSourceColor
         )
-        // L5 — Corrector.
+        // L5 — Corrector. data = imuSource (output 은 IMU error 에 비례).
         let corrColor: Color = session.enableBalanceCorrection
             ? (session.lastCorrections?.maxAbs ?? 0 > 0 ? DFColor.accent : DFColor.success)
             : DFColor.textSecondary
@@ -285,9 +303,11 @@ struct FallPreventionMonitor: View {
                 ? (session.rampProgress.map { String(format: "ramp %.0f%%", $0 * 100) }
                    ?? "ramp pending")
                 : "토글 OFF",
-            color: corrColor
+            color: corrColor,
+            dataSourceLabel: session.enableBalanceCorrection ? session.imuSource.label : nil,
+            dataSourceColor: session.enableBalanceCorrection ? imuSourceColor : nil
         )
-        // L6 — 모터 온도.
+        // L6 — 모터 온도. data = motorTempSource (별도 source — Telemetry 의 joints).
         let temp = session.maxMotorTemp
         let tempColor: Color = {
             if temp >= 60 { return DFColor.danger }
@@ -301,7 +321,9 @@ struct FallPreventionMonitor: View {
             valueLabel: String(format: "%.1f", temp),
             unit: "°C",
             thresholdLabel: "≥ 60°C = 자동 정지",
-            color: tempColor
+            color: tempColor,
+            dataSourceLabel: session.motorTempSource.label,
+            dataSourceColor: motorTempSourceColor
         )
         return [l1, l2, l3, l4, l5, l6]
     }
@@ -567,6 +589,11 @@ struct FallPreventionMonitor: View {
         let unit: String?
         let thresholdLabel: String
         let color: Color
+        /// 데이터 source 라벨 — "실 IMU" / "실 모터" / "시뮬" / "지연" / nil (UI-only layer).
+        /// nil 이면 source pill 미표시 (L1 cradle, L2 stability).
+        let dataSourceLabel: String?
+        /// 데이터 source 색 — source pill 색.
+        let dataSourceColor: Color?
     }
 
     private func stateColor(_ s: WalkLabSession.BalanceState) -> Color {
@@ -620,6 +647,29 @@ struct FallPreventionMonitor: View {
         case .real:  return DFColor.success
         case .stale: return DFColor.warning
         }
+    }
+
+    /// 모터 온도 source 색 — sim=회색, real=초록, stale=주황.
+    /// imuSourceColor 와 동일 매핑.
+    private var motorTempSourceColor: Color {
+        switch session.motorTempSource {
+        case .sim:   return DFColor.textSecondary
+        case .real:  return DFColor.success
+        case .stale: return DFColor.warning
+        }
+    }
+
+    /// 데이터 source pill — hero banner 의 IMU/모터 source 표시.
+    /// monospace + capsule + tint 배경 (모든 source pill 공통 스타일).
+    private func dataSourcePill(label: String, color: Color) -> some View {
+        Text(label)
+            .font(.system(size: DFFontSize.s9, design: .monospaced))
+            .foregroundStyle(color)
+            .padding(.horizontal, DFSpace.xs2)
+            .padding(.vertical, 1)
+            .background(color.opacity(DFOpacity.o10))
+            .clipShape(Capsule())
+            .layoutPriority(1)
     }
 
     private func eventIcon(_ k: WalkLabSession.SafetyEvent.Kind) -> String {

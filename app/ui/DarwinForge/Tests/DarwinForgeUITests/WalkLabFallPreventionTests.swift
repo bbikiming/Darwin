@@ -571,4 +571,37 @@ final class WalkLabFallPreventionTests: XCTestCase {
         }
         XCTAssertEqual(e.message, "test")
     }
+
+    // MARK: - L6 Thermal 실 데이터 통합 (2026-05-16)
+
+    /// **MotorTempSource enum** — sim / real / stale.
+    func testMotorTempSourceLabels() {
+        XCTAssertEqual(WalkLabSession.MotorTempSource.sim.label, "시뮬")
+        XCTAssertEqual(WalkLabSession.MotorTempSource.real.label, "실 모터")
+        XCTAssertEqual(WalkLabSession.MotorTempSource.stale.label, "지연")
+    }
+
+    /// **초기 motorTempSource = .sim** — 실 robot 미연결 default.
+    func testMotorTempSourceInitialSim() {
+        let session = WalkLabSession()
+        XCTAssertEqual(session.motorTempSource, .sim,
+            "초기 motorTempSource 는 sim 이어야 함 (실 robot 미연결)")
+    }
+
+    /// **maxMotorTemp 가 private(set)** — 외부에서 직접 쓰기 차단.
+    /// 컴파일 가능 == 접근 권한 보장. WalkLabSession 내부만 갱신.
+    func testMaxMotorTempReadOnly() {
+        let session = WalkLabSession()
+        XCTAssertEqual(session.maxMotorTemp, 35.0,
+            "초기 ambient temp 35°C")
+        // session.maxMotorTemp = 50 ← 컴파일 X (private(set))
+    }
+
+    /// **MotorTempSource Equatable / Sendable**.
+    func testMotorTempSourceEquatable() {
+        XCTAssertEqual(WalkLabSession.MotorTempSource.sim,
+                       WalkLabSession.MotorTempSource.sim)
+        XCTAssertNotEqual(WalkLabSession.MotorTempSource.sim,
+                          WalkLabSession.MotorTempSource.real)
+    }
 }

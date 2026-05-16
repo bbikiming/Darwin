@@ -60,9 +60,32 @@ public final class WalkLabSession: ObservableObject {
     @Published public var imuPitchDeg: Double = 0
     /// **Stage 1 (v1.1 fall prevention)**: IMU 출처 표시 — UI 가 sim/real/stale 구분.
     @Published public private(set) var imuSource: ImuSource = .sim
-    @Published public var maxMotorTemp: Double = 35.0
+    @Published public private(set) var maxMotorTemp: Double = 35.0
+    /// **2026-05-16**: 모터 온도 출처 — sim/real/stale. 이전 버그: 실 robot 연결 시에도
+    /// `updateSimThermal()` 만 호출 → dashboard 가 항상 가짜 온도 표시.
+    /// 정정: `updateMotorTempFromRealOrSim()` 가 `lastTelemetry?.joints` 의
+    /// `presentTemperature` 중 max 사용 (실), 미연결 시 sim model fallback.
+    @Published public private(set) var motorTempSource: MotorTempSource = .sim
     @Published public var balanceLost: Bool = false
     @Published public var thermalAlarm: Bool = false
+
+    /// 모터 온도 데이터 출처 — Stage 1 분석 후 추가 (2026-05-16).
+    public enum MotorTempSource: Equatable, Sendable {
+        /// 실 robot 미연결 또는 telemetry 미수신 — `updateSimThermal` 모델 값.
+        case sim
+        /// 실 robot 연결 + telemetry fresh — `lastTelemetry.joints` 의 max 사용.
+        case real
+        /// 실 robot 연결 됐으나 telemetry 5초+ 지연 — 마지막 값 hold.
+        case stale
+
+        public var label: String {
+            switch self {
+            case .sim:   return "시뮬"
+            case .real:  return "실 모터"
+            case .stale: return "지연"
+            }
+        }
+    }
 
     /// IMU 데이터 출처 — Stage 1 wire-up 이후 도입.
     public enum ImuSource: Equatable, Sendable {
@@ -235,6 +258,8 @@ public final class WalkLabSession: ObservableObject {
     private var previousBalanceState: BalanceState = .normal
     /// 이전 tick 의 imuSource — 전환 검출용.
     private var previousImuSource: ImuSource = .sim
+    /// 이전 tick 의 motorTempSource — 전환 검출용.
+    private var previousMotorTempSource: MotorTempSource = .sim
     /// 이전 tick 의 predictor recommendEmergency — rising-edge 만 이벤트.
     private var previousRecommendEmergency: Bool = false
     /// 이전 tick 의 ramp 완료 여부 — 한 번만 이벤트 발행.
@@ -429,6 +454,9 @@ public final class WalkLabSession: ObservableObject {
         imuRollDeg = 0
         imuPitchDeg = 0
         imuSource = .sim
+        // **2026-05-16**: 모터 온도 source reset — 새 session 의 첫 tick 에서
+        // updateMotorTempFromRealOrSim 이 정확한 source 로 갱신.
+        motorTempSource = .sim
         // **Phase D 정정 (Agent 4 P2)**: 이전 cycle 결과/preflight failure 도 reset.
         lastPreflightFailure = nil
         lastCycleResult = nil
@@ -441,6 +469,7 @@ public final class WalkLabSession: ObservableObject {
         safetyTimeline.removeAll()
         previousBalanceState = .normal
         previousImuSource = .sim
+        previousMotorTempSource = .sim
         previousRecommendEmergency = false
         rampCompletedLogged = false
         logSafetyEvent(kind: .sessionStart, message: "보행 시작 — \(preset.label)")
@@ -1051,7 +1080,7 @@ public final class WalkLabSession: ObservableObject {
         }
 
         updateImuFromRealOrSim()
-        updateSimThermal()
+        updateMotorTempFromRealOrSim()
         updateFallPrediction()
 
         // **Stage 2 (v1.1 fall prevention)**: 다단계 임계 분기.
@@ -1153,6 +1182,15 @@ public final class WalkLabSession: ObservableObject {
                 message: "IMU 출처: \(previousImuSource.label) → \(imuSource.label)"
             )
             previousImuSource = imuSource
+        }
+
+        // 이벤트 — 모터 온도 출처 변경 (2026-05-16).
+        if motorTempSource != previousMotorTempSource {
+            logSafetyEvent(
+                kind: .imuSourceChange,
+                message: "모터 온도 출처: \(previousMotorTempSource.label) → \(motorTempSource.label)"
+            )
+            previousMotorTempSource = motorTempSource
         }
 
         // 이벤트 — ramp 완료 (rising-edge, OFF→ON 후 1초 도달 시 1회만).
@@ -1354,6 +1392,44 @@ public final class WalkLabSession: ObservableObject {
             if abs(imuRollDeg) < 0.05 { imuRollDeg = 0 }
             if abs(imuPitchDeg) < 0.05 { imuPitchDeg = 0 }
         }
+    }
+
+    /// **모터 온도 — 실 robot / sim 자동 분기 (2026-05-16)**.
+    ///
+    /// 이전 버그: `tick()` 이 항상 `updateSimThermal()` 만 호출 → 실 robot 연결 시에도
+    /// dashboard 의 L6 Thermal 이 시뮬 값만 표시. 60°C 임계 자동 정지 게이트가 sim
+    /// 모델로만 트리거 → 실 모터가 60°C 넘어도 정지 안 됨 (P0).
+    ///
+    /// 정정: ConnectionStore 의 `lastTelemetry?.joints` 중 max `presentTemperature`
+    /// 사용. cadence == .essentials (default) 시 4 sample joints (headPan/Tilt/
+    /// rShoulderPitch/rKnee) 중 max. cadence == .full 시 20 관절 모두 중 max.
+    ///
+    /// 단계:
+    /// 1. 실 robot 연결 + telemetry fresh (< 5초) + joints 비어있지 않음 → 실 데이터.
+    /// 2. 실 robot 연결 됐으나 telemetry stale (≥ 5초) → 마지막 값 hold, source = .stale.
+    /// 3. 그 외 (미연결 / 테스트) → sim model fallback.
+    ///
+    /// **freshness 임계**: 5초 — ConnectionStore.isImuStale 과 정합.
+    private func updateMotorTempFromRealOrSim() {
+        // 1) 실 robot 연결 + telemetry 신선도 확인.
+        if let s = store, s.bus != nil,
+           let snap = s.lastTelemetry,
+           Date().timeIntervalSince(snap.timestamp) < 5.0,
+           let hottest = snap.hottestJoint?.1 {
+            // 실 robot — joint 의 max present_temperature 사용.
+            maxMotorTemp = Double(hottest.presentTemperature)
+            motorTempSource = .real
+            return
+        }
+        // 2) Telemetry stale (5초+ 갱신 없음) → 마지막 값 hold.
+        if let s = store, s.bus != nil {
+            motorTempSource = .stale
+            // 값 유지 (마지막 알려진) — sim 덮어쓰기 회피.
+            return
+        }
+        // 3) 그 외 → sim 모델.
+        motorTempSource = .sim
+        updateSimThermal()
     }
 
     /// Sim thermal — 워킹 중 모터 발열 + idle 시 자연 냉각.
