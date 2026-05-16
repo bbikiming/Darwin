@@ -356,8 +356,8 @@ public struct WalkDiagnosticsView: View {
     private var leftPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DFSpace.md) {
-                commandCard
                 if source == .preview {
+                    commandCard
                     noiseCard
                 } else {
                     liveSourceCard
