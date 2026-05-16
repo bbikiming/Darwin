@@ -117,8 +117,3 @@ public struct PhaseRibbon: View {
     }
 }
 
-extension WalkPhase: @retroactive CaseIterable {
-    public static var allCases: [WalkPhase] {
-        [.phase0, .phase1, .phase2, .phase3]
-    }
-}

@@ -17,7 +17,7 @@ public struct FootTargets: Sendable, Equatable {
     }
 }
 
-public enum WalkPhase: UInt8, Sendable {
+public enum WalkPhase: UInt8, Sendable, CaseIterable {
     case phase0 = 0, phase1 = 1, phase2 = 2, phase3 = 3
     public var label: String {
         switch self {
