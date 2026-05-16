@@ -38,38 +38,49 @@ public enum MotionPrimitives {
     // MARK: - 자주 쓰이는 pose primitives (약 30개)
 
     // ── 1. 팔 자세 ──
-    public static let armsUp        = deltaFromWalkReady([.rShoulderPitch: -90, .lShoulderPitch: 90])   // 만세
-    public static let armsForward   = deltaFromWalkReady([.rShoulderPitch: -45, .lShoulderPitch: 45])   // 정면 앞으로 뻗기
-    public static let armsT         = deltaFromWalkReady([.rShoulderRoll: -70, .lShoulderRoll: 70])     // T-자세
-    public static let armsCross     = deltaFromWalkReady([.rShoulderRoll: 30, .lShoulderRoll: -30])     // X 가슴
-    public static let armsAside     = deltaFromWalkReady([.rShoulderPitch: 20, .lShoulderPitch: -20])   // 옆 살짝
+    //
+    // **부호 규약** (`docs/architecture/joint-conventions.md` 2026-05-13 hotfix):
+    //   - 팔 앞·위로 (sho pitch):  R **+** / L **−**  ← 다리와 반대! URDF y-axis 반전
+    //   - 팔꿈치 굽힘 (elbow flex): R **+** / L **−**
+    //   - 어깨 외전 (sho roll):    R **−** / L **+**  (T 자세)
+    //   - 어깨 내전 (sho roll):    R **+** / L **−**  (X 가슴)
+    //
+    // walkReady 절대값: rSho=-48°, lSho=+41°, rEl=+29°, lEl=-29° (이미 약간 뒤로).
+    // 만세 등을 만들려면 R 양수 delta + L 음수 delta 더해야 의도대로 동작.
+    public static let armsUp        = deltaFromWalkReady([.rShoulderPitch: 90, .lShoulderPitch: -90])   // 만세
+    public static let armsForward   = deltaFromWalkReady([.rShoulderPitch: 45, .lShoulderPitch: -45])   // 정면 앞으로 뻗기
+    public static let armsT         = deltaFromWalkReady([.rShoulderRoll: -70, .lShoulderRoll: 70])     // T-자세 (외전)
+    public static let armsCross     = deltaFromWalkReady([.rShoulderRoll: 30, .lShoulderRoll: -30])     // X 가슴 (내전)
+    public static let armsAside     = deltaFromWalkReady([.rShoulderPitch: -20, .lShoulderPitch: 20])   // 옆 살짝 (살짝 뒤로)
     public static let armsHipHip    = deltaFromWalkReady([
-        .rShoulderPitch: -10, .lShoulderPitch: 10,
-        .rElbow: -90, .lElbow: 90,
-    ])  // 허리에 손
-    public static let armsRightWave = deltaFromWalkReady([.rShoulderPitch: -80, .rElbow: 30])     // 오른손만 인사
-    public static let armsLeftWave  = deltaFromWalkReady([.lShoulderPitch: 80, .lElbow: -30])      // 왼손만
-    public static let armsRightSalute = deltaFromWalkReady([.rShoulderPitch: -75, .rShoulderRoll: -25, .rElbow: -90])  // 경례
-    public static let armsBothBackward = deltaFromWalkReady([.rShoulderPitch: 40, .lShoulderPitch: -40])  // 뒤로 뻗기
+        .rShoulderPitch: 10, .lShoulderPitch: -10,
+        .rElbow: 90, .lElbow: -90,
+    ])  // 허리에 손 — 어깨 살짝 앞·위 + 팔꿈치 굽힘
+    public static let armsRightWave = deltaFromWalkReady([.rShoulderPitch: 80, .rElbow: -30])     // 오른손만 인사 (앞·위 + 팔꿈치 살짝 펴기)
+    public static let armsLeftWave  = deltaFromWalkReady([.lShoulderPitch: -80, .lElbow: 30])      // 왼손만
+    public static let armsRightSalute = deltaFromWalkReady([.rShoulderPitch: 75, .rShoulderRoll: -25, .rElbow: 90])  // 경례
+    public static let armsBothBackward = deltaFromWalkReady([.rShoulderPitch: -40, .lShoulderPitch: 40])  // 뒤로 뻗기 (R−/L+)
 
     // ── 2. 팔꿈치·손 ──
-    public static let elbowsBent90   = deltaFromWalkReady([.rElbow: -50, .lElbow: 50])  // L 자
-    public static let elbowsFold     = deltaFromWalkReady([.rElbow: -120, .lElbow: 120])  // 완전 접음
+    public static let elbowsBent90   = deltaFromWalkReady([.rElbow: 50, .lElbow: -50])    // L 자 굽힘
+    public static let elbowsFold     = deltaFromWalkReady([.rElbow: 120, .lElbow: -120])  // 완전 접음
     public static let armsPraying    = deltaFromWalkReady([
-        .rShoulderPitch: -45, .lShoulderPitch: 45,
-        .rShoulderRoll: 30, .lShoulderRoll: -30,
-        .rElbow: -80, .lElbow: 80,
+        .rShoulderPitch: 45, .lShoulderPitch: -45,
+        .rShoulderRoll: 30, .lShoulderRoll: -30,    // 내전 (양 손바닥 모음)
+        .rElbow: 80, .lElbow: -80,                   // 굽힘
     ])  // 합장
 
     // ── 3. 머리 (시선) ──
+    //   headPan: + 우측 / − 좌측
+    //   headTilt: + chin up (위 봄) / − chin down (아래 봄)
     public static let headLookLeft   = deltaFromWalkReady([.headPan: -45])
     public static let headLookRight  = deltaFromWalkReady([.headPan: 45])
     public static let headLookCenter = RobotPose.walkReady
-    public static let headLookUp     = deltaFromWalkReady([.headTilt: -25])
-    public static let headLookDown   = deltaFromWalkReady([.headTilt: 25])
-    public static let headBowSlight  = deltaFromWalkReady([.headTilt: 15])
+    public static let headLookUp     = deltaFromWalkReady([.headTilt: 25])    // chin up
+    public static let headLookDown   = deltaFromWalkReady([.headTilt: -25])   // chin down
+    public static let headBowSlight  = deltaFromWalkReady([.headTilt: -15])   // 살짝 숙임
 
-    // ── 4. 다리 (자세) ──
+    // ── 4. 다리 (자세) — 부호는 다리 규약 (hip pitch R−/L+ 앞, knee R+/L− 굽힘, ankle R+/L− 발끝위)
     public static let kneesBent5  = deltaFromWalkReady([.rKnee: 5, .lKnee: -5])
     public static let kneesBent15 = deltaFromWalkReady([.rKnee: 15, .lKnee: -15])
     public static let kneesBent25 = deltaFromWalkReady([.rKnee: 25, .lKnee: -25])
@@ -78,9 +89,9 @@ public enum MotionPrimitives {
     public static let hipSwayR    = deltaFromWalkReady([.rHipRoll: -10, .lHipRoll: -10, .rAnkleRoll: 10, .lAnkleRoll: 10])
     public static let hipSwayL    = deltaFromWalkReady([.rHipRoll: 10, .lHipRoll: 10, .rAnkleRoll: -10, .lAnkleRoll: -10])
 
-    // ── 5. 종합 자세 ──
-    public static let bowSlight   = deltaFromWalkReady([.rHipPitch: -10, .lHipPitch: 10, .headTilt: 12])
-    public static let bowDeep     = deltaFromWalkReady([.rHipPitch: -25, .lHipPitch: 25, .headTilt: 20])
+    // ── 5. 종합 자세 ── 절 = hip 앞 굽힘 + head chin down
+    public static let bowSlight   = deltaFromWalkReady([.rHipPitch: -10, .lHipPitch: 10, .headTilt: -12])
+    public static let bowDeep     = deltaFromWalkReady([.rHipPitch: -25, .lHipPitch: 25, .headTilt: -20])
     public static let squatLow    = deltaFromWalkReady([.rHipPitch: -20, .lHipPitch: 20, .rKnee: 30, .lKnee: -30, .rAnklePitch: 10, .lAnklePitch: -10])
 
     // MARK: - Step helper
