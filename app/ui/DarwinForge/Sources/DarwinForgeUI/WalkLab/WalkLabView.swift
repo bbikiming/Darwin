@@ -240,13 +240,19 @@ public struct WalkLabView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Fall Prevention 모니터링")
                     .font(.system(size: DFFontSize.s12, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Text(session.monitoringExpanded
                      ? "6-Layer 상태 + 시계열 + 이벤트 로그 표시 중"
                      : "펼치면 6-Layer 안전 시스템 + 시계열 그래프 + 이벤트 로그")
                     .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            Spacer()
+            .frame(minWidth: 0, alignment: .leading)
+            .layoutPriority(0)
+            Spacer(minLength: DFSpace.xs)
             // 현재 상태 요약 — 토글 닫혀 있어도 critical 만 보이게.
             if session.balanceState >= .warning {
                 HStack(spacing: 3) {
@@ -256,11 +262,13 @@ public struct WalkLabView: View {
                     Text(session.balanceState.label)
                         .font(.system(size: DFFontSize.s10, weight: .semibold))
                         .foregroundStyle(monitorBadgeColor)
+                        .lineLimit(1)
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1)
                 .background(monitorBadgeColor.opacity(DFOpacity.o10))
                 .clipShape(Capsule())
+                .layoutPriority(1)
             }
             Button {
                 withAnimation(DFAnimation.standard) {
@@ -272,12 +280,15 @@ public struct WalkLabView: View {
                         ? "chevron.up.circle.fill"
                         : "chevron.down.circle")
                     .font(.system(size: DFFontSize.s12))
+                    .lineLimit(1)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .layoutPriority(1)
         }
         .padding(.horizontal, DFSpace.sm2)
         .padding(.vertical, DFSpace.xs2)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(DFColor.elev2)
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.xs2)

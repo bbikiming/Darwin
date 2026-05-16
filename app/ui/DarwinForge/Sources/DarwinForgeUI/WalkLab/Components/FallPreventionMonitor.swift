@@ -102,19 +102,26 @@ struct FallPreventionMonitor: View {
                     Text(state.label)
                         .font(.system(size: DFFontSize.s20, weight: .semibold))
                         .foregroundStyle(color)
-                    Spacer()
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    Spacer(minLength: DFSpace.xs)
                     Text(String(format: "%.1f°", tiltMax))
                         .font(.system(size: DFFontSize.s18, weight: .semibold,
                                       design: .monospaced).monospacedDigit())
                         .foregroundStyle(color)
+                        .lineLimit(1)
+                        .layoutPriority(1)
                     Text("max|tilt|")
                         .font(.system(size: DFFontSize.s10))
                         .foregroundStyle(DFColor.textSecondary)
+                        .lineLimit(1)
                 }
                 if !stateMessage(state).isEmpty {
                     Text(stateMessage(state))
                         .font(.system(size: DFFontSize.s10))
                         .foregroundStyle(DFColor.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -131,14 +138,20 @@ struct FallPreventionMonitor: View {
 
     /// **NASA EICAS 패턴**: 6 systems tile grid. 각 tile = 1 safety layer.
     /// **NN/g "color + shape + label"**: icon + 라벨 + 색 항상 함께.
+    ///
+    /// **반응형 (Material Design 3 Adaptive Layouts)**: `GridItem(.adaptive(minimum:))`
+    /// 사용 — 좁은 폭에서 1-2 column auto-collapse, 넓은 폭에서 6 column 펼침.
+    /// minimum 110pt = 한국어 "L1 Cradle / 미확인" 1줄 표시 보장.
     private var layerStatusGrid: some View {
         let layers: [LayerStatus] = currentLayers()
         return VStack(alignment: .leading, spacing: 4) {
             Text("6-Layer 안전 시스템")
                 .font(.system(size: DFFontSize.s10, weight: .medium))
                 .foregroundStyle(DFColor.textSecondary)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3),
-                      spacing: 4) {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 110), spacing: 4)],
+                spacing: 4
+            ) {
                 ForEach(layers) { layer in
                     layerTile(layer)
                 }
@@ -155,24 +168,29 @@ struct FallPreventionMonitor: View {
                 Text(l.name)
                     .font(.system(size: DFFontSize.s10, weight: .medium))
                     .lineLimit(1)
-                Spacer()
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
             }
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(l.valueLabel)
                     .font(.system(size: DFFontSize.s12, weight: .semibold,
                                   design: .monospaced).monospacedDigit())
                     .foregroundStyle(l.color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 if let unit = l.unit {
                     Text(unit)
                         .font(.system(size: DFFontSize.s9))
                         .foregroundStyle(DFColor.textSecondary)
+                        .lineLimit(1)
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
             Text(l.thresholdLabel)
                 .font(.system(size: DFFontSize.s9))
                 .foregroundStyle(DFColor.textSecondary)
                 .lineLimit(1)
+                .truncationMode(.middle)
         }
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -292,56 +310,86 @@ struct FallPreventionMonitor: View {
 
     /// **Tufte "small multiples" 패턴**: 같은 시간축 3 sparkline. 일관 비교.
     /// **NASA Ames §3.2.1**: 임계 zone stripe (-30..-22 / 22..30 음영).
+    ///
+    /// **반응형 (Apple HIG Adaptive Layout)**: `ViewThatFits` 사용 —
+    /// 충분한 폭 (각 sparkline ≥ 130pt) 시 horizontal 3 column,
+    /// 그 외 vertical stack (각 차트 full-width). HSplitView detail
+    /// minWidth 480 - sidebar 240 = 240pt 일 때도 vertical 로 사용 가능.
     private var timeSeriesRow: some View {
         let now = Date()
         let cutoff = now.addingTimeInterval(-10)
         let recent = session.safetyTimeline.filter { $0.timestamp >= cutoff }
+        let rollSp = makeSparkline(
+            samples: recent.map { ($0.timestamp, $0.rollDeg) },
+            valueRange: -35...35,
+            tiltLineColor: sparklineColor(forTilt: session.imuRollDeg),
+            currentLabel: String(format: "%+.1f°", session.imuRollDeg),
+            title: "Roll", isTiltAxis: true
+        )
+        let pitchSp = makeSparkline(
+            samples: recent.map { ($0.timestamp, $0.pitchDeg) },
+            valueRange: -35...35,
+            tiltLineColor: sparklineColor(forTilt: session.imuPitchDeg),
+            currentLabel: String(format: "%+.1f°", session.imuPitchDeg),
+            title: "Pitch", isTiltAxis: true
+        )
+        let scoreSp = makeSparkline(
+            samples: recent.map { ($0.timestamp, $0.predictionScore) },
+            valueRange: 0...100,
+            tiltLineColor: sparklineColor(forScore: session.fallPrediction.score),
+            currentLabel: String(format: "%.0f", session.fallPrediction.score),
+            title: "Predictor", isTiltAxis: false
+        )
         return VStack(alignment: .leading, spacing: 4) {
             Text("최근 10초 — Roll / Pitch / Predictor Score")
                 .font(.system(size: DFFontSize.s10, weight: .medium))
                 .foregroundStyle(DFColor.textSecondary)
-            HStack(spacing: DFSpace.xs) {
-                SafetySparkline(
-                    samples: recent.map { ($0.timestamp, $0.rollDeg) },
-                    valueRange: -35...35,
-                    thresholds: [
-                        .init(value: 15, color: DFColor.warning),
-                        .init(value: 22, color: .orange),
-                        .init(value: 30, color: DFColor.danger),
-                    ],
-                    lineColor: sparklineColor(forTilt: session.imuRollDeg),
-                    currentValueLabel: String(format: "%+.1f°", session.imuRollDeg),
-                    title: "Roll"
-                )
-                .frame(height: 56)
-                SafetySparkline(
-                    samples: recent.map { ($0.timestamp, $0.pitchDeg) },
-                    valueRange: -35...35,
-                    thresholds: [
-                        .init(value: 15, color: DFColor.warning),
-                        .init(value: 22, color: .orange),
-                        .init(value: 30, color: DFColor.danger),
-                    ],
-                    lineColor: sparklineColor(forTilt: session.imuPitchDeg),
-                    currentValueLabel: String(format: "%+.1f°", session.imuPitchDeg),
-                    title: "Pitch"
-                )
-                .frame(height: 56)
-                SafetySparkline(
-                    samples: recent.map { ($0.timestamp, $0.predictionScore) },
-                    valueRange: 0...100,
-                    thresholds: [
-                        .init(value: 30, color: DFColor.warning),
-                        .init(value: 60, color: .orange),
-                        .init(value: 80, color: DFColor.danger),
-                    ],
-                    lineColor: sparklineColor(forScore: session.fallPrediction.score),
-                    currentValueLabel: String(format: "%.0f", session.fallPrediction.score),
-                    title: "Predictor"
-                )
-                .frame(height: 56)
+            ViewThatFits(in: .horizontal) {
+                // Wide: 3 columns horizontal (preferred — Tufte small multiples)
+                HStack(spacing: DFSpace.xs) {
+                    rollSp.frame(minWidth: 130, height: 56)
+                    pitchSp.frame(minWidth: 130, height: 56)
+                    scoreSp.frame(minWidth: 130, height: 56)
+                }
+                // Narrow: vertical stack (각 차트 full-width)
+                VStack(spacing: DFSpace.xs) {
+                    rollSp.frame(height: 44)
+                    pitchSp.frame(height: 44)
+                    scoreSp.frame(height: 44)
+                }
             }
         }
+    }
+
+    /// Sparkline factory — wide/narrow ViewThatFits 모두 동일 구성으로 생성.
+    /// `isTiltAxis = true` 시 IMU tilt 임계 (15/22/30°), false 시 score 임계 (30/60/80).
+    private func makeSparkline(
+        samples: [(Date, Double)],
+        valueRange: ClosedRange<Double>,
+        tiltLineColor: Color,
+        currentLabel: String,
+        title: String,
+        isTiltAxis: Bool
+    ) -> SafetySparkline {
+        let thresholds: [SafetySparkline.Threshold] = isTiltAxis
+            ? [
+                .init(value: 15, color: DFColor.warning),
+                .init(value: 22, color: .orange),
+                .init(value: 30, color: DFColor.danger),
+              ]
+            : [
+                .init(value: 30, color: DFColor.warning),
+                .init(value: 60, color: .orange),
+                .init(value: 80, color: DFColor.danger),
+              ]
+        return SafetySparkline(
+            samples: samples,
+            valueRange: valueRange,
+            thresholds: thresholds,
+            lineColor: tiltLineColor,
+            currentValueLabel: currentLabel,
+            title: title
+        )
     }
 
     // MARK: - 4. Corrector deltas + ramp
@@ -409,9 +457,11 @@ struct FallPreventionMonitor: View {
             Text(name)
                 .font(.system(size: DFFontSize.s9))
                 .foregroundStyle(DFColor.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .frame(width: 64, alignment: .leading)
             GeometryReader { geo in
-                let halfW = geo.size.width / 2
+                let halfW = max(0, geo.size.width / 2)
                 ZStack(alignment: .leading) {
                     // 중앙선.
                     Rectangle()
