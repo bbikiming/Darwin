@@ -39,6 +39,20 @@ public struct PilotCameraEndpoint: Equatable, Sendable {
         return components.url
     }
 
+    /// mjpg-streamer 표준 stream endpoint — multipart/x-mixed-replace 실시간 MJPEG.
+    /// 종전 snapshot 폴링 (4 fps) 대비 30 fps 급 실시간 재생.
+    public var streamURL: URL? {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = Int(port)
+        components.path = "/"
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "stream")
+        ]
+        return components.url
+    }
+
     public var displayName: String {
         "\(host):\(port)"
     }

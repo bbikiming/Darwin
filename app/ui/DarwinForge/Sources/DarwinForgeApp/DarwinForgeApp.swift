@@ -221,6 +221,12 @@ struct DarwinForgeApp: App {
                     NotificationCenter.default.post(name: .dfToggleMonitoring, object: nil)
                 }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
+
+                Divider()
+
+                // **2026-05-16**: 로봇 카메라 floating window — 모션 도중에도 호출 가능.
+                // ⌘⌥C — `Window` Scene (id: "robot-camera") 새 인스턴스 / 활성화.
+                OpenCameraWindowButton()
             }
 
             CommandMenu("로봇") {
@@ -244,5 +250,30 @@ struct DarwinForgeApp: App {
                      destination: URL(string: "https://github.com/bbikiming/Darwin")!)
             }
         }
+
+        // 2026-05-16: 로봇 카메라 floating window — 별도 scene (단일 instance).
+        // 어떤 메뉴 / 모드 (스튜디오, WalkLab, 모션 스튜디오 등) 작업 도중 카메라
+        // 실시간 stream 동시 표시 가능. motion_play (Dynamixel bus) 와 별개 채널
+        // (HTTP 8080 stream) — 동시 동작 충돌 없음.
+        // ⌘⌥C — `OpenCameraWindowButton` 의 SwiftUI `openWindow` action 으로 표시.
+        Window("로봇 카메라", id: "robot-camera") {
+            RobotCameraWindow()
+        }
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 720, height: 540)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: true))
+    }
+}
+
+/// `commands` closure 안에서 `@Environment(\.openWindow)` 를 사용하려면 별도 view
+/// struct 가 필요. closure 직접에는 environment 키 캡처 안 됨.
+private struct OpenCameraWindowButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("로봇 카메라 윈도우") {
+            openWindow(id: "robot-camera")
+        }
+        .keyboardShortcut("c", modifiers: [.command, .option])
     }
 }

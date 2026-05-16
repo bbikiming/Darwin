@@ -15,7 +15,11 @@ public struct PilotCameraView: View {
     @Binding var hsvPreset: VisionHsvPreset
     /// RemoteShell — HSV tuning sheet 의 로봇 read/write 용.
     @ObservedObject var remoteShell: RemoteShell
-    @StateObject private var client = MjpegSnapshotClient()
+    /// 2026-05-16: 종전 `MjpegSnapshotClient` (250ms snapshot 폴링, ~4fps) →
+    /// `MjpegStreamingClient` (multipart/x-mixed-replace 실시간 스트림, ~30fps).
+    /// 두 클래스 API 동일 — image / phase / framesReceived / detection 등 — 호출처
+    /// (PilotCameraView 본문) 코드 변경 0.
+    @StateObject private var client = MjpegStreamingClient()
     @State private var showSetupSheet: Bool = false
     @State private var showHeadTrackerSheet: Bool = false
     @State private var showImuSheet: Bool = false
