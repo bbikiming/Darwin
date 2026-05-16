@@ -368,12 +368,90 @@ public enum DFShadow {
         (Color.black.opacity(0.24), 28, 0, 8)
 }
 
-/// 애니메이션 — 표준 timing.
+/// 애니메이션 — 표준 timing + semantic alias.
+///
+/// # 사용 규칙
+/// - **Semantic alias 우선** (`.cardExpand`, `.modalPresent`) — 의도 명확.
+/// - **Primitive (`.fast/.standard/.smooth/.bounce`)** — semantic alias 가 없을 때만.
+/// - **WCAG 2.3**: 자동 reduce-motion 대응 — SwiftUI 의 withAnimation 이 시스템
+///   설정 honor.
 public enum DFAnimation {
+    // Primitive timings
+    /// 120ms ease-out — feedback (button press, hover state).
     public static let fast = Animation.easeOut(duration: 0.12)
+    /// 220ms ease-out — 일반 UI 전환 (expand/collapse, toggle).
     public static let standard = Animation.easeOut(duration: 0.22)
+    /// 400ms spring — 부드러운 motion (smooth navigation, card animations).
     public static let smooth = Animation.spring(response: 0.4, dampingFraction: 0.85)
+    /// 500ms bouncy spring — 강조 motion (success state, attention).
     public static let bounce = Animation.spring(response: 0.5, dampingFraction: 0.7)
+
+    // MARK: - 2026-05-16: Semantic aliases (의도 명확)
+
+    /// 토글 / 펼침 / 접힘 (monitoring dashboard, sidebar 등).
+    public static let toggle = standard
+    /// 카드 expand / collapse (dashboard sections).
+    public static let cardExpand = smooth
+    /// Modal / sheet 등장.
+    public static let modalPresent = smooth
+    /// 리스트 row 변경 (insert / delete).
+    public static let listChange = standard
+    /// 페이지 / view 전환.
+    public static let pageTransition = smooth
+    /// 강조 (state change → danger, emergency).
+    public static let emphasis = bounce
+    /// hover / focus 상태 변경.
+    public static let hover = fast
+}
+
+/// **2026-05-16**: Icon 시스템 — 텍스트와 짝지어진 아이콘의 크기 / weight 일관성.
+///
+/// # 사용 패턴 (두 가지)
+///
+/// 1. **인라인 (텍스트 옆 아이콘)** — `.font()` 사용 (텍스트와 자동 정렬):
+/// ```swift
+/// HStack {
+///     Image(systemName: "checkmark").font(DFFont.label)
+///     Text("확인").font(DFFont.label)
+/// }
+/// ```
+///
+/// 2. **독립 (배경 위 아이콘)** — `.frame(width:height:)` + `.font()` 사용:
+/// ```swift
+/// Image(systemName: "figure.balanced")
+///     .font(DFIcon.hero)
+///     .frame(width: DFSize.heroBox, height: DFSize.heroBox)
+/// ```
+///
+/// # Weight 규칙
+/// - **state indicator (danger/warning/success)**: `.semibold` (강조)
+/// - **decorative / inline**: `.regular`
+/// - **action button label icon**: `.medium`
+public enum DFIcon {
+    /// Hero icon (28pt semibold) — banner / 큰 표시기.
+    public static let hero = Font.system(size: 28, weight: .semibold)
+    /// Section icon (18pt semibold) — section header 옆 아이콘.
+    public static let section = Font.system(size: 18, weight: .semibold)
+    /// Body icon (14pt regular) — toolbar / 본문.
+    public static let body = Font.system(size: 14)
+    /// Caption icon (12pt regular) — pill / chip.
+    public static let caption = Font.system(size: 12)
+    /// Label icon (10pt regular) — small label inline.
+    public static let label = Font.system(size: 10)
+    /// Micro icon (9pt regular) — list row 의 leading icon.
+    public static let micro = Font.system(size: 9)
+
+    // Action 버튼 의 icon (medium weight = 강조)
+    /// Action 버튼의 standard size icon.
+    public static let action = Font.system(size: 14, weight: .medium)
+
+    // State icon (semibold = 강조)
+    /// 상태 표시 icon (small).
+    public static let stateSmall = Font.system(size: 12, weight: .semibold)
+    /// 상태 표시 icon (medium).
+    public static let stateMedium = Font.system(size: 14, weight: .semibold)
+    /// 상태 표시 icon (large).
+    public static let stateLarge = Font.system(size: 18, weight: .semibold)
 }
 
 /// 불투명도 토큰 — 일관 dim/disabled/border 처리.

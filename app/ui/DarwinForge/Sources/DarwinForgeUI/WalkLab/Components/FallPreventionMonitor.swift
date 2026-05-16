@@ -98,7 +98,7 @@ struct FallPreventionMonitor: View {
         let tiltMax = max(abs(session.imuRollDeg), abs(session.imuPitchDeg))
         return HStack(spacing: DFSpace.sm3) {
             Image(systemName: icon)
-                .font(DFFont.heroIcon)
+                .font(DFIcon.hero)
                 .foregroundStyle(color)
                 .frame(width: DFSize.heroBox, height: DFSize.heroBox)
                 .background(color.opacity(DFOpacity.o15))

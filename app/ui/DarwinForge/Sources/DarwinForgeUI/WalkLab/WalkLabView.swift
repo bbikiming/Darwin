@@ -36,7 +36,7 @@ public struct WalkLabView: View {
         .onAppear { session.attach(store: store) }
         // **2026-05-16**: 메뉴바 "보기 → Fall Prevention 모니터링" (⌘⇧M) 수신.
         .onReceive(NotificationCenter.default.publisher(for: .dfToggleMonitoring)) { _ in
-            withAnimation(DFAnimation.standard) {
+            withAnimation(DFAnimation.toggle) {
                 session.monitoringExpanded.toggle()
             }
         }
@@ -281,7 +281,7 @@ public struct WalkLabView: View {
                 .accessibilityLabel("현재 안전 상태 \(session.balanceState.label)")
             }
             Button {
-                withAnimation(DFAnimation.standard) {
+                withAnimation(DFAnimation.toggle) {
                     session.monitoringExpanded.toggle()
                 }
             } label: {
