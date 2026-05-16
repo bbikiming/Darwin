@@ -380,23 +380,31 @@ public struct WalkLabView: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
 
+    /// **2026-05-16 검증**: 좁은 detail 폭 (480pt) 에서 HStack 컬럼 5개 + Spacer +
+    /// 다이버 2개 = ~540pt content > 460pt available → 잠재 overflow.
+    /// 해결: 컬럼 자체 `.lineLimit(1)` + monospace text 가 자동 truncate.
+    /// 추가 보호: `.fixedSize(horizontal: false, vertical: true)` 명시 — wrap
+    /// 회피 + Spacer 우측 정렬 보장.
     private var footTargetsCard: some View {
         HStack(spacing: DFSpace.md - 2) {
             VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text("Phase").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
                 Text(session.phaseLabel)
                     .font(.system(size: DFFontSize.s13, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
             }
             Divider().frame(height: DFSpace.xl)
             VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text("L (x,y,z)").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
                 Text(fmt3(session.leftFoot))
                     .font(.system(size: DFFontSize.s12, design: .monospaced))
+                    .lineLimit(1)
             }
             VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 Text("R (x,y,z)").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
                 Text(fmt3(session.rightFoot))
                     .font(.system(size: DFFontSize.s12, design: .monospaced))
+                    .lineLimit(1)
             }
             Divider().frame(height: DFSpace.xl)
             VStack(alignment: .leading, spacing: DFSpace.micro2) {
@@ -404,17 +412,20 @@ public struct WalkLabView: View {
                 Text(String(format: "%.1f°C", session.maxMotorTemp))
                     .font(.system(size: DFFontSize.s12, design: .monospaced))
                     .foregroundStyle(tempColor)
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: DFSpace.xs)
             VStack(alignment: .trailing, spacing: DFSpace.micro2) {
                 Text("Elapsed").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
                 Text("\(session.elapsedMs) ms")
                     .font(.system(size: DFFontSize.s12, design: .monospaced))
+                    .lineLimit(1)
             }
         }
         .padding(DFSpace.sm2)
         .background(DFColor.elev2)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// 모터 온도 색상 — DFLoadColor 5단계 매핑 (45/50/60°C 임계값).
@@ -589,23 +600,30 @@ public struct WalkLabView: View {
                 .disabled(store.bus == nil || !session.cradleConfirmed)
                 .help("실 로봇을 walkReady 자세로 보냄 (정비 스탠드 거치 + 연결 필수)")
 
-                Spacer()
+                Spacer(minLength: DFSpace.xs)
 
                 connectionPill
+                    .layoutPriority(1)
 
                 Text(session.cradleConfirmed
                      ? "정비 스탠드 거치 ✓"
                      : "↑ 사이드바에서 스탠드 거치를 먼저 확인하세요")
                     .font(DFFont.caption)
                     .foregroundStyle(session.cradleConfirmed ? DFColor.success : DFColor.warning)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
 
             if let evt = session.lastRobotEvent {
                 HStack(spacing: DFSpace.xs2) {
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.system(size: DFFontSize.s10))
-                    Text(evt).font(.system(size: DFFontSize.s11, design: .monospaced))
-                    Spacer()
+                    Text(evt)
+                        .font(.system(size: DFFontSize.s11, design: .monospaced))
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
                 }
                 .foregroundStyle(DFColor.textSecondary)
             }

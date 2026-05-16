@@ -69,6 +69,11 @@ struct FallPreventionMonitor: View {
                 .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
                         lineWidth: DFSize.borderHairline)
         )
+        // **2026-05-16 검증**: ultrawide / fullscreen 시 dashboard 시각 sparseness
+        // 방지. 1400pt = NN/g Dashboard Design Patterns 권장 표준 폭 (시선 이동
+        // 최적). leading alignment — detail 좌상단부터. 작은 윈도우 (< 1400pt)
+        // 에선 영향 X (maxWidth 라 .infinity 처럼 동작).
+        .frame(maxWidth: Self.dashboardMaxW, alignment: .leading)
         // **2026-05-16 Phase B-1**: Dynamic Type cap — `xxxLarge` 까지 허용.
         // Apple HIG: monitoring dashboard 같은 dense layout 은 큰 텍스트
         // 모드에서 부서질 위험. `xxxLarge` 가 안전한 상한 (사용자 가독성 ↑ +
@@ -77,6 +82,10 @@ struct FallPreventionMonitor: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Fall Prevention 모니터링 대시보드")
     }
+
+    /// Dashboard 최대 폭 — ultrawide / fullscreen 시 시각 sparseness 방지.
+    /// NN/g: dashboard 의 데이터 밀도 최적 폭 = 1200-1400pt.
+    private static let dashboardMaxW: CGFloat = 1400
 
     // MARK: - 1. Hero status banner
 
