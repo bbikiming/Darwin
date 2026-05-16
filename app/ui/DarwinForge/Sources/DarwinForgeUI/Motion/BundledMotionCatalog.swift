@@ -1262,4 +1262,417 @@ public enum BundledMotionCatalog {
 
         return pages
     }
+
+    // MARK: - 9. 균형·곡예 (15 페이지)
+    public static func balancePages() -> [MotionPage] {
+        let P = MotionPrimitives.self
+        var pages: [MotionPage] = []
+        var id: UInt8 = 1
+
+        pages.append(MotionPage(id: id, name: "한발 서기 (R 들기)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 8]), ms: 800),
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 8]), ms: 2000, pause: 600),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "한발 서기 (L 들기)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.lHipPitch: 15, .lKnee: -20, .rHipRoll: -8]), ms: 800),
+                P.holdAt(P.deltaFromWalkReady([.lHipPitch: 15, .lKnee: -20, .rHipRoll: -8]), ms: 2000, pause: 600),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "까치발 hold",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rAnklePitch: -22, .lAnklePitch: 22]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rAnklePitch: -22, .lAnklePitch: 22]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "한발 + 양팔 T",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsT, ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 8, .rShoulderRoll: -70, .lShoulderRoll: 70]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "한발 + 양팔 위",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.lHipPitch: 15, .lKnee: -20, .rShoulderPitch: -90, .lShoulderPitch: 90]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "Lean (오른쪽)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.hipSwayR, ms: 500),
+                P.holdAt(P.hipSwayR, ms: 1200, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "Lean (왼쪽)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.hipSwayL, ms: 500),
+                P.holdAt(P.hipSwayL, ms: 1200, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "Lean 앞 (큰)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.hipLeanFwd, ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .lHipPitch: 15, .rAnklePitch: 15, .lAnklePitch: -15]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "Lean 뒤 (큰)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.hipLeanBack, ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: 15, .lHipPitch: -15, .rAnklePitch: -15, .lAnklePitch: 15]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "90° 회전 (좌)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rHipYaw: -45, .lHipYaw: -45, .headPan: -45]), ms: 800),
+                P.holdAt(P.deltaFromWalkReady([.rHipYaw: -45, .lHipYaw: -45, .headPan: -45]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "90° 회전 (우)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rHipYaw: 45, .lHipYaw: 45, .headPan: 45]), ms: 800),
+                P.holdAt(P.deltaFromWalkReady([.rHipYaw: 45, .lHipYaw: 45, .headPan: 45]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "한발 + Flying bird",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 8, .rShoulderRoll: -80, .lShoulderRoll: 80]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 8, .rShoulderRoll: -60, .lShoulderRoll: 60]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 8, .rShoulderRoll: -80, .lShoulderRoll: 80]), ms: 500, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "한발 + 합장",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 8]), ms: 600),
+                P.holdAt(P.armsPraying, ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "정적 균형 (다 굽힘)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rKnee: 18, .lKnee: -18, .rHipPitch: -8, .lHipPitch: 8, .rShoulderRoll: -25, .lShoulderRoll: 25]), ms: 600),
+                P.holdAt(P.deltaFromWalkReady([.rKnee: 18, .lKnee: -18, .rHipPitch: -8, .lHipPitch: 8, .rShoulderRoll: -25, .lShoulderRoll: 25]), ms: 2000, pause: 500),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "한발 + 옆 lean",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 12, .rShoulderRoll: -30, .lShoulderRoll: -30]), ms: 700),
+                P.holdAt(P.deltaFromWalkReady([.rHipPitch: -15, .rKnee: 20, .lHipRoll: 12, .rShoulderRoll: -30, .lShoulderRoll: -30]), ms: 1500, pause: 400),
+            ])))
+
+        return pages
+    }
+
+    // MARK: - 10. 시선·머리 (20 페이지)
+    public static func gazePages() -> [MotionPage] {
+        let P = MotionPrimitives.self
+        var pages: [MotionPage] = []
+        var id: UInt8 = 1
+
+        pages.append(MotionPage(id: id, name: "좌-우 둘러보기 (스캔)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookLeft, ms: 400, pause: 200),
+                P.holdAt(P.headLookRight, ms: 600, pause: 200),
+                P.holdAt(P.headLookLeft, ms: 600, pause: 200),
+                P.holdAt(P.headLookCenter, ms: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "위-아래 둘러보기",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookUp, ms: 400, pause: 200),
+                P.holdAt(P.headLookDown, ms: 600, pause: 200),
+                P.holdAt(P.headLookCenter, ms: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "8방향 시선",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.headPan: -30, .headTilt: -15]), ms: 300, pause: 100),
+                P.holdAt(P.headLookUp, ms: 300, pause: 100),
+                P.holdAt(P.deltaFromWalkReady([.headPan: 30, .headTilt: -15]), ms: 300, pause: 100),
+                P.holdAt(P.headLookRight, ms: 300, pause: 100),
+                P.holdAt(P.deltaFromWalkReady([.headPan: 30, .headTilt: 15]), ms: 300, pause: 100),
+                P.holdAt(P.headLookDown, ms: 300, pause: 100),
+                P.holdAt(P.deltaFromWalkReady([.headPan: -30, .headTilt: 15]), ms: 300, pause: 100),
+                P.holdAt(P.headLookLeft, ms: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "천천히 좌 → 우",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookLeft, ms: 800),
+                P.holdAt(P.headLookCenter, ms: 800),
+                P.holdAt(P.headLookRight, ms: 800, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "천천히 위 → 아래",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookUp, ms: 800),
+                P.holdAt(P.headLookCenter, ms: 800),
+                P.holdAt(P.headLookDown, ms: 800, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "머리 원 (순회)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookUp, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.headPan: 30, .headTilt: -10]), ms: 300),
+                P.holdAt(P.headLookRight, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.headPan: 30, .headTilt: 10]), ms: 300),
+                P.holdAt(P.headLookDown, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.headPan: -30, .headTilt: 10]), ms: 300),
+                P.holdAt(P.headLookLeft, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.headPan: -30, .headTilt: -10]), ms: 300, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "오른쪽 응시 (1.5s)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookRight, ms: 500),
+                P.holdAt(P.headLookRight, ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "왼쪽 응시 (1.5s)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookLeft, ms: 500),
+                P.holdAt(P.headLookLeft, ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "위 응시 (천장)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookUp, ms: 500),
+                P.holdAt(P.headLookUp, ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "아래 응시 (바닥)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookDown, ms: 500),
+                P.holdAt(P.headLookDown, ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "손가락 따라가기 (R)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -45, .rShoulderRoll: -25, .headPan: -25]), ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -45, .rShoulderRoll: -30, .headPan: -30]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -45, .rShoulderRoll: -25, .headPan: -25]), ms: 500, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "손가락 따라가기 (L)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.lShoulderPitch: 45, .lShoulderRoll: 25, .headPan: 25]), ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.lShoulderPitch: 45, .lShoulderRoll: 30, .headPan: 30]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.lShoulderPitch: 45, .lShoulderRoll: 25, .headPan: 25]), ms: 500, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "시선 빠르게 좌우 (×3)",
+            steps: P.wrapWithWalkReady(P.oscillate(
+                center: P.headLookCenter,
+                side1: P.headLookLeft,
+                side2: P.headLookRight,
+                cycles: 3, msPerHalf: 150)))); id += 1
+        pages.append(MotionPage(id: id, name: "시선 천천히 좌우 (×2)",
+            steps: P.wrapWithWalkReady(P.oscillate(
+                center: P.headLookCenter,
+                side1: P.headLookLeft,
+                side2: P.headLookRight,
+                cycles: 2, msPerHalf: 400)))); id += 1
+        pages.append(MotionPage(id: id, name: "작은 머리 흔들기 (no)",
+            steps: P.wrapWithWalkReady(P.oscillate(
+                center: P.headLookCenter,
+                side1: P.deltaFromWalkReady([.headPan: -12]),
+                side2: P.deltaFromWalkReady([.headPan: 12]),
+                cycles: 3, msPerHalf: 180)))); id += 1
+        pages.append(MotionPage(id: id, name: "작은 끄덕임 (yes)",
+            steps: P.wrapWithWalkReady(P.oscillate(
+                center: P.headLookCenter,
+                side1: P.deltaFromWalkReady([.headTilt: 8]),
+                side2: P.headLookCenter,
+                cycles: 4, msPerHalf: 180)))); id += 1
+        pages.append(MotionPage(id: id, name: "머리 둘레 회전 (반대방향)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.headPan: -30, .headTilt: 10]), ms: 300),
+                P.holdAt(P.headLookDown, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.headPan: 30, .headTilt: 10]), ms: 300),
+                P.holdAt(P.headLookRight, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.headPan: 30, .headTilt: -10]), ms: 300),
+                P.holdAt(P.headLookUp, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.headPan: -30, .headTilt: -10]), ms: 300, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "시선 + 양손 가리킴 (R)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -45, .rShoulderRoll: -35, .headPan: -35]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -45, .rShoulderRoll: -35, .headPan: -35]), ms: 1200, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "시선 + 호기심 (왼쪽)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.headPan: -25, .headTilt: -10]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.headPan: -25, .headTilt: 10]), ms: 500, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "종합 시선 (4단계)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.headLookLeft, ms: 400, pause: 200),
+                P.holdAt(P.headLookUp, ms: 400, pause: 200),
+                P.holdAt(P.headLookRight, ms: 400, pause: 200),
+                P.holdAt(P.headLookDown, ms: 400, pause: 200),
+            ])))
+
+        return pages
+    }
+
+    // MARK: - 11. 데모·엔터테인 (30 페이지)
+    public static func demoPages() -> [MotionPage] {
+        let P = MotionPrimitives.self
+        var pages: [MotionPage] = []
+        var id: UInt8 = 1
+
+        pages.append(MotionPage(id: id, name: "마법사 (양팔 흔들기 + 머리위)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -85, .lShoulderPitch: 85, .rShoulderRoll: -20, .lShoulderRoll: 20]), ms: 300),
+                P.holdAt(P.armsUp, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -85, .lShoulderPitch: 85, .rShoulderRoll: 20, .lShoulderRoll: -20]), ms: 300, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "짠! (등장)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 200),
+                P.holdAt(P.armsT, ms: 200),
+                P.holdAt(P.armsUp, ms: 600, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "노래하기 (양손 입 앞)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -45, .lShoulderPitch: 45, .rShoulderRoll: 25, .lShoulderRoll: -25, .rElbow: -90, .lElbow: 90]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -45, .lShoulderPitch: 45, .rShoulderRoll: 25, .lShoulderRoll: -25, .rElbow: -90, .lElbow: 90, .headTilt: -10]), ms: 800, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "박수 환영 (×5)",
+            steps: P.wrapWithWalkReady(P.oscillate(
+                center: P.deltaFromWalkReady([.rShoulderPitch: -30, .lShoulderPitch: 30, .rElbow: -60, .lElbow: 60]),
+                side1: P.deltaFromWalkReady([.rShoulderPitch: -25, .lShoulderPitch: 25, .rElbow: -50, .lElbow: 50]),
+                side2: P.deltaFromWalkReady([.rShoulderPitch: -35, .lShoulderPitch: 35, .rElbow: -65, .lElbow: 65]),
+                cycles: 5, msPerHalf: 130)))); id += 1
+        pages.append(MotionPage(id: id, name: "환호 + 박수",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -30, .lShoulderPitch: 30, .rElbow: -60, .lElbow: 60]), ms: 200),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -30, .lShoulderPitch: 30, .rElbow: -50, .lElbow: 50]), ms: 200),
+                P.holdAt(P.armsUp, ms: 400, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "신호등 동작 (위-옆-아래)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 500, pause: 200),
+                P.holdAt(P.armsT, ms: 500, pause: 200),
+                P.holdAt(P.armsAside, ms: 500, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "무용수 (한 발 + 양팔)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.lHipPitch: 15, .lKnee: -25]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.lHipPitch: 15, .lKnee: -25, .rShoulderRoll: -85, .lShoulderRoll: 85]), ms: 1200, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "마술쇼 (양손 위 + 회전)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -90, .lShoulderPitch: 90, .rHipYaw: -15, .lHipYaw: -15]), ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -90, .lShoulderPitch: 90, .rHipYaw: 15, .lHipYaw: 15]), ms: 400),
+                P.holdAt(P.armsUp, ms: 400, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "사진 포즈 (V 자, R)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -75, .rShoulderRoll: -15, .rElbow: -75]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -75, .rShoulderRoll: -15, .rElbow: -75, .headTilt: -5]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "사진 포즈 (양손 위)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -90, .lShoulderPitch: 90, .rElbow: -30, .lElbow: 30]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "사진 포즈 (자랑 시선)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsHipHip, ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -10, .lShoulderPitch: 10, .rElbow: -90, .lElbow: 90, .headPan: -10, .headTilt: -5]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "짧은 안내 (가리키기 R)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -30, .rShoulderRoll: -30]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -30, .rShoulderRoll: -30]), ms: 800, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "긴 안내 (좌우 가리키기)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.lShoulderPitch: 30, .lShoulderRoll: 30]), ms: 500, pause: 200),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -30, .rShoulderRoll: -30]), ms: 500, pause: 200),
+                P.holdAt(P.armsT, ms: 400, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "회전 (스핀, 좌→우)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rHipYaw: -25, .lHipYaw: -25, .rShoulderRoll: -30, .lShoulderRoll: 30]), ms: 400),
+                P.holdAt(.walkReady, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.rHipYaw: 25, .lHipYaw: 25, .rShoulderRoll: 30, .lShoulderRoll: -30]), ms: 400, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "영웅 등장 (양팔 + 자세)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsHipHip, ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -5, .lShoulderPitch: 5, .rElbow: -90, .lElbow: 90, .rKnee: 8, .lKnee: -8, .headTilt: -8]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "마이크 잡은 자세",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -40, .rShoulderRoll: -10, .rElbow: -100]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -40, .rShoulderRoll: -10, .rElbow: -100, .headTilt: -5]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "노래 + 박수 (마이크 + clap)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -40, .rElbow: -100]), ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -40, .rElbow: -100, .lShoulderPitch: 30, .lShoulderRoll: -20, .lElbow: 60]), ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -40, .rElbow: -100, .lShoulderPitch: 30, .lShoulderRoll: 0, .lElbow: 60]), ms: 400, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "코미디 (어이없음)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: 20, .lShoulderPitch: -20, .rShoulderRoll: -30, .lShoulderRoll: 30, .rElbow: -60, .lElbow: 60, .headTilt: -10]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: 20, .lShoulderPitch: -20, .rShoulderRoll: -30, .lShoulderRoll: 30, .rElbow: -60, .lElbow: 60, .headTilt: 10]), ms: 1200, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "신난다! (점프 자세)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rKnee: 15, .lKnee: -15]), ms: 200),
+                P.holdAt(P.armsUp, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.rKnee: 15, .lKnee: -15]), ms: 200),
+                P.holdAt(P.armsUp, ms: 400, pause: 300),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "자기 소개 (가슴 손)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -25, .rShoulderRoll: -10, .rElbow: -100]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -25, .rShoulderRoll: -10, .rElbow: -100, .headTilt: -5]), ms: 1200, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "학예회 인사 (단순 큰절)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsT, ms: 400),
+                P.holdAt(P.bowDeep, ms: 800, pause: 400),
+                P.holdAt(P.armsT, ms: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "호스트 환영 (큰 인사)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsT, ms: 500),
+                P.holdAt(P.bowSlight, ms: 600, pause: 300),
+                P.holdAt(P.armsRightWave, ms: 500, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "카메라 V (양손)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -75, .rShoulderRoll: -15, .rElbow: -75, .lShoulderPitch: 75, .lShoulderRoll: 15, .lElbow: 75]), ms: 500),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -75, .rShoulderRoll: -15, .rElbow: -75, .lShoulderPitch: 75, .lShoulderRoll: 15, .lElbow: 75, .headTilt: -5]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "K-pop 머리위 (양손 모이기)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -80, .lShoulderPitch: 80, .rShoulderRoll: -25, .lShoulderRoll: 25, .rElbow: -45, .lElbow: 45]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "노래방 (양손 마이크)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -40, .lShoulderPitch: 40, .rShoulderRoll: 10, .lShoulderRoll: -10, .rElbow: -100, .lElbow: 100]), ms: 600),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -40, .lShoulderPitch: 40, .rShoulderRoll: 10, .lShoulderRoll: -10, .rElbow: -100, .lElbow: 100, .headTilt: -8]), ms: 1500, pause: 400),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "인사 + 응원",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.bowSlight, ms: 500, pause: 200),
+                P.holdAt(P.armsUp, ms: 400),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -90, .lShoulderPitch: 90, .rShoulderRoll: -15, .lShoulderRoll: 15]), ms: 400, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "환영 + 인사 + 박수",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsT, ms: 400, pause: 200),
+                P.holdAt(P.bowSlight, ms: 500, pause: 200),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -30, .lShoulderPitch: 30, .rElbow: -60, .lElbow: 60]), ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -25, .lShoulderPitch: 25, .rElbow: -50, .lElbow: 50]), ms: 300, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "종합 데모 (4단계)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 400, pause: 200),
+                P.holdAt(P.armsT, ms: 400, pause: 200),
+                P.holdAt(P.bowSlight, ms: 400, pause: 200),
+                P.holdAt(P.armsRightWave, ms: 400, pause: 200),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "종합 데모 (6단계)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.armsUp, ms: 350, pause: 150),
+                P.holdAt(P.armsT, ms: 350, pause: 150),
+                P.holdAt(P.armsCross, ms: 350, pause: 150),
+                P.holdAt(P.bowSlight, ms: 350, pause: 150),
+                P.holdAt(P.armsRightWave, ms: 350, pause: 150),
+                P.holdAt(P.armsHipHip, ms: 350, pause: 150),
+            ]))); id += 1
+        pages.append(MotionPage(id: id, name: "마지막 인사 (큰 박수)",
+            steps: P.wrapWithWalkReady([
+                P.holdAt(P.bowDeep, ms: 600, pause: 300),
+                P.holdAt(P.armsUp, ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -30, .lShoulderPitch: 30, .rElbow: -60, .lElbow: 60]), ms: 300),
+                P.holdAt(P.deltaFromWalkReady([.rShoulderPitch: -25, .lShoulderPitch: 25, .rElbow: -50, .lElbow: 50]), ms: 300, pause: 200),
+            ])))
+
+        return pages
+    }
 }
