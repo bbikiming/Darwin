@@ -163,19 +163,30 @@ struct FallPreventionMonitor: View {
         .animation(DFAnimation.standard, value: state)
         // **2026-05-16 시인성**: emergency / danger 시 subtle pulse.
         // Reduce Motion ON 시 SwiftUI 자동 disable.
+        // **이슈 처리 (2026-05-16)**: `state` (local let) 캡처 대신 `session.balanceState`
+        // 직접 참조 — closure capture 명확성 + onChange 의 publisher 직결.
         .onAppear {
-            if state >= .danger { startEmergencyPulse() }
-        }
-        .onChange(of: state) { _, newState in
-            if newState >= .danger {
+            if session.balanceState >= .danger && !pulseActive {
                 startEmergencyPulse()
-            } else {
+            }
+        }
+        .onChange(of: session.balanceState) { _, newState in
+            let shouldPulse = newState >= .danger
+            if shouldPulse && !pulseActive {
+                // 중첩 호출 가드 — danger → emergency 등 동일 zone 내 전환 시
+                // startEmergencyPulse 중복 호출 방지 (이전: 매 전환마다 호출 →
+                // 중첩 animation 시각 jitter).
+                startEmergencyPulse()
+            } else if !shouldPulse && pulseActive {
+                pulseActive = false
                 emergencyPulse = false
             }
         }
     }
 
     @State private var emergencyPulse: Bool = false
+    /// Pulse animation 활성 상태 — startEmergencyPulse 중복 호출 가드.
+    @State private var pulseActive: Bool = false
 
     /// Pulse 활성 시 더 강한 stroke alpha (60%) — 부드러운 사이클.
     private func pulseStrokeAlpha(for state: WalkLabSession.BalanceState) -> Double {
@@ -186,6 +197,7 @@ struct FallPreventionMonitor: View {
     }
 
     private func startEmergencyPulse() {
+        pulseActive = true
         withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
             emergencyPulse = true
         }
@@ -634,10 +646,14 @@ struct FallPreventionMonitor: View {
             } else {
                 ScrollView {
                     VStack(spacing: DFSpace.micro) {
-                        // **2026-05-16 시인성**: 최신 이벤트 (reversed 의 first) 강조.
-                        let reversed = Array(session.safetyEvents.reversed())
-                        ForEach(Array(reversed.enumerated()), id: \.element.id) { idx, evt in
-                            eventRow(evt, isNewest: idx == 0)
+                        // **2026-05-16 시인성**: 최신 이벤트 강조.
+                        // **이슈 처리 (2026-05-16)**: 이전엔 Array(reversed) +
+                        // Array(enumerated) 두 allocation (~10KB × 2 / body eval =
+                        // 400KB/s 알로 churn). 정정: ReversedCollection 직접 사용
+                        // (RandomAccessCollection 보장) + isNewest 는 last id 비교.
+                        let newestId = session.safetyEvents.last?.id
+                        ForEach(session.safetyEvents.reversed()) { evt in
+                            eventRow(evt, isNewest: evt.id == newestId)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }

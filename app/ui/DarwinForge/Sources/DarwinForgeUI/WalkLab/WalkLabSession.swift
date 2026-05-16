@@ -1232,11 +1232,17 @@ public final class WalkLabSession: ObservableObject {
 
     /// 안전 이벤트 추가 — `safetyEvents` 에 append + 50건 상한.
     /// MainActor 보장 — caller (tick / start / stop / didSet 등) 모두 MainActor.
+    ///
+    /// **이슈 처리 (2026-05-16)**: 이전엔 append + removeFirst 2 mutations =
+    /// 2 publisher notifications. 정정: local var batched → 1 notification
+    /// (safetyTimeline 와 동일 패턴).
     private func logSafetyEvent(kind: SafetyEvent.Kind, message: String) {
-        safetyEvents.append(SafetyEvent(timestamp: Date(), kind: kind, message: message))
-        if safetyEvents.count > Self.safetyEventsMaxCount {
-            safetyEvents.removeFirst(safetyEvents.count - Self.safetyEventsMaxCount)
+        var newEvents = safetyEvents
+        newEvents.append(SafetyEvent(timestamp: Date(), kind: kind, message: message))
+        if newEvents.count > Self.safetyEventsMaxCount {
+            newEvents.removeFirst(newEvents.count - Self.safetyEventsMaxCount)
         }
+        safetyEvents = newEvents
     }
 
     /// 이벤트 로그 비우기 — UI 의 "지우기" 버튼.
