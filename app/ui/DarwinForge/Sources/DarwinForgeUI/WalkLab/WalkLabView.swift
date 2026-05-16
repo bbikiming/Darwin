@@ -205,6 +205,8 @@ public struct WalkLabView: View {
                     balanceStateCard
                     // **Stage 5 (v1.1 fall prevention)**: 예측 score + ETA.
                     FallPredictionCard(prediction: session.fallPrediction)
+                    // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
+                    balanceCorrectionCard
                     IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
                     IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
                 }
@@ -388,6 +390,54 @@ public struct WalkLabView: View {
         case .emergency: return "기울기 30°+ — 토크 OFF + walkReady 복귀"
         default:         return ""
         }
+    }
+
+    /// **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
+    private var balanceCorrectionCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "figure.balanced")
+                    .font(.system(size: DFFontSize.s12))
+                    .foregroundStyle(session.enableBalanceCorrection ? .green : DFColor.textSecondary)
+                Toggle("자세 보정 (실험)", isOn: $session.enableBalanceCorrection)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: DFFontSize.s10))
+                Spacer()
+            }
+            if session.enableBalanceCorrection {
+                if let c = session.lastCorrections {
+                    HStack(spacing: 4) {
+                        Text(String(format: "hipRoll %+.1f°", c.rHipRoll))
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
+                        Text(String(format: "knee %+.1f°", c.rKnee))
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
+                    }
+                    .foregroundStyle(DFColor.textSecondary)
+                    HStack(spacing: 4) {
+                        Text(String(format: "ankP %+.1f°", c.rAnklePitch))
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
+                        Text(String(format: "ankR %+.1f°", c.rAnkleRoll))
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
+                    }
+                    .foregroundStyle(DFColor.textSecondary)
+                } else {
+                    Text("ROBOTIS Walking.cpp::sensoryFeedback 패턴 (gain 0.5/0.3/1.0/0.9)")
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+            } else {
+                Text("기본 OFF — 실 robot 검증 + Codex audit 후 활성화 권장")
+                    .font(.system(size: DFFontSize.s10))
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+        }
+        .padding(8)
+        .background(DFColor.textSecondary.opacity(0.05))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
     }
 
     private var actionBar: some View {

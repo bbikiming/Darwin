@@ -99,6 +99,19 @@ public final class WalkLabSession: ObservableObject {
     /// 예측 결과 — UI 게이지·countdown 용.
     @Published public private(set) var fallPrediction: FallPredictor.Prediction = .zero
 
+    // MARK: - Stage 4 (v1.1 fall prevention): 실 balance feedback
+
+    /// Walking.cpp::sensoryFeedback 패턴 — IMU error → 4 관절 그룹 delta.
+    /// `enableBalanceCorrection = true` 시 보행 cycle pose 에 적용. **default OFF**
+    /// (실 robot 검증 + Codex audit 완료 후 user 가 명시 ON).
+    @Published public var enableBalanceCorrection: Bool = false
+    /// 보정 활성 시 0~1초 ramp 시작 시점. nil 이면 ramp 미시작.
+    private var correctionEnabledAt: Date?
+    /// 최근 산정 보정 delta (UI 표시·디버그 용).
+    @Published public private(set) var lastCorrections: BalanceCorrector.Corrections?
+    /// Corrector 인스턴스 — `WalkParams.default()` gain 정합.
+    public let balanceCorrector: BalanceCorrector = .robotisDefault
+
     /// 안전 상태 — `|max(|roll|, |pitch|)|` 기준 5단계.
     ///
     /// **임계** (deg):
@@ -330,6 +343,9 @@ public final class WalkLabSession: ObservableObject {
         lastBufferPushAt = nil
         fallPrediction = .zero
         balanceState = .normal
+        // **Stage 4 (v1.1 fall prevention)**: corrector ramp 재시작.
+        correctionEnabledAt = enableBalanceCorrection ? Date() : nil
+        lastCorrections = nil
         startTime = Date()
 
         simTimer?.invalidate()
@@ -884,7 +900,9 @@ public final class WalkLabSession: ObservableObject {
             let phaseFraction = (Double(elapsedMs).truncatingRemainder(dividingBy: period)) / period
             let phasedTimeMs = phaseFraction * period
             if let pose = WalkMotionLibrary.simWalkingPose(timeMs: phasedTimeMs, tuning: effectiveTuning) {
-                visualPose = pose
+                // **Stage 4 (v1.1 fall prevention)**: sim mode 에서도 corrector 적용
+                // → 시각화에 보정 효과 미리보기 (실 robot 미연결 상태에서도 검증).
+                visualPose = applyBalanceCorrectionIfEnabled(to: pose)
             }
         } else if current == .idle, !isRobotWalking {
             // idle 상태 → walkReady 로 부드럽게 복귀 (sim).
@@ -930,6 +948,38 @@ public final class WalkLabSession: ObservableObject {
             thermalAlarm = true
             emergencyStop()
         }
+    }
+
+    /// **Stage 4 (v1.1 fall prevention)**: Balance corrector 적용 helper.
+    ///
+    /// `enableBalanceCorrection = true` 시 IMU error 기반 4 그룹 delta 적용. gain
+    /// ramp 1초 (시작 0% → 100%) 로 oscillation 방지.
+    ///
+    /// **호출 위치**:
+    /// - sim mode 의 `visualPose` 갱신 (검증용 미리보기)
+    /// - **실 motor 송출** 은 `runWalkCycle` / `runContinuousWalk` 가 onPose 직전
+    ///   별도 호출 (BLOCKER C3 의 실 IK 완성 후 wire). 본 PR 에선 sim 만.
+    ///
+    /// 입력 pose 는 보통 보행 cycle 의 phase target. roll/pitch error 는 현재 IMU.
+    public func applyBalanceCorrectionIfEnabled(to pose: RobotPose) -> RobotPose {
+        guard enableBalanceCorrection else { return pose }
+        let now = Date()
+        if correctionEnabledAt == nil { correctionEnabledAt = now }
+        let ramp = correctionEnabledAt.map { now.timeIntervalSince($0) } ?? 1.0
+
+        let corrections = balanceCorrector.corrections(
+            rollErrDeg: imuRollDeg,
+            pitchErrDeg: imuPitchDeg
+        )
+        lastCorrections = corrections
+
+        return balanceCorrector.apply(
+            to: pose,
+            rollErrDeg: imuRollDeg,
+            pitchErrDeg: imuPitchDeg,
+            enabled: true,
+            secondsSinceEnable: ramp
+        )
     }
 
     /// **Stage 3 (v1.1 fall prevention)**: IMU ring buffer 갱신 + predictor 호출.

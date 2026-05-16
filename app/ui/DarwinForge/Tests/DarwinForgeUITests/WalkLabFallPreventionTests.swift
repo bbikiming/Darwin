@@ -264,4 +264,137 @@ final class WalkLabFallPreventionTests: XCTestCase {
             XCTFail("rate 50 dps 에서 ETA nil")
         }
     }
+
+    // MARK: - Stage 4 — Balance feedback (Walking.cpp 패턴)
+
+    /// **gain 정합성** — `robotisDefault` 가 WalkParams.default() 와 동일 4개 gain.
+    func testBalanceCorrectorDefaultsMatchRobotis() {
+        let c = BalanceCorrector.robotisDefault
+        XCTAssertEqual(c.hipRollGain,    0.5, accuracy: 0.001)  // Walking.cpp:110
+        XCTAssertEqual(c.kneeGain,       0.3, accuracy: 0.001)  // Walking.cpp:111
+        XCTAssertEqual(c.ankleRollGain,  1.0, accuracy: 0.001)  // Walking.cpp:112
+        XCTAssertEqual(c.anklePitchGain, 0.9, accuracy: 0.001)  // Walking.cpp:113
+        XCTAssertEqual(c.internalGain,  -0.3, accuracy: 0.001)  // Walking.cpp:892
+    }
+
+    /// **부호 정합 — roll error 양수 (오른쪽 기울) → hip_roll 음수 보정 (왼쪽으로 lean 회복)**.
+    /// Walking.cpp: `dir * -0.3 * rl * gain` = +1 * -0.3 * (+roll) * 0.5 = -0.15 * roll (음수).
+    func testCorrectionPolarityRollPositive() {
+        let c = BalanceCorrector.robotisDefault
+        let result = c.corrections(rollErrDeg: 10, pitchErrDeg: 0)
+        // hip_roll = -0.3 * 10 * 0.5 = -1.5 (음수, 왼쪽 lean)
+        XCTAssertLessThan(result.rHipRoll, 0, "roll +양 → R hipRoll 음수여야 (왼쪽 lean 회복)")
+        XCTAssertEqual(result.rHipRoll, result.lHipRoll, accuracy: 0.001,
+            "R/L hipRoll 동일 부호 (lateral CoP shift) 위반")
+        XCTAssertEqual(result.rHipRoll, -1.5, accuracy: 0.001,
+            "hipRoll = -0.3 * 10 * 0.5 = -1.5 (정량)")
+        // ankle_roll 도 같은 부호 + 큰 gain (1.0).
+        XCTAssertLessThan(result.rAnkleRoll, 0)
+        XCTAssertEqual(result.rAnkleRoll, -3.0, accuracy: 0.001,
+            "ankleRoll = -0.3 * 10 * 1.0 = -3.0")
+        // pitch=0 → knee, ank_pitch 보정 0.
+        XCTAssertEqual(result.rKnee, 0, accuracy: 0.001)
+        XCTAssertEqual(result.rAnklePitch, 0, accuracy: 0.001)
+    }
+
+    /// **부호 정합 — pitch error 양수 (앞 기울) → knee 양수 보정 (굽힘 = 뒤로 lean)**.
+    /// Walking.cpp: `-dir * -0.3 * fb * gain` = +0.3 * (+pitch) * 0.3 = +0.09 * pitch (양수).
+    func testCorrectionPolarityPitchPositive() {
+        let c = BalanceCorrector.robotisDefault
+        let result = c.corrections(rollErrDeg: 0, pitchErrDeg: 10)
+        // knee = +0.3 * 10 * 0.3 = +0.9 (양수, 굽힘)
+        XCTAssertGreaterThan(result.rKnee, 0, "pitch +양 → knee 양수 (굽힘)")
+        XCTAssertEqual(result.rKnee, 0.9, accuracy: 0.001,
+            "knee = +0.3 * 10 * 0.3 = 0.9 (정량)")
+        // ankle_pitch = +0.3 * 10 * 0.9 = +2.7
+        XCTAssertEqual(result.rAnklePitch, 2.7, accuracy: 0.001)
+        // roll=0 → hip/ankle roll 0.
+        XCTAssertEqual(result.rHipRoll, 0, accuracy: 0.001)
+        XCTAssertEqual(result.rAnkleRoll, 0, accuracy: 0.001)
+    }
+
+    /// **max clamp** — 큰 error 시 ±maxCorrectionDeg 로 잘림.
+    func testCorrectionClampedAtMax() {
+        let c = BalanceCorrector.robotisDefault  // maxCorrectionDeg = 15
+        // roll 100° → ankle_roll = -0.3 * 100 * 1.0 = -30 → clamp -15.
+        let result = c.corrections(rollErrDeg: 100, pitchErrDeg: 0)
+        XCTAssertEqual(result.rAnkleRoll, -15, accuracy: 0.001,
+            "큰 roll error 에서 ankleRoll clamp -15° 실패")
+        // hip_roll = -0.3 * 100 * 0.5 = -15 → 정확히 clamp 경계.
+        XCTAssertEqual(result.rHipRoll, -15, accuracy: 0.001)
+    }
+
+    /// **gain ramp** — 시작 0초 / 0.5초 / 1초+ 시 보정 비율.
+    func testBalanceCorrectorGainRamp() {
+        let c = BalanceCorrector.robotisDefault
+        let pose = RobotPose.walkReady
+        // 0초 ramp → 보정 0
+        let p0 = c.apply(to: pose, rollErrDeg: 10, pitchErrDeg: 0,
+                         enabled: true, secondsSinceEnable: 0)
+        XCTAssertEqual(p0.degrees(.rHipRoll), pose.degrees(.rHipRoll), accuracy: 0.5,
+            "ramp 0초 → pose 변화 없어야 함")
+        // 1초+ ramp → 100%.
+        let p1 = c.apply(to: pose, rollErrDeg: 10, pitchErrDeg: 0,
+                         enabled: true, secondsSinceEnable: 1.0)
+        let dHipRoll = p1.degrees(.rHipRoll) - pose.degrees(.rHipRoll)
+        XCTAssertEqual(dHipRoll, -1.5, accuracy: 0.5,
+            "ramp 1초 → hipRoll -1.5° delta (100% 적용)")
+        // 0.5초 ramp → 50%.
+        let p05 = c.apply(to: pose, rollErrDeg: 10, pitchErrDeg: 0,
+                          enabled: true, secondsSinceEnable: 0.5)
+        let dMid = p05.degrees(.rHipRoll) - pose.degrees(.rHipRoll)
+        XCTAssertEqual(dMid, -0.75, accuracy: 0.5,
+            "ramp 0.5초 → 50% 보정 (-0.75° delta)")
+    }
+
+    /// **disabled 시 identity** — enabled=false → pose 그대로.
+    func testBalanceCorrectorDisabledIdentity() {
+        let c = BalanceCorrector.robotisDefault
+        let pose = RobotPose.walkReady
+        let result = c.apply(to: pose, rollErrDeg: 20, pitchErrDeg: 15,
+                             enabled: false, secondsSinceEnable: 5.0)
+        // 모든 관절 동일.
+        for j in JointID.allCases {
+            XCTAssertEqual(result.raw(j), pose.raw(j),
+                "disabled 시 \(j) raw 변화 — identity 위반")
+        }
+    }
+
+    /// **NaN 입력 robust** — NaN error 가 들어와도 clamp 0.
+    func testBalanceCorrectorRejectsNaN() {
+        let c = BalanceCorrector.robotisDefault
+        let result = c.corrections(rollErrDeg: .nan, pitchErrDeg: 5)
+        // NaN 검출 → clamp 0.
+        XCTAssertEqual(result.rHipRoll, 0, accuracy: 0.001,
+            "NaN rollErr → hipRoll 0 으로 fallback 안 함")
+        // pitch 는 정상값이라 knee/ankle_pitch 정상.
+        XCTAssertGreaterThan(result.rKnee, 0,
+            "pitch=5 일 때 knee 양수 보정 실패 (NaN 격리 못 함)")
+    }
+
+    /// **maxAbs** — 모든 delta 의 최대 절댓값 helper.
+    func testBalanceCorrectorMaxAbs() {
+        let c = BalanceCorrector.robotisDefault
+        let result = c.corrections(rollErrDeg: 10, pitchErrDeg: 10)
+        // ankle_roll = -3, ankle_pitch = +2.7, knee = +0.9, hip_roll = -1.5 → max=3
+        XCTAssertEqual(result.maxAbs, 3.0, accuracy: 0.001)
+    }
+
+    /// **WalkLabSession 통합** — enableBalanceCorrection toggle default OFF.
+    func testBalanceCorrectionDefaultOff() {
+        let session = WalkLabSession()
+        XCTAssertFalse(session.enableBalanceCorrection,
+            "default OFF — 실 robot 검증 + Codex audit 전 활성화 위험")
+        XCTAssertNil(session.lastCorrections, "default 시 lastCorrections nil")
+    }
+
+    /// **applyBalanceCorrectionIfEnabled — disabled 시 identity.**
+    func testSessionApplyDisabledReturnsIdentity() {
+        let session = WalkLabSession()
+        // default enableBalanceCorrection = false.
+        let result = session.applyBalanceCorrectionIfEnabled(to: .walkReady)
+        for j in JointID.allCases {
+            XCTAssertEqual(result.raw(j), RobotPose.walkReady.raw(j))
+        }
+    }
 }
