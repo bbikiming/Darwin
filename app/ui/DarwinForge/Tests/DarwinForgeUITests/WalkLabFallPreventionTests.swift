@@ -614,4 +614,38 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertNotEqual(WalkLabSession.MotorTempSource.sim,
                           WalkLabSession.MotorTempSource.real)
     }
+
+    // MARK: - 완벽화 Sprint (2026-05-16): @AppStorage 영속성
+
+    /// **monitoringExpanded 영속성** — UserDefaults 에 자동 저장.
+    func testMonitoringExpandedPersistsToUserDefaults() {
+        let key = "df.walklab.monitoringExpanded"
+        UserDefaults.standard.removeObject(forKey: key)
+
+        let session = WalkLabSession()
+        XCTAssertFalse(session.monitoringExpanded,
+            "초기 — UserDefaults 에 키 없으면 false")
+
+        session.monitoringExpanded = true
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: key),
+            "토글 ON 후 UserDefaults 에 true 저장")
+
+        session.monitoringExpanded = false
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: key),
+            "토글 OFF 후 UserDefaults 에 false 저장")
+
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    /// **새 세션이 이전 상태 복원** — 앱 재시작 시뮬레이션.
+    func testNewSessionRestoresMonitoringState() {
+        let key = "df.walklab.monitoringExpanded"
+        UserDefaults.standard.set(true, forKey: key)
+
+        let session = WalkLabSession()
+        XCTAssertTrue(session.monitoringExpanded,
+            "새 session 이 UserDefaults true → 복원해야 함")
+
+        UserDefaults.standard.removeObject(forKey: key)
+    }
 }

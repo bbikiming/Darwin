@@ -49,6 +49,7 @@ import ForgeCore
 /// 5. **Event log** — 시간역순 이벤트 로그.
 struct FallPreventionMonitor: View {
     @ObservedObject var session: WalkLabSession
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.sm2) {
@@ -59,7 +60,9 @@ struct FallPreventionMonitor: View {
             eventLogPanel
         }
         .padding(DFSpace.sm2)
-        .background(DFColor.elev2)
+        // **2026-05-16**: Apple HIG Liquid Glass — `.regularMaterial` 사용.
+        // Reduce Transparency ON 시 자동으로 solid elev2 fallback.
+        .dfMaterial(.regularMaterial, fallback: DFColor.elev2)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.sm)
@@ -85,17 +88,26 @@ struct FallPreventionMonitor: View {
                 .background(color.opacity(DFOpacity.o15))
                 .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
                 .accessibilityLabel("안전 상태 \(state.label)")
+                .help(stateMessage(state).isEmpty
+                      ? "안전 상태 \(state.label) — 정상 보행"
+                      : stateMessage(state))
             VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 HStack(spacing: DFSpace.xs2) {
                     Text("안전 상태")
                         .font(.system(size: DFFontSize.s10))
                         .foregroundStyle(DFColor.textSecondary)
+                        .lineLimit(1)
                     Spacer(minLength: DFSpace.xs)
                     // 데이터 source 요약 — 사용자가 한 눈에 "실 robot vs sim 데이터" 식별.
-                    dataSourcePill(label: "IMU \(session.imuSource.label)",
-                                   color: imuSourceColor)
-                    dataSourcePill(label: "모터 \(session.motorTempSource.label)",
-                                   color: motorTempSourceColor)
+                    // **2026-05-16**: 재사용 가능 `DFSourcePill` 컴포넌트 사용.
+                    DFSourcePill(label: session.imuSource.label,
+                                 tint: imuSourceColor,
+                                 leading: "IMU")
+                        .layoutPriority(1)
+                    DFSourcePill(label: session.motorTempSource.label,
+                                 tint: motorTempSourceColor,
+                                 leading: "모터")
+                        .layoutPriority(1)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: DFSpace.sm) {
                     Text(state.label)
@@ -166,65 +178,22 @@ struct FallPreventionMonitor: View {
     /// 110pt = 한국어 "L1 Cradle / 미확인" 1줄 표시 보장.
     private static let layerTileMinW: CGFloat = 110
 
+    /// **2026-05-16**: 재사용 가능 `DFStatusTile` 컴포넌트 사용.
+    /// 기존 inline VStack 구조 → 디자인 시스템 컴포넌트로 추출.
     private func layerTile(_ l: LayerStatus) -> some View {
-        VStack(alignment: .leading, spacing: DFSpace.micro) {
-            HStack(spacing: DFSpace.xs) {
-                Image(systemName: l.icon)
-                    .font(.system(size: DFFontSize.s10))
-                    .foregroundStyle(l.color)
-                Text(l.name)
-                    .font(.system(size: DFFontSize.s10, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
-                // 데이터 source pill (실 IMU / 실 모터 / 시뮬 / 지연).
-                // **2026-05-16**: 사용자가 "실 데이터 / sim 데이터" 즉시 구분 가능.
+        DFStatusTile(
+            name: l.name,
+            icon: l.icon,
+            valueLabel: l.valueLabel,
+            unit: l.unit,
+            thresholdLabel: l.thresholdLabel,
+            tint: l.color,
+            sourcePill: {
                 if let label = l.dataSourceLabel, let color = l.dataSourceColor {
-                    Text(label)
-                        .font(.system(size: DFFontSize.s8, weight: .medium,
-                                      design: .monospaced))
-                        .foregroundStyle(color)
-                        .padding(.horizontal, DFSpace.micro2 + 1)  // 3pt — pill 의 minimal padding
-                        .padding(.vertical, 0.5)
-                        .background(color.opacity(DFOpacity.o15))
-                        .clipShape(Capsule())
-                        .layoutPriority(1)
-                        .accessibilityLabel("\(l.name) 데이터 출처 \(label)")
+                    DFSourcePill(label: label, tint: color)
                 }
             }
-            HStack(alignment: .firstTextBaseline, spacing: DFSpace.micro2) {
-                Text(l.valueLabel)
-                    .font(.system(size: DFFontSize.s12, weight: .semibold,
-                                  design: .monospaced).monospacedDigit())
-                    .foregroundStyle(l.color)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if let unit = l.unit {
-                    Text(unit)
-                        .font(.system(size: DFFontSize.s9))
-                        .foregroundStyle(DFColor.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-            Text(l.thresholdLabel)
-                .font(.system(size: DFFontSize.s9))
-                .foregroundStyle(DFColor.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .padding(DFSpace.xs2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(l.color.opacity(DFOpacity.o06))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.xs)
-                .stroke(l.color.opacity(DFOpacity.o25),
-                        lineWidth: DFSize.borderHairline)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(l.name) \(l.valueLabel)\(l.unit ?? "")")
-        .accessibilityValue(l.thresholdLabel)
     }
 
     private func currentLayers() -> [LayerStatus] {
@@ -578,6 +547,8 @@ struct FallPreventionMonitor: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(DFColor.textSecondary)
                     .accessibilityLabel("이벤트 로그 비우기")
+                    .help("이벤트 로그 \(session.safetyEvents.count)건 모두 삭제")
+                    .dfPointerCursor()
                 }
             }
             if session.safetyEvents.isEmpty {
@@ -710,19 +681,6 @@ struct FallPreventionMonitor: View {
         case .real:  return DFColor.success
         case .stale: return DFColor.warning
         }
-    }
-
-    /// 데이터 source pill — hero banner 의 IMU/모터 source 표시.
-    /// monospace + capsule + tint 배경 (모든 source pill 공통 스타일).
-    private func dataSourcePill(label: String, color: Color) -> some View {
-        Text(label)
-            .font(.system(size: DFFontSize.s9, design: .monospaced))
-            .foregroundStyle(color)
-            .padding(.horizontal, DFSpace.xs2)
-            .padding(.vertical, 1)
-            .background(color.opacity(DFOpacity.o10))
-            .clipShape(Capsule())
-            .layoutPriority(1)
     }
 
     private func eventIcon(_ k: WalkLabSession.SafetyEvent.Kind) -> String {

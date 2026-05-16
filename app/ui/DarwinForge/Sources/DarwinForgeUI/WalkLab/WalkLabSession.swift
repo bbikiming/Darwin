@@ -252,8 +252,16 @@ public final class WalkLabSession: ObservableObject {
     @Published public private(set) var safetyTimeline: [SafetySample] = []
     /// 안전 이벤트 로그 — 최근 50건 (가장 최신이 last). 별도 보존 — start() reset 시에도 유지.
     @Published public private(set) var safetyEvents: [SafetyEvent] = []
-    /// 모니터링 대시보드 펼침 상태 — UI 토글.
-    @Published public var monitoringExpanded: Bool = false
+    /// 모니터링 대시보드 펼침 상태 — UI 토글. 앱 재시작 후에도 유지 (UserDefaults).
+    /// 키: `df.walklab.monitoringExpanded`. UI 가 @AppStorage 로 binding 추천.
+    @Published public var monitoringExpanded: Bool = UserDefaults.standard.bool(
+        forKey: "df.walklab.monitoringExpanded"
+    ) {
+        didSet {
+            UserDefaults.standard.set(monitoringExpanded,
+                                      forKey: "df.walklab.monitoringExpanded")
+        }
+    }
 
     private static let safetyTimelineMaxWindowSec: Double = 10.0
     private static let safetyTimelineMaxSamples: Int = 250

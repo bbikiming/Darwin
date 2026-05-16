@@ -165,6 +165,16 @@ struct DarwinForgeApp: App {
                     }
                 }
                 .keyboardShortcut("m", modifiers: [.control, .command])
+
+                Divider()
+
+                // **2026-05-16**: Fall Prevention 모니터링 dashboard 토글.
+                // ⌘⇧M — WalkLab 활성 시 시계열/이벤트 로그/6-Layer 상태 패널 펼침.
+                // Apple HIG Discoverability — 키보드 단축키를 메뉴바에서 발견 가능.
+                Button("Fall Prevention 모니터링") {
+                    NotificationCenter.default.post(name: .dfToggleMonitoring, object: nil)
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
             }
 
             CommandMenu("로봇") {

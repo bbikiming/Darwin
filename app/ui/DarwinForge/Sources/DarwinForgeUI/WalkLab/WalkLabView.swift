@@ -34,6 +34,12 @@ public struct WalkLabView: View {
         }
         .background(DFColor.canvas)
         .onAppear { session.attach(store: store) }
+        // **2026-05-16**: 메뉴바 "보기 → Fall Prevention 모니터링" (⌘⇧M) 수신.
+        .onReceive(NotificationCenter.default.publisher(for: .dfToggleMonitoring)) { _ in
+            withAnimation(DFAnimation.standard) {
+                session.monitoringExpanded.toggle()
+            }
+        }
     }
 
     // MARK: - Sidebar
@@ -198,10 +204,11 @@ public struct WalkLabView: View {
                                     .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
                             )
                         // **Stage 1 (v1.1 fall prevention)**: 실 IMU 출처 라벨 표시.
-                        HStack(spacing: 4) {
+                        HStack(spacing: DFSpace.xs) {
                             Circle()
                                 .fill(imuSourceColor)
-                                .frame(width: 6, height: 6)
+                                .frame(width: DFSize.indicatorXxs,
+                                       height: DFSize.indicatorXxs)
                             Text("IMU 출처: \(session.imuSource.label)")
                                 .font(.system(size: DFFontSize.s10, design: .monospaced))
                                 .foregroundStyle(DFColor.textSecondary)
@@ -291,7 +298,10 @@ public struct WalkLabView: View {
             .accessibilityLabel(session.monitoringExpanded
                 ? "모니터링 대시보드 접기"
                 : "모니터링 대시보드 펼치기")
-            .keyboardShortcut("m", modifiers: [.command, .shift])
+            .help(session.monitoringExpanded
+                ? "Fall Prevention 모니터링 접기 (⌘⇧M)"
+                : "Fall Prevention 모니터링 펼치기 (⌘⇧M)")
+            .dfPointerCursor()
         }
         .padding(.horizontal, DFSpace.sm2)
         .padding(.vertical, DFSpace.xs2)
@@ -427,15 +437,17 @@ public struct WalkLabView: View {
     }
 
     /// **Stage 2 (v1.1 fall prevention)**: 안전 상태 카드 + 자동 보정 토글.
+    /// 2026-05-16: design system 토큰화 완료 (raw 4/6/8/0.10/0.4/0.5 → DFSpace/DFOpacity/DFSize).
     private var balanceStateCard: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: balanceStateIcon)
                     .font(.system(size: DFFontSize.s12))
                     .foregroundStyle(balanceStateColor)
                 Text("안전 상태: \(session.balanceState.label)")
                     .font(.system(size: DFFontSize.s11, weight: .medium))
                     .foregroundStyle(balanceStateColor)
+                    .lineLimit(1)
                 Spacer()
             }
             if session.balanceState >= .warning {
@@ -443,18 +455,23 @@ public struct WalkLabView: View {
                     .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.textSecondary)
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Toggle("자동 균형 보정", isOn: $session.autoFallPrevention)
                 .toggleStyle(.checkbox)
                 .font(.system(size: DFFontSize.s10))
+                .help("기울기 임계 도달 시 자동 감속/동결 — OFF 시 30° emergency 만 작동")
         }
-        .padding(8)
-        .background(balanceStateColor.opacity(0.10))
+        .padding(DFSpace.sm)
+        .background(balanceStateColor.opacity(DFOpacity.o10))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.xs2)
-                .stroke(balanceStateColor.opacity(0.4), lineWidth: 0.5)
+                .stroke(balanceStateColor.opacity(DFOpacity.o40),
+                        lineWidth: DFSize.borderHairline)
         )
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("안전 상태 카드 — \(session.balanceState.label)")
     }
 
     private var balanceStateIcon: String {
@@ -487,27 +504,33 @@ public struct WalkLabView: View {
     }
 
     /// **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
+    /// 2026-05-16: design system 토큰화 완료.
     private var balanceCorrectionCard: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "figure.balanced")
                     .font(.system(size: DFFontSize.s12))
-                    .foregroundStyle(session.enableBalanceCorrection ? .green : DFColor.textSecondary)
+                    .foregroundStyle(session.enableBalanceCorrection
+                                     ? DFColor.success
+                                     : DFColor.textSecondary)
                 Toggle("자세 보정 (실험)", isOn: $session.enableBalanceCorrection)
                     .toggleStyle(.checkbox)
                     .font(.system(size: DFFontSize.s10))
+                    .help(session.enableBalanceCorrection
+                          ? "현재 ON — Walking.cpp sensoryFeedback 패턴 적용 중. 1초 ramp."
+                          : "ROBOTIS Walking.cpp 패턴 corrector — 실 robot 검증 후 활성 권장")
                 Spacer()
             }
             if session.enableBalanceCorrection {
                 if let c = session.lastCorrections {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         Text(String(format: "hipRoll %+.1f°", c.rHipRoll))
                             .font(.system(size: DFFontSize.s10, design: .monospaced))
                         Text(String(format: "knee %+.1f°", c.rKnee))
                             .font(.system(size: DFFontSize.s10, design: .monospaced))
                     }
                     .foregroundStyle(DFColor.textSecondary)
-                    HStack(spacing: 4) {
+                    HStack(spacing: DFSpace.xs) {
                         Text(String(format: "ankP %+.1f°", c.rAnklePitch))
                             .font(.system(size: DFFontSize.s10, design: .monospaced))
                         Text(String(format: "ankR %+.1f°", c.rAnkleRoll))
@@ -525,13 +548,18 @@ public struct WalkLabView: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
         }
-        .padding(8)
-        .background(DFColor.textSecondary.opacity(0.05))
+        .padding(DFSpace.sm)
+        .background(DFColor.textSecondary.opacity(DFOpacity.ghost))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.xs2)
-                .stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.o25),
+                        lineWidth: DFSize.borderHairline)
         )
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(session.enableBalanceCorrection
+            ? "자세 보정 ON — 최대 보정 \(String(format: "%.1f", session.lastCorrections?.maxAbs ?? 0))°"
+            : "자세 보정 OFF")
     }
 
     private var actionBar: some View {

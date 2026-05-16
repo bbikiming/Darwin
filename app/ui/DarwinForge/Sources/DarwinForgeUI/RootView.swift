@@ -1051,4 +1051,8 @@ extension Notification.Name {
     public static let dfTransferPoseToStudio = Notification.Name("DarwinForge.TransferPoseToStudio")
     /// Studio → MotionStudio 로 자세 전달. object 는 RobotPose.
     public static let dfTransferPoseToMotion = Notification.Name("DarwinForge.TransferPoseToMotion")
+
+    /// **2026-05-16**: WalkLab fall prevention 모니터링 dashboard 토글.
+    /// 메뉴바 "보기 → Fall Prevention 모니터링" (⌘⇧M) → WalkLabView 가 listen.
+    public static let dfToggleMonitoring = Notification.Name("DarwinForge.ToggleMonitoring")
 }

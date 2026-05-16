@@ -17,6 +17,8 @@ public enum DFColor {
     public static let card = Color(light: "#FFFFFF", dark: "#2C2C2E")
     /// nested 카드
     public static let elev2 = Color(light: "#F9F9FB", dark: "#3A3A3C")
+    /// **2026-05-16**: nested level 3 — dashboard 내부 sub-panel.
+    public static let elev3 = Color(light: "#EFEFF4", dark: "#48484A")
 
     // MARK: - Text
     public static let textPrimary = Color(light: "#1C1C1E", dark: "#FFFFFF")
@@ -38,6 +40,19 @@ public enum DFColor {
     public static let info = Color(light: "#5AC8FA", dark: "#64D2FF")
     /// 토크 / 모터 시각화
     public static let torque = Color(light: "#BF5AF2", dark: "#DA8FFF")
+
+    // MARK: - Interaction state (2026-05-16)
+
+    /// 마우스 hover background — Apple HIG `controlBackgroundColor` 변형.
+    /// macOS native pattern: `NSColor.selectedControlColor` 의 light variant.
+    public static let hoverBg = Color(light: "#E5E5EA", dark: "#3A3A3C")
+    /// selected row / item background — `NSColor.selectedContentBackgroundColor` 대응.
+    public static let selectedBg = Color(light: "#D0E4FE", dark: "#0A4D8A")
+    /// focus ring 색 — Apple HIG `NSColor.keyboardFocusIndicatorColor`.
+    /// keyboardShortcut / Tab navigation 시 강조 outline.
+    public static let focusRing = Color(light: "#0A84FF", dark: "#0A84FF")
+    /// 비활성 (disabled) overlay — control 위에 덧씌워 dim 효과.
+    public static let disabledOverlay = Color(light: "#FFFFFF", dark: "#000000").opacity(0.4)
 }
 
 /// 타이포 스케일 — Apple HIG Typography 가이드 기반.
@@ -359,6 +374,55 @@ public extension View {
                 .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
                         lineWidth: DFSize.borderHairline)
         )
+    }
+
+    /// **macOS native cursor** — clickable area 에 pointing hand 표시.
+    /// Apple HIG: interactive element 는 cursor 가 변경되어야 affordance 명확.
+    /// SwiftUI 자체엔 API 없어 NSCursor wrapper 로 처리.
+    ///
+    /// 사용:
+    /// ```swift
+    /// Button { … } label: { … }.dfPointerCursor()
+    /// ```
+    func dfPointerCursor() -> some View {
+        self.onHover { hovering in
+            #if canImport(AppKit)
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+            #endif
+        }
+    }
+
+    /// **Reduce Transparency 대응 material** — Apple HIG + WCAG.
+    /// 시스템 Reduce Transparency 시: solid `card` 배경.
+    /// 그 외: `material` (`.regularMaterial` / `.thickMaterial` 등).
+    ///
+    /// 사용:
+    /// ```swift
+    /// .dfMaterial(.regularMaterial)
+    /// ```
+    func dfMaterial(_ material: Material = .regularMaterial,
+                    fallback: Color = DFColor.card) -> some View {
+        self.modifier(DFMaterialBackground(material: material, fallback: fallback))
+    }
+}
+
+/// Reduce Transparency 대응 material background.
+/// 시스템 설정 → 손쉬운 사용 → 디스플레이 → 투명도 줄이기 ON → solid color.
+private struct DFMaterialBackground: ViewModifier {
+    let material: Material
+    let fallback: Color
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.background(fallback)
+        } else {
+            content.background(material)
+        }
     }
 }
 
