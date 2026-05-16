@@ -95,7 +95,10 @@ struct FallPreventionMonitor: View {
         let state = session.balanceState
         let color = stateColor(state)
         let icon = stateIcon(state)
-        let tiltMax = max(abs(session.imuRollDeg), abs(session.imuPitchDeg))
+        // **2026-05-16 방어**: NaN/Inf 가드 — 잘못된 sensor 데이터 시 0 fallback.
+        let safeRoll = session.imuRollDeg.isFinite ? session.imuRollDeg : 0
+        let safePitch = session.imuPitchDeg.isFinite ? session.imuPitchDeg : 0
+        let tiltMax = max(abs(safeRoll), abs(safePitch))
         return HStack(spacing: DFSpace.sm3) {
             Image(systemName: icon)
                 .font(DFIcon.hero)

@@ -129,10 +129,12 @@ struct SafetySparkline: View {
     private enum Trend { case rising, falling, flat, unknown }
 
     /// 최근 3 sample 의 first→last delta. |delta| < 0.5 = flat.
+    /// **2026-05-16 방어**: NaN sample 시 .unknown.
     private func computeTrend() -> Trend {
         guard samples.count >= 3 else { return .unknown }
         let recent = samples.suffix(3)
-        guard let first = recent.first, let last = recent.last else { return .unknown }
+        guard let first = recent.first, let last = recent.last,
+              first.1.isFinite, last.1.isFinite else { return .unknown }
         let delta = last.1 - first.1
         let threshold = max(0.5, (valueRange.upperBound - valueRange.lowerBound) * 0.02)
         if abs(delta) < threshold { return .flat }
@@ -216,6 +218,8 @@ struct SafetySparkline: View {
     private static let baselineW: CGFloat = DFSize.borderHairline  // 0.5pt
 
     /// Canvas 기반 직접 draw — `Path` 보다 perf 우위 (Tufte minimalism + 라이브 업데이트).
+    /// **2026-05-16 방어**: NaN/Inf sample → 차트 깨짐 방지. drawChart 입구에서
+    /// 필터링 + 각 좌표 변환에서 isFinite 가드.
     private func drawChart(ctx: GraphicsContext, size: CGSize) {
         let pad = Self.chartPad
         let w = size.width - pad * 2
@@ -223,7 +227,8 @@ struct SafetySparkline: View {
         let yMin = valueRange.lowerBound
         let yMax = valueRange.upperBound
         let ySpan = yMax - yMin
-        guard ySpan > 0, w > 0, h > 0 else { return }
+        guard ySpan > 0, w > 0, h > 0,
+              ySpan.isFinite, yMin.isFinite, yMax.isFinite else { return }
 
         // 1. 임계 zone 음영 — ISA-101 §6.4.2 패턴. yMin 부터 sorted threshold 까지.
         let sortedThresholds = thresholds.sorted { abs($0.value) < abs($1.value) }
@@ -257,21 +262,24 @@ struct SafetySparkline: View {
         }
 
         // 3. 데이터 line + area fill.
-        guard samples.count >= 2 else {
+        // **2026-05-16 방어**: NaN/Inf sample 사전 필터 — Canvas Path.move 가
+        // NaN 받으면 그래프 깨짐. 잘못된 sensor 데이터에서도 안전.
+        let validSamples = samples.filter { $0.1.isFinite }
+        guard validSamples.count >= 2 else {
             // 단일 sample — 점 하나만.
-            if let last = samples.last {
+            if let last = validSamples.last {
                 drawCurrentDot(ctx: ctx, x: pad + w,
                                y: pad + h * CGFloat((yMax - last.1) / ySpan))
             }
             return
         }
 
-        let tFirst = samples.first!.0.timeIntervalSinceReferenceDate
-        let tLast = samples.last!.0.timeIntervalSinceReferenceDate
+        let tFirst = validSamples.first!.0.timeIntervalSinceReferenceDate
+        let tLast = validSamples.last!.0.timeIntervalSinceReferenceDate
         let tSpan = tLast - tFirst
         // tSpan < 0.05s — 모든 점이 거의 같은 시각. 첫·마지막만 그림.
-        guard tSpan > 0.05 else {
-            if let last = samples.last {
+        guard tSpan > 0.05, tSpan.isFinite else {
+            if let last = validSamples.last {
                 drawCurrentDot(ctx: ctx, x: pad + w,
                                y: pad + h * CGFloat((yMax - last.1) / ySpan))
             }
@@ -288,11 +296,11 @@ struct SafetySparkline: View {
             return pad + h
         }()
 
-        // **2026-05-16 최적화**: 이전엔 area + line 을 separate iteration (samples × 2).
+        // **2026-05-16 최적화**: 이전엔 area + line 을 separate iteration (validSamples × 2).
         // 정정: 단일 pass 로 두 path 동시 build — sample N 개일 때 2N → N point 계산.
         var areaPath = Path()
         var linePath = Path()
-        for (i, s) in samples.enumerated() {
+        for (i, s) in validSamples.enumerated() {
             let tNorm = (s.0.timeIntervalSinceReferenceDate - tFirst) / tSpan
             let x = pad + w * CGFloat(tNorm)
             let yNorm = (yMax - s.1) / ySpan
@@ -318,7 +326,7 @@ struct SafetySparkline: View {
                                       lineCap: .round, lineJoin: .round))
 
         // 4. 마지막 sample dot — NN/g 권장 (현재 값 강조).
-        if let last = samples.last {
+        if let last = validSamples.last {
             let yNorm = (yMax - last.1) / ySpan
             drawCurrentDot(ctx: ctx, x: pad + w,
                            y: pad + h * CGFloat(max(0, min(1, yNorm))))

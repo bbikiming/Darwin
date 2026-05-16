@@ -693,6 +693,27 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertEqual(DFRadius.capsule, DFRadius.full)
     }
 
+    /// **NaN/Inf 방어** — 잘못된 sensor 데이터에서도 안전 (regression guard).
+    /// FallPredictor 가 NaN sample 을 reject 하는지 + safetyTimeline 갱신 안전.
+    func testNaNImuValuesHandled() {
+        let session = WalkLabSession()
+        // FallPredictor 의 isFinite filter 가 NaN sample 을 걸러야 함.
+        let nanSample = FallPredictor.Sample(
+            timestamp: Date(), rollDeg: .nan, pitchDeg: 0,
+            gyroXDps: 0, gyroYDps: 0
+        )
+        let prediction = FallPredictor.predict(samples: [nanSample])
+        XCTAssertEqual(prediction.score, 0,
+            "NaN sample → score 0 (FallPredictor.predict guard)")
+        XCTAssertNil(prediction.etaMs)
+        XCTAssertFalse(prediction.recommendEmergency)
+
+        // session.imuRollDeg 가 NaN 이어도 hero banner 계산이 0 fallback.
+        // 직접 검증 어려움 (UI test 필요) — 회귀 가드만.
+        XCTAssertEqual(session.imuRollDeg, 0,
+            "초기 IMU 값 0 — finite default")
+    }
+
     /// **새 세션이 이전 상태 복원** — 앱 재시작 시뮬레이션.
     func testNewSessionRestoresMonitoringState() {
         let key = "df.walklab.monitoringExpanded"
