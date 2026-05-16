@@ -201,6 +201,7 @@ public struct PilotHsvTuningSheet: View {
                     .foregroundStyle(DFColor.accent)
             }
             Slider(value: binding, in: range, step: step)
+                .tint(DFColor.accent)
         }
         .padding(DFSpace.xs2)
         .background(DFColor.elev2)

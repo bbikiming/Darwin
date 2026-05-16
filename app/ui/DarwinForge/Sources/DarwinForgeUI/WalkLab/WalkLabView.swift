@@ -342,85 +342,9 @@ public struct WalkLabView: View {
         }
     }
 
-    /// **Monitoring 펼침 토글** — 사용자가 expert 진단 패널을 보고 싶을 때.
-    ///
-    /// UX 근거 (NN/g progressive disclosure): 기본 닫힘 — 일반 사용자 UI overload
-    /// 방지. expert 가 토글 ON 시 6-Layer + 시계열 + 이벤트 로그 한 화면.
-    private var monitoringToggleBar: some View {
-        HStack(spacing: DFSpace.sm) {
-            Image(systemName: "waveform.path.ecg.rectangle")
-                .font(DFFont.sectionSmall)
-                .foregroundStyle(DFColor.accent)
-            VStack(alignment: .leading, spacing: DFSpace.micro) {
-                Text("Fall Prevention 모니터링")
-                    .font(DFFont.sectionBody)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(session.monitoringExpanded
-                     ? "6-Layer 상태 + 시계열 + 이벤트 로그 표시 중"
-                     : "펼치면 6-Layer 안전 시스템 + 시계열 그래프 + 이벤트 로그")
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(minWidth: 0, alignment: .leading)
-            .layoutPriority(0)
-            Spacer(minLength: DFSpace.xs)
-            // 현재 상태 요약 — 토글 닫혀 있어도 critical 만 보이게.
-            if session.balanceState >= .warning {
-                HStack(spacing: DFSpace.micro2 + 1) {  // 3pt — capsule 내부 dot ↔ label
-                    Circle()
-                        .fill(monitorBadgeColor)
-                        .frame(width: DFSize.indicatorXxs,
-                               height: DFSize.indicatorXxs)
-                    Text(session.balanceState.label)
-                        .font(DFFont.labelStrong)
-                        .foregroundStyle(monitorBadgeColor)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, DFSpace.xs2)
-                .padding(.vertical, DFSpace.micro)
-                .background(monitorBadgeColor.opacity(DFOpacity.o10))
-                .clipShape(Capsule())
-                .layoutPriority(1)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("현재 안전 상태 \(session.balanceState.label)")
-            }
-            Button {
-                withAnimation(DFAnimation.toggle) {
-                    session.monitoringExpanded.toggle()
-                }
-            } label: {
-                Label(session.monitoringExpanded ? "접기" : "펼치기",
-                      systemImage: session.monitoringExpanded
-                        ? "chevron.up.circle.fill"
-                        : "chevron.down.circle")
-                    .font(DFFont.bodySmall)
-                    .lineLimit(1)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .layoutPriority(1)
-            .accessibilityLabel(session.monitoringExpanded
-                ? "모니터링 대시보드 접기"
-                : "모니터링 대시보드 펼치기")
-            .help(session.monitoringExpanded
-                ? "Fall Prevention 모니터링 접기 (⌘⇧M)"
-                : "Fall Prevention 모니터링 펼치기 (⌘⇧M)")
-            .dfPointerCursor()
-        }
-        .padding(.horizontal, DFSpace.sm2)
-        .padding(.vertical, DFSpace.xs2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DFColor.elev2)
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.button)
-                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
-                        lineWidth: DFSize.borderHairline)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
-    }
+    // 2026-05-16: 가로 `monitoringToggleBar` private var (~75 line) 제거 — 좌측
+    // 세로 `collapsedMonitoringStripe` / `monitoringSidebar` 헤더 toggle 로 통합.
+    // dead code (호출처 0).
 
     private var monitorBadgeColor: Color {
         switch session.balanceState {

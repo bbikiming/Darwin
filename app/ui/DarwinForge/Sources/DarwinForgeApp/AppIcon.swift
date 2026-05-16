@@ -2,18 +2,19 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-/// DarwinForge 앱 아이콘 — Core Graphics 로 생성하는 미니멀 OP 기하학.
+/// DarwinForge 앱 아이콘 — 2-tier:
 ///
-/// 디자인 컨셉 (2026-05-16 재디자인):
-/// - 심플 + 슬림 — 굵은 도형 (두께 100pt) → 얇은 stroke (두께 30pt) 로 1/3 슬림화.
-/// - 메인 컬러 통일 — Forge orange (#FF6A00) → DarwinForge brand blue (#0050D5).
-/// - "OP" (Open Platform — DARwIn-OP) 글자 outline 만 흰색 stroke 로 표현.
-/// - 단색 배경 (gradient 제거) — 시각 부담 최소, 16pt 까지 축소 시에도 명료.
-/// - 외곽 = macOS HIG 표준 rounded square (cornerRadius = canvas × 0.2237).
+/// 1. **사용자 지정 PNG 자산** (영구, 우선) — `Bundle.module` 의 `AppIcon.png`
+///    (origin: `app/icon/option/ChatGPT Image ... 10_57_32 (1).png`). 사용자
+///    명시 변경 전까지 변경 금지.
+/// 2. **Core Graphics fallback** (`make()`) — PNG 누락 시 안전망. 슬림 OP outline
+///    (두께 30pt) + 단색 brand blue (#0050D5). dev 환경 / PNG 미설치 build
+///    에서만 노출.
 ///
 /// 사용:
 /// ```swift
-/// NSApp.applicationIconImage = AppIcon.make()
+/// // 우선 PNG, 없으면 코드 생성.
+/// NSApp.applicationIconImage = AppIcon.loadBundledPNG() ?? AppIcon.make()
 /// ```
 public enum AppIcon {
 
