@@ -39,14 +39,21 @@ final class WalkLabFallPreventionTests: XCTestCase {
     }
 
     /// L3 자동 정지 게이트가 imuSource 와 무관하게 작동 — sim 모드에서 직접 값 주입.
-    /// (Stage 1 변경이 기존 게이트 동작을 깨지 않음을 검증)
-    func testL3GateWorksRegardlessOfSource() {
+    /// **L3 gate boundary 검증** — BalanceState.from(maxTilt:) 와 L3 gate 가
+    /// 둘 다 `>= 30` 임계 사용 (off-by-one 정정 회귀).
+    /// 2026-05-16: 이전 misleading 이름 (testL3GateWorksRegardlessOfSource) →
+    /// 실제 invariant 만 검증 (boundary 정합).
+    func testL3GateThresholdBoundaryConsistency() {
+        // BalanceState.from 의 30° boundary — `.emergency`.
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 30.0), .emergency,
+            "30.0° 는 .emergency — `>=` 임계 정합")
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 29.99), .danger,
+            "29.99° 는 .danger")
+        // L3 gate 의 직접 검증은 simTimer private 라 불가능 — BalanceState 의
+        // 임계만 boundary 정합 (실 gate 도 동일 `>=` 사용 정정 후).
         let session = WalkLabSession()
-        // sim 모드의 imuRollDeg/imuPitchDeg 는 일반적으로 0~6° 흔들림.
-        // 임계 30° 도달 시 balanceLost true + emergency stop.
-        // 직접 imuRollDeg 주입 후 다음 tick 에서 게이트 발동 확인은 simTimer
-        // private 이라 직접 테스트 불가. 공개 invariant: balanceLost 초기 false.
-        XCTAssertFalse(session.balanceLost, "초기 balanceLost 가 true 인 것은 비정상")
+        XCTAssertFalse(session.balanceLost,
+            "초기 balanceLost 는 false — 정상 초기 invariant")
     }
 
     // MARK: - Stage 2 — 다단계 안전 임계

@@ -1120,8 +1120,11 @@ public final class WalkLabSession: ObservableObject {
             }
         }
 
-        // L3 — 균형 손실 (실 IMU 또는 sim 둘 다 동일 임계, 기존 동작)
-        if abs(imuRollDeg) > 30 || abs(imuPitchDeg) > 30 {
+        // L3 — 균형 손실 (실 IMU 또는 sim 둘 다 동일 임계).
+        // **이슈 정정 (2026-05-16)**: 이전 `> 30` strict 비교 → BalanceState.from(maxTilt:)
+        // 의 `>= 30` 와 불일치. 정확히 30.0° 에서 dashboard 는 .emergency 표시되지만
+        // L3 emergency 미발동 (off-by-one). 정정: `>= 30` 일관.
+        if abs(imuRollDeg) >= 30 || abs(imuPitchDeg) >= 30 {
             balanceLost = true
             emergencyStop()
         }
@@ -1275,9 +1278,11 @@ public final class WalkLabSession: ObservableObject {
             return pose
         }
         let now = Date()
-        if correctionEnabledAt == nil { correctionEnabledAt = now }
-        // Phase D 정정: optional 의 `?? 1.0` dead code 제거 (`correctionEnabledAt` 위에서 비-nil 보장).
-        let ramp = max(0, min(1, now.timeIntervalSince(correctionEnabledAt!)))
+        // 2026-05-16 정정: force unwrap → coalescing. correctionEnabledAt 이 nil
+        // 이면 now (= 시작 시각) 사용. ramp = 0 (시작점) 결과 동일하지만 안전.
+        let startedAt = correctionEnabledAt ?? now
+        if correctionEnabledAt == nil { correctionEnabledAt = startedAt }
+        let ramp = max(0, min(1, now.timeIntervalSince(startedAt)))
 
         let corrected = balanceCorrector.apply(
             to: pose,

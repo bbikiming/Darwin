@@ -49,7 +49,9 @@ import ForgeCore
 /// 5. **Event log** — 시간역순 이벤트 로그.
 struct FallPreventionMonitor: View {
     @ObservedObject var session: WalkLabSession
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    // 2026-05-16 이슈 정정: 이전 `@Environment(\.accessibilityReduceTransparency)`
+    // 선언했으나 미사용 (dead code). `.dfMaterial` modifier 가 내부에서 자체
+    // Environment lookup — 본 view 에선 불필요. 제거.
 
     var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.sm2) {
@@ -291,9 +293,12 @@ struct FallPreventionMonitor: View {
         // L3 — IMU tilt (max|roll/pitch|). data = imuSource.
         let tiltMax = max(abs(session.imuRollDeg), abs(session.imuPitchDeg))
         let tiltColor: Color = {
-            if tiltMax >= 30 { return DFColor.danger }
+            // **이슈 정정 (2026-05-16)**: 이전 `>= 30 / >= 28` 둘 다 danger,
+            // `>= 22 / >= 15` 둘 다 warning — 5단계 의도였으나 3단계 표현.
+            // 정정: BalanceState 의 5-tier 와 정합:
+            // normal < 15 < caution < 22 < warning(severe) < 28 < danger
             if tiltMax >= 28 { return DFColor.danger }
-            if tiltMax >= 22 { return DFColor.warning }
+            if tiltMax >= 22 { return DFColor.severe }
             if tiltMax >= 15 { return DFColor.warning }
             return DFColor.success
         }()
@@ -310,8 +315,10 @@ struct FallPreventionMonitor: View {
         // L4 — Predictor score. data = imuSource (gyro + tilt 둘 다 IMU).
         let score = session.fallPrediction.score
         let scoreColor: Color = {
+            // **이슈 정정 (2026-05-16)**: 이전 60/30 둘 다 warning — 의도된 severe 누락.
+            // 정정: 4-tier — < 30 / 30-60 / 60-80 / >= 80.
             if score >= 80 { return DFColor.danger }
-            if score >= 60 { return DFColor.warning }
+            if score >= 60 { return DFColor.severe }
             if score >= 30 { return DFColor.warning }
             return DFColor.success
         }()
@@ -354,8 +361,10 @@ struct FallPreventionMonitor: View {
         // L6 — 모터 온도. data = motorTempSource (별도 source — Telemetry 의 joints).
         let temp = session.maxMotorTemp
         let tempColor: Color = {
+            // **이슈 정정 (2026-05-16)**: 이전 50/45 둘 다 warning — severe 누락.
+            // 정정: 4-tier — < 45 / 45-50 / 50-60 / >= 60.
             if temp >= 60 { return DFColor.danger }
-            if temp >= 50 { return DFColor.warning }
+            if temp >= 50 { return DFColor.severe }
             if temp >= 45 { return DFColor.warning }
             return DFColor.success
         }()

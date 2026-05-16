@@ -22,10 +22,12 @@ import SwiftUI
 /// `thresholds` = 임계값 + 색 (예: `[(15, .yellow), (22, .orange), (30, .red)]`).
 /// `valueRange` = y 축 범위 (자동 fitting 안 함 — 일관 비교 위해 caller 가 명시).
 struct SafetySparkline: View {
-    public struct Threshold: Equatable {
-        public let value: Double
-        public let color: Color
-        public init(value: Double, color: Color) {
+    // 2026-05-16 정정: 부모 struct 가 internal 이라 nested `public` 는 의미 없음.
+    // (Swift 컴파일러 경고 회피 — internal 로 일관)
+    struct Threshold: Equatable {
+        let value: Double
+        let color: Color
+        init(value: Double, color: Color) {
             self.value = value
             self.color = color
         }
