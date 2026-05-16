@@ -104,11 +104,25 @@ public final class WalkLabSession: ObservableObject {
     /// Walking.cpp::sensoryFeedback 패턴 — IMU error → 4 관절 그룹 delta.
     /// `enableBalanceCorrection = true` 시 보행 cycle pose 에 적용. **default OFF**
     /// (실 robot 검증 + Codex audit 완료 후 user 가 명시 ON).
-    @Published public var enableBalanceCorrection: Bool = false
+    ///
+    /// **Phase D 정정 (Agent 2 B-3)**: didSet 으로 toggle OFF → ON 재전환 시 ramp
+    /// 재시작 보장. 이전엔 OFF 시 `correctionEnabledAt` 잔존 → 다음 ON 즉시 100%
+    /// 적용 (ramp 우회).
+    @Published public var enableBalanceCorrection: Bool = false {
+        didSet {
+            if enableBalanceCorrection != oldValue {
+                // 토글 전환 — ramp 재시작 (ON → 0초부터 / OFF → nil).
+                correctionEnabledAt = enableBalanceCorrection ? Date() : nil
+                if !enableBalanceCorrection { lastCorrections = nil }
+            }
+        }
+    }
     /// 보정 활성 시 0~1초 ramp 시작 시점. nil 이면 ramp 미시작.
     private var correctionEnabledAt: Date?
     /// 최근 산정 보정 delta (UI 표시·디버그 용).
     @Published public private(set) var lastCorrections: BalanceCorrector.Corrections?
+    /// **Phase C (2026-05-16)**: balanceState .danger 시 동결 기준 pose. nil 이면 walkReady fallback.
+    private var lastSafePose: RobotPose?
     /// Corrector 인스턴스 — `WalkParams.default()` gain 정합.
     public let balanceCorrector: BalanceCorrector = .robotisDefault
 
@@ -343,9 +357,18 @@ public final class WalkLabSession: ObservableObject {
         lastBufferPushAt = nil
         fallPrediction = .zero
         balanceState = .normal
+        // **Phase D 정정 (Agent 4 P1)**: imu 값도 reset — 이전 cycle 의 stale 28°
+        // 가 남아 있으면 첫 tick 에 잘못된 balanceState 발동.
+        imuRollDeg = 0
+        imuPitchDeg = 0
+        imuSource = .sim
+        // **Phase D 정정 (Agent 4 P2)**: 이전 cycle 결과/preflight failure 도 reset.
+        lastPreflightFailure = nil
+        lastCycleResult = nil
         // **Stage 4 (v1.1 fall prevention)**: corrector ramp 재시작.
         correctionEnabledAt = enableBalanceCorrection ? Date() : nil
         lastCorrections = nil
+        lastSafePose = nil
         startTime = Date()
 
         simTimer?.invalidate()
@@ -984,36 +1007,50 @@ public final class WalkLabSession: ObservableObject {
         }
     }
 
-    /// **Stage 4 (v1.1 fall prevention)**: Balance corrector 적용 helper.
+    /// **Stage 4 + Phase C (v1.1 fall prevention)**: Balance corrector + balanceState
+    /// 둘 다 실 motor 송출 경로에 적용. sim/실 일관.
     ///
-    /// `enableBalanceCorrection = true` 시 IMU error 기반 4 그룹 delta 적용. gain
-    /// ramp 1초 (시작 0% → 100%) 로 oscillation 방지.
-    ///
-    /// **호출 위치**:
-    /// - sim mode 의 `visualPose` 갱신 (검증용 미리보기)
-    /// - **실 motor 송출** 은 `runWalkCycle` / `runContinuousWalk` 가 onPose 직전
-    ///   별도 호출 (BLOCKER C3 의 실 IK 완성 후 wire). 본 PR 에선 sim 만.
+    /// 2026-05-16 Phase C 정정 (Agent 4 발견): 이전엔 Stage 2 의 warning 70% 감속 /
+    /// danger 자세 동결이 sim engine 만 영향. 실 motor 경로는 미적용. 이번 정정에서
+    /// **transformPose 가 balanceState 별로 pose 변환** 으로 실 motor 에도 적용:
+    /// - `.danger` (28-30°): 마지막 안전 pose (lastSafePose) 반환 = 자세 동결
+    /// - 그 외: corrector 만 적용 (default false 면 identity)
+    /// `.warning` (22-28°) 의 속도 감속은 pose 변환으로는 표현 불가 → engine 감속만 유지
+    /// (실 motor 의 cycle plan 은 미리 합성됨, 동적 stride 변경은 추후 Sprint).
     ///
     /// 입력 pose 는 보통 보행 cycle 의 phase target. roll/pitch error 는 현재 IMU.
     public func applyBalanceCorrectionIfEnabled(to pose: RobotPose) -> RobotPose {
-        guard enableBalanceCorrection else { return pose }
+        // **Phase C 정정**: Stage 2 danger 자세 동결 — corrector 보다 우선.
+        if autoFallPrevention, balanceState == .danger {
+            // 28°+ 도달 — pose 송출 정지 (마지막 안전 pose 또는 walkReady 반환).
+            // 30° emergency 임박. 다음 tick L3 가 토크 OFF.
+            return lastSafePose ?? pose
+        }
+        // Corrector 분기.
+        guard enableBalanceCorrection else {
+            lastSafePose = pose  // 안전한 상황 — 다음 동결 시 이 pose 로 회복.
+            return pose
+        }
         let now = Date()
         if correctionEnabledAt == nil { correctionEnabledAt = now }
-        let ramp = correctionEnabledAt.map { now.timeIntervalSince($0) } ?? 1.0
+        // Phase D 정정: optional 의 `?? 1.0` dead code 제거 (`correctionEnabledAt` 위에서 비-nil 보장).
+        let ramp = max(0, min(1, now.timeIntervalSince(correctionEnabledAt!)))
 
-        let corrections = balanceCorrector.corrections(
-            rollErrDeg: imuRollDeg,
-            pitchErrDeg: imuPitchDeg
-        )
-        lastCorrections = corrections
-
-        return balanceCorrector.apply(
+        let corrected = balanceCorrector.apply(
             to: pose,
             rollErrDeg: imuRollDeg,
             pitchErrDeg: imuPitchDeg,
             enabled: true,
             secondsSinceEnable: ramp
         )
+        // Phase D 정정 (Agent 2 발견 B-7): UI 표시 corrections 도 ramp 반영.
+        let rampedCorr = balanceCorrector.corrections(
+            rollErrDeg: imuRollDeg * ramp,
+            pitchErrDeg: imuPitchDeg * ramp
+        )
+        lastCorrections = rampedCorr
+        lastSafePose = corrected
+        return corrected
     }
 
     /// **Stage 3 (v1.1 fall prevention)**: IMU ring buffer 갱신 + predictor 호출.
@@ -1060,22 +1097,28 @@ public final class WalkLabSession: ObservableObject {
         fallPrediction = FallPredictor.predict(samples: imuBuffer, now: now)
     }
 
-    /// **Stage 2 (v1.1 fall prevention)**: 다단계 임계 별 자동 mitigation.
+    /// **Stage 2 + Phase C/D (v1.1 fall prevention)**: 다단계 임계 별 자동 mitigation.
     ///
-    /// Warning (22-28°) — engine 속도 70% 자동 감속.
-    /// Danger (28-30°) — engine enabled=false (자세 동결).
-    /// Emergency (≥ 30°) 는 별도 L3 게이트가 처리 (토크 OFF + walkReady).
+    /// Warning (22-28°) — sim engine 속도 70% 감속 + 실 motor 는 corrector + 다음
+    /// `runWalkCycle` 재합성 (TODO: 추후 Sprint).
+    /// Danger (28-30°) — sim engine 정지 + 실 motor 는 `transformPose` 가
+    /// lastSafePose 반환 (자세 동결, Phase C 추가).
+    /// Emergency (≥ 30°) — 별도 L3 게이트 (토크 OFF + walkReady).
     ///
     /// `autoFallPrevention = false` 면 호출 안 됨 — 기존 30° emergency 만 작동.
-    /// Sim mode + 실 mode 모두 동일 적용 (sim 자가검증 가능).
+    ///
+    /// **Phase D 정정 (Agent 4 P1)**: normal/caution 복귀 시 engine 명령 복원 —
+    /// 이전엔 warning 의 0.7× scale 이 영구 잔존.
     private func applyBalanceMitigation() {
+        let cmd = effectiveCommand
         switch balanceState {
         case .normal, .caution:
-            // 정상·주의 — engine 그대로. UI 만 색 변화.
-            break
+            // **Phase D 정정**: 회복 시 engine 100% 복원. 이전 warning 의 0.7× 잔존 방지.
+            engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
         case .warning:
-            // 70% 자동 감속 — engine 의 x_amplitude 만 줄임. period/y/a 유지.
-            let cmd = effectiveCommand
+            // 70% 자동 감속 — sim engine 의 x_amplitude 만 줄임.
+            // (실 motor 송출의 plan 은 미리 합성됨 — 동적 stride 변경은 추후 Sprint.
+            //  대신 `transformPose` 의 corrector 가 매 step pose 보정.)
             engine.setCommand(
                 x: cmd.x * BalanceState.warning.speedScale,
                 y: cmd.y,
@@ -1083,10 +1126,11 @@ public final class WalkLabSession: ObservableObject {
                 enabled: cmd.enabled
             )
         case .danger:
-            // 자세 동결 — engine 정지 (보행 cycle 일시 멈춤). emergency 직전 단계.
+            // **Phase C**: sim engine 정지 + `transformPose` 가 lastSafePose 반환.
+            // 둘 다 실 motor 의 자세 동결 효과.
             engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
         case .emergency:
-            // 즉시 L3 게이트 (별도 처리). 본 helper 는 아무 동작 X.
+            // 즉시 L3 게이트 (별도 처리).
             break
         }
     }

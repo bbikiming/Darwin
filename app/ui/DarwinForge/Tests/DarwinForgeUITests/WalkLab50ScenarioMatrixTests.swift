@@ -78,25 +78,25 @@ final class WalkLab50ScenarioMatrixTests: XCTestCase {
                 let r = c.corrections(rollErrDeg: dist.rollDeg, pitchErrDeg: dist.pitchDeg)
                 let cell = "\(slider.name) × \(dist.name)"
 
-                // roll +양 → hipRoll 음수
+                // **Phase B 2026-05-16 정정 부호** (Agent 3 cross-check 후):
+                // roll +양 → hip_roll / ankle_roll 모두 음수 (lateral 회복, 동일 부호)
                 if dist.rollDeg > 0 {
                     if r.rHipRoll >= 0 { failures.append("\(cell): rHipRoll \(r.rHipRoll) 양수 (회복 반대)") }
                     if r.lHipRoll >= 0 { failures.append("\(cell): lHipRoll \(r.lHipRoll) 양수 (회복 반대)") }
-                    if r.rAnkleRoll <= 0 { failures.append("\(cell): rAnkleRoll \(r.rAnkleRoll) 음수 (회복 반대)") }
-                    if r.lAnkleRoll <= 0 { failures.append("\(cell): lAnkleRoll \(r.lAnkleRoll) 음수 (회복 반대)") }
+                    if r.rAnkleRoll >= 0 { failures.append("\(cell): rAnkleRoll \(r.rAnkleRoll) 양수 (회복 반대 — hip_roll 과 동일 부호)") }
+                    if r.lAnkleRoll >= 0 { failures.append("\(cell): lAnkleRoll \(r.lAnkleRoll) 양수 (회복 반대)") }
                 }
-                // roll 0 → hip/ankle roll 보정 ≈ 0
                 if dist.rollDeg == 0 {
-                    if abs(r.rHipRoll) > 0.01   { failures.append("\(cell): rHipRoll \(r.rHipRoll) ≠ 0 (roll 0 일 때 보정 X)") }
+                    if abs(r.rHipRoll) > 0.01   { failures.append("\(cell): rHipRoll \(r.rHipRoll) ≠ 0") }
                     if abs(r.rAnkleRoll) > 0.01 { failures.append("\(cell): rAnkleRoll \(r.rAnkleRoll) ≠ 0") }
                 }
 
-                // pitch +양 → R knee 음수 / L knee 양수 (mirror)
+                // pitch +양 → R knee +양수 (굽힘) / L knee -음수 (mirror 굽힘)
                 if dist.pitchDeg > 0 {
-                    if r.rKnee >= 0 { failures.append("\(cell): rKnee \(r.rKnee) 양수 (mirror 위반)") }
-                    if r.lKnee <= 0 { failures.append("\(cell): lKnee \(r.lKnee) 음수 (mirror 위반)") }
-                    if r.rAnklePitch <= 0 { failures.append("\(cell): rAnklePitch \(r.rAnklePitch) 음수 (회복 반대)") }
-                    if r.lAnklePitch >= 0 { failures.append("\(cell): lAnklePitch \(r.lAnklePitch) 양수 (mirror 위반)") }
+                    if r.rKnee <= 0 { failures.append("\(cell): rKnee \(r.rKnee) 음수 (R 굽힘 반대)") }
+                    if r.lKnee >= 0 { failures.append("\(cell): lKnee \(r.lKnee) 양수 (L 굽힘 mirror 반대)") }
+                    if r.rAnklePitch <= 0 { failures.append("\(cell): rAnklePitch \(r.rAnklePitch) 음수 (R dorsiflex 반대)") }
+                    if r.lAnklePitch >= 0 { failures.append("\(cell): lAnklePitch \(r.lAnklePitch) 양수 (L dorsiflex mirror 반대)") }
                 }
             }
         }

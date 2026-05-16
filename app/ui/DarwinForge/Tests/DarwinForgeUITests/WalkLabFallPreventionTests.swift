@@ -277,68 +277,59 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertEqual(c.internalGain,  -0.3, accuracy: 0.001)  // Walking.cpp:892
     }
 
-    /// **부호 정합 (정정 후)** — roll +10° → URDF dir 적용 후 8 관절 정확 값.
+    /// **부호 정합 (Phase B 2026-05-16 정정 후)** — roll +10° → 4-source 정합 부호.
     ///
-    /// 정정 (2026-05-16): URDF `getJointDirection` 적용해서 R/L 부호 차이 반영:
-    /// - hip_roll: 둘 다 -1.5° (lateral, R/L 동일)
-    /// - ank_roll: 둘 다 **+3.0°** (lateral, R/L 동일, **부호 reverse**)
+    /// doc + URDF + walkReady + 본 함수 일치:
+    /// - hip_roll: 둘 다 -1.5° (lateral 회복)
+    /// - ankle_roll: 둘 다 **-3.0°** (lateral 회복, hip_roll 과 동일 부호)
     /// - 다른 관절: roll=0 일 때 보정 0
     func testCorrectionPolarityRollPositive() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: 10, pitchErrDeg: 0)
-        // hipRoll = -0.15 * 10 = -1.5°
         XCTAssertEqual(result.rHipRoll, -1.5, accuracy: 0.001,
-            "hipRoll = -0.15 × imuRoll = -1.5 (정량)")
+            "hipRoll = -0.15 × imuRoll = -1.5")
         XCTAssertEqual(result.lHipRoll, -1.5, accuracy: 0.001,
-            "L hipRoll = R 동일 (lateral CoP shift)")
-        // ankleRoll = +0.30 * 10 = +3.0° (정정 후 부호)
-        XCTAssertEqual(result.rAnkleRoll, +3.0, accuracy: 0.001,
-            "ankleRoll = +0.30 × imuRoll = +3.0 (URDF dir +1 적용)")
-        XCTAssertEqual(result.lAnkleRoll, +3.0, accuracy: 0.001,
-            "L ankleRoll = R 동일 (lateral)")
-        // pitch=0 → knee, ank_pitch 보정 0.
+            "L hipRoll = R 동일 (lateral)")
+        XCTAssertEqual(result.rAnkleRoll, -3.0, accuracy: 0.001,
+            "ankleRoll = -0.30 × imuRoll = -3.0 (lateral 회복, hip_roll 과 동일 부호)")
+        XCTAssertEqual(result.lAnkleRoll, -3.0, accuracy: 0.001)
         XCTAssertEqual(result.rKnee, 0, accuracy: 0.001)
         XCTAssertEqual(result.lKnee, 0, accuracy: 0.001)
         XCTAssertEqual(result.rAnklePitch, 0, accuracy: 0.001)
         XCTAssertEqual(result.lAnklePitch, 0, accuracy: 0.001)
     }
 
-    /// **부호 정합 (정정 후)** — pitch +10° → R/L mirror 부호 (sagittal recovery).
+    /// **부호 정합 (Phase B 2026-05-16 정정 후)** — pitch +10° → R/L mirror 굽힘.
     ///
-    /// 정정 (2026-05-16): knee/ankle_pitch 의 L 부호 reverse:
-    /// - knee_R = -0.9°, knee_L = +0.9° (mirror)
-    /// - anklePitch_R = +2.7°, anklePitch_L = -2.7° (mirror)
+    /// doc "굽힘 R+ / L-" 일치:
+    /// - knee_R = +0.9°, knee_L = -0.9° (mirror, 양 다리 굽힘)
+    /// - anklePitch_R = +2.7°, anklePitch_L = -2.7° (mirror, 양 발끝 위)
     func testCorrectionPolarityPitchPositive() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: 0, pitchErrDeg: 10)
-        // knee = mirror — R 음수, L 양수.
-        XCTAssertEqual(result.rKnee, -0.9, accuracy: 0.001,
-            "R knee = -0.09 × imuPitch = -0.9 (URDF dir +1, mirror with L)")
-        XCTAssertEqual(result.lKnee, +0.9, accuracy: 0.001,
-            "L knee = +0.09 × imuPitch = +0.9 (URDF dir -1, R mirror)")
-        // anklePitch = mirror — R 양수, L 음수.
+        XCTAssertEqual(result.rKnee, +0.9, accuracy: 0.001,
+            "R knee = +0.09 × imuPitch = +0.9 (굽힘 = 회복)")
+        XCTAssertEqual(result.lKnee, -0.9, accuracy: 0.001,
+            "L knee = -0.09 × imuPitch = -0.9 (mirror 굽힘)")
         XCTAssertEqual(result.rAnklePitch, +2.7, accuracy: 0.001,
-            "R anklePitch = +0.27 × imuPitch")
+            "R anklePitch = +0.27 × imuPitch (dorsiflex)")
         XCTAssertEqual(result.lAnklePitch, -2.7, accuracy: 0.001,
-            "L anklePitch = -0.27 × imuPitch (mirror)")
-        // roll=0 → hip/ankle roll 0.
+            "L anklePitch = -0.27 × imuPitch (mirror dorsiflex)")
         XCTAssertEqual(result.rHipRoll, 0, accuracy: 0.001)
         XCTAssertEqual(result.rAnkleRoll, 0, accuracy: 0.001)
     }
 
-    /// **max clamp** — 큰 error 시 ±maxCorrectionDeg 로 잘림.
+    /// **max clamp (Phase B 2026-05-16 정정 후)** — ankleRoll 부호도 hip_roll 과 동일.
     func testCorrectionClampedAtMax() {
         let c = BalanceCorrector.robotisDefault  // maxCorrectionDeg = 15
-        // roll 100° → ankleRoll = +0.30 * 100 = +30 → clamp +15 (양수 한도).
+        // roll +100° → ankleRoll = -0.30 × 100 = -30 → clamp -15.
         let result = c.corrections(rollErrDeg: 100, pitchErrDeg: 0)
-        XCTAssertEqual(result.rAnkleRoll, +15, accuracy: 0.001,
-            "큰 roll +error 에서 ankleRoll clamp +15° (양수 한도)")
-        // hip_roll = -0.15 * 100 = -15 → 음수 한도 정확.
+        XCTAssertEqual(result.rAnkleRoll, -15, accuracy: 0.001,
+            "큰 roll +error 에서 ankleRoll clamp -15° (hip_roll 과 동일 부호)")
         XCTAssertEqual(result.rHipRoll, -15, accuracy: 0.001)
-        // 음수 roll 입력 — 부호 reverse 확인.
+        // 음수 roll → 반대 한도.
         let neg = c.corrections(rollErrDeg: -100, pitchErrDeg: 0)
-        XCTAssertEqual(neg.rAnkleRoll, -15, accuracy: 0.001,
-            "음수 roll -100° 에서 ankleRoll clamp -15° (음수 한도)")
+        XCTAssertEqual(neg.rAnkleRoll, +15, accuracy: 0.001)
         XCTAssertEqual(neg.rHipRoll, +15, accuracy: 0.001)
     }
 
@@ -365,20 +356,20 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "ramp 0.5초 → 50% 보정 (-0.75° delta)")
     }
 
-    /// **URDF dir 부호 lock-in** — 정상 보행 시 self-collision / over-extension 회피.
-    /// roll +10° + pitch +10° 동시 입력 → 8 관절 delta 가 모두 정확 부호.
+    /// **4-source 부호 lock-in (Phase B 2026-05-16 정정 후)** — doc + URDF + walkReady + 본 함수.
+    /// roll +10° + pitch +10° 동시 입력 → 8 관절 delta 가 회복 방향.
     func testCorrectionFullSignTableLockIn() {
         let c = BalanceCorrector.robotisDefault
         let r = c.corrections(rollErrDeg: 10, pitchErrDeg: 10)
-        // 정확 부호 매트릭스 (URDF dir × Walking.cpp 식 유도):
-        XCTAssertEqual(r.rHipRoll,    -1.5, accuracy: 0.001)  // -0.15 × 10
+        // 정합 부호 매트릭스 (Agent 3 cross-check + 정정):
+        XCTAssertEqual(r.rHipRoll,    -1.5, accuracy: 0.001)  // lateral 회복
         XCTAssertEqual(r.lHipRoll,    -1.5, accuracy: 0.001)
-        XCTAssertEqual(r.rKnee,       -0.9, accuracy: 0.001)  // -0.09 × 10
-        XCTAssertEqual(r.lKnee,       +0.9, accuracy: 0.001)  // +0.09 × 10 (mirror)
-        XCTAssertEqual(r.rAnklePitch, +2.7, accuracy: 0.001)  // +0.27 × 10
-        XCTAssertEqual(r.lAnklePitch, -2.7, accuracy: 0.001)  // -0.27 × 10 (mirror)
-        XCTAssertEqual(r.rAnkleRoll,  +3.0, accuracy: 0.001)  // +0.30 × 10
-        XCTAssertEqual(r.lAnkleRoll,  +3.0, accuracy: 0.001)
+        XCTAssertEqual(r.rKnee,       +0.9, accuracy: 0.001)  // R 굽힘 회복
+        XCTAssertEqual(r.lKnee,       -0.9, accuracy: 0.001)  // L 굽힘 (mirror)
+        XCTAssertEqual(r.rAnklePitch, +2.7, accuracy: 0.001)  // R dorsiflex
+        XCTAssertEqual(r.lAnklePitch, -2.7, accuracy: 0.001)  // L dorsiflex (mirror)
+        XCTAssertEqual(r.rAnkleRoll,  -3.0, accuracy: 0.001)  // lateral 회복 (hip_roll 과 동일 부호)
+        XCTAssertEqual(r.lAnkleRoll,  -3.0, accuracy: 0.001)
     }
 
     /// **disabled 시 identity** — enabled=false → pose 그대로.

@@ -84,28 +84,29 @@ public struct BalanceCorrector {
     /// - `rollErrDeg` — `imuRollDeg` (양수 = 오른쪽 기울)
     /// - `pitchErrDeg` — `imuPitchDeg` (양수 = 앞으로 기울)
     ///
-    /// # 부호 매핑 (URDF dir × ROBOTIS Walking.cpp 식 유도)
+    /// # 부호 매핑 (4-source 정합: doc + URDF + walkReady + 본 함수)
     ///
-    /// ROBOTIS 원본: `balance = ±dir(joint) × (-0.3) × (-measuredErr) × gain`.
-    /// `getJointDirection` 의 URDF axis sum 값을 본 함수의 R/L 부호로 직접 표현:
+    /// `docs/architecture/joint-conventions.md` 본문 + URDF axis +
+    /// `RobotPose.walkReady` 의 R/L 절댓값 → 회복 동작 방향 확정:
     ///
-    /// | 관절 | URDF axis | dir | 본 함수 식 |
+    /// | 관절 | doc 의도 | URDF dir | 본 함수 식 (imu+양수 시) |
     /// |---|---|---|---|
-    /// | r_hip_roll  | (-1, 0, 0) | -1 | `-0.15 × imuRollDeg` |
-    /// | l_hip_roll  | (-1, 0, 0) | -1 | `-0.15 × imuRollDeg` (R 동일) |
-    /// | r_knee      | (0, +1, 0) | +1 | `-0.09 × imuPitchDeg` |
-    /// | l_knee      | (0, -1, 0) | -1 | `+0.09 × imuPitchDeg` (R 반대) |
-    /// | r_ank_pitch | (0, -1, 0) | -1 | `+0.27 × imuPitchDeg` |
-    /// | l_ank_pitch | (0, +1, 0) | +1 | `-0.27 × imuPitchDeg` (R 반대) |
-    /// | r_ank_roll  | (+1, 0, 0) | +1 | `+0.30 × imuRollDeg` |
-    /// | l_ank_roll  | (+1, 0, 0) | +1 | `+0.30 × imuRollDeg` (R 동일) |
+    /// | r_hip_roll  | 오른쪽 기울 → 음수 (lateral CoP) | -1 | `-0.15 × imuRoll` (음수) |
+    /// | l_hip_roll  | R/L 동일 | -1 | `-0.15 × imuRoll` (음수) |
+    /// | r_knee      | 앞 기울 → 굽힘 (R+) | +1 | `+0.09 × imuPitch` (양수 = R 굽힘) |
+    /// | l_knee      | 앞 기울 → 굽힘 (L-) | -1 | `-0.09 × imuPitch` (음수 = L 굽힘) |
+    /// | r_ank_pitch | 앞 기울 → 발끝 위 (R+) | -1 | `+0.27 × imuPitch` (양수 = dorsiflex) |
+    /// | l_ank_pitch | 앞 기울 → 발끝 위 (L-) | +1 | `-0.27 × imuPitch` (음수 = dorsiflex) |
+    /// | r_ank_roll  | 오른쪽 기울 → 음수 (lateral CoP) | +1 | `-0.30 × imuRoll` (음수) |
+    /// | l_ank_roll  | R/L 동일 | +1 | `-0.30 × imuRoll` (음수) |
     ///
-    /// **lateral shift (hip_roll, ankle_roll)** → R/L 같은 부호.
-    /// **sagittal recovery (knee, ankle_pitch)** → R/L mirror 부호.
+    /// **lateral CoP (hip_roll, ankle_roll)** → R/L 같은 부호 (모두 음수, 왼쪽 lean 회복).
+    /// **sagittal recovery (knee, ankle_pitch)** → R/L mirror (양 다리 동기 굽힘 + 발끝 위).
     ///
-    /// 2026-05-16 정정 (v1.1 Stage 4 audit): 이전 R/L 모두 동일 부호 가정은
-    /// URDF dir 무시한 오류 → knee/ankle_pitch 의 L 부호 + ankle_roll 의 양쪽
-    /// 부호 4 곳 정정.
+    /// 2026-05-16 정정 (Agent 3 cross-check): 이전 audit 가 ROBOTIS Walking.cpp
+    /// 의 `+dir × (-0.3) × (-imuErr) × gain` 유도식만 적용해 doc 본문의 의도와
+    /// 4 관절 (r_knee / l_knee / r_ank_roll / l_ank_roll) 부호 충돌 발견.
+    /// 이번 정정은 **doc 의도 + walkReady mirror 패턴** 일치 우선.
     public func corrections(rollErrDeg: Double, pitchErrDeg: Double) -> Corrections {
         // ROBOTIS 원본 `balance = dir × internal_gain × (goal - measured) × gain`.
         // `goal = 0` 이라 `(goal - measured) = -measured` 부호 변환.
@@ -147,12 +148,15 @@ public struct BalanceCorrector {
         //               = +0.30 × imuRoll
         //   l_ank_roll  = 동일 (dir 같음) = +0.30 × imuRoll
 
-        let hipRollBoth     = -m * rollErrDeg * hipRollGain        // = -0.15 × imuRoll
-        let kneeR           = -m * pitchErrDeg * kneeGain          // = -0.09 × imuPitch
-        let kneeL           = +m * pitchErrDeg * kneeGain          // = +0.09 × imuPitch
-        let anklePitchR     = +m * pitchErrDeg * anklePitchGain    // = +0.27 × imuPitch
-        let anklePitchL     = -m * pitchErrDeg * anklePitchGain    // = -0.27 × imuPitch
-        let ankleRollBoth   = +m * rollErrDeg * ankleRollGain      // = +0.30 × imuRoll
+        // **2026-05-16 Phase B 정정 (Agent 3 cross-check 발견)**:
+        // doc + walkReady + URDF 4-source 정합 부호. 이전 4 관절 (kneeR, kneeL,
+        // ankleRoll 양쪽) 부호 반대로 작성 → fall 가속 위험. 다음으로 정정:
+        let hipRollBoth     = -m * rollErrDeg * hipRollGain        // = -0.15 × imuRoll (lateral 회복)
+        let kneeR           = +m * pitchErrDeg * kneeGain          // = +0.09 × imuPitch (R 굽힘 = 회복)
+        let kneeL           = -m * pitchErrDeg * kneeGain          // = -0.09 × imuPitch (L 굽힘 mirror)
+        let anklePitchR     = +m * pitchErrDeg * anklePitchGain    // = +0.27 × imuPitch (R dorsiflex)
+        let anklePitchL     = -m * pitchErrDeg * anklePitchGain    // = -0.27 × imuPitch (L dorsiflex mirror)
+        let ankleRollBoth   = -m * rollErrDeg * ankleRollGain      // = -0.30 × imuRoll (lateral 회복, hip_roll 과 동일 부호)
 
         return Corrections(
             rHipRoll:    clamp(hipRollBoth),
@@ -193,20 +197,24 @@ public struct BalanceCorrector {
         )
         let c = effective.corrections(rollErrDeg: rollErrDeg, pitchErrDeg: pitchErrDeg)
 
-        // 각 관절에 deg delta 더해서 raw 재계산.
-        var positions = pose.positions
-        positions[.rHipRoll]    = applyDelta(pose.degrees(.rHipRoll),    c.rHipRoll)
-        positions[.lHipRoll]    = applyDelta(pose.degrees(.lHipRoll),    c.lHipRoll)
-        positions[.rKnee]       = applyDelta(pose.degrees(.rKnee),       c.rKnee)
-        positions[.lKnee]       = applyDelta(pose.degrees(.lKnee),       c.lKnee)
-        positions[.rAnklePitch] = applyDelta(pose.degrees(.rAnklePitch), c.rAnklePitch)
-        positions[.lAnklePitch] = applyDelta(pose.degrees(.lAnklePitch), c.lAnklePitch)
-        positions[.rAnkleRoll]  = applyDelta(pose.degrees(.rAnkleRoll),  c.rAnkleRoll)
-        positions[.lAnkleRoll]  = applyDelta(pose.degrees(.lAnkleRoll),  c.lAnkleRoll)
-        return RobotPose(positions: positions)
+        // **Phase F 정정 (Agent 2 B-5)**: `RobotPose.with(_:)` 가 자동으로
+        // `joint.rawLimits` 안전 clamp — 이전 `positions[.X] = applyDelta` 직접 write
+        // 는 12-bit 한도 (0..4095) 만 clamp + joint 별 안전 한도 우회.
+        return pose.with([
+            .rHipRoll:    applyDelta(pose.degrees(.rHipRoll),    c.rHipRoll),
+            .lHipRoll:    applyDelta(pose.degrees(.lHipRoll),    c.lHipRoll),
+            .rKnee:       applyDelta(pose.degrees(.rKnee),       c.rKnee),
+            .lKnee:       applyDelta(pose.degrees(.lKnee),       c.lKnee),
+            .rAnklePitch: applyDelta(pose.degrees(.rAnklePitch), c.rAnklePitch),
+            .lAnklePitch: applyDelta(pose.degrees(.lAnklePitch), c.lAnklePitch),
+            .rAnkleRoll:  applyDelta(pose.degrees(.rAnkleRoll),  c.rAnkleRoll),
+            .lAnkleRoll:  applyDelta(pose.degrees(.lAnkleRoll),  c.lAnkleRoll),
+        ])
     }
 
-    private func applyDelta(_ baseDeg: Double, _ deltaDeg: Double) -> UInt16 {
+    private func applyDelta(_ baseDeg: Double, _ deltaDeg: Double) -> Int {
+        // RobotPose.positions 는 `[JointID: Int]` — Kinematics.raw 도 Int 반환.
+        // 2026-05-16 정정: 이전 `UInt16` 반환 타입은 `[JointID: Int]` 와 타입 mismatch.
         Kinematics.raw(fromDegrees: baseDeg + deltaDeg)
     }
 
