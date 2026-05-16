@@ -17,6 +17,11 @@ public enum BundledMotionCatalog {
     // MARK: - 1. 기본 자세 (10 페이지)
     //
     // walkReady 변형 + 정적 자세 hold. 사용자가 "기본 위치" 로 자주 호출.
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - `만세` `T 자세` `허리에 손` — ROBOTIS 표준 자세 (T-pose 는 진단용 공식 패턴)
+    // - `합장` `팔짱` `낮은 squat` `정적 명상` `차렷` `팔 옆` `팔 뒤로` —
+    //   **자체 발상**. 외부 reference 직접 인용 없음. v1.1 사용자 review 권장.
     public static func basicPosePages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -88,6 +93,17 @@ public enum BundledMotionCatalog {
     // MARK: - 2. 인사·예의 (25 페이지)
     //
     // 한국식 절·서양 wave·악수·합장·박수 등 다양한 인사. 모두 walkReady 복귀.
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - `꾸벅 인사 (가벼움/보통/깊게)` `큰절` — ROBOTIS Personal Assistant op2 page
+    //   250~255 (인사 set) 의 인사 패턴 인용. 관절값은 자체 합성.
+    // - `오른손/왼손 wave` `악수 (R/L)` — ROBOTIS 공식 motion_4096.bin page 4 "hi"
+    //   (catalog id 4 "Thank you" 매핑) 의 손 흔들기 패턴 인용.
+    // - `박수 × 3/5` `환영합니다` — ROBOTIS catalog page 54 "Clap please" 패턴.
+    // - `bye-bye (R/L)` — ROBOTIS catalog page 38 "Bye bye" 패턴.
+    // - `namaste 합장` `직각 90° 절` `안녕하세요` `공손한 인사` `이쪽으로 안내` —
+    //   **자체 발상** (한국 / 일본 / 일반 안내 패턴). 외부 출처 없음.
+    // - `경례 (군대식)` `안내 (R/L)` `끄덕` `도리도리` `네!` — **자체 발상**.
     public static func greetingPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -280,6 +296,16 @@ public enum BundledMotionCatalog {
     // MARK: - 3. 표현·감정 (25 페이지)
     //
     // OK·NO·놀람·생각·기쁨 등. 머리·팔·자세 조합으로 의미 표현.
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - `좋아요 (오른손/양손 thumbs up)` — ROBOTIS catalog id 2 "Yes" + 사용자
+    //   확장. 손가락은 미지원 (관절 부족) — 팔 자세만.
+    // - `환호!` — ROBOTIS catalog id 24 "Wow!" 의 만세 + 무릎 굽힘 패턴 인용.
+    // - `깜짝 놀라` — ROBOTIS catalog id 27 "Oops" 의 양손 위로 패턴.
+    // - `안 돼요 (X 팔)` — ROBOTIS catalog id 3 "No" + 사용자 확장.
+    // - 나머지 `놀람` `부끄러움` `생각` `자랑` `기쁨` `슬픔` `화남` `호기심`
+    //   `강한동의/부정` `어깨 으쓱` `가리키기` `졸음` `침착` `응원` —
+    //   **모두 자체 발상**. 외부 reference 없음. v1.1 사용자 review 권장.
     public static func emotionPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -470,6 +496,15 @@ public enum BundledMotionCatalog {
     // MARK: - 4. 댄스·리듬 (30 페이지)
     //
     // K-pop 안무 단순화·트위스트·시미·스텝. 음악 동반 권장.
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - **카테고리 전체가 자체 발상**. ROBOTIS·외부 reference 의 댄스 모션 없음.
+    // - 패턴 영감: HROS5-Framework `Data/motion_dest.bin` 의 변환 페어 일부 (춤
+    //   동작 인터랙티브 페이지) 의 디자인 패턴만 인용 — 관절값은 합성 X.
+    // - 30개 모두 사용자 review 권장. 자가충돌 / JointLimits 위반 가능성 가장 큼
+    //   (특히 K-pop 머리위 하트, Dab, Floss 등 빠른 동시 변위).
+    // - 안전 가드: 모든 dance step 의 raw 가 conservative 한도 (±168°) 안임을
+    //   `testAllRawsWithinConservativeSoftwareLimit` 로 검증.
     public static func dancePages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -685,6 +720,18 @@ public enum BundledMotionCatalog {
     // MARK: - 5. 운동·스트레칭 (30 페이지)
     //
     // 거북목·어깨·허리·다리·팔·손목. 책상 사용자 신체 케어.
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - `목 좌측 stretch` `목 우측 stretch` `목 위/아래 stretch` `목 회전` —
+    //   Personal Assistant op2 page 100~108 (거북목 케어 시나리오) 직접 인용.
+    //   기존 `ReferenceMotionLibrary.ergonomicPages` 와 동일 의도, 자세 합성 별도.
+    // - `오른어깨/왼어깨 돌리기 (앞/뒤)` `양 어깨 동시` — Personal Assistant
+    //   page 100~108 의 어깨 케어 인용.
+    // - `양팔 위/옆/뒤` `팔꿈치 stretch (R/L)` `허리 트위스트/lean` `lunge (R/L)`
+    //   `발끝 들기` `한쪽 발 들기` — Personal Assistant page 100~108 ergonomic
+    //   시나리오 패턴 인용 + 사용자 확장.
+    // - `깊은 squat × 3` `팔꿈치 회전` `신호등` `종합 stretch` —
+    //   **자체 발상**. v1.1 사용자 review 권장.
     public static func stretchPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -886,6 +933,15 @@ public enum BundledMotionCatalog {
     // MARK: - 6. 요가·필라테스 (20 페이지)
     //
     // warrior·tree·child pose 등 정적 hold. 휴머노이드 체형 한계로 단순화.
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - **카테고리 전체가 자체 발상**. ROBOTIS·외부 reference 의 요가 모션 없음.
+    // - Yoga pose 명은 일반 공개 자료 (warrior I/II, tree, mountain, child, cobra,
+    //   downward dog, cat, cow, half moon, chair, eagle, plank, side angle,
+    //   triangle, dancer, boat, bridge, seated forward, corpse) 의 관절 의미를
+    //   휴머노이드 OP2 의 20-DOF 한계 안에서 단순화.
+    // - 20개 모두 사용자 review 권장. 휴머노이드 메커니즘 한계로 의도-실제 일치
+    //   정밀 검증 필요 (`Tree pose` 한 발 서기, `Plank` 앞 lean 등은 균형 위험).
     public static func yogaPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -999,6 +1055,19 @@ public enum BundledMotionCatalog {
     }
 
     // MARK: - 7. 태권도·무술 (25 페이지)
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - `정권 (R/L/양)` `위/아래 막기` `중단 막기` — **자체 발상**. ROBOTIS catalog 의
+    //   page 12 "Right Kick" (HighRisk) + page 13 "Left Kick" 의 kick 자세 패턴
+    //   영감만 — 정권·막기는 직접 인용 없음.
+    // - `옆차기/앞차기/돌려차기 자세 (R/L)` — ROBOTIS catalog page 12/13 의 kick
+    //   자세 일부 패턴 인용.
+    // - `학다리 자세` `뒷발차기 자세` — **자체 발상**. ROBOTIS 의 page 17
+    //   "Hand Standing" (HighRisk) 패턴과 유사 단순화.
+    // - `자유 자세` `후방 자세` `정권 콤보` `막기 콤보` `사범 인사` `호흡 자세`
+    //   `권법 시작 자세` `마무리 자세` — **모두 자체 발상**.
+    // - **안전 주의**: HighRisk 클래스 모션이 포함될 수 있음 — 균형 한계 검증
+    //   필수. 실 로봇 송출 전 `single_foot_ok` metadata 확인.
     public static func martialPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -1146,6 +1215,17 @@ public enum BundledMotionCatalog {
     }
 
     // MARK: - 8. 보행 변형 (20 페이지)
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - 기존 Sprint 5 walk progression (`ReferenceMotionLibrary.walkProgressionPages`,
+    //   page 110~115 ID) 의 보행 검증 패턴 인용 — `motions/test/walk-progression-v1.bin`
+    //   의 slot 110~115 와 의도 일치.
+    // - `앞/뒤로 한 걸음` `옆걸음 (L/R)` `90° 회전 (L/R)` `조심걸음` `빠른 걸음` —
+    //   ROBOTIS-OP2 `op2_walking_module/config/param.yaml` 의 stride/period
+    //   파라미터 변형 단순화. **자세 합성은 자체**.
+    // - 나머지 `cycle 시작/끝` `발 swap` `무릎 들기` `앞/옆 lean+발` `걸음 후
+    //   정지` `회전 보행` `보행 후 정렬` — **자체 발상**. Sprint 5 walking-engine
+    //   진입 전 motion primitive 단위 격리 검증 의도.
     public static func walkVariantPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -1264,6 +1344,13 @@ public enum BundledMotionCatalog {
     }
 
     // MARK: - 9. 균형·곡예 (15 페이지)
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - **카테고리 전체가 자체 발상**. ROBOTIS·외부 reference 의 균형 모션 없음.
+    // - `한발 서기 (R/L)` `까치발` `한발 + T/위/flying bird/합장` `90° 회전 (L/R)`
+    //   — 휴머노이드 균형 한계 미검증. 실 로봇 실행 시 낙상 위험 가능.
+    // - `정적 균형` `한발 + 옆 lean` — 보수적 자세 (균형 한계 안).
+    // - 15개 모두 사용자 review + 실 로봇 검증 필수 (HighRisk safety class 권장).
     public static func balancePages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -1350,6 +1437,12 @@ public enum BundledMotionCatalog {
     }
 
     // MARK: - 10. 시선·머리 (20 페이지)
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - **카테고리 전체가 자체 발상**. ROBOTIS·외부 reference 의 시선 시퀀스 없음.
+    // - 머리 pan/tilt 의 ±45° / ±25° 한도 안에서 안전 (JointLimits 통과).
+    // - `손가락 따라가기 (R/L)` — 어깨 + 머리 동시 움직임. 자가충돌 위험 낮음.
+    // - 20개 모두 사용자 review 권장. 단 머리 단독 동작이라 안전 위험 가장 낮음.
     public static func gazePages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -1490,6 +1583,17 @@ public enum BundledMotionCatalog {
     }
 
     // MARK: - 11. 데모·엔터테인 (30 페이지)
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - **카테고리 전체가 자체 발상**. ROBOTIS·외부 reference 의 데모 모션 없음.
+    // - 패턴 영감: HROS5-Framework `Data/motion_4096.bin` 의 인터랙티브 페이지 디자인
+    //   (사진 포즈, 박수 환영, 노래 등) — 관절값 합성 X.
+    // - `마법사` `짠!` `노래하기` `박수 환영 × 5` `환호 + 박수` `신호등 동작`
+    //   `무용수` `마술쇼` `사진 포즈 (V/위/자랑)` `짧은/긴 안내` `회전 스핀`
+    //   `영웅 등장` `마이크 자세` `노래 + 박수` `코미디` `신난다` `자기 소개`
+    //   `학예회 인사` `호스트 환영` `카메라 V` `K-pop 머리위` `노래방`
+    //   `인사 + 응원` `환영 + 인사 + 박수` `종합 데모 (4/6 단계)` `마지막 인사` —
+    //   **30개 모두 자체 발상**. 사용자 review 권장.
     public static func demoPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -1677,6 +1781,16 @@ public enum BundledMotionCatalog {
     }
 
     // MARK: - 12. 체조·근력 (20 페이지)
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - **카테고리 전체가 자체 발상**. ROBOTIS·외부 reference 의 운동 모션 없음.
+    // - 운동 명 (Jumping jack, Squat, Lunge, Push-up, Sit-up, Plank, Mountain
+    //   climber, Bicep curl, Shoulder press, Leg raise, Calf raise, Burpee,
+    //   High knees, Cooldown) 의 인간 자세 의미를 휴머노이드 OP2 의 20-DOF
+    //   한계 안에서 단순화.
+    // - **안전 주의**: Push-up / Plank 등 앞 lean 자세는 낙상 위험 있음. 실
+    //   로봇 실행 전 single_foot_ok 또는 stable_two_foot metadata 확인 필수.
+    // - 20개 모두 사용자 review 권장.
     public static func exercisePages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -1796,6 +1910,18 @@ public enum BundledMotionCatalog {
     }
 
     // MARK: - 13. 응급 복구 (15 페이지)
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - `넘어진 후 일어나기 (앞/뒤)` — ROBOTIS catalog id 10 "Get Up (Front)" + id 11
+    //   "Get Up (Back)" (Caution class) 의 복구 자세 시퀀스 인용. 정확한 step
+    //   timing 은 자체 합성.
+    // - `사이드 일어나기 (R/L)` `무릎 서기 → 일어서기` `앉아서 → 무릎서기` `손짚기
+    //   일어나기` `T자 균형 잡기 (복구)` `빠른 복귀 (긴급)` `안정 자세 점검` `호흡
+    //   정리` `균형 복구 (정렬)` `다리/팔 검사` `완전 복귀 cycle` —
+    //   **자체 발상**. ROBOTIS 의 Get Up 시퀀스를 응용한 안전 복구 패턴.
+    //
+    // **안전 주의**: 모든 복구 모션은 사용자가 robot 을 cradle 거치한 후 실행
+    //   권장. 일어서기 도중 균형 손실 시 추가 낙상 위험.
     public static func recoveryPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -1899,6 +2025,11 @@ public enum BundledMotionCatalog {
     }
 
     // MARK: - 14. 정적·명상 (15 페이지)
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - **카테고리 전체가 자체 발상**. ROBOTIS·외부 reference 의 명상 모션 없음.
+    // - 정적 자세 hold + 합장 + 호흡 (양손 위↑/옆↔ 천천히 sweep) 패턴.
+    // - 15개 모두 사용자 review 권장. 안전 위험 낮음 (정적·느린 자세).
     public static func meditationPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
@@ -1999,6 +2130,14 @@ public enum BundledMotionCatalog {
     //
     // 다른 카테고리들의 패턴을 결합한 routine 예시. 사용자가 직접 보고 모션 합성
     // 학습 — Mirror / Morph / Sequence 합성 결과로 어떤 모션이 나올지 미리보기.
+    //
+    // **출처** (v1.1 audit, 2026-05-16):
+    // - **카테고리 전체가 자체 발상**. 다른 14 카테고리의 page 들을 sequence /
+    //   mirror / morph 합성한 예시. 외부 reference 직접 인용 없음.
+    // - `Mirror chain (R 손 → L 손)` — `forge synth mirror` 의 산출물 예시.
+    //   기존 `synth::ops::mirror::mirror_page` 와 동작 동등.
+    // - 나머지 chain / routine 들 — 사용자가 PR review 시 합성 시나리오 적합성
+    //   판단 후 유지/제거 결정. **v1.1.0 tag 이전 사용자 검수 권장**.
     public static func generatedPages() -> [MotionPage] {
         let P = MotionPrimitives.self
         var pages: [MotionPage] = []
