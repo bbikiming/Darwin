@@ -48,7 +48,12 @@ let package = Package(
         .executableTarget(
             name: "DarwinForgeApp",
             dependencies: ["DarwinForgeUI"],
-            path: "Sources/DarwinForgeApp"
+            path: "Sources/DarwinForgeApp",
+            resources: [
+                // 2026-05-16: PNG 앱 아이콘 — 코드 생성 OP 도형 대체.
+                // Dock / Cmd-Tab / Finder 미리보기 모두 이 PNG 사용.
+                .copy("Resources/AppIcon.png")
+            ]
         ),
         .testTarget(
             name: "ForgeCoreTests",

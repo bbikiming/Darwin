@@ -10,10 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        // OP 기하학 앱 아이콘 — Core Graphics 로 즉시 생성 후 Dock / Cmd-Tab / Finder 적용.
+        // 앱 아이콘 — SwiftPM 번들 PNG 우선, 누락 시 Core Graphics 도형 fallback.
         // `.app` bundle 의 AppIcon.icns 가 있으면 macOS 가 우선 사용 — 런타임 설정은
         // `swift run` 같은 bundle 없이 실행되는 dev 환경에서 효과적.
-        NSApp.applicationIconImage = AppIcon.make()
+        NSApp.applicationIconImage = AppIcon.loadBundledPNG() ?? AppIcon.make()
 
         for w in NSApp.windows {
             configureWindow(w)
