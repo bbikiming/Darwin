@@ -506,6 +506,13 @@ public final class WalkLabSession: ObservableObject {
             self?.visualPose = pose
         }
 
+        // **Stage 4b (v1.1 fall prevention)**: 실 motor 송출 경로에 corrector wire.
+        // `enableBalanceCorrection = true` 시 매 step pose 에 IMU 기반 보정 적용.
+        // default false (사용자 토글 ON 후 활성).
+        let transformPose: @MainActor @Sendable (RobotPose) -> RobotPose = { [weak self] pose in
+            self?.applyBalanceCorrectionIfEnabled(to: pose) ?? pose
+        }
+
         // 연속 보행 plan 시도.
         if let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: currentWalkTuning()) {
             isRobotWalking = true
@@ -516,7 +523,8 @@ public final class WalkLabSession: ObservableObject {
                     bus: bus, plan: plan,
                     maxDurationSec: maxDurationSec,
                     lowerBodyJoints: lowerBody,
-                    onPose: onPose
+                    onPose: onPose,
+                    transformPose: transformPose
                 )
                 await MainActor.run { [weak self] in
                     guard let self else { return }
@@ -546,7 +554,8 @@ public final class WalkLabSession: ObservableObject {
                 maxDurationSec: maxDurationSec,
                 lowerBodyJoints: lowerBody,
                 loop: false,   // jog 는 kick chain 끝나면 종료.
-                onPose: onPose
+                onPose: onPose,
+                transformPose: transformPose
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -629,7 +638,8 @@ public final class WalkLabSession: ObservableObject {
     private static func runContinuousWalk(
         bus: Bus, plan: WalkMotionLibrary.ContinuousWalkPlan, maxDurationSec: Int,
         lowerBodyJoints: Set<JointID>,
-        onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil
+        onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil,
+        transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -656,7 +666,16 @@ public final class WalkLabSession: ObservableObject {
 
         // 한 step 송출 helper — closure 캡처 X (concurrency 안전).
         func sendStep(_ step: MotionStep, previousIn: RobotPose) async -> RobotPose {
-            let target = step.toPose()
+            let rawTarget = step.toPose()
+            // **Stage 4b (v1.1 fall prevention, 2026-05-16)**: IMU 기반 corrector
+            // 적용 — 호출자가 `transformPose` 로 `applyBalanceCorrectionIfEnabled`
+            // 전달. nil 이면 identity (기존 동작).
+            let target: RobotPose
+            if let transformPose {
+                target = await transformPose(rawTarget)
+            } else {
+                target = rawTarget
+            }
             // **Phase G11**: 3D 모델 갱신 — main actor 로 publish (실 로봇 송출 전에).
             if let onPose {
                 await onPose(target)
@@ -717,7 +736,14 @@ public final class WalkLabSession: ObservableObject {
 
         // 4. Exit — walkReady 안전 복귀. cancel 후에도 토크 OFF 보다는 복귀가 안전 (낙상 risk).
         for step in plan.exit {
-            let target = step.toPose()
+            let rawTarget = step.toPose()
+            // **Stage 4b (v1.1 fall prevention)**: exit phase 도 corrector 적용.
+            let target: RobotPose
+            if let transformPose {
+                target = await transformPose(rawTarget)
+            } else {
+                target = rawTarget
+            }
             // Phase G11 — 3D 모델 갱신.
             if let onPose {
                 await onPose(target)
@@ -764,7 +790,8 @@ public final class WalkLabSession: ObservableObject {
         bus: Bus, page: MotionPage, maxDurationSec: Int,
         lowerBodyJoints: Set<JointID>,
         loop: Bool = true,
-        onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil
+        onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil,
+        transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -795,7 +822,14 @@ public final class WalkLabSession: ObservableObject {
                 if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
                 if let end = endDate, Date() >= end { break cycleLoop }
 
-                let target = step.toPose()
+                let rawTarget = step.toPose()
+                // **Stage 4b (v1.1 fall prevention)**: corrector 적용.
+                let target: RobotPose
+                if let transformPose {
+                    target = await transformPose(rawTarget)
+                } else {
+                    target = rawTarget
+                }
                 // Phase G11 — 3D 모델 갱신.
                 if let onPose {
                     await onPose(target)
