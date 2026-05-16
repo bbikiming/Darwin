@@ -45,7 +45,7 @@ struct SafetySparkline: View {
     let title: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: DFSpace.micro2) {
             HStack(spacing: DFSpace.xs) {
                 Text(title)
                     .font(.system(size: DFFontSize.s10, weight: .medium))
@@ -56,27 +56,39 @@ struct SafetySparkline: View {
                         .font(.system(size: DFFontSize.s11, weight: .semibold,
                                       design: .monospaced).monospacedDigit())
                         .foregroundStyle(lineColor)
+                        .lineLimit(1)
                 }
             }
             GeometryReader { geo in
                 Canvas { ctx, size in
                     drawChart(ctx: ctx, size: size)
                 }
-                .background(DFColor.textSecondary.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .background(DFColor.textSecondary.opacity(DFOpacity.o06).opacity(0.7))
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: DFRadius.xs)
                         .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
                                 lineWidth: DFSize.borderHairline)
                 )
                 .frame(width: geo.size.width, height: geo.size.height)
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title) 시계열 — 현재 \(currentValueLabel ?? "값 없음")")
     }
+
+    /// Sparkline 내부 padding — 라인이 border 에 닿지 않도록.
+    private static let chartPad: CGFloat = DFSpace.micro2  // 2pt
+    /// Current value dot 반경.
+    private static let currentDotR: CGFloat = DFSize.dot / 2  // 2.5pt
+    /// 라인 두께 — Tufte data-ink minimalism.
+    private static let lineW: CGFloat = 1.5
+    /// 0 baseline dashed line 두께.
+    private static let baselineW: CGFloat = DFSize.borderHairline  // 0.5pt
 
     /// Canvas 기반 직접 draw — `Path` 보다 perf 우위 (Tufte minimalism + 라이브 업데이트).
     private func drawChart(ctx: GraphicsContext, size: CGSize) {
-        let pad: CGFloat = 2
+        let pad = Self.chartPad
         let w = size.width - pad * 2
         let h = size.height - pad * 2
         let yMin = valueRange.lowerBound
@@ -104,19 +116,16 @@ struct SafetySparkline: View {
             p.move(to: CGPoint(x: pad, y: zeroY))
             p.addLine(to: CGPoint(x: pad + w, y: zeroY))
             ctx.stroke(p, with: .color(DFColor.textSecondary.opacity(DFOpacity.o25)),
-                       style: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                       style: StrokeStyle(lineWidth: Self.baselineW,
+                                          dash: [DFSpace.micro2, DFSpace.micro2]))
         }
 
         // 3. 데이터 line.
         guard samples.count >= 2 else {
             // 단일 sample — 점 하나만.
             if let last = samples.last {
-                let x = pad + w
-                let yNorm = (yMax - last.1) / ySpan
-                let y = pad + h * CGFloat(yNorm)
-                ctx.fill(Path(ellipseIn: CGRect(x: x - 2.5, y: y - 2.5,
-                                                width: 5, height: 5)),
-                         with: .color(lineColor))
+                drawCurrentDot(ctx: ctx, x: pad + w,
+                               y: pad + h * CGFloat((yMax - last.1) / ySpan))
             }
             return
         }
@@ -127,12 +136,8 @@ struct SafetySparkline: View {
         // tSpan < 0.05s — 모든 점이 거의 같은 시각. 첫·마지막만 그림.
         guard tSpan > 0.05 else {
             if let last = samples.last {
-                let x = pad + w
-                let yNorm = (yMax - last.1) / ySpan
-                let y = pad + h * CGFloat(yNorm)
-                ctx.fill(Path(ellipseIn: CGRect(x: x - 2.5, y: y - 2.5,
-                                                width: 5, height: 5)),
-                         with: .color(lineColor))
+                drawCurrentDot(ctx: ctx, x: pad + w,
+                               y: pad + h * CGFloat((yMax - last.1) / ySpan))
             }
             return
         }
@@ -150,17 +155,25 @@ struct SafetySparkline: View {
             }
         }
         ctx.stroke(path, with: .color(lineColor),
-                   style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                   style: StrokeStyle(lineWidth: Self.lineW,
+                                      lineCap: .round, lineJoin: .round))
 
         // 4. 마지막 sample dot — NN/g 권장 (현재 값 강조).
         if let last = samples.last {
-            let x = pad + w
             let yNorm = (yMax - last.1) / ySpan
-            let y = pad + h * CGFloat(max(0, min(1, yNorm)))
-            ctx.fill(Path(ellipseIn: CGRect(x: x - 2.5, y: y - 2.5,
-                                            width: 5, height: 5)),
-                     with: .color(lineColor))
+            drawCurrentDot(ctx: ctx, x: pad + w,
+                           y: pad + h * CGFloat(max(0, min(1, yNorm))))
         }
+    }
+
+    /// Current value dot — NN/g 권장 (현재 값 강조).
+    /// 모든 dot draw 호출을 통일 — magic 2.5 / 5 제거.
+    private func drawCurrentDot(ctx: GraphicsContext, x: CGFloat, y: CGFloat) {
+        let r = Self.currentDotR
+        ctx.fill(
+            Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+            with: .color(lineColor)
+        )
     }
 
     /// 양수 임계 zone — value > yLow 영역 (위쪽).
@@ -175,7 +188,7 @@ struct SafetySparkline: View {
         let yBottom = pad + h * CGFloat((yMax - yLow) / ySpan)
         let rect = CGRect(x: pad, y: yTop, width: size.width - pad * 2,
                           height: max(0, yBottom - yTop))
-        ctx.fill(Path(rect), with: .color(color.opacity(0.12)))
+        ctx.fill(Path(rect), with: .color(color.opacity(DFOpacity.o12)))
     }
 
     /// 음수/양수 대칭 zone — `|value| > yLowAbs`.
@@ -191,7 +204,7 @@ struct SafetySparkline: View {
             let yBottom = pad + h * CGFloat((yMax - yLowAbs) / ySpan)
             let rect = CGRect(x: pad, y: yTop, width: size.width - pad * 2,
                               height: max(0, yBottom - yTop))
-            ctx.fill(Path(rect), with: .color(color.opacity(0.12)))
+            ctx.fill(Path(rect), with: .color(color.opacity(DFOpacity.o12)))
         }
         // 음수 영역 — -yLowAbs 부터 yMin 까지.
         if yMin <= -yLowAbs {
@@ -199,7 +212,7 @@ struct SafetySparkline: View {
             let yBottom = pad + h
             let rect = CGRect(x: pad, y: yTop, width: size.width - pad * 2,
                               height: max(0, yBottom - yTop))
-            ctx.fill(Path(rect), with: .color(color.opacity(0.12)))
+            ctx.fill(Path(rect), with: .color(color.opacity(DFOpacity.o12)))
         }
     }
 }

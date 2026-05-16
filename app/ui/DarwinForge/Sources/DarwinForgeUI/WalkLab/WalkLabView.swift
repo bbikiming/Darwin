@@ -237,7 +237,7 @@ public struct WalkLabView: View {
             Image(systemName: "waveform.path.ecg.rectangle")
                 .font(.system(size: DFFontSize.s14, weight: .semibold))
                 .foregroundStyle(DFColor.accent)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: DFSpace.micro) {
                 Text("Fall Prevention 모니터링")
                     .font(.system(size: DFFontSize.s12, weight: .semibold))
                     .lineLimit(1)
@@ -255,20 +255,23 @@ public struct WalkLabView: View {
             Spacer(minLength: DFSpace.xs)
             // 현재 상태 요약 — 토글 닫혀 있어도 critical 만 보이게.
             if session.balanceState >= .warning {
-                HStack(spacing: 3) {
+                HStack(spacing: DFSpace.micro2 + 1) {  // 3pt — capsule 내부 dot ↔ label
                     Circle()
                         .fill(monitorBadgeColor)
-                        .frame(width: 6, height: 6)
+                        .frame(width: DFSize.indicatorXxs,
+                               height: DFSize.indicatorXxs)
                     Text(session.balanceState.label)
                         .font(.system(size: DFFontSize.s10, weight: .semibold))
                         .foregroundStyle(monitorBadgeColor)
                         .lineLimit(1)
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
+                .padding(.horizontal, DFSpace.xs2)
+                .padding(.vertical, DFSpace.micro)
                 .background(monitorBadgeColor.opacity(DFOpacity.o10))
                 .clipShape(Capsule())
                 .layoutPriority(1)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("현재 안전 상태 \(session.balanceState.label)")
             }
             Button {
                 withAnimation(DFAnimation.standard) {
@@ -285,6 +288,10 @@ public struct WalkLabView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .layoutPriority(1)
+            .accessibilityLabel(session.monitoringExpanded
+                ? "모니터링 대시보드 접기"
+                : "모니터링 대시보드 펼치기")
+            .keyboardShortcut("m", modifiers: [.command, .shift])
         }
         .padding(.horizontal, DFSpace.sm2)
         .padding(.vertical, DFSpace.xs2)

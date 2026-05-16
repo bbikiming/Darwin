@@ -81,11 +81,12 @@ struct FallPreventionMonitor: View {
             Image(systemName: icon)
                 .font(.system(size: DFFontSize.s28, weight: .semibold))
                 .foregroundStyle(color)
-                .frame(width: 40, height: 40)
+                .frame(width: DFSize.heroBox, height: DFSize.heroBox)
                 .background(color.opacity(DFOpacity.o15))
                 .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                .accessibilityLabel("안전 상태 \(state.label)")
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
+                HStack(spacing: DFSpace.xs2) {
                     Text("안전 상태")
                         .font(.system(size: DFFontSize.s10))
                         .foregroundStyle(DFColor.textSecondary)
@@ -142,24 +143,31 @@ struct FallPreventionMonitor: View {
     /// minimum 110pt = 한국어 "L1 Cradle / 미확인" 1줄 표시 보장.
     private var layerStatusGrid: some View {
         let layers: [LayerStatus] = currentLayers()
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("6-Layer 안전 시스템")
                 .font(.system(size: DFFontSize.s10, weight: .medium))
                 .foregroundStyle(DFColor.textSecondary)
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 110), spacing: 4)],
-                spacing: 4
+                columns: [GridItem(.adaptive(minimum: Self.layerTileMinW),
+                                   spacing: DFSpace.xs)],
+                spacing: DFSpace.xs
             ) {
                 ForEach(layers) { layer in
                     layerTile(layer)
                 }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("6-Layer 안전 시스템 상태")
     }
 
+    /// 6-Layer tile 의 최소 너비 — adaptive grid 의 GridItem.minimum.
+    /// 110pt = 한국어 "L1 Cradle / 미확인" 1줄 표시 보장.
+    private static let layerTileMinW: CGFloat = 110
+
     private func layerTile(_ l: LayerStatus) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: DFSpace.micro) {
+            HStack(spacing: DFSpace.xs) {
                 Image(systemName: l.icon)
                     .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(l.color)
@@ -172,16 +180,18 @@ struct FallPreventionMonitor: View {
                 // **2026-05-16**: 사용자가 "실 데이터 / sim 데이터" 즉시 구분 가능.
                 if let label = l.dataSourceLabel, let color = l.dataSourceColor {
                     Text(label)
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .font(.system(size: DFFontSize.s8, weight: .medium,
+                                      design: .monospaced))
                         .foregroundStyle(color)
-                        .padding(.horizontal, 3)
+                        .padding(.horizontal, DFSpace.micro2 + 1)  // 3pt — pill 의 minimal padding
                         .padding(.vertical, 0.5)
                         .background(color.opacity(DFOpacity.o15))
                         .clipShape(Capsule())
                         .layoutPriority(1)
+                        .accessibilityLabel("\(l.name) 데이터 출처 \(label)")
                 }
             }
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: DFSpace.micro2) {
                 Text(l.valueLabel)
                     .font(.system(size: DFFontSize.s12, weight: .semibold,
                                   design: .monospaced).monospacedDigit())
@@ -202,14 +212,18 @@ struct FallPreventionMonitor: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(6)
+        .padding(DFSpace.xs2)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(l.color.opacity(DFOpacity.o06))
         .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(l.color.opacity(DFOpacity.o25), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DFRadius.xs)
+                .stroke(l.color.opacity(DFOpacity.o25),
+                        lineWidth: DFSize.borderHairline)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(l.name) \(l.valueLabel)\(l.unit ?? "")")
+        .accessibilityValue(l.thresholdLabel)
     }
 
     private func currentLayers() -> [LayerStatus] {
@@ -362,26 +376,36 @@ struct FallPreventionMonitor: View {
             currentLabel: String(format: "%.0f", session.fallPrediction.score),
             title: "Predictor", isTiltAxis: false
         )
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("최근 10초 — Roll / Pitch / Predictor Score")
                 .font(.system(size: DFFontSize.s10, weight: .medium))
                 .foregroundStyle(DFColor.textSecondary)
             ViewThatFits(in: .horizontal) {
                 // Wide: 3 columns horizontal (preferred — Tufte small multiples)
                 HStack(spacing: DFSpace.xs) {
-                    rollSp.frame(minWidth: 130, height: 56)
-                    pitchSp.frame(minWidth: 130, height: 56)
-                    scoreSp.frame(minWidth: 130, height: 56)
+                    rollSp.frame(minWidth: Self.sparklineMinW, height: Self.sparklineWideH)
+                    pitchSp.frame(minWidth: Self.sparklineMinW, height: Self.sparklineWideH)
+                    scoreSp.frame(minWidth: Self.sparklineMinW, height: Self.sparklineWideH)
                 }
                 // Narrow: vertical stack (각 차트 full-width)
                 VStack(spacing: DFSpace.xs) {
-                    rollSp.frame(height: 44)
-                    pitchSp.frame(height: 44)
-                    scoreSp.frame(height: 44)
+                    rollSp.frame(height: Self.sparklineNarrowH)
+                    pitchSp.frame(height: Self.sparklineNarrowH)
+                    scoreSp.frame(height: Self.sparklineNarrowH)
                 }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("최근 10초 시계열 — Roll, Pitch, Predictor Score")
     }
+
+    /// Sparkline 최소 너비 — ViewThatFits 폭 분기점. 130pt = Roll/Pitch 10초 trace
+    /// 가 인지 가능한 최소 (10 sample × 10pt 간격 + padding).
+    private static let sparklineMinW: CGFloat = 130
+    /// Sparkline horizontal 모드 높이 — Apple HIG chart canvas 표준 ≥ 48pt.
+    private static let sparklineWideH: CGFloat = 56
+    /// Sparkline vertical 모드 높이 — 좁은 폭에서 컨텍스트 손실 최소화 + 가독성.
+    private static let sparklineNarrowH: CGFloat = 44
 
     /// Sparkline factory — wide/narrow ViewThatFits 모두 동일 구성으로 생성.
     /// `isTiltAxis = true` 시 IMU tilt 임계 (15/22/30°), false 시 score 임계 (30/60/80).
@@ -419,8 +443,8 @@ struct FallPreventionMonitor: View {
     /// **NN/g + medical monitor 패턴**: 8 관절 horizontal bar (center=0, deflect=delta).
     /// 부호 색 분리: + = 파랑 (info), - = 주황 (forge) — WCAG color-blind safe.
     private var correctorPanel: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs2) {
                 Text("자세 보정 delta (8 관절)")
                     .font(.system(size: DFFontSize.s10, weight: .medium))
                     .foregroundStyle(DFColor.textSecondary)
@@ -443,18 +467,20 @@ struct FallPreventionMonitor: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Rectangle()
-                            .fill(DFColor.textSecondary.opacity(0.15))
-                            .frame(height: 3)
+                            .fill(DFColor.textSecondary.opacity(DFOpacity.o15))
+                            .frame(height: DFSize.barTrackH)
                         Rectangle()
                             .fill(progress >= 1 ? DFColor.success : DFColor.accent)
-                            .frame(width: geo.size.width * CGFloat(progress), height: 3)
+                            .frame(width: max(0, geo.size.width) * CGFloat(progress),
+                                   height: DFSize.barTrackH)
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 1.5))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.tiny))
                 }
-                .frame(height: 3)
+                .frame(height: DFSize.barTrackH)
+                .accessibilityLabel("Ramp 진행 \(Int(progress * 100))%")
             }
             let corrections = session.lastCorrections
-            VStack(spacing: 2) {
+            VStack(spacing: DFSpace.micro2) {
                 jointDeltaRow("R hipRoll", corrections?.rHipRoll)
                 jointDeltaRow("L hipRoll", corrections?.lHipRoll)
                 jointDeltaRow("R knee", corrections?.rKnee)
@@ -464,10 +490,13 @@ struct FallPreventionMonitor: View {
                 jointDeltaRow("R ankRoll", corrections?.rAnkleRoll)
                 jointDeltaRow("L ankRoll", corrections?.lAnkleRoll)
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("8 관절 자세 보정 delta")
         }
     }
 
     /// 가로 bar — center=0, max ±15° (BalanceCorrector.maxCorrectionDeg).
+    /// joint name 64pt 고정 + value 48pt 고정 = layout 안정. 가운데 bar 가 flex.
     private func jointDeltaRow(_ name: String, _ delta: Double?) -> some View {
         let value = delta ?? 0
         let absVal = abs(value)
@@ -475,54 +504,65 @@ struct FallPreventionMonitor: View {
         let frac = min(1, absVal / maxAbs)
         let isPositive = value >= 0
         let color: Color = isPositive ? DFColor.info : DFColor.forge
-        return HStack(spacing: 4) {
+        return HStack(spacing: DFSpace.xs) {
             Text(name)
                 .font(.system(size: DFFontSize.s9))
                 .foregroundStyle(DFColor.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(width: 64, alignment: .leading)
+                .frame(width: Self.jointNameColW, alignment: .leading)
+                .accessibilityHidden(true)  // 부모가 combined label 사용
             GeometryReader { geo in
                 let halfW = max(0, geo.size.width / 2)
                 ZStack(alignment: .leading) {
                     // 중앙선.
                     Rectangle()
-                        .fill(DFColor.textSecondary.opacity(0.10))
-                        .frame(height: 3)
+                        .fill(DFColor.textSecondary.opacity(DFOpacity.o10))
+                        .frame(height: DFSize.barTrackH)
                     // 양수 / 음수 deflection.
                     if isPositive {
                         Rectangle()
                             .fill(color)
-                            .frame(width: halfW * CGFloat(frac), height: 3)
+                            .frame(width: halfW * CGFloat(frac),
+                                   height: DFSize.barTrackH)
                             .offset(x: halfW)
                     } else {
                         Rectangle()
                             .fill(color)
-                            .frame(width: halfW * CGFloat(frac), height: 3)
+                            .frame(width: halfW * CGFloat(frac),
+                                   height: DFSize.barTrackH)
                             .offset(x: halfW - halfW * CGFloat(frac))
                     }
-                    // 중앙 tick.
+                    // 중앙 tick (center zero indicator) — 0.5pt hairline.
                     Rectangle()
-                        .fill(DFColor.textSecondary.opacity(0.4))
-                        .frame(width: 0.5, height: 5)
-                        .offset(x: halfW - 0.25)
+                        .fill(DFColor.textSecondary.opacity(DFOpacity.o40))
+                        .frame(width: DFSize.borderHairline, height: DFSize.dot)
+                        .offset(x: halfW - DFSize.borderHairline / 2)
                 }
             }
-            .frame(height: 5)
+            .frame(height: DFSize.dot)
             Text(String(format: "%+.2f°", value))
                 .font(.system(size: DFFontSize.s9, design: .monospaced).monospacedDigit())
                 .foregroundStyle(absVal > 0.05 ? color : DFColor.textSecondary)
-                .frame(width: 48, alignment: .trailing)
+                .frame(width: Self.jointValueColW, alignment: .trailing)
+                .lineLimit(1)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(name) 보정 \(String(format: "%+.2f°", value))")
     }
+
+    /// joint name 컬럼 폭 — "R ankPitch" 14자 까지 1줄 표시 보장.
+    private static let jointNameColW: CGFloat = 64
+    /// joint value 컬럼 폭 — "+10.00°" 7자 monospace 보장.
+    private static let jointValueColW: CGFloat = 48
 
     // MARK: - 5. Event log (Philips IntelliVue 패턴)
 
     /// **Philips IntelliVue alarm log 패턴**: 시간 + severity icon + 메시지.
     /// **ISA-101 §6.7**: 시간역순 + 가장 최근이 상단.
     private var eventLogPanel: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs2) {
                 Text("이벤트 로그")
                     .font(.system(size: DFFontSize.s10, weight: .medium))
                     .foregroundStyle(DFColor.textSecondary)
@@ -536,6 +576,7 @@ struct FallPreventionMonitor: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(DFColor.textSecondary)
+                    .accessibilityLabel("이벤트 로그 비우기")
                 }
             }
             if session.safetyEvents.isEmpty {
@@ -543,41 +584,52 @@ struct FallPreventionMonitor: View {
                     .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, DFSpace.xs2)
             } else {
                 ScrollView {
-                    VStack(spacing: 1) {
+                    VStack(spacing: DFSpace.micro) {
                         ForEach(session.safetyEvents.reversed()) { evt in
                             eventRow(evt)
                         }
                     }
                 }
-                .frame(maxHeight: 140)
+                .frame(maxHeight: Self.eventLogMaxH)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("이벤트 로그 \(session.safetyEvents.count)건")
             }
         }
     }
 
+    /// 이벤트 로그 ScrollView 최대 높이 — 약 9 row × 15pt 가시 + scroll.
+    private static let eventLogMaxH: CGFloat = 140
+
     private func eventRow(_ evt: WalkLabSession.SafetyEvent) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DFSpace.xs2) {
             Image(systemName: eventIcon(evt.kind))
                 .font(.system(size: DFFontSize.s10))
                 .foregroundStyle(eventColor(evt.kind))
-                .frame(width: 14)
+                .frame(width: DFSize.iconCol)
+                .accessibilityHidden(true)
             Text(timeString(evt.timestamp))
                 .font(.system(size: DFFontSize.s9, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
-                .frame(width: 54, alignment: .leading)
+                .frame(width: Self.eventTimeColW, alignment: .leading)
             Text(evt.message)
                 .font(.system(size: DFFontSize.s10))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 1)
+        .padding(.horizontal, DFSpace.xs)
+        .padding(.vertical, DFSpace.micro)
         .background(eventColor(evt.kind).opacity(DFOpacity.o06))
-        .clipShape(RoundedRectangle(cornerRadius: 2))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.tiny))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(timeString(evt.timestamp)) \(evt.kind.rawValue) — \(evt.message)")
     }
+
+    /// 이벤트 로그 의 timestamp 컬럼 폭 — "HH:mm:ss" 8 char monospace.
+    private static let eventTimeColW: CGFloat = 54
 
     // MARK: - Helpers
 

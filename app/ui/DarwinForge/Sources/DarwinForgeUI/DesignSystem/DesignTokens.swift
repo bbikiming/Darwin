@@ -141,6 +141,8 @@ public enum DFSpace {
 /// - `full` = capsule (height 의 절반 이상).
 public enum DFRadius {
     public static let none: CGFloat = 0
+    /// 2pt — 매우 좁은 pill / event log row 의 hint background.
+    public static let tiny: CGFloat = 2
     public static let xs: CGFloat = 4
     /// 6pt — 버튼 / pill / 작은 indicator (이전 raw 6 통일).
     public static let xs2: CGFloat = 6
@@ -192,6 +194,18 @@ public enum DFSize {
     public static let indicatorSm: CGFloat = 8
     /// 12pt — larger badge dot.
     public static let indicatorMd: CGFloat = 12
+
+    // MARK: Bars / tracks / dots (모니터링 대시보드 표준)
+    /// 3pt — 얇은 progress bar / joint delta bar / 트랙. KS B 9609 (안전 표지) 의
+    /// 표시기 두께 권장 ≥ 2pt + 시인성 마진.
+    public static let barTrackH: CGFloat = 3
+    /// 5pt — sparkline 의 current value dot / center tick. NN/g
+    /// *Data Visualization* 권장 — 5pt = 멀리서도 인지 가능한 minimum.
+    public static let dot: CGFloat = 5
+    /// 14pt — 리스트 row 의 leading icon column 표준 폭 (Apple HIG list row).
+    public static let iconCol: CGFloat = 14
+    /// 40pt — hero icon container (Apple HIG large icon container).
+    public static let heroBox: CGFloat = 40
 
     // MARK: Icons (SF Symbol container — `.frame(width: N, height: N)`)
     /// 12pt — 매우 작은 inline icon.
