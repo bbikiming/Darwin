@@ -99,13 +99,19 @@ public actor BusActor {
         try bus.motionPlaySlot(slot: slot, confirmRisk: confirmRisk, followChain: followChain)
     }
 
-    /// 진행 중인 motion play 취소 — 다른 Task 에서 호출 가능.
-    public func motionPlayCancel() throws {
+    /// 진행 중인 motion play 취소 — `nonisolated` 로 actor 큐 우회.
+    ///
+    /// **CRITIC HIGH fix (2026-05-16)**: 종전엔 actor 메소드라 `motionPlaySlot` 블로킹
+    /// 큐 뒤에서 대기 → cancel 이 motion 종료 후에야 실행 = 안전 메커니즘 마비.
+    /// `nonisolated` 로 즉시 실행 — `Bus.motionPlayCancel` 내부는 `fc_motion_play_cancel`
+    /// 호출, 그 함수는 `&*handle` shared ref + `Arc<AtomicBool>` SeqCst write 라 thread-safe.
+    public nonisolated func motionPlayCancel() throws {
         try bus.motionPlayCancel()
     }
 
-    /// motion play 재생 중이면 true.
-    public var isMotionPlaying: Bool {
+    /// motion play 재생 중이면 true — `nonisolated` 로 actor 큐 우회.
+    /// `fc_motion_play_is_running` 은 AtomicBool SeqCst read 만 수행 — thread-safe.
+    public nonisolated var isMotionPlaying: Bool {
         bus.isMotionPlaying
     }
 }

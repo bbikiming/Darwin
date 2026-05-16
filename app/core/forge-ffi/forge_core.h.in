@@ -346,6 +346,11 @@ int fc_motion_play_slot(struct fc_bus *handle,
 /*
  진행 중인 motion play 를 취소. 다음 8 ms 체크 시점에 중단.
  반환: 0=OK (취소 신호 전송), -2=핸들 invalid.
+
+ **Thread safety**: `fc_motion_play_slot` (다른 thread) 이 `&mut FcBus` 로 backend
+ 를 mutating 하는 동안 호출 가능. 본 함수는 `&*handle` (shared ref) 로 진입하고
+ `motion_cancel` 의 `Option<CancelHandle>` 를 읽기만 함 — backend 와 disjoint field.
+ CancelHandle 내부 `Arc<AtomicBool>` 이 cross-thread cancellation 보장.
  */
 int fc_motion_play_cancel(struct fc_bus *handle);
 
