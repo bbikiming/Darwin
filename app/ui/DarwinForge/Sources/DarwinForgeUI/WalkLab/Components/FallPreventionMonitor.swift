@@ -128,7 +128,8 @@ struct FallPreventionMonitor: View {
         .background(color.opacity(DFOpacity.o10))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.xs2)
-                .stroke(color.opacity(DFOpacity.o35), lineWidth: 0.5)
+                .stroke(color.opacity(DFOpacity.o35),
+                        lineWidth: DFSize.borderHairline)
         )
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
     }
@@ -726,28 +727,29 @@ struct FallPreventionMonitor: View {
 
     private func eventIcon(_ k: WalkLabSession.SafetyEvent.Kind) -> String {
         switch k {
-        case .sessionStart:       return "play.circle"
-        case .sessionStop:        return "stop.circle"
-        case .stateChange:        return "arrow.triangle.swap"
-        case .emergencyTriggered: return "bolt.fill"
-        case .predictorRecommend: return "exclamationmark.shield.fill"
-        case .correctorOn:        return "figure.balanced"
-        case .correctorOff:       return "figure.stand"
-        case .rampComplete:       return "checkmark.circle.fill"
-        case .imuSourceChange:    return "gyroscope"
-        case .thermalAlarm:       return "thermometer.sun.fill"
-        case .preflightFailure:   return "xmark.shield"
+        case .sessionStart:          return "play.circle"
+        case .sessionStop:           return "stop.circle"
+        case .stateChange:           return "arrow.triangle.swap"
+        case .emergencyTriggered:    return "bolt.fill"
+        case .predictorRecommend:    return "exclamationmark.shield.fill"
+        case .correctorOn:           return "figure.balanced"
+        case .correctorOff:          return "figure.stand"
+        case .rampComplete:          return "checkmark.circle.fill"
+        case .imuSourceChange:       return "gyroscope"
+        case .motorTempSourceChange: return "thermometer"
+        case .thermalAlarm:          return "thermometer.sun.fill"
+        case .preflightFailure:      return "xmark.shield"
         }
     }
 
     private func eventColor(_ k: WalkLabSession.SafetyEvent.Kind) -> Color {
         switch k {
-        case .sessionStart, .sessionStop, .correctorOff:    return DFColor.textSecondary
-        case .stateChange:                                  return DFColor.warning
+        case .sessionStart, .sessionStop, .correctorOff: return DFColor.textSecondary
+        case .stateChange:                               return DFColor.warning
         case .emergencyTriggered, .predictorRecommend,
-             .thermalAlarm, .preflightFailure:              return DFColor.danger
-        case .correctorOn, .rampComplete:                   return DFColor.success
-        case .imuSourceChange:                              return DFColor.info
+             .thermalAlarm, .preflightFailure:           return DFColor.danger
+        case .correctorOn, .rampComplete:                return DFColor.success
+        case .imuSourceChange, .motorTempSourceChange:   return DFColor.info
         }
     }
 

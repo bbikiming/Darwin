@@ -515,11 +515,21 @@ final class WalkLabFallPreventionTests: XCTestCase {
             .sessionStart, .sessionStop, .stateChange,
             .emergencyTriggered, .predictorRecommend,
             .correctorOn, .correctorOff, .rampComplete,
-            .imuSourceChange, .thermalAlarm, .preflightFailure,
+            .imuSourceChange, .motorTempSourceChange,
+            .thermalAlarm, .preflightFailure,
         ]
         for k in allKinds {
             XCTAssertFalse(k.rawValue.isEmpty, "\(k) rawValue 비어 있음")
         }
+    }
+
+    /// **motorTempSourceChange 가 imuSourceChange 와 분리** — 의미 오류 가드.
+    /// 이전 버그: 같은 Kind 사용 → 이벤트 로그 아이콘이 gyroscope 로 표시되어
+    /// 모터 온도 변경이 IMU 변경처럼 보임.
+    func testMotorTempSourceChangeIsSeparateKind() {
+        XCTAssertNotEqual(WalkLabSession.SafetyEvent.Kind.motorTempSourceChange,
+                          WalkLabSession.SafetyEvent.Kind.imuSourceChange,
+                          "motorTempSourceChange 와 imuSourceChange 는 별도 Kind")
     }
 
     // MARK: - 반응형 레이아웃 회귀 (2026-05-16)

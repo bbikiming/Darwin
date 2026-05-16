@@ -234,6 +234,11 @@ public final class WalkLabSession: ObservableObject {
             case correctorOff
             case rampComplete
             case imuSourceChange
+            /// 모터 온도 출처 변경 — 실 robot 연결 시 sim → real 등.
+            /// 2026-05-16: imuSourceChange 와 분리 (이전 버그: 같은 Kind 재사용 →
+            /// 이벤트 로그 아이콘이 gyroscope 로 표시되어 모터 온도 변경이 IMU
+            /// 변경처럼 보임).
+            case motorTempSourceChange
             case thermalAlarm
             case preflightFailure
         }
@@ -1187,7 +1192,7 @@ public final class WalkLabSession: ObservableObject {
         // 이벤트 — 모터 온도 출처 변경 (2026-05-16).
         if motorTempSource != previousMotorTempSource {
             logSafetyEvent(
-                kind: .imuSourceChange,
+                kind: .motorTempSourceChange,
                 message: "모터 온도 출처: \(previousMotorTempSource.label) → \(motorTempSource.label)"
             )
             previousMotorTempSource = motorTempSource
