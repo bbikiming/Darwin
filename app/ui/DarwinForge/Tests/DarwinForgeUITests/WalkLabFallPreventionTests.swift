@@ -47,4 +47,53 @@ final class WalkLabFallPreventionTests: XCTestCase {
         // private 이라 직접 테스트 불가. 공개 invariant: balanceLost 초기 false.
         XCTAssertFalse(session.balanceLost, "초기 balanceLost 가 true 인 것은 비정상")
     }
+
+    // MARK: - Stage 2 — 다단계 안전 임계
+
+    /// BalanceState 임계 정확성.
+    func testBalanceStateThresholds() {
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 0),    .normal)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 10),   .normal)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 14.9), .normal)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 15),   .caution)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 21.9), .caution)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 22),   .warning)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 27.9), .warning)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 28),   .danger)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 29.9), .danger)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 30),   .emergency)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 45),   .emergency)
+    }
+
+    /// 속도 배수 — Warning 70%, Danger 0%.
+    func testBalanceStateSpeedScale() {
+        XCTAssertEqual(WalkLabSession.BalanceState.normal.speedScale,    1.0)
+        XCTAssertEqual(WalkLabSession.BalanceState.caution.speedScale,   1.0)
+        XCTAssertEqual(WalkLabSession.BalanceState.warning.speedScale,   0.7, accuracy: 0.001)
+        XCTAssertEqual(WalkLabSession.BalanceState.danger.speedScale,    0.0)
+        XCTAssertEqual(WalkLabSession.BalanceState.emergency.speedScale, 0.0)
+    }
+
+    /// BalanceState 가 Comparable — 단조 증가.
+    func testBalanceStateIsComparable() {
+        XCTAssertLessThan(WalkLabSession.BalanceState.normal, .caution)
+        XCTAssertLessThan(WalkLabSession.BalanceState.caution, .warning)
+        XCTAssertLessThan(WalkLabSession.BalanceState.warning, .danger)
+        XCTAssertLessThan(WalkLabSession.BalanceState.danger, .emergency)
+    }
+
+    /// 라벨 비어있지 않음 — UI 표시 안전.
+    func testBalanceStateLabelsNotEmpty() {
+        for s in [WalkLabSession.BalanceState.normal, .caution, .warning, .danger, .emergency] {
+            XCTAssertFalse(s.label.isEmpty, "\(s) label 비어있음")
+        }
+    }
+
+    /// 초기 상태 — 정상 + autoFallPrevention ON.
+    func testInitialStateNormalAndAutoOn() {
+        let session = WalkLabSession()
+        XCTAssertEqual(session.balanceState, .normal)
+        XCTAssertTrue(session.autoFallPrevention,
+            "autoFallPrevention 기본값이 ON 이어야 함 (사용자가 명시적 OFF 가능)")
+    }
 }

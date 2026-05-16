@@ -81,6 +81,60 @@ public final class WalkLabSession: ObservableObject {
             }
         }
     }
+
+    // MARK: - Stage 2 (v1.1 fall prevention): 다단계 안전 임계
+
+    /// 현재 IMU 기반 안전 상태. tick() 마다 갱신.
+    @Published public private(set) var balanceState: BalanceState = .normal
+    /// 자동 fall prevention 토글. false 면 emergency (30°) 만 작동. default true.
+    @Published public var autoFallPrevention: Bool = true
+
+    /// 안전 상태 — `|max(|roll|, |pitch|)|` 기준 5단계.
+    ///
+    /// **임계** (deg):
+    /// | 상태 | 임계 | 동작 |
+    /// |---|---|---|
+    /// | `.normal` | < 15° | 정상 |
+    /// | `.caution` | 15-22° | UI 경고만 |
+    /// | `.warning` | 22-28° | 보행 속도 70% 자동 감속 |
+    /// | `.danger` | 28-30° | 자세 동결 (cycle 일시 정지) |
+    /// | `.emergency` | ≥ 30° | 토크 OFF + walkReady 복귀 (기존 L3) |
+    public enum BalanceState: Int, Comparable, Equatable, Sendable {
+        case normal = 0, caution, warning, danger, emergency
+
+        public static func < (l: BalanceState, r: BalanceState) -> Bool {
+            l.rawValue < r.rawValue
+        }
+
+        /// IMU |max| 각도로부터 상태 결정.
+        public static func from(maxTilt: Double) -> BalanceState {
+            if maxTilt >= 30 { return .emergency }
+            if maxTilt >= 28 { return .danger }
+            if maxTilt >= 22 { return .warning }
+            if maxTilt >= 15 { return .caution }
+            return .normal
+        }
+
+        public var label: String {
+            switch self {
+            case .normal:    return "정상"
+            case .caution:   return "주의"
+            case .warning:   return "경고"
+            case .danger:    return "위험"
+            case .emergency: return "비상"
+            }
+        }
+
+        /// 보행 속도 배수 (Stage 2 자동 감속).
+        public var speedScale: Double {
+            switch self {
+            case .normal, .caution: return 1.0
+            case .warning:          return 0.7  // 70% 감속
+            case .danger:           return 0.0  // 자세 동결
+            case .emergency:        return 0.0  // 정지
+            }
+        }
+    }
     /// **Phase G11 (2026-05-15)**: 3D 모델 시각화용 현재 자세.
     ///
     /// 보행 중 매 step 갱신 (`runContinuousWalk` / `runWalkCycle` 에서 송출 직전 publish).
@@ -824,6 +878,15 @@ public final class WalkLabSession: ObservableObject {
         updateImuFromRealOrSim()
         updateSimThermal()
 
+        // **Stage 2 (v1.1 fall prevention)**: 다단계 임계 분기.
+        // `autoFallPrevention = false` 면 emergency (30°) 만 작동 — 기존 동작 보존.
+        let maxTilt = max(abs(imuRollDeg), abs(imuPitchDeg))
+        balanceState = BalanceState.from(maxTilt: maxTilt)
+
+        if autoFallPrevention {
+            applyBalanceMitigation()
+        }
+
         // 자동 stop (시간 초과)
         if let start = startTime {
             let secs = Date().timeIntervalSince(start)
@@ -832,7 +895,7 @@ public final class WalkLabSession: ObservableObject {
             }
         }
 
-        // L3 — 균형 손실 (실 IMU 또는 sim 둘 다 동일 임계)
+        // L3 — 균형 손실 (실 IMU 또는 sim 둘 다 동일 임계, 기존 동작)
         if abs(imuRollDeg) > 30 || abs(imuPitchDeg) > 30 {
             balanceLost = true
             emergencyStop()
@@ -842,6 +905,37 @@ public final class WalkLabSession: ObservableObject {
         if maxMotorTemp >= 60 {
             thermalAlarm = true
             emergencyStop()
+        }
+    }
+
+    /// **Stage 2 (v1.1 fall prevention)**: 다단계 임계 별 자동 mitigation.
+    ///
+    /// Warning (22-28°) — engine 속도 70% 자동 감속.
+    /// Danger (28-30°) — engine enabled=false (자세 동결).
+    /// Emergency (≥ 30°) 는 별도 L3 게이트가 처리 (토크 OFF + walkReady).
+    ///
+    /// `autoFallPrevention = false` 면 호출 안 됨 — 기존 30° emergency 만 작동.
+    /// Sim mode + 실 mode 모두 동일 적용 (sim 자가검증 가능).
+    private func applyBalanceMitigation() {
+        switch balanceState {
+        case .normal, .caution:
+            // 정상·주의 — engine 그대로. UI 만 색 변화.
+            break
+        case .warning:
+            // 70% 자동 감속 — engine 의 x_amplitude 만 줄임. period/y/a 유지.
+            let cmd = effectiveCommand
+            engine.setCommand(
+                x: cmd.x * BalanceState.warning.speedScale,
+                y: cmd.y,
+                a: cmd.a,
+                enabled: cmd.enabled
+            )
+        case .danger:
+            // 자세 동결 — engine 정지 (보행 cycle 일시 멈춤). emergency 직전 단계.
+            engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
+        case .emergency:
+            // 즉시 L3 게이트 (별도 처리). 본 helper 는 아무 동작 X.
+            break
         }
     }
 

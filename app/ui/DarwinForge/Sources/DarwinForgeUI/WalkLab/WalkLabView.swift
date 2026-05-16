@@ -201,6 +201,8 @@ public struct WalkLabView: View {
                             .foregroundStyle(DFColor.textSecondary)
                         Spacer()
                     }
+                    // **Stage 2 (v1.1 fall prevention)**: 안전 상태 + 자동 보정 토글.
+                    balanceStateCard
                     IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
                     IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
                 }
@@ -323,6 +325,66 @@ public struct WalkLabView: View {
         case .sim:   return DFColor.textSecondary
         case .real:  return .green
         case .stale: return DFColor.warning
+        }
+    }
+
+    /// **Stage 2 (v1.1 fall prevention)**: 안전 상태 카드 + 자동 보정 토글.
+    private var balanceStateCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: balanceStateIcon)
+                    .font(.system(size: DFFontSize.s12))
+                    .foregroundStyle(balanceStateColor)
+                Text("안전 상태: \(session.balanceState.label)")
+                    .font(.system(size: DFFontSize.s11, weight: .medium))
+                    .foregroundStyle(balanceStateColor)
+                Spacer()
+            }
+            if session.balanceState >= .warning {
+                Text(balanceStateMessage)
+                    .font(.system(size: DFFontSize.s10))
+                    .foregroundStyle(DFColor.textSecondary)
+                    .lineLimit(2)
+            }
+            Toggle("자동 균형 보정", isOn: $session.autoFallPrevention)
+                .toggleStyle(.checkbox)
+                .font(.system(size: DFFontSize.s10))
+        }
+        .padding(8)
+        .background(balanceStateColor.opacity(0.10))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .stroke(balanceStateColor.opacity(0.4), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    private var balanceStateIcon: String {
+        switch session.balanceState {
+        case .normal:    return "checkmark.circle.fill"
+        case .caution:   return "exclamationmark.circle"
+        case .warning:   return "exclamationmark.triangle.fill"
+        case .danger:    return "exclamationmark.octagon.fill"
+        case .emergency: return "xmark.octagon.fill"
+        }
+    }
+
+    private var balanceStateColor: Color {
+        switch session.balanceState {
+        case .normal:    return .green
+        case .caution:   return .yellow
+        case .warning:   return .orange
+        case .danger:    return .red
+        case .emergency: return .red
+        }
+    }
+
+    private var balanceStateMessage: String {
+        switch session.balanceState {
+        case .warning:   return "기울기 22°+ — 보행 속도 70% 자동 감속"
+        case .danger:    return "기울기 28°+ — 자세 동결 (보행 일시 정지)"
+        case .emergency: return "기울기 30°+ — 토크 OFF + walkReady 복귀"
+        default:         return ""
         }
     }
 
