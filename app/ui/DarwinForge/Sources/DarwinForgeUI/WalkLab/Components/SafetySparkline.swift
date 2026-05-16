@@ -164,15 +164,20 @@ struct SafetySparkline: View {
         if thr.value <= yMax, thr.value >= yMin {
             let y = CGFloat((yMax - thr.value) / ySpan) * height
             thresholdLabelText(thr.value, color: thr.color)
-                .offset(x: -Self.chartPad, y: y - 6)
+                .offset(x: -Self.chartPad, y: y - Self.thresholdLabelVCenter)
         }
         // 음수 영역 (대칭).
         if yMin < 0, thr.value > 0, -thr.value >= yMin {
             let y = CGFloat((yMax - (-thr.value)) / ySpan) * height
             thresholdLabelText(-thr.value, color: thr.color)
-                .offset(x: -Self.chartPad, y: y - 6)
+                .offset(x: -Self.chartPad, y: y - Self.thresholdLabelVCenter)
         }
     }
+
+    /// Threshold label vertical center offset — label height (7pt font + 2pt
+    /// vertical padding = ~11pt) 의 절반. line y 좌표 가 label 중앙에 오도록
+    /// 위로 이동. 7pt + 2pt × 2 / 2 ≈ 5.5 → 6 (반올림, 시각 적정).
+    private static let thresholdLabelVCenter: CGFloat = 6
 
     @ViewBuilder
     private func thresholdLabelText(_ value: Double, color: Color) -> some View {

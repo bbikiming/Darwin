@@ -1160,23 +1160,27 @@ public final class WalkLabSession: ObservableObject {
             balanceState: balanceState,
             correctorMaxDelta: maxDelta
         )
-        safetyTimeline.append(sample)
-        // **2026-05-16 최적화**: samples 가 chronological 정렬되므로 expired
-        // sample 은 앞쪽에만 있음. removeAll(where:) 의 O(N) full scan 대신
-        // 앞에서부터 cutoff 도달 시점까지만 scan — O(k) where k=expired count.
-        // 매 tick 보통 1-2 개만 expire → O(1-2) avg.
+        // **2026-05-16 최적화 (Phase 2)**: 매 tick 의 3-step @Published 변경을
+        // 단일 assignment 로 batch — publisher notification 3 → 1.
+        // 이전: append + removeFirst (expired) + removeFirst (cap) = 3 mutations
+        // 정정: local var 에서 작업 후 1회 assign — SwiftUI subscriber 부담 ↓.
+        //
+        // chronological 정렬 invariant 유지 — append always at end, prune from front.
+        var newTimeline = safetyTimeline
+        newTimeline.append(sample)
         let cutoff = now.addingTimeInterval(-Self.safetyTimelineMaxWindowSec)
         var firstValidIdx = 0
-        while firstValidIdx < safetyTimeline.count,
-              safetyTimeline[firstValidIdx].timestamp < cutoff {
+        while firstValidIdx < newTimeline.count,
+              newTimeline[firstValidIdx].timestamp < cutoff {
             firstValidIdx += 1
         }
         if firstValidIdx > 0 {
-            safetyTimeline.removeFirst(firstValidIdx)
+            newTimeline.removeFirst(firstValidIdx)
         }
-        if safetyTimeline.count > Self.safetyTimelineMaxSamples {
-            safetyTimeline.removeFirst(safetyTimeline.count - Self.safetyTimelineMaxSamples)
+        if newTimeline.count > Self.safetyTimelineMaxSamples {
+            newTimeline.removeFirst(newTimeline.count - Self.safetyTimelineMaxSamples)
         }
+        safetyTimeline = newTimeline
 
         // 이벤트 — balanceState 전환.
         if balanceState != previousBalanceState {
