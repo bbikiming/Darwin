@@ -49,9 +49,12 @@ import ForgeCore
 /// 5. **Event log** — 시간역순 이벤트 로그.
 struct FallPreventionMonitor: View {
     @ObservedObject var session: WalkLabSession
-    // 2026-05-16 이슈 정정: 이전 `@Environment(\.accessibilityReduceTransparency)`
-    // 선언했으나 미사용 (dead code). `.dfMaterial` modifier 가 내부에서 자체
-    // Environment lookup — 본 view 에선 불필요. 제거.
+    /// **2026-05-16 a11y 정정**: `repeatForever` animation 은 SwiftUI 가
+    /// 자동 disable 안 함. 명시적 @Environment 가드 필요.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var emergencyPulse: Bool = false
+    /// Pulse animation 활성 상태 — startEmergencyPulse 중복 호출 가드.
+    @State private var pulseActive: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.sm2) {
@@ -155,6 +158,11 @@ struct FallPreventionMonitor: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            // **2026-05-16 a11y 정정 (Agent 2 발견)**: 이전엔 VoiceOver 가
+            // "안전 상태" + state.label + tilt 값 + "max|tilt|" 4 element 따로 읽음.
+            // .combine 으로 하나의 hero label 로 통합.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("안전 상태 \(state.label), 최대 기울기 \(String(format: "%.1f도", tiltMax))")
         }
         .padding(DFSpace.sm2)
         .background(color.opacity(DFOpacity.o10))
@@ -179,19 +187,18 @@ struct FallPreventionMonitor: View {
             let shouldPulse = newState >= .danger
             if shouldPulse && !pulseActive {
                 // 중첩 호출 가드 — danger → emergency 등 동일 zone 내 전환 시
-                // startEmergencyPulse 중복 호출 방지 (이전: 매 전환마다 호출 →
-                // 중첩 animation 시각 jitter).
+                // startEmergencyPulse 중복 호출 방지.
                 startEmergencyPulse()
             } else if !shouldPulse && pulseActive {
-                pulseActive = false
-                emergencyPulse = false
+                stopEmergencyPulse()
             }
         }
+        // **2026-05-16 정정 (Agent 2 발견)**: view 사라질 때 (monitoringExpanded
+        // toggle OFF) animation state hygiene — pulseActive/emergencyPulse reset.
+        .onDisappear {
+            if pulseActive { stopEmergencyPulse() }
+        }
     }
-
-    @State private var emergencyPulse: Bool = false
-    /// Pulse animation 활성 상태 — startEmergencyPulse 중복 호출 가드.
-    @State private var pulseActive: Bool = false
 
     /// Pulse 활성 시 더 강한 stroke alpha (60%) — 부드러운 사이클.
     private func pulseStrokeAlpha(for state: WalkLabSession.BalanceState) -> Double {
@@ -201,11 +208,30 @@ struct FallPreventionMonitor: View {
         return DFOpacity.o35
     }
 
+    /// **2026-05-16 a11y 정정 (Agent 2 발견)**: Reduce Motion ON 시 `repeatForever`
+    /// 가 SwiftUI 가 자동 disable 안 함 — 명시적 guard 필요.
+    /// `withAnimation` 안에 들어가도 repeatForever 는 이 setting 무시.
     private func startEmergencyPulse() {
+        guard !reduceMotion else {
+            // Reduce Motion ON — animation 없이 단순히 활성 상태만 표시.
+            pulseActive = true
+            emergencyPulse = true  // stroke alpha 60% 고정 (animate X)
+            return
+        }
         pulseActive = true
         withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
             emergencyPulse = true
         }
+    }
+
+    /// **2026-05-16 정정 (Agent 2 발견)**: animation cancellation 명시.
+    /// `emergencyPulse = false` 만 으로는 repeatForever 가 stuck 가능 →
+    /// `withAnimation(.linear(duration: 0))` 으로 explicit end.
+    private func stopEmergencyPulse() {
+        withAnimation(.linear(duration: 0)) {
+            emergencyPulse = false
+        }
+        pulseActive = false
     }
 
     // MARK: - 2. 6-Layer status grid
@@ -830,9 +856,15 @@ struct FallPreventionMonitor: View {
         }
     }
 
-    private func timeString(_ d: Date) -> String {
+    /// **2026-05-16 정정 (Agent 2 발견)**: DateFormatter 매 row 마다 새로 alloc
+    /// → 50ms tick × N rows 의 GC pressure. static cache 로 한 번만 alloc.
+    private static let eventTimeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
-        return f.string(from: d)
+        return f
+    }()
+
+    private func timeString(_ d: Date) -> String {
+        Self.eventTimeFormatter.string(from: d)
     }
 }

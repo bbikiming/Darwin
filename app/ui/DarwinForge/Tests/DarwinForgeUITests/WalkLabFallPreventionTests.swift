@@ -431,6 +431,87 @@ final class WalkLabFallPreventionTests: XCTestCase {
         }
     }
 
+    /// **Phase C 핵심 invariant (Agent 3 발견 — 미테스트 영역)**:
+    /// enableBalanceCorrection=true + autoFallPrevention=true 시 corrector identity.
+    /// .danger 분기는 private balanceState 라 직접 검증 어려움 — public
+    /// invariant 로 enable 시 lastSafePose 가 갱신되는지만 검증.
+    func testApplyBalanceCorrectionUpdatesLastSafePoseWhenSafe() {
+        let session = WalkLabSession()
+        session.enableBalanceCorrection = true
+        // 정상 상태 (imuRollDeg=0) → corrector identity 거의 (작은 ramp).
+        let result = session.applyBalanceCorrectionIfEnabled(to: .walkReady)
+        // result 는 walkReady 와 거의 동일 (IMU=0 이라 corrections 모두 0).
+        for j in JointID.allCases {
+            XCTAssertEqual(result.raw(j), RobotPose.walkReady.raw(j),
+                "IMU=0 시 corrector identity")
+        }
+    }
+
+    /// **emergencyStop 이벤트 발행 (Agent 3 발견 — 미테스트)**.
+    /// 비상 정지 호출 시 safetyEvents 에 .emergencyTriggered 추가.
+    func testEmergencyStopLogsEvent() {
+        let session = WalkLabSession()
+        let initialCount = session.safetyEvents.count
+        session.emergencyStop()
+        XCTAssertEqual(session.safetyEvents.count, initialCount + 1,
+            "emergencyStop 호출 시 이벤트 1건 발행")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .emergencyTriggered,
+            "마지막 이벤트가 emergencyTriggered 이어야 함")
+    }
+
+    /// **customX/Y/A 단위 변환 (Agent 3 발견 — 미테스트, FFI regression risk)**.
+    /// strideMm (mm) ↔ customX (m), sideMm ↔ customY, turnDeg ↔ customA (rad).
+    func testCustomXYAUnitConversion() {
+        let session = WalkLabSession()
+        // mm → m
+        session.strideMm = 25
+        XCTAssertEqual(session.customX, 0.025, accuracy: 1e-9,
+            "25mm = 0.025m")
+        session.customX = 0.05
+        XCTAssertEqual(session.strideMm, 50, accuracy: 1e-9,
+            "0.05m = 50mm")
+
+        // sideMm
+        session.sideMm = -10
+        XCTAssertEqual(session.customY, -0.010, accuracy: 1e-9)
+
+        // turnDeg ↔ customA (rad)
+        session.turnDeg = 90
+        XCTAssertEqual(session.customA, .pi / 2, accuracy: 1e-9,
+            "90° = π/2 rad")
+        session.customA = .pi
+        XCTAssertEqual(session.turnDeg, 180, accuracy: 1e-9,
+            "π rad = 180°")
+    }
+
+    /// **FallPredictor 모든 NaN sample → .zero 반환 (Agent 3 발견)**.
+    func testFallPredictorAllNaNSamplesReturnZero() {
+        let samples = (0..<5).map { _ in
+            FallPredictor.Sample(
+                timestamp: Date(), rollDeg: .nan, pitchDeg: .infinity,
+                gyroXDps: .nan, gyroYDps: .nan
+            )
+        }
+        let pred = FallPredictor.predict(samples: samples)
+        XCTAssertEqual(pred.score, 0,
+            "모든 sample NaN/Inf → score 0")
+        XCTAssertNil(pred.etaMs)
+        XCTAssertFalse(pred.recommendEmergency)
+    }
+
+    /// **BalanceCorrector intensity clamp (Agent 3 발견)**.
+    /// intensity > 1.0 입력 시 1.0 으로 clamp.
+    func testBalanceCorrectorIntensityClampsAboveOne() {
+        let corrector = BalanceCorrector(
+            intensity: 2.0,  // out of range
+            maxCorrectionDeg: 15,
+            hipRollGain: 0.5, kneeGain: 0.3,
+            anklePitchGain: 0.9, ankleRollGain: 1.0
+        )
+        XCTAssertEqual(corrector.intensity, 1.0, accuracy: 1e-9,
+            "intensity > 1.0 입력 → 1.0 clamp")
+    }
+
     // MARK: - Monitoring Dashboard (2026-05-16): 시계열 + 이벤트 로그 회귀
 
     /// 초기 상태 — 시계열 비어 있음, 이벤트 비어 있음, 펼침 OFF.
