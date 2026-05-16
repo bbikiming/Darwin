@@ -203,6 +203,8 @@ public struct WalkLabView: View {
                     }
                     // **Stage 2 (v1.1 fall prevention)**: 안전 상태 + 자동 보정 토글.
                     balanceStateCard
+                    // **Stage 5 (v1.1 fall prevention)**: 예측 score + ETA.
+                    FallPredictionCard(prediction: session.fallPrediction)
                     IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
                     IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
                 }

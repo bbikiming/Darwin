@@ -1,0 +1,92 @@
+import SwiftUI
+import ForgeCore
+
+/// v1.1 Stage 5 — fall prediction score + ETA countdown UI.
+///
+/// 0..100 score 게이지 + 30° 도달 예측 시간 (있을 때만). emergency 권고 시
+/// 빨간 깜박임 + "선제 정지 발동" 표시.
+public struct FallPredictionCard: View {
+    public let prediction: FallPredictor.Prediction
+
+    public init(prediction: FallPredictor.Prediction) {
+        self.prediction = prediction
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.shield")
+                    .font(.system(size: DFFontSize.s12))
+                    .foregroundStyle(scoreColor)
+                Text("예측 낙상 위험")
+                    .font(.system(size: DFFontSize.s11, weight: .medium))
+                Spacer()
+                Text("\(Int(prediction.score))")
+                    .font(.system(size: DFFontSize.s13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(scoreColor)
+            }
+
+            // Score 게이지 — horizontal bar.
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(DFColor.textSecondary.opacity(0.15))
+                        .frame(height: 6)
+                    Rectangle()
+                        .fill(scoreColor)
+                        .frame(width: geo.size.width * min(1.0, max(0.0, prediction.score / 100.0)),
+                               height: 6)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+            .frame(height: 6)
+
+            // ETA + emergency 권고.
+            HStack(spacing: 6) {
+                if let etaMs = prediction.etaMs {
+                    Image(systemName: "hourglass")
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(DFColor.textSecondary)
+                    Text(etaLabel(etaMs))
+                        .font(.system(size: DFFontSize.s10, design: .monospaced))
+                        .foregroundStyle(DFColor.textSecondary)
+                } else {
+                    Text("ETA: 안정 (회복 중 또는 정상)")
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+                Spacer()
+                if prediction.recommendEmergency {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(.red)
+                    Text("선제 정지")
+                        .font(.system(size: DFFontSize.s10, weight: .semibold))
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .padding(8)
+        .background(scoreColor.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .stroke(scoreColor.opacity(0.35), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    private var scoreColor: Color {
+        switch prediction.score {
+        case ..<30:  return .green
+        case ..<60:  return .yellow
+        case ..<80:  return .orange
+        default:     return .red
+        }
+    }
+
+    private func etaLabel(_ ms: Double) -> String {
+        if ms < 100 { return "ETA <0.1s" }
+        if ms < 1000 { return String(format: "ETA %.0fms", ms) }
+        return String(format: "ETA %.1fs", ms / 1000)
+    }
+}

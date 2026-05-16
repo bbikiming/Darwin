@@ -89,6 +89,16 @@ public final class WalkLabSession: ObservableObject {
     /// 자동 fall prevention 토글. false 면 emergency (30°) 만 작동. default true.
     @Published public var autoFallPrevention: Bool = true
 
+    // MARK: - Stage 3 (v1.1 fall prevention): 예측 fall detection
+
+    /// 최근 IMU sample ring buffer (최대 1초 / 5 sample).
+    private var imuBuffer: [FallPredictor.Sample] = []
+    /// 마지막 buffer push 시각 — 5Hz polling 동기화.
+    private var lastBufferPushAt: Date?
+
+    /// 예측 결과 — UI 게이지·countdown 용.
+    @Published public private(set) var fallPrediction: FallPredictor.Prediction = .zero
+
     /// 안전 상태 — `|max(|roll|, |pitch|)|` 기준 5단계.
     ///
     /// **임계** (deg):
@@ -314,6 +324,12 @@ public final class WalkLabSession: ObservableObject {
         simSwayPhase = 0
         balanceLost = false
         thermalAlarm = false
+        // **Stage 3 (v1.1 fall prevention)**: 새 보행 시작 시 buffer reset —
+        // 이전 cycle 의 stale sample 로 score 거짓 발동 방지.
+        imuBuffer.removeAll()
+        lastBufferPushAt = nil
+        fallPrediction = .zero
+        balanceState = .normal
         startTime = Date()
 
         simTimer?.invalidate()
@@ -877,6 +893,7 @@ public final class WalkLabSession: ObservableObject {
 
         updateImuFromRealOrSim()
         updateSimThermal()
+        updateFallPrediction()
 
         // **Stage 2 (v1.1 fall prevention)**: 다단계 임계 분기.
         // `autoFallPrevention = false` 면 emergency (30°) 만 작동 — 기존 동작 보존.
@@ -885,6 +902,13 @@ public final class WalkLabSession: ObservableObject {
 
         if autoFallPrevention {
             applyBalanceMitigation()
+
+            // **Stage 3 (v1.1 fall prevention)**: predictor 가 emergency 권고 → L3 도달
+            // 전에 선제 emergency. 0.3-0.5s 빠른 정지로 낙상 위험 ↓.
+            if fallPrediction.recommendEmergency {
+                balanceLost = true
+                emergencyStop()
+            }
         }
 
         // 자동 stop (시간 초과)
@@ -906,6 +930,50 @@ public final class WalkLabSession: ObservableObject {
             thermalAlarm = true
             emergencyStop()
         }
+    }
+
+    /// **Stage 3 (v1.1 fall prevention)**: IMU ring buffer 갱신 + predictor 호출.
+    ///
+    /// 5Hz IMU polling 동기화 — `lastBufferPushAt` 기준 ≥ 150ms 경과 시에만 push.
+    /// (50ms tick × 4 ≈ 200ms 의미. 150ms 임계는 polling jitter 허용).
+    /// sim mode 에서도 호출 — sim IMU 의 sin 흔들림으로 predictor 동작 검증 가능.
+    ///
+    /// gyro 데이터:
+    /// - 실 mode (`imuSource == .real`): `store.lastTelemetry.imu` 의 gyroXDps/YDps
+    /// - sim mode: derivative — `(roll_now - roll_prev) / dt` 를 gyro 로 근사
+    private func updateFallPrediction() {
+        let now = Date()
+        // Polling jitter 허용 — 너무 잦은 push 회피.
+        if let last = lastBufferPushAt, now.timeIntervalSince(last) < 0.15 {
+            // 그대로 마지막 prediction 유지 (재계산 X — score 변동 줄임).
+            return
+        }
+
+        // Gyro 추출 — 실 IMU 우선, sim 은 derivative 근사.
+        var gyroX: Double = 0
+        var gyroY: Double = 0
+        if imuSource == .real, let s = store, let imu = s.lastTelemetry?.imu {
+            gyroX = Double(imu.gyroXDps)
+            gyroY = Double(imu.gyroYDps)
+        } else if let prev = imuBuffer.last {
+            let dt = now.timeIntervalSince(prev.timestamp)
+            if dt > 0.001 {
+                gyroX = (imuRollDeg - prev.rollDeg) / dt    // deg / sec
+                gyroY = (imuPitchDeg - prev.pitchDeg) / dt
+            }
+        }
+
+        let sample = FallPredictor.Sample(
+            timestamp: now,
+            rollDeg: imuRollDeg,
+            pitchDeg: imuPitchDeg,
+            gyroXDps: gyroX,
+            gyroYDps: gyroY
+        )
+        FallPredictor.append(sample, to: &imuBuffer)
+        lastBufferPushAt = now
+
+        fallPrediction = FallPredictor.predict(samples: imuBuffer, now: now)
     }
 
     /// **Stage 2 (v1.1 fall prevention)**: 다단계 임계 별 자동 mitigation.
