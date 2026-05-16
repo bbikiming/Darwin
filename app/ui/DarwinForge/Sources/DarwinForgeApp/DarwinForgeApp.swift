@@ -10,10 +10,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        // 앱 아이콘 — SwiftPM 번들 PNG 우선, 누락 시 Core Graphics 도형 fallback.
+        // 앱 아이콘 — Core Graphics 로 slim OP 로고 (brand blue) 즉시 생성.
         // `.app` bundle 의 AppIcon.icns 가 있으면 macOS 가 우선 사용 — 런타임 설정은
         // `swift run` 같은 bundle 없이 실행되는 dev 환경에서 효과적.
-        NSApp.applicationIconImage = AppIcon.loadBundledPNG() ?? AppIcon.make()
+        // 2026-05-16: 종전 PNG 우선 로드 패턴 제거 — 코드 생성 단독 (slim OP + #0050D5).
+        NSApp.applicationIconImage = AppIcon.make()
 
         for w in NSApp.windows {
             configureWindow(w)

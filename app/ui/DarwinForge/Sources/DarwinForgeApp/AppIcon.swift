@@ -2,31 +2,20 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-/// DarwinForge 앱 아이콘 — Core Graphics 로 생성하는 기하학 OP.
+/// DarwinForge 앱 아이콘 — Core Graphics 로 생성하는 미니멀 OP 기하학.
 ///
-/// 디자인 컨셉:
-/// - 배달의민족 스타일 — 굵고 단순한 글자 윤곽 + 강한 단색 background.
-/// - "OP" (Open Platform — DARwIn-OP) 를 두 도형으로 분해:
-///   · O = 도넛 (큰 원 - 작은 원)
-///   · P = stem(수직 막대) + head(작은 도넛, 위쪽)
-/// - Background = forge orange gradient (FF6A00 → FF8A3D, DarwinForge brand).
-/// - 외곽 = macOS 표준 rounded square (cornerRadius = canvas × 0.2237, Apple HIG).
+/// 디자인 컨셉 (2026-05-16 재디자인):
+/// - 심플 + 슬림 — 굵은 도형 (두께 100pt) → 얇은 stroke (두께 30pt) 로 1/3 슬림화.
+/// - 메인 컬러 통일 — Forge orange (#FF6A00) → DarwinForge brand blue (#0050D5).
+/// - "OP" (Open Platform — DARwIn-OP) 글자 outline 만 흰색 stroke 로 표현.
+/// - 단색 배경 (gradient 제거) — 시각 부담 최소, 16pt 까지 축소 시에도 명료.
+/// - 외곽 = macOS HIG 표준 rounded square (cornerRadius = canvas × 0.2237).
 ///
 /// 사용:
 /// ```swift
 /// NSApp.applicationIconImage = AppIcon.make()
 /// ```
 public enum AppIcon {
-
-    /// SwiftPM 번들에 포함된 `AppIcon.png` 를 우선 로드 — 사용자 지정 아이콘.
-    /// 누락 시 nil 반환 → 호출자가 `make()` 로 fallback.
-    public static func loadBundledPNG() -> NSImage? {
-        guard let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
-            return nil
-        }
-        return image
-    }
 
     /// 1024×1024 표준 macOS app icon (Dock + Finder + Spotlight 모두 자동 scale).
     public static func make(size: CGFloat = 1024) -> NSImage {
@@ -44,7 +33,10 @@ public enum AppIcon {
 
     // MARK: - Background
 
-    /// Rounded square + forge orange linear gradient (top-left → bottom-right).
+    /// Rounded square + brand blue 단색.
+    ///
+    /// **2026-05-16**: gradient 제거 (심플), 색상 통일 (forge brand blue #0050D5).
+    /// 단색은 작은 크기 (16pt Dock 미니어처) 에서도 인지성 우수.
     private static func drawBackground(in ctx: CGContext, size: CGSize) {
         let rect = CGRect(origin: .zero, size: size)
         // Apple HIG macOS app icon corner radius = 22.37% of canvas (squircle 근사).
@@ -59,102 +51,88 @@ public enum AppIcon {
         ctx.addPath(bgPath)
         ctx.clip()
 
-        // Forge orange gradient — DarwinForge brand.
-        let colors: [CGColor] = [
-            CGColor(red: 1.00, green: 0.416, blue: 0.000, alpha: 1.0),   // #FF6A00 (forge)
-            CGColor(red: 1.00, green: 0.541, blue: 0.239, alpha: 1.0)    // #FF8A3D (lighter)
-        ]
-        let gradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: colors as CFArray,
-            locations: [0.0, 1.0]
-        )!
-        ctx.drawLinearGradient(
-            gradient,
-            start: CGPoint(x: 0, y: size.height),       // top-left
-            end:   CGPoint(x: size.width, y: 0),         // bottom-right
-            options: []
-        )
+        // Brand blue 단색 — DFColor.forge (#0050D5) 와 정합.
+        ctx.setFillColor(CGColor(red: 0.000, green: 0.314, blue: 0.835, alpha: 1.0))
+        ctx.fill(rect)
 
-        // 내부 inner shadow (subtle depth). top-edge darker.
-        let innerShadowPath = CGMutablePath()
-        innerShadowPath.addPath(bgPath)
-        ctx.setStrokeColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.10))
-        ctx.setLineWidth(size.width * 0.012)
+        // 매우 미묘한 top-edge inner highlight — depth 단서.
+        let highlight = CGColor(red: 1, green: 1, blue: 1, alpha: 0.08)
+        ctx.setStrokeColor(highlight)
+        ctx.setLineWidth(size.width * 0.006)
         ctx.addPath(bgPath)
         ctx.strokePath()
 
         ctx.restoreGState()
     }
 
-    // MARK: - OP glyphs (geometric white shapes)
+    // MARK: - OP glyphs (slim outline strokes)
 
-    /// 두 글자 OP — 도넛(O) + stem+head(P). 모두 흰색 단일톤.
-    /// 캔버스 1024 기준 비례 좌표 → 다른 size 에서도 동일하게 scale.
+    /// 두 글자 OP — 모두 흰색 thin stroke. 1024 기준 두께 30pt (기존 100pt → 1/3 슬림).
+    /// 비례 좌표 → 다른 size 에서도 동일하게 scale.
     private static func drawOPGlyphs(in ctx: CGContext, size: CGSize) {
         let s = size.width
-        let unit = s / 1024.0  // 1024 기준 unit.
+        let unit = s / 1024.0
+        let stroke = 30 * unit
+        let white = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
 
-        // 글자 영역 — 캔버스 중앙 60% (좌우 20% margin, 상하 25% margin).
-        // 가로: 두 글자 + gap. 세로: 약 540pt (high) (1024 의 53%).
-        // 두 글자가 합쳐 약 740pt 폭 차지 (캔버스 72%).
-
-        // 흰색 + 약간의 soft shadow 로 깊이.
         ctx.saveGState()
+        // Subtle shadow — depth + crispness on bright background.
         ctx.setShadow(
-            offset: CGSize(width: 0, height: -8 * unit),
-            blur: 16 * unit,
-            color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.15)
+            offset: CGSize(width: 0, height: -3 * unit),
+            blur: 6 * unit,
+            color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.12)
         )
 
-        // === O (도넛) — 좌측 ===
-        // 외경 ø = 400pt, 내경 ø = 200pt (두께 100pt = ø의 25%).
-        let oCenter = CGPoint(x: 305 * unit, y: 512 * unit)
-        let oOuter = 200 * unit
-        let oInner = 100 * unit
-        drawDonut(in: ctx, center: oCenter, outerRadius: oOuter, innerRadius: oInner)
+        // === O (얇은 도넛) — 좌측 ===
+        // 외경 ø=280pt → r=140, 두께 30pt → 내경 ø=220pt r=110.
+        let oCenter = CGPoint(x: 345 * unit, y: 512 * unit)
+        let oRadius = 140 * unit
+        strokeRing(in: ctx, center: oCenter, outerRadius: oRadius, thickness: stroke, color: white)
 
-        // === P (stem + head) — 우측 ===
-        // Stem: 수직 막대 (x=580, y=312~712, 즉 두께 100pt × 높이 400pt).
-        // Head: 위쪽 도넛 (head center y = 612, outer ø=260, inner ø=130).
-        let pStemX = 580 * unit
-        let pStemBottomY = 312 * unit
-        let pStemHeight = 400 * unit
-        let pStemThickness = 100 * unit
+        // === P (얇은 stem + thin head ring) — 우측 ===
+        // Stem: 수직 막대 (두께 30pt × 높이 280pt). pStem center x = 540.
+        // Head ring: 외경 ø=140pt r=70, 두께 30pt → 내경 ø=80pt r=40.
+        let pStemX: CGFloat = 540 * unit
+        let pStemBottomY: CGFloat = 372 * unit
+        let pStemHeight: CGFloat = 280 * unit
 
-        // P stem — rounded rectangle (bottom rounded for soft termination).
+        // P stem — rounded rectangle (양 끝 rounded).
         let stemRect = CGRect(
             x: pStemX,
             y: pStemBottomY,
-            width: pStemThickness,
+            width: stroke,
             height: pStemHeight
         )
         let stemPath = CGPath(
             roundedRect: stemRect,
-            cornerWidth: pStemThickness * 0.5,
-            cornerHeight: pStemThickness * 0.5,
+            cornerWidth: stroke * 0.5,
+            cornerHeight: stroke * 0.5,
             transform: nil
         )
-        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
+        ctx.setFillColor(white)
         ctx.addPath(stemPath)
         ctx.fillPath()
 
-        // P head — 위쪽 도넛, stem 의 위 절반과 겹침.
-        let pHeadCenter = CGPoint(x: (pStemX + pStemThickness) + 50 * unit, y: 612 * unit)
-        let pHeadOuter = 130 * unit
-        let pHeadInner = 60 * unit
-        drawDonut(in: ctx, center: pHeadCenter, outerRadius: pHeadOuter, innerRadius: pHeadInner)
+        // P head — stem 위쪽과 자연스럽게 결합. center x = stem 우측 + 우반경.
+        let pHeadCenter = CGPoint(
+            x: pStemX + stroke + 70 * unit,
+            y: pStemBottomY + pStemHeight - 70 * unit
+        )
+        strokeRing(in: ctx, center: pHeadCenter, outerRadius: 70 * unit, thickness: stroke, color: white)
 
         ctx.restoreGState()
     }
 
-    /// 도넛 (외경/내경 두 동심원 — even-odd fill rule).
-    private static func drawDonut(
+    /// 동심원 도넛 — 외경/내경 (= 외경 - thickness×2) 두 ring.
+    /// even-odd fill rule 로 가운데 hole.
+    private static func strokeRing(
         in ctx: CGContext,
         center: CGPoint,
         outerRadius: CGFloat,
-        innerRadius: CGFloat
+        thickness: CGFloat,
+        color: CGColor
     ) {
+        let innerRadius = max(0, outerRadius - thickness)
         let outerRect = CGRect(
             x: center.x - outerRadius,
             y: center.y - outerRadius,
@@ -170,7 +148,7 @@ public enum AppIcon {
         let path = CGMutablePath()
         path.addEllipse(in: outerRect)
         path.addEllipse(in: innerRect)
-        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
+        ctx.setFillColor(color)
         ctx.addPath(path)
         ctx.fillPath(using: .evenOdd)
     }

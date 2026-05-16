@@ -26,8 +26,11 @@ public enum DFColor {
 
     // MARK: - Accent
     public static let accent = Color(light: "#0A84FF", dark: "#0A84FF")
-    /// 브랜드 (로봇 / 모션 강조)
-    public static let forge = Color(light: "#FF6A00", dark: "#FF8A3D")
+    /// 브랜드 (로봇 / 모션 강조).
+    /// **2026-05-16**: orange 계열 (#FF6A00) → blue 계열 (#0050D5). 메인 컬러 통일.
+    /// `DFColor.accent` (system blue #0A84FF) 와 구분되는 짙은 brand blue —
+    /// 같은 파랑 계열이지만 더 진해 brand identity 유지.
+    public static let forge = Color(light: "#0050D5", dark: "#3F8CFF")
 
     // MARK: - State (KS S ISO 7010 매핑 + WCAG High Contrast 변형)
     //
