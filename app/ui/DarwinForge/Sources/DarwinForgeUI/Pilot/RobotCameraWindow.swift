@@ -16,7 +16,8 @@ import SwiftUI
 ///
 /// # 단축키
 ///
-/// ⌘⇧C — 카메라 윈도우 열기 / 토글 (`DarwinForgeApp.commands`).
+/// ⌘⌥C — 카메라 윈도우 열기 / 활성화 (`DarwinForgeApp.commands` 의
+/// `OpenCameraWindowButton`). ⌘⇧C 는 "자동 USB 연결" 단축키 점유로 회피.
 ///
 /// # UX
 ///
@@ -48,7 +49,13 @@ public struct RobotCameraWindow: View {
         .frame(minWidth: 480, idealWidth: 720, maxWidth: .infinity,
                minHeight: 360, idealHeight: 540, maxHeight: .infinity)
         .background(DFColor.canvas)
-        .onAppear { startFpsTimer() }
+        .onAppear {
+            // Codex 권고 (2026-05-16): RobotCameraWindow 는 detection overlay 사용 안
+            // 함 — `BallVision` / `MultiColorVision` 계산 비용 (~10-30ms/frame) 절약.
+            // PilotCameraView 는 detection 활성 유지 (HUD overlay).
+            client.detectionEnabled = false
+            startFpsTimer()
+        }
         .onDisappear {
             fpsTimer?.cancel()
             client.stop(resetImage: false)
@@ -225,6 +232,12 @@ public struct RobotCameraWindow: View {
     // MARK: - Actions
 
     private func startStream() {
+        // Codex MEDIUM fix (2026-05-16): fps 계산 변수 reset — 빠른 재시작 시 잔상값
+        // 으로 fps 가 몇 초간 0 또는 옛 평균 잘못 표시되는 회귀 차단.
+        fps = 0
+        lastFramesCount = 0
+        lastFpsSampleAt = Date()
+
         let endpoint = PilotCameraEndpoint(host: host, port: UInt16(clamping: port))
         client.start(endpoint: endpoint)
     }

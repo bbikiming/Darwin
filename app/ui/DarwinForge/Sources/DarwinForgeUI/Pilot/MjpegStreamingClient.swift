@@ -98,9 +98,20 @@ public final class MjpegStreamingClient: ObservableObject {
         task?.cancel()
     }
 
-    /// 스트림 시작. 이미 같은 endpoint 면 no-op.
+    /// 스트림 시작.
+    ///
+    /// **Codex HIGH fix (2026-05-16)**: 종전 `self.endpoint == endpoint && task != nil`
+    /// no-op 조건이 `runStream` 종료 후에도 `task` 가 nil 안 됐을 때 재연결 버튼을
+    /// 막아버림 (failed phase 에서도 같은 endpoint 재시도 무력화). 새 guard:
+    /// **`.connecting` / `.live` 일 때만 no-op**. idle / failed 는 새 task 생성.
     public func start(endpoint: PilotCameraEndpoint) {
-        if self.endpoint == endpoint, task != nil { return }
+        // 활성 stream 중복 시도만 차단. failed / idle 상태는 명시 재시도 허용.
+        if self.endpoint == endpoint, task != nil {
+            switch phase {
+            case .connecting, .live: return
+            case .idle, .failed: break
+            }
+        }
 
         stop(resetImage: false)
         self.endpoint = endpoint
@@ -109,6 +120,9 @@ public final class MjpegStreamingClient: ObservableObject {
         task = Task { [weak self] in
             guard let self else { return }
             await self.runStream(endpoint: endpoint)
+            // Codex HIGH fix: 자연 종료 (정상/에러/cancel) 시 task 변수 정리 — 다음
+            // start() 가 새 task 생성 가능. 미정리 시 같은 endpoint 재연결 막힘.
+            self.task = nil
         }
     }
 
@@ -124,11 +138,14 @@ public final class MjpegStreamingClient: ObservableObject {
         if resetImage { image = nil }
     }
 
-    // MARK: - Stream loop
+    // MARK: - Stream loop (background)
 
-    private func runStream(endpoint: PilotCameraEndpoint) async {
+    /// **Codex HIGH fix (2026-05-16)**: `nonisolated` — byte loop / JPEG decode /
+    /// vision detection 모두 background thread. UI 입력 / 메뉴 / 정지 버튼 응답성
+    /// 보장. `@Published` 갱신만 `MainActor.run` 으로 hop.
+    nonisolated private func runStream(endpoint: PilotCameraEndpoint) async {
         guard let url = endpoint.streamURL else {
-            phase = .failed(.invalidURL)
+            await reportPhase(.failed(.invalidURL))
             return
         }
 
@@ -137,37 +154,43 @@ public final class MjpegStreamingClient: ObservableObject {
         // Apple URLSession 이 자동 Keep-alive — 추가 헤더 불필요.
 
         do {
+            // session 은 immutable property — nonisolated 안전 capture.
+            let session = self.session
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {
-                phase = .failed(.other("응답 형식 오류"))
+                await reportPhase(.failed(.other("응답 형식 오류")))
                 return
             }
             guard (200..<300).contains(http.statusCode) else {
-                phase = .failed(.httpStatus(http.statusCode))
+                await reportPhase(.failed(.httpStatus(http.statusCode)))
                 return
             }
             let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? ""
             guard let boundary = Self.boundary(fromContentType: contentType) else {
                 // stream endpoint 미지원 (ROBOTIS demo 가 snapshot 만 노출하는 경우 등).
-                // 호출자가 snapshot client 로 fallback.
-                phase = .failed(.decodeFailed)
+                await reportPhase(.failed(.decodeFailed))
                 return
             }
 
-            phase = .live
+            await reportPhase(.live)
             await parseFrames(bytes: bytes, boundary: boundary)
             // stream 자연 종료 (서버 close 또는 cancel).
             if !Task.isCancelled {
-                phase = .idle
+                await reportPhase(.idle)
             }
         } catch is CancellationError {
-            phase = .idle
+            await reportPhase(.idle)
         } catch {
-            phase = .failed(.from(error: error))
+            await reportPhase(.failed(.from(error: error)))
         }
     }
 
-    // MARK: - Multipart parser
+    /// MainActor hop helper — nonisolated background 가 `@Published phase` 갱신용.
+    private func reportPhase(_ newValue: Phase) {
+        self.phase = newValue
+    }
+
+    // MARK: - Multipart parser (background)
 
     private enum ParseState {
         case seekingBoundary
@@ -175,7 +198,7 @@ public final class MjpegStreamingClient: ObservableObject {
         case readingJPEG
     }
 
-    private func parseFrames(bytes: URLSession.AsyncBytes, boundary: String) async {
+    nonisolated private func parseFrames(bytes: URLSession.AsyncBytes, boundary: String) async {
         let boundaryDelim = Array("--\(boundary)".utf8)
         let crlf2: [UInt8] = [0x0D, 0x0A, 0x0D, 0x0A]
 
@@ -253,32 +276,64 @@ public final class MjpegStreamingClient: ObservableObject {
         } catch is CancellationError {
             // ok — 호출자가 stop 또는 task cancel.
         } catch {
-            phase = .failed(.from(error: error))
+            await reportPhase(.failed(.from(error: error)))
         }
     }
 
-    // MARK: - Frame delivery
+    // MARK: - Frame delivery (background decode + detection, MainActor publish)
 
-    private func deliverFrame(data: Data) async {
-        guard let frame = NSImage(data: data) else {
+    /// JPEG → CGImage 디코딩 + vision detection 모두 background. main hop 은
+    /// publish 1 회 (NSImage 래핑 + `@Published` 갱신).
+    ///
+    /// **CGImage 경로**: `NSImage(data:)` / `BallVision.detect(in: NSImage)` 등 NSImage
+    /// 버전 API 는 `@MainActor` 격리됨 (Apple Cocoa Drawing thread-safety 보장 위해).
+    /// CGImage / CFData / CGImageSource 는 nonisolated thread-safe — background 사용 가능.
+    /// background 에서 CGImage 디코딩 + detection → main 에서 NSImage 래핑 후 binding.
+    nonisolated private func deliverFrame(data: Data) async {
+        // background: CGImage 디코딩 (NSImage 우회 — thread-safe).
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             // 디코딩 실패 1 frame 은 skip — stream 자체는 계속.
             return
         }
-        image = frame
-        framesReceived += 1
-        lastFrameAt = Date()
 
-        if detectionEnabled {
-            lastDetection = BallVision.detect(in: frame)
-            if let preset = hsvPreset {
-                multiColorDetections = MultiColorVision.detectAll(in: frame, preset: preset)
+        // detection 설정 main 에서 snapshot — stream 중 toggle / preset 변경 반영.
+        let snapshot = await readDetectionSnapshot()
+
+        let lastDet: BallVision.Detection?
+        let multiDets: [MultiColorVision.Detection]
+        if snapshot.enabled {
+            lastDet = BallVision.detect(in: cgImage)
+            if let preset = snapshot.preset {
+                multiDets = MultiColorVision.detectAll(in: cgImage, preset: preset)
             } else {
-                multiColorDetections = MultiColorVision.detectAll(in: frame)
+                multiDets = MultiColorVision.detectAll(in: cgImage)
             }
         } else {
-            if lastDetection != nil { lastDetection = nil }
-            if !multiColorDetections.isEmpty { multiColorDetections = [] }
+            lastDet = nil
+            multiDets = []
         }
+
+        await publishFrame(cgImage: cgImage, detection: lastDet, multi: multiDets)
+    }
+
+    /// MainActor hop — `detectionEnabled` / `hsvPreset` snapshot 읽기.
+    private func readDetectionSnapshot() -> (enabled: Bool, preset: VisionHsvPreset?) {
+        (detectionEnabled, hsvPreset)
+    }
+
+    /// MainActor hop — CGImage → NSImage 래핑 + `@Published` frame state 갱신.
+    private func publishFrame(
+        cgImage: CGImage,
+        detection: BallVision.Detection?,
+        multi: [MultiColorVision.Detection]
+    ) {
+        let size = NSSize(width: cgImage.width, height: cgImage.height)
+        self.image = NSImage(cgImage: cgImage, size: size)
+        framesReceived += 1
+        lastFrameAt = Date()
+        lastDetection = detection
+        multiColorDetections = multi
     }
 
     // MARK: - Header parsing helpers
@@ -287,7 +342,7 @@ public final class MjpegStreamingClient: ObservableObject {
     ///
     /// 예: `"multipart/x-mixed-replace; boundary=boundarydonotcross"` → `"boundarydonotcross"`
     /// 또는 `"multipart/x-mixed-replace;boundary=\"frame\""` → `"frame"`
-    static func boundary(fromContentType ct: String) -> String? {
+    nonisolated static func boundary(fromContentType ct: String) -> String? {
         let lower = ct.lowercased()
         guard lower.contains("multipart/x-mixed-replace") else { return nil }
         guard let r = ct.range(of: "boundary=", options: .caseInsensitive) else { return nil }
@@ -302,14 +357,17 @@ public final class MjpegStreamingClient: ObservableObject {
     }
 
     /// 헤더 블록에서 `Content-Length` 값 추출.
-    static func contentLength(fromHeaders headers: String) -> Int? {
+    nonisolated static func contentLength(fromHeaders headers: String) -> Int? {
         for line in headers.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
             let lower = line.lowercased()
             guard lower.hasPrefix("content-length:") else { continue }
             let parts = line.split(separator: ":", maxSplits: 1)
             guard parts.count == 2 else { continue }
             let value = parts[1].trimmingCharacters(in: .whitespaces)
-            if let n = Int(value), n > 0, n < 50_000_000 {
+            // Codex LOW fix (2026-05-16): 50MB → 5MB.
+            // ROBOTIS 카메라 320×240 quality 80 ≈ 수십~수백 KB. 5MB 면 1280×720
+            // quality 100 까지도 안전 + 악의 server / 손상 stream OOM 방어.
+            if let n = Int(value), n > 0, n < 5_000_000 {
                 return n
             }
         }
@@ -318,7 +376,7 @@ public final class MjpegStreamingClient: ObservableObject {
 
     /// `window` 의 마지막 N byte 가 `suffix` 와 일치하는지.
     /// boundary 검색용 — O(suffix.count).
-    static func windowEndsWith(_ window: [UInt8], suffix: [UInt8]) -> Bool {
+    nonisolated static func windowEndsWith(_ window: [UInt8], suffix: [UInt8]) -> Bool {
         if window.count < suffix.count { return false }
         let start = window.count - suffix.count
         for i in 0..<suffix.count {

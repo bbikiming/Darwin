@@ -10,13 +10,27 @@ import SwiftUI
 ///     complementary filter 라이브 데모, sliding-window 통계, CSV 익스포트.
 ///     monospaced + 고밀도 + 정밀 표기 + 키보드 드라이브.
 ///
+/// **데이터 소스 (2026-05-16 v1.1.1)**:
+///   - **미리보기 (Preview)**: `SyntheticImuGenerator` — Mac 안 `WalkEngine` 의
+///     발 trajectory 로부터 finite-diff + Gaussian noise 로 합성. 로봇 미연결에서도
+///     동작. preset 으로 6 가지 보행 모드 시각화. 보행 알고리즘 검증 + 필터 α 튜닝용.
+///   - **실측 (Live)**: `ConnectionStore.lastTelemetry.imu` — CM-740 register 38-49
+///     의 12-byte BULK READ (Bus.readImu → forge-core 의 `CmController::read_imu`).
+///     ConnectionStore 가 매 200ms (5Hz) 폴링. 로봇 연결 + IMU 응답 필요.
+///
 /// 레이아웃 (반응형):
-///   - 상단: 툴바 — Run/Pause/Step/Reset · 샘플레이트 · 단위 · 노이즈 · CSV
-///   - 좌측 (≥1100 width): WalkCommand + 합성 IMU 노이즈 + 필터 α
+///   - 상단: 툴바 — Run/Pause/Step/Reset · 모드 picker · 샘플레이트 · 단위 · CSV
+///   - 좌측 (≥1100 width): WalkCommand + (preview) 합성 IMU 노이즈 + 필터 α
 ///   - 가운데 (fill): gyro chart · accel chart · 필터 추정 chart · phase ribbon
 ///   - 우측 (≥1280 width): 라이브 numeric + 채널별 통계 (min/max/μ/σ/RMS) +
 ///                        최근 sample log
 public struct WalkDiagnosticsView: View {
+    // MARK: - Connection store (live mode IMU source)
+    @EnvironmentObject private var store: ConnectionStore
+
+    // MARK: - Data source mode
+    @State private var source: DiagnosticsSource = .preview
+
     // MARK: - State (Walk command)
     @State private var cmdX: Double = 0.0
     @State private var cmdY: Double = 0.0
@@ -29,6 +43,13 @@ public struct WalkDiagnosticsView: View {
     @State private var gyroNoiseSigma: Double = 0.02
     @State private var accelNoiseSigma: Double = 0.05
     @State private var filterAlpha: Double = 0.98
+
+    // MARK: - Live mode tracking
+    /// ConnectionStore.lastTelemetry 의 timestamp 가 변경됐을 때만 sample append.
+    /// 같은 ImuRaw 가 여러 번 publish 돼도 중복 append 방지.
+    @State private var lastLiveImuTimestamp: Date?
+    /// Live 모드 누적 시작 시각 — chart x 축 origin.
+    @State private var liveStartedAt: Date?
 
     // MARK: - Units
     @State private var unitGyro: GyroUnit = .radPerSec
@@ -67,6 +88,13 @@ public struct WalkDiagnosticsView: View {
     @State private var showExportToast: Bool = false
 
     public init() {}
+
+    /// `ConnectionStore.status == .connected(...)` pattern match helper.
+    /// `Status.connected(BoardSnapshot)` associated value 때문에 직접 `==` 비교 불가.
+    private var isStoreConnected: Bool {
+        if case .connected = store.status { return true }
+        return false
+    }
 
     public var body: some View {
         GeometryReader { geo in
@@ -110,14 +138,93 @@ public struct WalkDiagnosticsView: View {
         }
         .background(DFColor.canvas)
         .overlay(toast, alignment: .top)
+        .overlay(alignment: .top) {
+            // Live + 미연결 / IMU 미가용 시 차트 위에 안내 배너.
+            if source == .live {
+                if !isStoreConnected {
+                    liveDisconnectedBanner.padding(.top, 56)
+                } else if store.isImuUnavailable {
+                    liveImuUnavailableBanner.padding(.top, 56)
+                }
+            }
+        }
         .dfDensity(.dataDense)
+        // Live 모드: ConnectionStore 의 새 telemetry snapshot 마다 live append 호출.
+        // compactMap 으로 nil snap 은 skip; liveAppend 가 source/enabled/timestamp dedup 판단.
+        .onReceive(store.$lastTelemetry.compactMap { $0 }) { snap in
+            liveAppend(snap)
+        }
         .onDisappear { stop() }
+    }
+
+    // MARK: - Live mode banners
+
+    private var liveDisconnectedBanner: some View {
+        HStack(spacing: DFSpace.xs2) {
+            Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                .foregroundStyle(DFColor.textSecondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("로봇이 연결되어 있지 않습니다")
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
+                Text("좌측 사이드바의 ‘원격 명령’ 또는 ‘원격 조종’ 메뉴에서 로봇을 연결하면 실측 IMU 가 차트에 표시됩니다.")
+                    .font(.system(size: DFFontSize.s9))
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.md)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 0.5)
+        )
+    }
+
+    private var liveImuUnavailableBanner: some View {
+        HStack(spacing: DFSpace.xs2) {
+            Image(systemName: "sensor.tag.radiowaves.forward.slash")
+                .foregroundStyle(DFColor.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("IMU 응답 없음")
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
+                Text("로봇은 연결되어 있으나 CM-740 IMU register (38-49) 가 응답하지 않습니다. 펌웨어/모델을 확인하세요.")
+                    .font(.system(size: DFFontSize.s9))
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.md)
+                .stroke(DFColor.warning.opacity(DFOpacity.o45), lineWidth: 0.5)
+        )
     }
 
     // MARK: - Toolbar
 
     private var toolbar: some View {
         HStack(spacing: DFSpace.md) {
+            // Mode picker (preview / live) — 보행 진단의 데이터 소스 선택.
+            HStack(spacing: DFSpace.xs2) {
+                Picker("", selection: $source) {
+                    ForEach(DiagnosticsSource.allCases) { src in
+                        Label(src.label, systemImage: src.icon).tag(src)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .labelsHidden()
+                .frame(width: 200)
+                .onChange(of: source) { _, _ in
+                    // 모드 전환 = 데이터 의미가 달라짐 → 차트 초기화.
+                    stop()
+                    reset()
+                }
+            }
+
+            Divider().frame(height: 22)
+
             // Run / Pause / Step / Reset
             HStack(spacing: DFSpace.xs2) {
                 DFButton(.primary, size: .small, action: toggleRun) {
@@ -127,13 +234,14 @@ public struct WalkDiagnosticsView: View {
                     }
                 }
                 .keyboardShortcut(.space, modifiers: [])
+                .disabled(source == .live && !isStoreConnected)
                 DFButton(.secondary, size: .small, action: stepOnce) {
                     HStack(spacing: DFSpace.xs) {
                         Image(systemName: "forward.frame.fill")
                         Text("스텝")
                     }
                 }
-                .disabled(enabled)
+                .disabled(enabled || source == .live)  // live 는 폴링 cadence 고정.
                 DFButton(.ghost, size: .small, action: reset) {
                     HStack(spacing: DFSpace.xs) {
                         Image(systemName: "arrow.counterclockwise")
@@ -144,19 +252,26 @@ public struct WalkDiagnosticsView: View {
 
             Divider().frame(height: 22)
 
-            // Sample rate
+            // Sample rate — preview 에서만 의미가 있음. live 는 ConnectionStore 폴링에 종속.
             HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "metronome").foregroundStyle(DFColor.textSecondary)
-                Picker("", selection: $sampleRateHz) {
-                    Text("50 Hz").tag(50)
-                    Text("100 Hz").tag(100)
-                    Text("200 Hz").tag(200)
+                if source == .preview {
+                    Picker("", selection: $sampleRateHz) {
+                        Text("50 Hz").tag(50)
+                        Text("100 Hz").tag(100)
+                        Text("200 Hz").tag(200)
+                    }
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .frame(width: 86)
+                    .onChange(of: sampleRateHz) { _, _ in if enabled { restart() } }
+                } else {
+                    Text("5 Hz")
+                        .font(.system(size: DFFontSize.s10, design: .monospaced))
+                        .foregroundStyle(DFColor.textSecondary)
+                        .help("실측 모드는 ConnectionStore 의 5Hz 폴링 cadence 에 종속")
                 }
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .labelsHidden()
-                .frame(width: 86)
-                .onChange(of: sampleRateHz) { _, _ in if enabled { restart() } }
             }
 
             Divider().frame(height: 22)
@@ -201,7 +316,20 @@ public struct WalkDiagnosticsView: View {
 
     private var statusPill: some View {
         let on = enabled
+        let modeTint: Color = source == .preview ? DFColor.info : DFColor.success
+        let modeTag: String = source == .preview ? "PREVIEW" : "LIVE"
         return HStack(spacing: DFSpace.xs2) {
+            // 모드 배지 — 합성/실측 구분.
+            Text(modeTag)
+                .font(.system(size: DFFontSize.s9, weight: .black, design: .monospaced))
+                .foregroundStyle(modeTint)
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(
+                    RoundedRectangle(cornerRadius: 2)
+                        .stroke(modeTint, lineWidth: 0.8)
+                )
+            Text("·").foregroundStyle(DFColor.textSecondary)
+            // 동작 상태.
             Circle()
                 .fill(on ? DFColor.success : DFColor.textSecondary)
                 .frame(width: 7, height: 7)
@@ -220,7 +348,7 @@ public struct WalkDiagnosticsView: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 4)
         .background(Capsule().fill(DFColor.elev2))
-        .overlay(Capsule().stroke(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 0.5))
+        .overlay(Capsule().stroke(modeTint.opacity(DFOpacity.o40), lineWidth: 0.5))
     }
 
     // MARK: - Left panel (input controls)
@@ -229,11 +357,63 @@ public struct WalkDiagnosticsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DFSpace.md) {
                 commandCard
-                noiseCard
+                if source == .preview {
+                    noiseCard
+                } else {
+                    liveSourceCard
+                }
                 filterCard
                 channelToggleCard
             }
         }
+    }
+
+    /// Live 모드 좌측 패널 카드 — IMU 데이터 소스/스케일/캘리브레이션 메타 정보 표시.
+    private var liveSourceCard: some View {
+        DFPanel(
+            "Live IMU",
+            subtitle: "CM-740 register 38-49",
+            icon: "antenna.radiowaves.left.and.right",
+            tint: DFColor.success
+        ) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
+                liveMetaRow("연결", isStoreConnected ? "OK" : "OFFLINE",
+                            color: isStoreConnected ? DFColor.success : DFColor.warning)
+                liveMetaRow("IMU 폴링", "5 Hz (ConnectionStore)")
+                liveMetaRow("최근 성공",
+                            store.lastImuSuccessAt.map { Self.fmtRel($0) } ?? "—")
+                liveMetaRow("연속 실패", "\(store.imuConsecutiveFailures)")
+                liveMetaRow("변환 가정", "16-bit ±2000°/s · ±2g")
+                Divider().padding(.vertical, 2)
+                Text("스케일 가정은 v1.6 검증 예정 (cm.rs:166-184). 실 robot 정지 시 accel.z 가 ~9.81 m/s² 인지 확인.")
+                    .font(.system(size: DFFontSize.s9, design: .monospaced))
+                    .foregroundStyle(DFColor.textSecondary)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func liveMetaRow(_ label: String, _ value: String, color: Color = DFColor.textPrimary) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: DFFontSize.s9, design: .monospaced))
+                .foregroundStyle(DFColor.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: DFFontSize.s10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private static func fmtRel(_ d: Date) -> String {
+        let secs = -d.timeIntervalSinceNow
+        if secs < 1 { return "방금" }
+        if secs < 60 { return String(format: "%.0fs 전", secs) }
+        if secs < 3600 { return String(format: "%.0fm 전", secs / 60) }
+        return String(format: "%.0fh 전", secs / 3600)
     }
 
     private var commandCard: some View {
@@ -595,12 +775,22 @@ public struct WalkDiagnosticsView: View {
     }
 
     private func start() {
-        enabled = true
-        pushCommand()
-        ticker?.invalidate()
-        let dt = 1.0 / Double(sampleRateHz)
-        ticker = Timer.scheduledTimer(withTimeInterval: dt, repeats: true) { _ in
-            Task { @MainActor in tick(dt: dt) }
+        switch source {
+        case .preview:
+            enabled = true
+            pushCommand()
+            ticker?.invalidate()
+            let dt = 1.0 / Double(sampleRateHz)
+            ticker = Timer.scheduledTimer(withTimeInterval: dt, repeats: true) { _ in
+                Task { @MainActor in previewTick(dt: dt) }
+            }
+        case .live:
+            // 실측 모드는 ConnectionStore 가 이미 백그라운드에서 폴링 중.
+            // 여기서는 "기록 활성화" flag 만 켜고 onReceive 가 append 를 수행.
+            guard isStoreConnected else { return }
+            enabled = true
+            liveStartedAt = Date()
+            lastLiveImuTimestamp = nil
         }
     }
 
@@ -608,7 +798,9 @@ public struct WalkDiagnosticsView: View {
         enabled = false
         ticker?.invalidate()
         ticker = nil
-        engine.setCommand(x: cmdX, y: cmdY, a: cmdA, enabled: false)
+        if source == .preview {
+            engine.setCommand(x: cmdX, y: cmdY, a: cmdA, enabled: false)
+        }
     }
 
     private func restart() {
@@ -622,22 +814,31 @@ public struct WalkDiagnosticsView: View {
         lastFoot = nil
         filter.reset()
         engine = WalkEngine()
+        liveStartedAt = nil
+        lastLiveImuTimestamp = nil
         data.clear()
     }
 
     private func pushCommand() {
+        // Walk command 는 미리보기(Mac WalkEngine) 에만 의미. 실측 모드에선 no-op —
+        // 실 로봇에 명령 전송은 별도 wiring (원격 명령 메뉴) 의 책임.
+        guard source == .preview else { return }
         engine.setCommand(x: cmdX, y: cmdY, a: cmdA, enabled: enabled)
     }
 
     private func stepOnce() {
+        guard source == .preview else { return }
         let dt = 1.0 / Double(sampleRateHz)
         // 한 번만 켰다 끄기 — engine 의 tick 은 enabled 와 무관하지만 일관성 위해.
         engine.setCommand(x: cmdX, y: cmdY, a: cmdA, enabled: true)
-        tick(dt: dt)
+        previewTick(dt: dt)
         engine.setCommand(x: cmdX, y: cmdY, a: cmdA, enabled: false)
     }
 
-    private func tick(dt: Double) {
+    // MARK: - Tick handlers per source
+
+    /// 미리보기 모드 — WalkEngine + SyntheticImuGenerator 으로 합성 sample 생성.
+    private func previewTick(dt: Double) {
         let dtMs = UInt32(max(1, Int(dt * 1000)))
         let foot = engine.tick(dtMs: dtMs)
         simTime += dt
@@ -657,6 +858,63 @@ public struct WalkDiagnosticsView: View {
             filterRoll: filter.rollRad, filterPitch: filter.pitchRad,
             accRoll: accRoll, accPitch: accPitch,
             phase: foot.phase, foot: foot
+        )
+    }
+
+    /// 실측 모드 — `TelemetrySnapshot` 의 새 IMU sample 을 chart 버퍼에 append.
+    /// onReceive 에서 호출. `enabled == true` 일 때만 기록 (사용자가 "▶ 실행" 누른 상태).
+    ///
+    /// **변환**: forge-core 의 `ImuRaw` 는 16-bit signed ±2000°/s / ±2g 가정. cm.rs:166-184
+    /// 의 변환식은 v1.6 검증 예정 — 실 robot 정지 시 accel_z 가 16384 (16-bit) 인지 512
+    /// (10-bit) 인지로 결정. 일단 forge-core 가 주는 helper (gyroXDps, …) 그대로 사용.
+    private func liveAppend(_ snap: TelemetrySnapshot) {
+        guard source == .live, enabled, let imu = snap.imu else { return }
+        // ConnectionStore 가 같은 sample 을 publish 할 수도 있어 timestamp 기준 dedup.
+        if let last = lastLiveImuTimestamp, snap.timestamp <= last { return }
+        lastLiveImuTimestamp = snap.timestamp
+
+        let start = liveStartedAt ?? snap.timestamp
+        if liveStartedAt == nil { liveStartedAt = start }
+        let t = snap.timestamp.timeIntervalSince(start)
+        simTime = t
+
+        // ImuRaw → SI units. gyroXDps 는 °/s → rad/s 변환.
+        let degToRad = Double.pi / 180.0
+        let gyro = SIMD3<Double>(
+            imu.gyroXDps * degToRad,
+            imu.gyroYDps * degToRad,
+            imu.gyroZDps * degToRad
+        )
+        // accel: g → m/s².
+        let gToMs2 = 9.80665
+        let accel = SIMD3<Double>(
+            Double(imu.accelX) * 2.0 / 32767.0 * gToMs2,
+            Double(imu.accelY) * 2.0 / 32767.0 * gToMs2,
+            Double(imu.accelZ) * 2.0 / 32767.0 * gToMs2
+        )
+
+        // dt 추정: 직전 sample 과의 timestamp 간격. 첫 sample 은 5Hz 가정.
+        let dt: Double
+        if data.gyroX.samples.last?.t != nil, let prevT = data.gyroX.samples.last?.t {
+            dt = max(0.001, t - prevT)
+        } else {
+            dt = 0.2  // ConnectionStore default cadence.
+        }
+
+        // ComplementaryFilterSwift 는 preview 와 공유 — live 에서도 동일 필터 시각화.
+        let imuSample = ImuSampleSwift(gyro: gyro, accel: accel)
+        filter.update(imuSample, dtSeconds: dt)
+
+        let accRoll  = atan2(accel.y, accel.z)
+        let accPitch = atan2(-accel.x, (accel.y * accel.y + accel.z * accel.z).squareRoot())
+
+        // 실측 모드는 WalkEngine phase 가 없음 — phase0 (idle) 로 표기. foot=nil.
+        data.append(
+            t: t, idCounter: &sampleId,
+            gyro: gyro, accel: accel,
+            filterRoll: filter.rollRad, filterPitch: filter.pitchRad,
+            accRoll: accRoll, accPitch: accPitch,
+            phase: .phase0, foot: nil
         )
     }
 
@@ -757,6 +1015,43 @@ public enum AngleUnit: UnitConvertible {
     public func convert(_ v: Double) -> Double { self == .radians ? v : v * 180.0 / .pi }
 }
 
+// MARK: - Data source mode
+
+/// 보행 진단의 데이터 소스. UI 상에서 "미리보기" / "실측" 두 가지로 노출.
+///
+/// - **preview**: SyntheticImuGenerator — `WalkEngine` 발 trajectory finite-diff +
+///   Gaussian noise. 로봇 미연결에서도 동작 (보행 알고리즘 시각화 + 필터 튜닝용).
+/// - **live**: `ConnectionStore.lastTelemetry?.imu` — CM-740 register 38-49 BULK READ.
+///   ConnectionStore 폴링 cadence (현재 5Hz) 에 의존. 로봇 연결 + IMU 응답 필요.
+public enum DiagnosticsSource: String, CaseIterable, Identifiable {
+    case preview
+    case live
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .preview: return "미리보기"
+        case .live:    return "실측"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .preview: return "play.tv"
+        case .live:    return "antenna.radiowaves.left.and.right"
+        }
+    }
+
+    /// 사용자에게 보일 한 줄 설명 — toolbar 우측 status badge 아래.
+    public var subtitle: String {
+        switch self {
+        case .preview: return "합성 시뮬레이션 — 로봇 불필요"
+        case .live:    return "CM-740 IMU 5Hz 실측"
+        }
+    }
+}
+
 // MARK: - Data store
 
 @MainActor
@@ -776,11 +1071,13 @@ final class WalkDiagnosticsData: ObservableObject {
     @Published var recentLog: [String] = []
     private var nextPhaseId: Int = 0
 
+    /// IMU sample append. `foot` 은 preview 모드에서만 의미 (recentLog 의 L.z/R.z 표시) —
+    /// live 모드에선 nil (FootTargets 가 internal init 만 노출 + 실 발 위치는 모르므로).
     func append(t: Double, idCounter: inout Int,
                 gyro: SIMD3<Double>, accel: SIMD3<Double>,
                 filterRoll: Double, filterPitch: Double,
                 accRoll: Double, accPitch: Double,
-                phase: WalkPhase, foot: FootTargets) {
+                phase: WalkPhase, foot: FootTargets?) {
         gyroX.append(t: t, v: gyro.x)
         gyroY.append(t: t, v: gyro.y)
         gyroZ.append(t: t, v: gyro.z)
@@ -799,12 +1096,18 @@ final class WalkDiagnosticsData: ObservableObject {
         }
 
         idCounter += 1
+        let footTail: String
+        if let f = foot {
+            footTail = String(format: " L.z=%+.3f R.z=%+.3f", f.leftXYZ.z, f.rightXYZ.z)
+        } else {
+            footTail = ""
+        }
         let line = String(
-            format: "%6.3fs ph=%d g=(%+6.3f %+6.3f %+6.3f) a=(%+6.2f %+6.2f %+6.2f) L.z=%+.3f R.z=%+.3f",
+            format: "%6.3fs ph=%d g=(%+6.3f %+6.3f %+6.3f) a=(%+6.2f %+6.2f %+6.2f)%@",
             t, phase.rawValue,
             gyro.x, gyro.y, gyro.z,
             accel.x, accel.y, accel.z,
-            foot.leftXYZ.z, foot.rightXYZ.z
+            footTail as NSString
         )
         recentLog.append(line)
         if recentLog.count > 32 { recentLog.removeFirst(recentLog.count - 32) }
