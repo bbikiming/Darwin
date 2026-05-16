@@ -638,6 +638,59 @@ final class WalkLabFallPreventionTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: key)
     }
 
+    // MARK: - 시인성 강화 (2026-05-16)
+
+    /// **DFColor.severe** — warning ↔ danger intermediate semantic.
+    /// 5-tier 안전 색 매핑에서 새 단계.
+    func testSevereColorExists() {
+        // 컴파일 가능 == 토큰 존재.
+        let _ = DFColor.severe
+    }
+
+    /// **DFIcon.hero/section/body/caption/label/micro** — icon 시스템.
+    func testDFIconTokensExist() {
+        let _ = DFIcon.hero
+        let _ = DFIcon.section
+        let _ = DFIcon.body
+        let _ = DFIcon.caption
+        let _ = DFIcon.label
+        let _ = DFIcon.micro
+        let _ = DFIcon.action
+        let _ = DFIcon.stateSmall
+        let _ = DFIcon.stateMedium
+        let _ = DFIcon.stateLarge
+    }
+
+    /// **DFAnimation semantic alias** — toggle/cardExpand/modalPresent 등.
+    func testDFAnimationSemanticAliases() {
+        let _ = DFAnimation.toggle
+        let _ = DFAnimation.cardExpand
+        let _ = DFAnimation.modalPresent
+        let _ = DFAnimation.listChange
+        let _ = DFAnimation.pageTransition
+        let _ = DFAnimation.emphasis
+        let _ = DFAnimation.hover
+    }
+
+    /// **DFRadius / DFSpace 시맨틱 alias** — fragmentation 해결.
+    func testSemanticAliasesExist() {
+        // DFSpace
+        XCTAssertEqual(DFSpace.pillV, DFSpace.xs2)
+        XCTAssertEqual(DFSpace.pillH, DFSpace.sm3)
+        XCTAssertEqual(DFSpace.toolbarGap, DFSpace.sm2)
+        XCTAssertEqual(DFSpace.cardInner, DFSpace.md)
+        XCTAssertEqual(DFSpace.cardInnerCompact, DFSpace.sm)
+        XCTAssertEqual(DFSpace.modalInner, DFSpace.md2)
+        // DFRadius
+        XCTAssertEqual(DFRadius.button, DFRadius.xs2)
+        XCTAssertEqual(DFRadius.statusTile, DFRadius.xs)
+        XCTAssertEqual(DFRadius.card, DFRadius.sm)
+        XCTAssertEqual(DFRadius.panel, DFRadius.md)
+        XCTAssertEqual(DFRadius.modal, DFRadius.lg)
+        XCTAssertEqual(DFRadius.hero, DFRadius.xl)
+        XCTAssertEqual(DFRadius.capsule, DFRadius.full)
+    }
+
     /// **새 세션이 이전 상태 복원** — 앱 재시작 시뮬레이션.
     func testNewSessionRestoresMonitoringState() {
         let key = "df.walklab.monitoringExpanded"

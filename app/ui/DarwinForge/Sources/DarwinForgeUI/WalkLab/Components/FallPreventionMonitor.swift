@@ -155,10 +155,40 @@ struct FallPreventionMonitor: View {
         .background(color.opacity(DFOpacity.o10))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.button)
-                .stroke(color.opacity(DFOpacity.o35),
-                        lineWidth: DFSize.borderHairline)
+                .stroke(color.opacity(pulseStrokeAlpha(for: state)),
+                        lineWidth: state >= .danger ? 1.0 : DFSize.borderHairline)
         )
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
+        // **2026-05-16 시인성**: state 변경 시 smooth color transition.
+        .animation(DFAnimation.standard, value: state)
+        // **2026-05-16 시인성**: emergency / danger 시 subtle pulse.
+        // Reduce Motion ON 시 SwiftUI 자동 disable.
+        .onAppear {
+            if state >= .danger { startEmergencyPulse() }
+        }
+        .onChange(of: state) { _, newState in
+            if newState >= .danger {
+                startEmergencyPulse()
+            } else {
+                emergencyPulse = false
+            }
+        }
+    }
+
+    @State private var emergencyPulse: Bool = false
+
+    /// Pulse 활성 시 더 강한 stroke alpha (60%) — 부드러운 사이클.
+    private func pulseStrokeAlpha(for state: WalkLabSession.BalanceState) -> Double {
+        if state >= .danger {
+            return emergencyPulse ? DFOpacity.o60 : DFOpacity.o35
+        }
+        return DFOpacity.o35
+    }
+
+    private func startEmergencyPulse() {
+        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+            emergencyPulse = true
+        }
     }
 
     // MARK: - 2. 6-Layer status grid
@@ -504,6 +534,21 @@ struct FallPreventionMonitor: View {
                     Rectangle()
                         .fill(DFColor.textSecondary.opacity(DFOpacity.o10))
                         .frame(height: DFSize.barTrackH)
+                    // **2026-05-16 시인성**: threshold tick marks at ±5° / ±10°.
+                    // 사용자가 보정 magnitude 즉시 비교 가능.
+                    ForEach([5.0, 10.0], id: \.self) { tickDeg in
+                        let tickFrac = tickDeg / maxAbs
+                        // 양수 쪽 tick.
+                        Rectangle()
+                            .fill(DFColor.textSecondary.opacity(DFOpacity.o25))
+                            .frame(width: DFSize.borderHairline, height: 4)
+                            .offset(x: halfW + halfW * CGFloat(tickFrac))
+                        // 음수 쪽 tick.
+                        Rectangle()
+                            .fill(DFColor.textSecondary.opacity(DFOpacity.o25))
+                            .frame(width: DFSize.borderHairline, height: 4)
+                            .offset(x: halfW - halfW * CGFloat(tickFrac))
+                    }
                     // 양수 / 음수 deflection.
                     if isPositive {
                         Rectangle()
@@ -525,13 +570,15 @@ struct FallPreventionMonitor: View {
                         .offset(x: halfW - DFSize.borderHairline / 2)
                 }
             }
-            .frame(height: DFSize.dot)
+            .frame(height: DFSize.dot + 2)  // tick (5pt) 위로 살짝 확장
             Text(String(format: "%+.2f°", value))
                 .font(DFFont.dataMicro)
                 .foregroundStyle(absVal > 0.05 ? color : DFColor.textSecondary)
                 .frame(width: Self.jointValueColW, alignment: .trailing)
                 .lineLimit(1)
         }
+        // **2026-05-16 시인성**: 보정 값 변경 시 부드러운 animation.
+        .animation(DFAnimation.standard, value: value)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(name) 보정 \(String(format: "%+.2f°", value))")
     }
@@ -575,10 +622,14 @@ struct FallPreventionMonitor: View {
             } else {
                 ScrollView {
                     VStack(spacing: DFSpace.micro) {
-                        ForEach(session.safetyEvents.reversed()) { evt in
-                            eventRow(evt)
+                        // **2026-05-16 시인성**: 최신 이벤트 (reversed 의 first) 강조.
+                        let reversed = Array(session.safetyEvents.reversed())
+                        ForEach(Array(reversed.enumerated()), id: \.element.id) { idx, evt in
+                            eventRow(evt, isNewest: idx == 0)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
+                    .animation(DFAnimation.listChange, value: session.safetyEvents.count)
                 }
                 .frame(maxHeight: Self.eventLogMaxH)
                 .accessibilityElement(children: .contain)
@@ -590,29 +641,42 @@ struct FallPreventionMonitor: View {
     /// 이벤트 로그 ScrollView 최대 높이 — 약 9 row × 15pt 가시 + scroll.
     private static let eventLogMaxH: CGFloat = 140
 
-    private func eventRow(_ evt: WalkLabSession.SafetyEvent) -> some View {
-        HStack(spacing: DFSpace.xs2) {
-            Image(systemName: eventIcon(evt.kind))
-                .font(DFFont.label)
-                .foregroundStyle(eventColor(evt.kind))
-                .frame(width: DFSize.iconCol)
+    private func eventRow(_ evt: WalkLabSession.SafetyEvent, isNewest: Bool) -> some View {
+        let severityColor = eventColor(evt.kind)
+        return HStack(spacing: 0) {
+            // **2026-05-16 시인성**: 좌측 severity stripe (3pt) — Philips IntelliVue 패턴.
+            // 색 + 라벨 분리 — 텍스트 옆 sticker 처럼 즉시 인식.
+            Rectangle()
+                .fill(severityColor)
+                .frame(width: DFSize.barTrackH)
                 .accessibilityHidden(true)
-            Text(timeString(evt.timestamp))
-                .font(DFFont.monoMicro)
-                .foregroundStyle(DFColor.textSecondary)
-                .frame(width: Self.eventTimeColW, alignment: .leading)
-            Text(evt.message)
-                .font(DFFont.label)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: eventIcon(evt.kind))
+                    .font(DFFont.label)
+                    .foregroundStyle(severityColor)
+                    .frame(width: DFSize.iconCol)
+                    .accessibilityHidden(true)
+                Text(timeString(evt.timestamp))
+                    .font(DFFont.monoMicro)
+                    .foregroundStyle(DFColor.textSecondary)
+                    .frame(width: Self.eventTimeColW, alignment: .leading)
+                Text(evt.message)
+                    .font(DFFont.label)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, DFSpace.xs)
+            .padding(.vertical, DFSpace.micro)
         }
-        .padding(.horizontal, DFSpace.xs)
-        .padding(.vertical, DFSpace.micro)
-        .background(eventColor(evt.kind).opacity(DFOpacity.o06))
+        // **2026-05-16 시인성**: 최신 이벤트 강조 — newest row 에 subtle bg.
+        // Twitter/X 의 새 트윗 highlight 패턴.
+        .background(isNewest
+            ? severityColor.opacity(DFOpacity.o12)
+            : severityColor.opacity(DFOpacity.o06))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.tiny))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(timeString(evt.timestamp)) \(evt.kind.rawValue) — \(evt.message)")
+        .accessibilityLabel("\(timeString(evt.timestamp)) \(evt.kind.rawValue) — \(evt.message)\(isNewest ? " (최신)" : "")")
     }
 
     /// 이벤트 로그 의 timestamp 컬럼 폭 — "HH:mm:ss" 8 char monospace.

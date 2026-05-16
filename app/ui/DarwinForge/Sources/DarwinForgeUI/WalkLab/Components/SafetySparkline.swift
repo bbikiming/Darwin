@@ -50,6 +50,8 @@ struct SafetySparkline: View {
                 Text(title)
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
+                // **2026-05-16 시인성**: 트렌드 화살표 — 최근 3 sample slope.
+                trendArrow
                 Spacer()
                 if let l = currentValueLabel {
                     Text(l)
@@ -59,21 +61,145 @@ struct SafetySparkline: View {
                 }
             }
             GeometryReader { geo in
-                Canvas { ctx, size in
-                    drawChart(ctx: ctx, size: size)
+                ZStack(alignment: .trailing) {
+                    Canvas { ctx, size in
+                        drawChart(ctx: ctx, size: size)
+                    }
+                    .background(DFColor.textSecondary.opacity(DFOpacity.o06).opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.statusTile))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DFRadius.statusTile)
+                            .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
+                                    lineWidth: DFSize.borderHairline)
+                    )
+                    .frame(width: geo.size.width, height: geo.size.height)
+
+                    // **2026-05-16 시인성**: 임계 값 라벨 (우측 끝).
+                    // NASA PFD 패턴 — pilot 가 정확한 threshold 값 즉시 인지.
+                    thresholdLabels(height: geo.size.height)
+
+                    // **2026-05-16 시인성**: empty state — 데이터 미수신 시.
+                    if samples.count < 2 {
+                        emptyStateOverlay
+                    }
                 }
-                .background(DFColor.textSecondary.opacity(DFOpacity.o06).opacity(0.7))
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DFRadius.xs)
-                        .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
-                                lineWidth: DFSize.borderHairline)
-                )
-                .frame(width: geo.size.width, height: geo.size.height)
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title) 시계열 — 현재 \(currentValueLabel ?? "값 없음")")
+        .accessibilityLabel("\(title) 시계열 — 현재 \(currentValueLabel ?? "값 없음")\(trendAccessibilityLabel)")
+    }
+
+    // MARK: - 시인성 helpers (2026-05-16)
+
+    /// 최근 3 sample 의 slope 기반 트렌드 — ↑ / → / ↓ Image.
+    /// Apple Health 패턴 — 트렌드 즉시 인지.
+    @ViewBuilder
+    private var trendArrow: some View {
+        let trend = computeTrend()
+        switch trend {
+        case .rising:
+            Image(systemName: "arrow.up.right")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.severe)
+                .accessibilityHidden(true)
+        case .falling:
+            Image(systemName: "arrow.down.right")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.success)
+                .accessibilityHidden(true)
+        case .flat:
+            Image(systemName: "arrow.right")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .accessibilityHidden(true)
+        case .unknown:
+            EmptyView()
+        }
+    }
+
+    private var trendAccessibilityLabel: String {
+        switch computeTrend() {
+        case .rising: return ", 트렌드 상승"
+        case .falling: return ", 트렌드 하강"
+        case .flat: return ", 트렌드 평탄"
+        case .unknown: return ""
+        }
+    }
+
+    private enum Trend { case rising, falling, flat, unknown }
+
+    /// 최근 3 sample 의 first→last delta. |delta| < 0.5 = flat.
+    private func computeTrend() -> Trend {
+        guard samples.count >= 3 else { return .unknown }
+        let recent = samples.suffix(3)
+        guard let first = recent.first, let last = recent.last else { return .unknown }
+        let delta = last.1 - first.1
+        let threshold = max(0.5, (valueRange.upperBound - valueRange.lowerBound) * 0.02)
+        if abs(delta) < threshold { return .flat }
+        return delta > 0 ? .rising : .falling
+    }
+
+    /// 임계 값 라벨 — 차트 우측 가장자리. 사용자가 정확한 threshold 인지.
+    @ViewBuilder
+    private func thresholdLabels(height: CGFloat) -> some View {
+        let ySpan = valueRange.upperBound - valueRange.lowerBound
+        if ySpan > 0 {
+            ZStack(alignment: .topTrailing) {
+                ForEach(Array(thresholds.enumerated()), id: \.offset) { _, thr in
+                    thresholdLabelPair(threshold: thr,
+                                       height: height,
+                                       yMin: valueRange.lowerBound,
+                                       yMax: valueRange.upperBound)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func thresholdLabelPair(threshold thr: Threshold,
+                                    height: CGFloat,
+                                    yMin: Double, yMax: Double) -> some View {
+        let ySpan = yMax - yMin
+        // 양수 영역.
+        if thr.value <= yMax, thr.value >= yMin {
+            let y = CGFloat((yMax - thr.value) / ySpan) * height
+            thresholdLabelText(thr.value, color: thr.color)
+                .offset(x: -Self.chartPad, y: y - 6)
+        }
+        // 음수 영역 (대칭).
+        if yMin < 0, thr.value > 0, -thr.value >= yMin {
+            let y = CGFloat((yMax - (-thr.value)) / ySpan) * height
+            thresholdLabelText(-thr.value, color: thr.color)
+                .offset(x: -Self.chartPad, y: y - 6)
+        }
+    }
+
+    @ViewBuilder
+    private func thresholdLabelText(_ value: Double, color: Color) -> some View {
+        // 7pt = threshold label 전용 micro size. 차트 우측 가장자리에 비-침습적 표시.
+        Text(value >= 0 ? String(format: "%+.0f", value) : String(format: "%.0f", value))
+            .font(.system(size: 7, weight: .medium, design: .monospaced))
+            .foregroundStyle(color.opacity(DFOpacity.dim))
+            .padding(.horizontal, DFSpace.micro2)
+            .background(
+                Capsule().fill(DFColor.canvas.opacity(DFOpacity.o85))
+            )
+            .accessibilityHidden(true)
+    }
+
+    /// Empty state — sample 미충분 시 안내.
+    /// NN/g *Empty States* 가이드 — "no data" 상태도 명시.
+    private var emptyStateOverlay: some View {
+        VStack(spacing: DFSpace.micro2) {
+            Image(systemName: "waveform")
+                .font(DFIcon.label)
+                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
+            Text("데이터 수집 중…")
+                .font(DFFont.pill)
+                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityLabel("데이터 수집 중")
     }
 
     /// Sparkline 내부 padding — 라인이 border 에 닿지 않도록.
@@ -108,6 +234,13 @@ struct SafetySparkline: View {
             }
         }
 
+        // 1b. **2026-05-16 시인성**: 임계 라인 그리기 — NASA PFD 패턴.
+        // zone stripe 위에 명확한 threshold line — 사용자가 정확한 임계 위치 인지.
+        for thr in sortedThresholds {
+            drawThresholdLine(ctx: ctx, size: size, pad: pad,
+                              value: thr.value, color: thr.color, mirror: yMin < 0)
+        }
+
         // 2. 0 base line (음수 / 양수 둘 다 있을 때).
         if yMin < 0 && yMax > 0 {
             let zeroY = pad + h * CGFloat((yMax - 0) / ySpan)
@@ -119,7 +252,7 @@ struct SafetySparkline: View {
                                           dash: [DFSpace.micro2, DFSpace.micro2]))
         }
 
-        // 3. 데이터 line.
+        // 3. 데이터 line + area fill.
         guard samples.count >= 2 else {
             // 단일 sample — 점 하나만.
             if let last = samples.last {
@@ -141,6 +274,35 @@ struct SafetySparkline: View {
             return
         }
 
+        // **2026-05-16 시인성**: area fill — Apple Stocks 패턴.
+        // line 아래 영역을 lineColor opacity gradient 로 채움 — 트렌드 강조.
+        // 0 baseline 이 있으면 baseline 까지, 없으면 차트 하단까지.
+        let baselineY: CGFloat = {
+            if yMin < 0 && yMax > 0 {
+                return pad + h * CGFloat((yMax - 0) / ySpan)
+            }
+            return pad + h
+        }()
+        var areaPath = Path()
+        for (i, s) in samples.enumerated() {
+            let tNorm = (s.0.timeIntervalSinceReferenceDate - tFirst) / tSpan
+            let x = pad + w * CGFloat(tNorm)
+            let yNorm = (yMax - s.1) / ySpan
+            let y = pad + h * CGFloat(max(0, min(1, yNorm)))
+            if i == 0 {
+                areaPath.move(to: CGPoint(x: x, y: baselineY))
+                areaPath.addLine(to: CGPoint(x: x, y: y))
+            } else {
+                areaPath.addLine(to: CGPoint(x: x, y: y))
+            }
+        }
+        // 마지막 sample 의 x 에서 baseline 으로 내림.
+        let lastX = pad + w
+        areaPath.addLine(to: CGPoint(x: lastX, y: baselineY))
+        areaPath.closeSubpath()
+        ctx.fill(areaPath, with: .color(lineColor.opacity(DFOpacity.o20)))
+
+        // 데이터 line (area 위에 그림 — 강조).
         var path = Path()
         for (i, s) in samples.enumerated() {
             let tNorm = (s.0.timeIntervalSinceReferenceDate - tFirst) / tSpan
@@ -162,6 +324,39 @@ struct SafetySparkline: View {
             let yNorm = (yMax - last.1) / ySpan
             drawCurrentDot(ctx: ctx, x: pad + w,
                            y: pad + h * CGFloat(max(0, min(1, yNorm))))
+        }
+    }
+
+    /// **2026-05-16 시인성**: 임계 라인 — zone stripe 위에 명확한 dashed line.
+    /// 음수/양수 대칭 지원 (mirror=true 시).
+    private func drawThresholdLine(ctx: GraphicsContext, size: CGSize, pad: CGFloat,
+                                   value: Double, color: Color, mirror: Bool) {
+        let yMin = valueRange.lowerBound
+        let yMax = valueRange.upperBound
+        let ySpan = yMax - yMin
+        guard ySpan > 0 else { return }
+        let h = size.height - pad * 2
+        let w = size.width - pad * 2
+
+        // 양수 영역.
+        if value <= yMax, value >= yMin {
+            let y = pad + h * CGFloat((yMax - value) / ySpan)
+            var line = Path()
+            line.move(to: CGPoint(x: pad, y: y))
+            line.addLine(to: CGPoint(x: pad + w, y: y))
+            ctx.stroke(line, with: .color(color.opacity(DFOpacity.o40)),
+                       style: StrokeStyle(lineWidth: 0.5,
+                                          dash: [3, 2]))
+        }
+        // 음수 영역 (mirror).
+        if mirror, value > 0, -value >= yMin, -value <= yMax {
+            let y = pad + h * CGFloat((yMax - (-value)) / ySpan)
+            var line = Path()
+            line.move(to: CGPoint(x: pad, y: y))
+            line.addLine(to: CGPoint(x: pad + w, y: y))
+            ctx.stroke(line, with: .color(color.opacity(DFOpacity.o40)),
+                       style: StrokeStyle(lineWidth: 0.5,
+                                          dash: [3, 2]))
         }
     }
 
