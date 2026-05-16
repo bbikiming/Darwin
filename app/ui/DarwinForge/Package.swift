@@ -48,10 +48,13 @@ let package = Package(
         .executableTarget(
             name: "DarwinForgeApp",
             dependencies: ["DarwinForgeUI"],
-            path: "Sources/DarwinForgeApp"
-            // 2026-05-16: PNG 리소스 제거 — 새 slim OP 로고를 AppIcon.swift 가
-            // Core Graphics 로 직접 생성. `Bundle.module` 미사용 → SwiftPM resource
-            // 등록 불필요. dev / `swift run` 환경에서 즉시 새 로고 적용.
+            path: "Sources/DarwinForgeApp",
+            resources: [
+                // 2026-05-16: PNG 앱 아이콘 영구 적용 — 사용자 지정 자산.
+                // `option/ChatGPT Image ... 10_57_32 (1).png` 사본. 사용자 명시 변경
+                // 전까지 변경 금지 (memory/feedback_app_icon.md).
+                .copy("Resources/AppIcon.png")
+            ]
         ),
         .testTarget(
             name: "ForgeCoreTests",

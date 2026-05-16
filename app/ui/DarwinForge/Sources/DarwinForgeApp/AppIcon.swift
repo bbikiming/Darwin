@@ -17,6 +17,19 @@ import Foundation
 /// ```
 public enum AppIcon {
 
+    /// SwiftPM 번들에 포함된 `AppIcon.png` 가 있으면 우선 로드 — 사용자 지정 자산.
+    /// 누락 시 nil → 호출자가 `make()` 로 코드 생성 fallback.
+    ///
+    /// **2026-05-16 (재복구)**: 사용자 명시 — `option/ChatGPT Image ... 10_57_32 (1).png`
+    /// 영구 적용. 사용자 추가 요청 전까지 변경 금지.
+    public static func loadBundledPNG() -> NSImage? {
+        guard let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+              let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+        return image
+    }
+
     /// 1024×1024 표준 macOS app icon (Dock + Finder + Spotlight 모두 자동 scale).
     public static func make(size: CGFloat = 1024) -> NSImage {
         let canvas = CGSize(width: size, height: size)

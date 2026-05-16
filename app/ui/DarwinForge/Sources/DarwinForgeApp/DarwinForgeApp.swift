@@ -6,15 +6,17 @@ import SwiftUI
 /// activation policy를 자동으로 잡지 못한다. 명시적으로 .regular로 올려
 /// dock 아이콘 + 메뉴 + 윈도우 활성화를 강제한다.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// 첫 launch maximize 가 한 번 적용됐는지. 사용자가 그 후 작게 만들면 회복 안 함.
+    private var didMaximizeOnLaunch: Bool = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        // 앱 아이콘 — Core Graphics 로 slim OP 로고 (brand blue) 즉시 생성.
-        // `.app` bundle 의 AppIcon.icns 가 있으면 macOS 가 우선 사용 — 런타임 설정은
-        // `swift run` 같은 bundle 없이 실행되는 dev 환경에서 효과적.
-        // 2026-05-16: 종전 PNG 우선 로드 패턴 제거 — 코드 생성 단독 (slim OP + #0050D5).
-        NSApp.applicationIconImage = AppIcon.make()
+        // 앱 아이콘 — SwiftPM 번들 PNG (사용자 지정 자산) 우선, 누락 시 코드 생성 fallback.
+        // `.app` bundle 의 AppIcon.icns 가 있으면 macOS 가 우선 사용.
+        // 2026-05-16 (재복구): 사용자 명시 — option/ChatGPT Image 10_57_32 (1).png 영구 적용.
+        NSApp.applicationIconImage = AppIcon.loadBundledPNG() ?? AppIcon.make()
 
         for w in NSApp.windows {
             configureWindow(w)
@@ -23,18 +25,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
-        ) { note in
+        ) { [weak self] note in
             if let w = note.object as? NSWindow {
                 Self.configureWindow(w)
+                // 첫 visible window 가 잡혔을 때 1회 추가 maximize 시도.
+                // didFinishLaunching 직후엔 window 가 아직 visible 아닐 수 있어 보강.
+                if let self = self, !self.didMaximizeOnLaunch, w.isVisible {
+                    self.maximizeWindow(w)
+                    self.didMaximizeOnLaunch = true
+                }
             }
         }
 
         // 첫 실행 시 자동 maximize — 모니터 visibleFrame 가득 채움 (메뉴바/Dock 영역 제외).
-        // 사용자가 매번 zoom 버튼을 누르지 않아도 큰 화면에서 자동으로 펼쳐짐.
-        // 명시적 fullscreen (메뉴바도 hide) 은 ⌃⌘F 또는 녹색 신호등.
-        DispatchQueue.main.async { [weak self] in
-            self?.maximizeMainWindow()
+        // 2026-05-16 보강: asyncAfter 0.3s 로 충분한 window-creation 시간 확보 (macOS
+        // Sonoma+ SwiftUI life-cycle 에서 window 가 didFinishLaunching 직후엔 invisible).
+        // didBecomeKey observer 와 이중 안전망 — 둘 중 어느 쪽이든 먼저 잡으면 1회 적용.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self, !self.didMaximizeOnLaunch else { return }
+            self.maximizeMainWindow()
+            self.didMaximizeOnLaunch = true
         }
+    }
+
+    /// 지정 window 를 모니터 visibleFrame 가득 채움.
+    func maximizeWindow(_ w: NSWindow) {
+        guard let screen = w.screen ?? NSScreen.main else { return }
+        w.setFrame(screen.visibleFrame, display: true, animate: true)
     }
 
     /// 메인 윈도우를 모니터 visibleFrame 가득 채움 (zoom = maximize).

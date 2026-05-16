@@ -71,8 +71,10 @@ public struct DarwinForgeLogo: View {
             Text("Darwin").foregroundStyle(DarwinForgePalette.body)
             Text("Forge").foregroundStyle(DarwinForgePalette.forge)
         }
-        .font(.system(size: density.fontSize, weight: .black, design: .default))
-        .kerning(-density.fontSize * 0.04)
+        // 2026-05-16 슬림 재디자인: `.black` (heavy) → `.semibold` — 슬림 워드마크.
+        // kerning 도 -4% → -2% 로 조금 더 자연스러운 간격.
+        .font(.system(size: density.fontSize, weight: .semibold, design: .default))
+        .kerning(-density.fontSize * 0.02)
         .lineLimit(1)
         .fixedSize()
     }
@@ -88,9 +90,11 @@ public struct DarwinForgeLogo: View {
 
 // MARK: - Mark composite
 
-/// DarwinForge 헥사곤 마크 (슬레이트 본체 + forge-orange 스파크).
+/// DarwinForge 헥사곤 마크 (슬림 outline + brand blue accent dot).
 ///
-/// 본체와 스파크를 `Canvas`로 같은 좌표계에 그려 정확한 정렬을 보장한다.
+/// **2026-05-16 슬림 재디자인**: 종전 fill 헥사곤 + orange 스파크 → 얇은 stroke
+/// 헥사곤 (lineWidth 8) + 우상단 코너 brand blue accent dot. body 채움 제거 —
+/// transparency 가 사이드바 배경과 자연스럽게 어울림.
 public struct DarwinForgeMark: View {
     public init() {}
 
@@ -104,22 +108,31 @@ public struct DarwinForgeMark: View {
                 CGPoint(x: originX + x * scale, y: originY + y * scale)
             }
 
+            // 헥사곤 outline — 작은 inset (4pt) 으로 stroke 가 잘리지 않게 보호.
             var hex = Path()
-            hex.move(to: pt(100, 0))
-            hex.addLine(to: pt(175, 50))
-            hex.addLine(to: pt(175, 150))
-            hex.addLine(to: pt(100, 200))
-            hex.addLine(to: pt(25,  150))
-            hex.addLine(to: pt(25,  50))
+            hex.move(to: pt(100, 4))
+            hex.addLine(to: pt(172, 50))
+            hex.addLine(to: pt(172, 150))
+            hex.addLine(to: pt(100, 196))
+            hex.addLine(to: pt(28,  150))
+            hex.addLine(to: pt(28,  50))
             hex.closeSubpath()
-            context.fill(hex, with: .color(DarwinForgePalette.body))
+            context.stroke(
+                hex,
+                with: .color(DarwinForgePalette.body),
+                style: StrokeStyle(lineWidth: 8 * scale, lineJoin: .round)
+            )
 
-            var spark = Path()
-            spark.move(to: pt(175, 50))
-            spark.addLine(to: pt(175, 100))
-            spark.addLine(to: pt(130, 68))
-            spark.closeSubpath()
-            context.fill(spark, with: .color(DarwinForgePalette.forge))
+            // Brand blue accent dot — 우상단 코너 안쪽 (옛 스파크 위치).
+            let dotR: CGFloat = 9 * scale
+            let dotCenter = pt(155, 68)
+            let dot = Path(ellipseIn: CGRect(
+                x: dotCenter.x - dotR,
+                y: dotCenter.y - dotR,
+                width: dotR * 2,
+                height: dotR * 2
+            ))
+            context.fill(dot, with: .color(DarwinForgePalette.forge))
         }
         .accessibilityHidden(true)
     }
@@ -134,8 +147,10 @@ public enum DarwinForgePalette {
     public static let body: Color = DFColor.textPrimary
     /// SVG 자산 고정 슬레이트 (#2E3940) — 라이트 모드 README 등에서 사용.
     public static let slate = Color(red: 46/255,  green: 57/255,  blue: 64/255)
-    /// 포지 오렌지 — "Forge" 글자 + 헥사곤 스파크.
-    public static let forge = Color(red: 233/255, green: 113/255, blue: 50/255)
+    /// 브랜드 accent — "Forge" 글자 + 헥사곤 accent dot.
+    /// 2026-05-16: 하드코딩 orange 제거 → `DFColor.forge` 토큰 위임 (brand blue 자동).
+    /// 디자인 시스템 메인 컬러 일관화 — 토큰 변경 시 로고도 자동 정합.
+    public static let forge: Color = DFColor.forge
 }
 
 #if DEBUG
