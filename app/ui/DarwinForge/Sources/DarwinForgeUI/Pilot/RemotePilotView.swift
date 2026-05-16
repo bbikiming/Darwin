@@ -88,10 +88,15 @@ public struct RemotePilotView: View {
         }
         .background(DFColor.canvas)
         .onAppear {
+            // 2026-05-16: 자동 RemoteShell 호출 제거 — 사용자 명시 요청.
+            // 종전엔 onAppear 가 `startStatusPolling()` + `checkPatchedDemoOnce()` 즉시
+            // 호출 → 두 함수가 `remoteShell.send` → SSH key 미셋업 시 SMB fallback →
+            // `NSWorkspace.shared.open(smb://192.168.123.1/robotis)` → macOS Finder
+            // 다이얼로그 자동 팝업 (사용자 의도 안 한 SMB 인증 요청).
+            // 새 정책: ROBOTIS 측 통신 (RemoteShell.send) 은 사용자가 명시적으로
+            // "상태 확인" 또는 "데모 시작" 버튼 누를 때만. attach 만 수행.
             channel.attach(store: store, gate: gate)
             headTracker.attach(store: store, gate: gate)
-            startStatusPolling()
-            Task { await checkPatchedDemoOnce() }
         }
         .onDisappear {
             statusPollTask?.cancel()
