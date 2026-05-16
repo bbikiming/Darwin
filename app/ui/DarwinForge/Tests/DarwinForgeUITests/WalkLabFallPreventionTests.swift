@@ -422,4 +422,103 @@ final class WalkLabFallPreventionTests: XCTestCase {
             XCTAssertEqual(result.raw(j), RobotPose.walkReady.raw(j))
         }
     }
+
+    // MARK: - Monitoring Dashboard (2026-05-16): 시계열 + 이벤트 로그 회귀
+
+    /// 초기 상태 — 시계열 비어 있음, 이벤트 비어 있음, 펼침 OFF.
+    func testMonitoringInitialState() {
+        let session = WalkLabSession()
+        XCTAssertTrue(session.safetyTimeline.isEmpty,
+            "초기 시계열 buffer 가 비어 있어야 함")
+        XCTAssertTrue(session.safetyEvents.isEmpty,
+            "초기 이벤트 로그가 비어 있어야 함")
+        XCTAssertFalse(session.monitoringExpanded,
+            "기본 펼침 OFF — progressive disclosure (NN/g)")
+    }
+
+    /// **Corrector 토글 — 이벤트 로그 발행**.
+    /// OFF→ON / ON→OFF 각각 이벤트 1건씩.
+    func testCorrectorToggleLogsEvents() {
+        let session = WalkLabSession()
+        let initialCount = session.safetyEvents.count
+        session.enableBalanceCorrection = true
+        XCTAssertEqual(session.safetyEvents.count, initialCount + 1,
+            "OFF→ON 시 이벤트 1건 발행")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOn,
+            "마지막 이벤트가 correctorOn 이어야 함")
+        session.enableBalanceCorrection = false
+        XCTAssertEqual(session.safetyEvents.count, initialCount + 2,
+            "ON→OFF 시 추가 이벤트 1건")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff)
+    }
+
+    /// **clearSafetyEvents — 이벤트 비움**.
+    func testClearSafetyEvents() {
+        let session = WalkLabSession()
+        session.enableBalanceCorrection = true
+        session.enableBalanceCorrection = false
+        XCTAssertFalse(session.safetyEvents.isEmpty)
+        session.clearSafetyEvents()
+        XCTAssertTrue(session.safetyEvents.isEmpty,
+            "clearSafetyEvents 후 빈 배열")
+    }
+
+    /// **이벤트 로그 50건 상한**.
+    /// 100건 발행 후에도 last 50건만 보존.
+    func testSafetyEventsCapAt50() {
+        let session = WalkLabSession()
+        // 토글 ON/OFF 를 51번 (총 102 이벤트) — Cap=50 검증.
+        for _ in 0..<51 {
+            session.enableBalanceCorrection = true
+            session.enableBalanceCorrection = false
+        }
+        XCTAssertLessThanOrEqual(session.safetyEvents.count, 50,
+            "이벤트 로그가 50건을 초과")
+        // 가장 최신 이벤트 가 correctorOff 여야 (마지막 토글이 false).
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff)
+    }
+
+    /// **rampProgress** — 토글 OFF 시 nil, ON 직후 ≈ 0.
+    func testRampProgressMatchesToggleState() {
+        let session = WalkLabSession()
+        XCTAssertNil(session.rampProgress, "토글 OFF 시 rampProgress nil")
+        session.enableBalanceCorrection = true
+        // 토글 직후 — progress ≈ 0 (< 0.1).
+        if let p = session.rampProgress {
+            XCTAssertLessThan(p, 0.5,
+                "토글 직후 progress 가 너무 큼 — \(p)")
+            XCTAssertGreaterThanOrEqual(p, 0)
+        } else {
+            XCTFail("토글 ON 시 rampProgress 가 nil")
+        }
+        session.enableBalanceCorrection = false
+        XCTAssertNil(session.rampProgress, "토글 OFF 후 다시 nil")
+    }
+
+    /// **SafetySample 필드 정합** — 모든 필드가 Equatable.
+    func testSafetySampleEquality() {
+        let t = Date()
+        let s1 = WalkLabSession.SafetySample(
+            timestamp: t, rollDeg: 5, pitchDeg: 3,
+            predictionScore: 25, balanceState: .normal, correctorMaxDelta: 0
+        )
+        let s2 = WalkLabSession.SafetySample(
+            timestamp: t, rollDeg: 5, pitchDeg: 3,
+            predictionScore: 25, balanceState: .normal, correctorMaxDelta: 0
+        )
+        XCTAssertEqual(s1, s2, "동일 데이터 SafetySample 가 같아야 함")
+    }
+
+    /// **SafetyEvent Kind 모두 비어있지 않음** — UI 안전.
+    func testSafetyEventKindRawValuesNonEmpty() {
+        let allKinds: [WalkLabSession.SafetyEvent.Kind] = [
+            .sessionStart, .sessionStop, .stateChange,
+            .emergencyTriggered, .predictorRecommend,
+            .correctorOn, .correctorOff, .rampComplete,
+            .imuSourceChange, .thermalAlarm, .preflightFailure,
+        ]
+        for k in allKinds {
+            XCTAssertFalse(k.rawValue.isEmpty, "\(k) rawValue 비어 있음")
+        }
+    }
 }

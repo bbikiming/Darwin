@@ -114,6 +114,13 @@ public final class WalkLabSession: ObservableObject {
                 // 토글 전환 — ramp 재시작 (ON → 0초부터 / OFF → nil).
                 correctionEnabledAt = enableBalanceCorrection ? Date() : nil
                 if !enableBalanceCorrection { lastCorrections = nil }
+                rampCompletedLogged = false
+                logSafetyEvent(
+                    kind: enableBalanceCorrection ? .correctorOn : .correctorOff,
+                    message: enableBalanceCorrection
+                        ? "자세 보정 ON — 1초 ramp 시작"
+                        : "자세 보정 OFF"
+                )
             }
         }
     }
@@ -178,6 +185,66 @@ public final class WalkLabSession: ObservableObject {
     /// sim mode (실 로봇 미연결) 도 50ms tick 마다 phase pose 합성해서 갱신 →
     /// `WalkLabView` 의 `RobotScene3D(pose: session.visualPose)` 가 받아서 모델 동작.
     @Published public var visualPose: RobotPose = .walkReady
+
+    // MARK: - Monitoring Dashboard (2026-05-16): 시계열 안전 상태 + 이벤트 로그
+
+    /// 안전 상태 한 시점 스냅샷 — sparkline 차트 source.
+    public struct SafetySample: Equatable, Sendable {
+        public let timestamp: Date
+        public let rollDeg: Double
+        public let pitchDeg: Double
+        public let predictionScore: Double
+        public let balanceState: BalanceState
+        /// 4 관절 corrector delta 의 최대 절댓값 (deg). 0 = corrector off 또는 보정 없음.
+        public let correctorMaxDelta: Double
+    }
+
+    /// 안전 이벤트 한 건 — 이벤트 로그 row.
+    public struct SafetyEvent: Identifiable, Equatable, Sendable {
+        public enum Kind: String, Equatable, Sendable {
+            case sessionStart
+            case sessionStop
+            case stateChange
+            case emergencyTriggered
+            case predictorRecommend
+            case correctorOn
+            case correctorOff
+            case rampComplete
+            case imuSourceChange
+            case thermalAlarm
+            case preflightFailure
+        }
+        public let id = UUID()
+        public let timestamp: Date
+        public let kind: Kind
+        public let message: String
+    }
+
+    /// 시계열 안전 sample buffer — 최근 10초 (50ms tick × 200).
+    @Published public private(set) var safetyTimeline: [SafetySample] = []
+    /// 안전 이벤트 로그 — 최근 50건 (가장 최신이 last). 별도 보존 — start() reset 시에도 유지.
+    @Published public private(set) var safetyEvents: [SafetyEvent] = []
+    /// 모니터링 대시보드 펼침 상태 — UI 토글.
+    @Published public var monitoringExpanded: Bool = false
+
+    private static let safetyTimelineMaxWindowSec: Double = 10.0
+    private static let safetyTimelineMaxSamples: Int = 250
+    private static let safetyEventsMaxCount: Int = 50
+
+    /// 이전 tick 의 balanceState — 전환 검출용.
+    private var previousBalanceState: BalanceState = .normal
+    /// 이전 tick 의 imuSource — 전환 검출용.
+    private var previousImuSource: ImuSource = .sim
+    /// 이전 tick 의 predictor recommendEmergency — rising-edge 만 이벤트.
+    private var previousRecommendEmergency: Bool = false
+    /// 이전 tick 의 ramp 완료 여부 — 한 번만 이벤트 발행.
+    private var rampCompletedLogged: Bool = false
+
+    /// **현재 ramp 진행률** (0..1). corrector OFF 또는 미시작 시 nil.
+    public var rampProgress: Double? {
+        guard enableBalanceCorrection, let t = correctionEnabledAt else { return nil }
+        return max(0, min(1, Date().timeIntervalSince(t)))
+    }
 
     // MARK: - 세션 기록
     @Published public var history: [WalkLabRecord] = []
@@ -369,6 +436,14 @@ public final class WalkLabSession: ObservableObject {
         correctionEnabledAt = enableBalanceCorrection ? Date() : nil
         lastCorrections = nil
         lastSafePose = nil
+        // **Monitoring dashboard reset**: 시계열 buffer / 이전 상태 reset.
+        // safetyEvents 는 유지 — 사용자가 이전 세션의 이벤트 확인 가능.
+        safetyTimeline.removeAll()
+        previousBalanceState = .normal
+        previousImuSource = .sim
+        previousRecommendEmergency = false
+        rampCompletedLogged = false
+        logSafetyEvent(kind: .sessionStart, message: "보행 시작 — \(preset.label)")
         startTime = Date()
 
         simTimer?.invalidate()
@@ -425,6 +500,9 @@ public final class WalkLabSession: ObservableObject {
             if history.count > 12 { history.removeLast() }
         }
         startTime = nil
+        if wasRunning {
+            logSafetyEvent(kind: .sessionStop, message: "정상 정지 — \(current.label)")
+        }
         current = .idle
         // sway 도 zero 로 디케이 — 다음 tick 에서 매끄럽게 감소.
 
@@ -451,6 +529,12 @@ public final class WalkLabSession: ObservableObject {
         simTimer = nil
         engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
         startTime = nil
+        let tilt = max(abs(imuRollDeg), abs(imuPitchDeg))
+        logSafetyEvent(
+            kind: .emergencyTriggered,
+            message: String(format: "비상 정지 — 토크 OFF (tilt %.1f°, score %.0f)",
+                            tilt, fallPrediction.score)
+        )
         current = .idle
         riskAcknowledged = false
         balanceLost = false
@@ -1003,8 +1087,96 @@ public final class WalkLabSession: ObservableObject {
         // L4 — 온도 임계
         if maxMotorTemp >= 60 {
             thermalAlarm = true
+            logSafetyEvent(
+                kind: .thermalAlarm,
+                message: String(format: "모터 %.1f°C — 60°C 임계 도달 → 정지", maxMotorTemp)
+            )
             emergencyStop()
         }
+
+        // Monitoring dashboard — 시계열 sample 기록 + 이벤트 전환 감지.
+        recordSafetySampleAndEvents()
+    }
+
+    /// **Monitoring dashboard (2026-05-16)**: 매 tick 시계열 sample 기록 + 상태 전환
+    /// 이벤트 감지. tick() 마지막에 호출.
+    ///
+    /// - sample: 매 tick 마다 1건 append, 10초 윈도우 + 250 sample 상한.
+    /// - 이벤트:
+    ///   - balanceState 변경 (rising/falling 모두) → `.stateChange`
+    ///   - predictor recommendEmergency rising-edge → `.predictorRecommend`
+    ///   - imuSource 변경 → `.imuSourceChange`
+    ///   - ramp 0..1 완료 (rising-edge) → `.rampComplete`
+    private func recordSafetySampleAndEvents() {
+        let now = Date()
+        let maxDelta = lastCorrections?.maxAbs ?? 0
+        let sample = SafetySample(
+            timestamp: now,
+            rollDeg: imuRollDeg,
+            pitchDeg: imuPitchDeg,
+            predictionScore: fallPrediction.score,
+            balanceState: balanceState,
+            correctorMaxDelta: maxDelta
+        )
+        safetyTimeline.append(sample)
+        // 10초 윈도우 + 안전 상한 250.
+        let cutoff = now.addingTimeInterval(-Self.safetyTimelineMaxWindowSec)
+        safetyTimeline.removeAll { $0.timestamp < cutoff }
+        if safetyTimeline.count > Self.safetyTimelineMaxSamples {
+            safetyTimeline.removeFirst(safetyTimeline.count - Self.safetyTimelineMaxSamples)
+        }
+
+        // 이벤트 — balanceState 전환.
+        if balanceState != previousBalanceState {
+            logSafetyEvent(
+                kind: .stateChange,
+                message: "안전 상태: \(previousBalanceState.label) → \(balanceState.label)"
+            )
+            previousBalanceState = balanceState
+        }
+
+        // 이벤트 — predictor rising-edge.
+        let recommend = fallPrediction.recommendEmergency
+        if recommend, !previousRecommendEmergency {
+            let etaStr = fallPrediction.etaMs.map { String(format: " (ETA %.0fms)", $0) } ?? ""
+            logSafetyEvent(
+                kind: .predictorRecommend,
+                message: String(format: "예측 fall — score %.0f%@", fallPrediction.score, etaStr)
+            )
+        }
+        previousRecommendEmergency = recommend
+
+        // 이벤트 — IMU 출처 변경.
+        if imuSource != previousImuSource {
+            logSafetyEvent(
+                kind: .imuSourceChange,
+                message: "IMU 출처: \(previousImuSource.label) → \(imuSource.label)"
+            )
+            previousImuSource = imuSource
+        }
+
+        // 이벤트 — ramp 완료 (rising-edge, OFF→ON 후 1초 도달 시 1회만).
+        if enableBalanceCorrection,
+           let progress = rampProgress,
+           progress >= 1.0,
+           !rampCompletedLogged {
+            logSafetyEvent(kind: .rampComplete, message: "자세 보정 ramp 100% 도달 — 풀 적용")
+            rampCompletedLogged = true
+        }
+    }
+
+    /// 안전 이벤트 추가 — `safetyEvents` 에 append + 50건 상한.
+    /// MainActor 보장 — caller (tick / start / stop / didSet 등) 모두 MainActor.
+    private func logSafetyEvent(kind: SafetyEvent.Kind, message: String) {
+        safetyEvents.append(SafetyEvent(timestamp: Date(), kind: kind, message: message))
+        if safetyEvents.count > Self.safetyEventsMaxCount {
+            safetyEvents.removeFirst(safetyEvents.count - Self.safetyEventsMaxCount)
+        }
+    }
+
+    /// 이벤트 로그 비우기 — UI 의 "지우기" 버튼.
+    public func clearSafetyEvents() {
+        safetyEvents.removeAll()
     }
 
     /// **Stage 4 + Phase C (v1.1 fall prevention)**: Balance corrector + balanceState

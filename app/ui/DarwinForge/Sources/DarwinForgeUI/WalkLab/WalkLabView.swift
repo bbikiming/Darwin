@@ -145,79 +145,155 @@ public struct WalkLabView: View {
     // MARK: - Detail
 
     private var detail: some View {
-        VStack(spacing: DFSpace.sm3) {
-            simOnlyNotice
+        ScrollView {
+            VStack(spacing: DFSpace.sm3) {
+                simOnlyNotice
 
-            if session.balanceLost {
-                banner(systemImage: "exclamationmark.triangle.fill",
-                       message: "균형 잃음 감지 — 자동 정지됨",
-                       tint: .red)
-            }
-            if session.thermalAlarm {
-                banner(systemImage: "thermometer.sun.fill",
-                       message: "모터 60°C 도달 — 자동 정지 + LiPo 분리 권고",
-                       tint: .red)
-            }
-            if session.advanced && session.stabilityScore.category == .critical {
-                banner(systemImage: "xmark.octagon.fill",
-                       message: "낙상 위험 점수 \(Int(session.stabilityScore.score))/100 — 시작 차단. 슬라이더 값을 줄이거나 안전 한도 해제를 끄세요.",
-                       tint: .red)
-            }
-
-            HStack(spacing: DFSpace.sm3) {
-                // Hero: 3D 모델 — **Phase G11 (2026-05-15)**: pose 가 보행 cycle 마다 갱신.
-                // 실 로봇 송출 중: `runContinuousWalk` 의 onPose 가 매 step 마다 visualPose publish.
-                // sim mode: 50ms tick 이 phase 따라 합성 pose publish.
-                // footTrace 는 좌측 발 자취 (2D 캔버스와 동일 source).
-                RobotScene3D(
-                    pose: session.visualPose,
-                    footTrace: session.footTrail.map { $0.left }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DFRadius.sm)
-                        .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
-                )
-
-                // 사이드 패널: 2D 발자취 (top-down) + IMU 게이지 2개.
-                VStack(spacing: DFSpace.sm2) {
-                    FootTrailCanvas(trail: session.footTrail,
-                                    leftFoot: session.leftFoot,
-                                    rightFoot: session.rightFoot)
-                        .frame(height: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: DFRadius.xs2)
-                                .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
-                        )
-                    // **Stage 1 (v1.1 fall prevention)**: 실 IMU 출처 라벨 표시.
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(imuSourceColor)
-                            .frame(width: 6, height: 6)
-                        Text("IMU 출처: \(session.imuSource.label)")
-                            .font(.system(size: DFFontSize.s10, design: .monospaced))
-                            .foregroundStyle(DFColor.textSecondary)
-                        Spacer()
-                    }
-                    // **Stage 2 (v1.1 fall prevention)**: 안전 상태 + 자동 보정 토글.
-                    balanceStateCard
-                    // **Stage 5 (v1.1 fall prevention)**: 예측 score + ETA.
-                    FallPredictionCard(prediction: session.fallPrediction)
-                    // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
-                    balanceCorrectionCard
-                    IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
-                    IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
+                if session.balanceLost {
+                    banner(systemImage: "exclamationmark.triangle.fill",
+                           message: "균형 잃음 감지 — 자동 정지됨",
+                           tint: .red)
                 }
-                .frame(width: 240)
+                if session.thermalAlarm {
+                    banner(systemImage: "thermometer.sun.fill",
+                           message: "모터 60°C 도달 — 자동 정지 + LiPo 분리 권고",
+                           tint: .red)
+                }
+                if session.advanced && session.stabilityScore.category == .critical {
+                    banner(systemImage: "xmark.octagon.fill",
+                           message: "낙상 위험 점수 \(Int(session.stabilityScore.score))/100 — 시작 차단. 슬라이더 값을 줄이거나 안전 한도 해제를 끄세요.",
+                           tint: .red)
+                }
+
+                monitoringToggleBar
+                if session.monitoringExpanded {
+                    FallPreventionMonitor(session: session)
+                }
+
+                HStack(spacing: DFSpace.sm3) {
+                    // Hero: 3D 모델 — **Phase G11 (2026-05-15)**: pose 가 보행 cycle 마다 갱신.
+                    // 실 로봇 송출 중: `runContinuousWalk` 의 onPose 가 매 step 마다 visualPose publish.
+                    // sim mode: 50ms tick 이 phase 따라 합성 pose publish.
+                    // footTrace 는 좌측 발 자취 (2D 캔버스와 동일 source).
+                    RobotScene3D(
+                        pose: session.visualPose,
+                        footTrace: session.footTrail.map { $0.left }
+                    )
+                    .frame(minHeight: 360, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DFRadius.sm)
+                            .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
+                    )
+
+                    // 사이드 패널: 2D 발자취 (top-down) + IMU 게이지 2개.
+                    VStack(spacing: DFSpace.sm2) {
+                        FootTrailCanvas(trail: session.footTrail,
+                                        leftFoot: session.leftFoot,
+                                        rightFoot: session.rightFoot)
+                            .frame(height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DFRadius.xs2)
+                                    .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
+                            )
+                        // **Stage 1 (v1.1 fall prevention)**: 실 IMU 출처 라벨 표시.
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(imuSourceColor)
+                                .frame(width: 6, height: 6)
+                            Text("IMU 출처: \(session.imuSource.label)")
+                                .font(.system(size: DFFontSize.s10, design: .monospaced))
+                                .foregroundStyle(DFColor.textSecondary)
+                            Spacer()
+                        }
+                        // **Stage 2 (v1.1 fall prevention)**: 안전 상태 + 자동 보정 토글.
+                        balanceStateCard
+                        // **Stage 5 (v1.1 fall prevention)**: 예측 score + ETA.
+                        FallPredictionCard(prediction: session.fallPrediction)
+                        // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
+                        balanceCorrectionCard
+                        IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
+                        IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
+                    }
+                    .frame(width: 240)
+                }
+                .frame(minHeight: 360)
+
+                footTargetsCard
+
+                actionBar
             }
-
-            footTargetsCard
-
-            actionBar
+            .padding(DFSpace.md)
         }
-        .padding(DFSpace.md)
+    }
+
+    /// **Monitoring 펼침 토글** — 사용자가 expert 진단 패널을 보고 싶을 때.
+    ///
+    /// UX 근거 (NN/g progressive disclosure): 기본 닫힘 — 일반 사용자 UI overload
+    /// 방지. expert 가 토글 ON 시 6-Layer + 시계열 + 이벤트 로그 한 화면.
+    private var monitoringToggleBar: some View {
+        HStack(spacing: DFSpace.sm) {
+            Image(systemName: "waveform.path.ecg.rectangle")
+                .font(.system(size: DFFontSize.s14, weight: .semibold))
+                .foregroundStyle(DFColor.accent)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Fall Prevention 모니터링")
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
+                Text(session.monitoringExpanded
+                     ? "6-Layer 상태 + 시계열 + 이벤트 로그 표시 중"
+                     : "펼치면 6-Layer 안전 시스템 + 시계열 그래프 + 이벤트 로그")
+                    .font(.system(size: DFFontSize.s10))
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+            Spacer()
+            // 현재 상태 요약 — 토글 닫혀 있어도 critical 만 보이게.
+            if session.balanceState >= .warning {
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(monitorBadgeColor)
+                        .frame(width: 6, height: 6)
+                    Text(session.balanceState.label)
+                        .font(.system(size: DFFontSize.s10, weight: .semibold))
+                        .foregroundStyle(monitorBadgeColor)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(monitorBadgeColor.opacity(DFOpacity.o10))
+                .clipShape(Capsule())
+            }
+            Button {
+                withAnimation(DFAnimation.standard) {
+                    session.monitoringExpanded.toggle()
+                }
+            } label: {
+                Label(session.monitoringExpanded ? "접기" : "펼치기",
+                      systemImage: session.monitoringExpanded
+                        ? "chevron.up.circle.fill"
+                        : "chevron.down.circle")
+                    .font(.system(size: DFFontSize.s12))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, DFSpace.sm2)
+        .padding(.vertical, DFSpace.xs2)
+        .background(DFColor.elev2)
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
+                        lineWidth: DFSize.borderHairline)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    private var monitorBadgeColor: Color {
+        switch session.balanceState {
+        case .normal:    return DFColor.success
+        case .caution:   return DFColor.warning
+        case .warning:   return .orange
+        case .danger, .emergency: return DFColor.danger
+        }
     }
 
     /// 시뮬 vs 실 송출 경계 안내. 프리셋/고급 슬라이더 모두 실 송출 page 합성에 반영.
