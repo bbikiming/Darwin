@@ -129,12 +129,17 @@ struct DarwinForgeApp: App {
                     minHeight: 640, idealHeight: 1000, maxHeight: .infinity
                 )
         }
-        // 첫 실행 윈도우 크기 — 큰 모니터 우선. AppDelegate.maximizeMainWindow 가
-        // didFinishLaunching 직후 visibleFrame 으로 추가 확장 (UX: 즉시 큰 캔버스).
-        .defaultSize(width: 1600, height: 1000)
-        // `.contentSize` → minSize 이상 / 사용자 / fullscreen 모두 자유 resize.
-        // 종전 `.contentMinSize` 는 max 없으면 ideal 에 머무는 케이스가 있었음.
-        .windowResizability(.contentSize)
+        // 2026-05-16 fix: maximize 회귀 차단 — defaultSize 를 visibleFrame 보다 큰 값
+        // (4096×2560 = 5K iMac visibleFrame 상위) 으로 두면 시스템이 자동 clamp →
+        // 모든 모니터에서 첫 launch 부터 화면 가득. SceneStorage 가 frame 기억하더라도
+        // AppDelegate.maximizeMainWindow 의 3-stage retry 가 보강.
+        .defaultSize(width: 4096, height: 2560)
+        // 2026-05-16: `.contentSize` → `.contentMinSize` 변경.
+        // - `.contentSize` 는 max 도 SwiftUI 가 강제 (maxWidth: .infinity 무시 사례
+        //   재발) → setFrame visibleFrame 적용 후 다시 ideal size 로 되돌리는 race.
+        // - `.contentMinSize` 는 SwiftUI minSize 만 관여 — NSWindow setFrame 자유.
+        // RootView frame 의 `maxWidth/maxHeight: .infinity` 와 결합해 안정.
+        .windowResizability(.contentMinSize)
         // macOS native unified toolbar — NavigationSplitView .toolbar API 와 자연스럽게
         // 통합되어 신호등 + sidebar toggle + 상태 정보 (배터리/온도/토크) 가 한 줄에 그려진다.
         .windowToolbarStyle(.unified(showsTitle: false))

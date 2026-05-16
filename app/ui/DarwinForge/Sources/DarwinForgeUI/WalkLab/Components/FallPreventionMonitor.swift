@@ -145,7 +145,7 @@ struct FallPreventionMonitor: View {
                         .foregroundStyle(color)
                         .lineLimit(1)
                         .layoutPriority(1)
-                    Text("max|tilt|")
+                    Text("최대 기울기")
                         .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(1)
@@ -287,7 +287,7 @@ struct FallPreventionMonitor: View {
     private func currentLayers() -> [LayerStatus] {
         // L1 — 정비 스탠드 (사이드바 토글). UI-only — source 라벨 없음.
         let l1 = LayerStatus(
-            id: "L1", name: "L1 Cradle",
+            id: "L1", name: "L1 거치 안정",
             icon: session.cradleConfirmed ? "checkmark.shield.fill" : "shield",
             valueLabel: session.cradleConfirmed ? "확인" : "미확인",
             unit: nil,
@@ -307,7 +307,7 @@ struct FallPreventionMonitor: View {
             }
         }()
         let l2 = LayerStatus(
-            id: "L2", name: "L2 Stability",
+            id: "L2", name: "L2 균형 안정도",
             icon: session.advanced ? "slider.horizontal.3" : "minus.circle",
             valueLabel: session.advanced ? String(format: "%.0f", stab) : "—",
             unit: session.advanced ? "/100" : nil,
@@ -329,7 +329,7 @@ struct FallPreventionMonitor: View {
             return DFColor.success
         }()
         let l3 = LayerStatus(
-            id: "L3", name: "L3 IMU Tilt",
+            id: "L3", name: "L3 자이로 기울기",
             icon: "gyroscope",
             valueLabel: String(format: "%.1f", tiltMax),
             unit: "°",
@@ -349,7 +349,7 @@ struct FallPreventionMonitor: View {
             return DFColor.success
         }()
         let l4 = LayerStatus(
-            id: "L4", name: "L4 Predictor",
+            id: "L4", name: "L4 낙상 예측",
             icon: "exclamationmark.shield",
             valueLabel: String(format: "%.0f", score),
             unit: "/100",
@@ -372,7 +372,7 @@ struct FallPreventionMonitor: View {
             return "0.0"
         }()
         let l5 = LayerStatus(
-            id: "L5", name: "L5 Corrector",
+            id: "L5", name: "L5 자세 보정",
             icon: "figure.balanced",
             valueLabel: corrValue,
             unit: session.enableBalanceCorrection ? "° max" : nil,
@@ -395,7 +395,7 @@ struct FallPreventionMonitor: View {
             return DFColor.success
         }()
         let l6 = LayerStatus(
-            id: "L6", name: "L6 Thermal",
+            id: "L6", name: "L6 모터 온도",
             icon: "thermometer.medium",
             valueLabel: String(format: "%.1f", temp),
             unit: "°C",
@@ -437,24 +437,24 @@ struct FallPreventionMonitor: View {
             valueRange: -35...35,
             tiltLineColor: sparklineColor(forTilt: session.imuRollDeg),
             currentLabel: String(format: "%+.1f°", session.imuRollDeg),
-            title: "Roll", isTiltAxis: true
+            title: "옆 기울기", isTiltAxis: true
         )
         let pitchSp = makeSparkline(
             samples: pitchSamples,
             valueRange: -35...35,
             tiltLineColor: sparklineColor(forTilt: session.imuPitchDeg),
             currentLabel: String(format: "%+.1f°", session.imuPitchDeg),
-            title: "Pitch", isTiltAxis: true
+            title: "앞뒤 기울기", isTiltAxis: true
         )
         let scoreSp = makeSparkline(
             samples: scoreSamples,
             valueRange: 0...100,
             tiltLineColor: sparklineColor(forScore: session.fallPrediction.score),
             currentLabel: String(format: "%.0f", session.fallPrediction.score),
-            title: "Predictor", isTiltAxis: false
+            title: "낙상 예측", isTiltAxis: false
         )
         return VStack(alignment: .leading, spacing: DFSpace.xs) {
-            Text("최근 10초 — Roll / Pitch / Predictor Score")
+            Text("최근 10초 — 옆 기울기 / 앞뒤 기울기 / 낙상 예측 점수")
                 .font(DFFont.sectionLabel)
                 .foregroundStyle(DFColor.textSecondary)
             ViewThatFits(in: .horizontal) {
@@ -473,7 +473,7 @@ struct FallPreventionMonitor: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("최근 10초 시계열 — Roll, Pitch, Predictor Score")
+        .accessibilityLabel("최근 10초 시계열 — 옆 기울기, 앞뒤 기울기, 낙상 예측 점수")
     }
 
     /// Sparkline 최소 너비 — ViewThatFits 폭 분기점. 130pt = Roll/Pitch 10초 trace
@@ -527,15 +527,15 @@ struct FallPreventionMonitor: View {
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer()
                 if let progress = session.rampProgress {
-                    Text(String(format: "Ramp %.0f%%", progress * 100))
+                    Text(String(format: "보정 진행 %.0f%%", progress * 100))
                         .font(DFFont.monoLabel)
                         .foregroundStyle(progress >= 1 ? DFColor.success : DFColor.accent)
                 } else if session.enableBalanceCorrection {
-                    Text("Ramp pending")
+                    Text("보정 대기")
                         .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                 } else {
-                    Text("Corrector OFF")
+                    Text("자세 보정 꺼짐")
                         .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                 }

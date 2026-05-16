@@ -151,33 +151,111 @@ public struct WalkLabView: View {
     // MARK: - Detail
 
     private var detail: some View {
-        // 2026-05-16 layout 변경: 펼친 Fall Prevention Monitor 를 우측 가로 영역에서
-        // **좌측 세로 column** 으로 분리. 모니터링 + 메인 워크플로를 동시에 시각 가능.
-        // - 닫힘 상태: 기존 single-column 그대로
-        // - 펼침 상태: 좌측 340pt 세로 dashboard + 우측 main content
+        // 2026-05-16 layout: 좌측 세로 dashboard + 세로 toggle stripe + 우측 main.
+        // - 펼침: 모니터링 column (320pt) + 우측 main 동시 시각
+        // - 접힘: 세로 stripe (36pt) 만 — 좌측 edge 에서 클릭 시 펼침
+        // - 세로 toggle 만 사용 (가로 monitoringToggleBar 제거) — macOS Mail sidebar
+        //   collapse 패턴 정합
         HStack(alignment: .top, spacing: DFSpace.none) {
             if session.monitoringExpanded {
                 monitoringSidebar
+            } else {
+                collapsedMonitoringStripe
             }
             mainDetailContent
         }
     }
 
     /// 좌측 세로 모니터링 dashboard column — `monitoringExpanded` 시만 표시.
-    /// `FallPreventionMonitor` 내부 `ViewThatFits` 가 좁은 폭에서 narrow layout
-    /// (sparkline vertical stack 등) 으로 자동 적응.
+    /// 헤더에 닫기 버튼 (chevron.left) + 본문 `FallPreventionMonitor` ScrollView.
+    /// 좁은 폭 (320pt) 에서 모니터 내부 `ViewThatFits` 가 narrow layout 자동 적응.
     private var monitoringSidebar: some View {
-        ScrollView {
-            FallPreventionMonitor(session: session)
-                .padding(DFSpace.md)
+        VStack(spacing: DFSpace.none) {
+            // 헤더 — 라벨 + 닫기 버튼.
+            HStack(spacing: DFSpace.sm) {
+                Image(systemName: "waveform.path.ecg.rectangle")
+                    .font(DFFont.sectionBody)
+                    .foregroundStyle(DFColor.accent)
+                Text("Fall Prevention 모니터링")
+                    .font(DFFont.sectionBody)
+                    .foregroundStyle(DFColor.textPrimary)
+                Spacer()
+                Button {
+                    withAnimation(DFAnimation.fast) {
+                        session.monitoringExpanded = false
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(DFFont.sectionBody)
+                        .foregroundStyle(DFColor.textSecondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("모니터링 패널 접기")
+                .accessibilityLabel("모니터링 패널 접기")
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+            }
+            .padding(.horizontal, DFSpace.sm2)
+            .padding(.vertical, DFSpace.sm)
+            .background(DFColor.elev3)
+
+            Divider()
+
+            ScrollView {
+                FallPreventionMonitor(session: session)
+                    .padding(DFSpace.sm)
+            }
         }
-        .frame(width: 340)
+        .frame(width: 320)
         .background(DFColor.elev2)
         .overlay(alignment: .trailing) {
             Rectangle()
                 .fill(DFColor.textSecondary.opacity(DFOpacity.subtle))
                 .frame(width: DFSize.borderHairline)
         }
+        .transition(.move(edge: .leading).combined(with: .opacity))
+    }
+
+    /// 접힘 상태의 좌측 edge 세로 stripe — 펼치기 버튼 + 라벨.
+    /// macOS Mail / Notes 의 sidebar collapse 패턴 정합.
+    private var collapsedMonitoringStripe: some View {
+        VStack(spacing: DFSpace.sm) {
+            Button {
+                withAnimation(DFAnimation.fast) {
+                    session.monitoringExpanded = true
+                }
+            } label: {
+                VStack(spacing: DFSpace.xs2) {
+                    Image(systemName: "chevron.right")
+                        .font(DFFont.sectionBody)
+                    Image(systemName: "waveform.path.ecg.rectangle")
+                        .font(DFFont.sectionBody)
+                    Text("모니터링")
+                        .font(DFFont.micro)
+                        .rotationEffect(.degrees(-90))
+                        .fixedSize()
+                        .frame(width: 12, height: 60)
+                }
+                .foregroundStyle(DFColor.accent)
+                .padding(.vertical, DFSpace.md)
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .help("Fall Prevention 모니터링 펼치기 (⌘⇧M)")
+            .accessibilityLabel("Fall Prevention 모니터링 펼치기")
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+            Spacer()
+        }
+        .frame(width: 36)
+        .frame(maxHeight: .infinity)
+        .background(DFColor.elev2)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(DFColor.textSecondary.opacity(DFOpacity.subtle))
+                .frame(width: DFSize.borderHairline)
+        }
+        .transition(.move(edge: .leading).combined(with: .opacity))
     }
 
     private var mainDetailContent: some View {
@@ -201,8 +279,9 @@ public struct WalkLabView: View {
                            tint: DFColor.danger)
                 }
 
-                monitoringToggleBar
-                // (FallPreventionMonitor 는 좌측 monitoringSidebar 로 이동 — 펼침 시 자동 표시)
+                // 2026-05-16: 가로 monitoringToggleBar 제거 — 좌측 세로 stripe 로 통합.
+                // 토글은 `collapsedMonitoringStripe` 또는 `monitoringSidebar` 헤더의
+                // chevron 버튼에서 수행.
 
                 HStack(spacing: DFSpace.sm3) {
                     // Hero: 3D 모델 — **Phase G11 (2026-05-15)**: pose 가 보행 cycle 마다 갱신.

@@ -78,12 +78,21 @@ public struct PilotCameraView: View {
             .frame(minHeight: 160)
         }
         .onAppear {
-            configureClient()
+            // 2026-05-16: 자동 연결 제거 — 사용자 명시 요청 ("카메라 연결 버튼 누를 때만").
+            // client 는 idle 로 유지. hsvPreset 만 동기.
+            // 사용자가 cameraWaitingOverlay 의 "카메라 연결" 버튼 클릭 시 configureClient.
             client.hsvPreset = hsvPreset
         }
         .onDisappear { client.stop(resetImage: false) }
-        .onChange(of: flags.camera) { _, _ in configureClient() }
-        .onChange(of: endpoint) { _, _ in configureClient() }
+        // 2026-05-16: flag / endpoint 변경 시 자동 재연결 제거 — 사용자 명시 시작만.
+        // flags.camera OFF 변경 시는 즉시 정지 (안전).
+        .onChange(of: flags.camera) { _, newValue in
+            if !newValue { client.stop() }
+        }
+        .onChange(of: endpoint) { _, _ in
+            // endpoint 변경 = 진행 중 폴링 무효화. 단 자동 재시작 X — 사용자 재연결 버튼.
+            if case .live = client.phase { client.stop() }
+        }
         .onChange(of: hsvPreset) { _, newValue in client.hsvPreset = newValue }
         .onChange(of: client.lastDetection) { _, newValue in
             // Phase D5 — 새 detection 마다 head tracker 처리.
@@ -408,6 +417,27 @@ public struct PilotCameraView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, DFSpace.md)
                 setupActionsRow(reason: reason)
+            case .idle:
+                // 2026-05-16: 자동 연결 제거 — 사용자 명시 시작.
+                Image(systemName: "video.fill")
+                    .font(.system(size: DFFontSize.s32))
+                    .foregroundStyle(DFColor.textSecondary)
+                Text("카메라 연결 대기")
+                    .font(DFFont.bodyEmph)
+                Text("\(endpoint.displayName) 으로 연결을 시도하려면 아래 버튼을 누르세요")
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, DFSpace.md)
+                Button {
+                    configureClient()
+                } label: {
+                    Label("카메라 연결", systemImage: "play.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .tint(DFColor.accent)
+                .padding(.top, DFSpace.xs)
             default:
                 ProgressView()
                     .controlSize(.small)
