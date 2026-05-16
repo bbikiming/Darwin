@@ -151,6 +151,36 @@ public struct WalkLabView: View {
     // MARK: - Detail
 
     private var detail: some View {
+        // 2026-05-16 layout 변경: 펼친 Fall Prevention Monitor 를 우측 가로 영역에서
+        // **좌측 세로 column** 으로 분리. 모니터링 + 메인 워크플로를 동시에 시각 가능.
+        // - 닫힘 상태: 기존 single-column 그대로
+        // - 펼침 상태: 좌측 340pt 세로 dashboard + 우측 main content
+        HStack(alignment: .top, spacing: DFSpace.none) {
+            if session.monitoringExpanded {
+                monitoringSidebar
+            }
+            mainDetailContent
+        }
+    }
+
+    /// 좌측 세로 모니터링 dashboard column — `monitoringExpanded` 시만 표시.
+    /// `FallPreventionMonitor` 내부 `ViewThatFits` 가 좁은 폭에서 narrow layout
+    /// (sparkline vertical stack 등) 으로 자동 적응.
+    private var monitoringSidebar: some View {
+        ScrollView {
+            FallPreventionMonitor(session: session)
+                .padding(DFSpace.md)
+        }
+        .frame(width: 340)
+        .background(DFColor.elev2)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(DFColor.textSecondary.opacity(DFOpacity.subtle))
+                .frame(width: DFSize.borderHairline)
+        }
+    }
+
+    private var mainDetailContent: some View {
         ScrollView {
             VStack(spacing: DFSpace.sm3) {
                 simOnlyNotice
@@ -172,9 +202,7 @@ public struct WalkLabView: View {
                 }
 
                 monitoringToggleBar
-                if session.monitoringExpanded {
-                    FallPreventionMonitor(session: session)
-                }
+                // (FallPreventionMonitor 는 좌측 monitoringSidebar 로 이동 — 펼침 시 자동 표시)
 
                 HStack(spacing: DFSpace.sm3) {
                     // Hero: 3D 모델 — **Phase G11 (2026-05-15)**: pose 가 보행 cycle 마다 갱신.

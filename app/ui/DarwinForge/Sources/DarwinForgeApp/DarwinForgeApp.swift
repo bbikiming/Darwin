@@ -48,19 +48,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 지정 window 를 모니터 visibleFrame 가득 채움.
-    func maximizeWindow(_ w: NSWindow) {
-        guard let screen = w.screen ?? NSScreen.main else { return }
-        w.setFrame(screen.visibleFrame, display: true, animate: true)
-    }
-
     /// 메인 윈도우를 모니터 visibleFrame 가득 채움 (zoom = maximize).
     /// 시스템 환경설정의 "Dock / Menu Bar" 영역 자동 회피.
     func maximizeMainWindow() {
         guard let w = NSApp.windows.first(where: { $0.isVisible }) else { return }
+        maximizeWindow(w)
+    }
+
+    /// 지정 window 를 모니터 visibleFrame 가득 채움.
+    ///
+    /// **2026-05-16 강화**: 종전 `setFrame` 단독 호출이 SwiftUI Scene 의 `.defaultSize`
+    /// / `.windowResizability(.contentSize)` 와 충돌해 적용 후 다시 ideal size 로 복귀
+    /// 되는 회귀 발견. 3-stage 강제:
+    ///   1. `performZoom(nil)` — macOS native zoom (delegate `windowWillUseStandardFrame`
+    ///      자동 호출, visibleFrame 반환)
+    ///   2. `setFrame(visibleFrame, animate: false)` 직접 호출 — performZoom 미반응 안전망
+    ///   3. asyncAfter 0.2s 한 번 더 setFrame — SwiftUI re-layout 이후 override 차단
+    func maximizeWindow(_ w: NSWindow) {
         guard let screen = w.screen ?? NSScreen.main else { return }
         let target = screen.visibleFrame
-        w.setFrame(target, display: true, animate: true)
+
+        // Stage 1: macOS native zoom — Apple HIG 표준 maximize 동작.
+        if !w.isZoomed {
+            w.performZoom(nil)
+        }
+
+        // Stage 2: zoom 미반응 시 직접 setFrame (애니메이션 없이 즉시).
+        if w.frame != target {
+            w.setFrame(target, display: true, animate: false)
+        }
+
+        // Stage 3: SwiftUI Scene defaultSize 가 race 로 override 하는 경우 한 번 더.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            if w.frame != target {
+                w.setFrame(target, display: true, animate: false)
+            }
+        }
     }
 
     /// 윈도우 fullscreen + zoom 동작 활성화.
