@@ -84,11 +84,15 @@ if [[ $SKIP_RUST -eq 0 ]]; then
   echo "▶ Vendor/CForgeCore/lib/libforge_core.a 복사"
   cp "$STATIC_FINAL" "$SWIFT_VENDOR/lib/libforge_core.a"
 
-  # 헤더: cbindgen 산출물 우선, fallback으로 forge-ffi/forge_core.h.in
-  HEADER=$(find "$CARGO_DIR/target" -name "forge_core.h" -path "*/build/forge-ffi-*/out/*" 2>/dev/null | head -1)
+  # 헤더: cbindgen 산출물 우선, fallback으로 forge-ffi/forge_core.h.in.
+  # 다중 stale 빌드 dir (구 universal target, 옛 debug) 이 남아 있을 때
+  # `find | head -1` 는 filesystem 순서로 stale 헤더를 픽업할 수 있다.
+  # → `-exec ls -t1 {} +` 로 paths 일괄 모아 mtime 내림차순 정렬 후 최신 1건.
+  HEADER=$(find "$CARGO_DIR/target" -name "forge_core.h" -path "*/build/forge-ffi-*/out/*" \
+           -exec ls -t1 {} + 2>/dev/null | head -1)
   if [[ -n "${HEADER:-}" && -f "$HEADER" ]]; then
     cp "$HEADER" "$SWIFT_VENDOR/include/forge_core.h"
-    echo "  ▷ forge_core.h ← cbindgen 자동 생성"
+    echo "  ▷ forge_core.h ← cbindgen 자동 생성 (latest by mtime)"
   elif [[ -f "$CARGO_DIR/forge-ffi/forge_core.h.in" ]]; then
     cp "$CARGO_DIR/forge-ffi/forge_core.h.in" "$SWIFT_VENDOR/include/forge_core.h"
     echo "  ▷ forge_core.h ← forge-ffi/forge_core.h.in fallback"
