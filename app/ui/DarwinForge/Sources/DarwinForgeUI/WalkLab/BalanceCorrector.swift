@@ -81,29 +81,88 @@ public struct BalanceCorrector {
     /// 입력 단위 deg (°). 결과 단위 deg. 호출자가 `Kinematics.raw(fromDegrees:)`
     /// 로 raw 변환 후 pose 에 적용.
     ///
-    /// - `rollErrDeg` — `imuRollDeg - 0` (목표 자세는 walkReady 의 roll=0)
-    /// - `pitchErrDeg` — `imuPitchDeg - 0`
+    /// - `rollErrDeg` — `imuRollDeg` (양수 = 오른쪽 기울)
+    /// - `pitchErrDeg` — `imuPitchDeg` (양수 = 앞으로 기울)
+    ///
+    /// # 부호 매핑 (URDF dir × ROBOTIS Walking.cpp 식 유도)
+    ///
+    /// ROBOTIS 원본: `balance = ±dir(joint) × (-0.3) × (-measuredErr) × gain`.
+    /// `getJointDirection` 의 URDF axis sum 값을 본 함수의 R/L 부호로 직접 표현:
+    ///
+    /// | 관절 | URDF axis | dir | 본 함수 식 |
+    /// |---|---|---|---|
+    /// | r_hip_roll  | (-1, 0, 0) | -1 | `-0.15 × imuRollDeg` |
+    /// | l_hip_roll  | (-1, 0, 0) | -1 | `-0.15 × imuRollDeg` (R 동일) |
+    /// | r_knee      | (0, +1, 0) | +1 | `-0.09 × imuPitchDeg` |
+    /// | l_knee      | (0, -1, 0) | -1 | `+0.09 × imuPitchDeg` (R 반대) |
+    /// | r_ank_pitch | (0, -1, 0) | -1 | `+0.27 × imuPitchDeg` |
+    /// | l_ank_pitch | (0, +1, 0) | +1 | `-0.27 × imuPitchDeg` (R 반대) |
+    /// | r_ank_roll  | (+1, 0, 0) | +1 | `+0.30 × imuRollDeg` |
+    /// | l_ank_roll  | (+1, 0, 0) | +1 | `+0.30 × imuRollDeg` (R 동일) |
+    ///
+    /// **lateral shift (hip_roll, ankle_roll)** → R/L 같은 부호.
+    /// **sagittal recovery (knee, ankle_pitch)** → R/L mirror 부호.
+    ///
+    /// 2026-05-16 정정 (v1.1 Stage 4 audit): 이전 R/L 모두 동일 부호 가정은
+    /// URDF dir 무시한 오류 → knee/ankle_pitch 의 L 부호 + ankle_roll 의 양쪽
+    /// 부호 4 곳 정정.
     public func corrections(rollErrDeg: Double, pitchErrDeg: Double) -> Corrections {
-        // Walking.cpp 원본 부호 매핑 — R/L 동일 부호 (lateral shift).
-        // hip_roll:   dir(+) * (-0.3) * rl * gain  → +1 * -0.3 = -0.3 multiplier
-        // ankle_roll: dir(+) * (-0.3) * rl * gain  → 동일
-        // knee:       dir(+) * (+0.3) * fb * gain  → reverse internal_gain
-        // ank_pitch:  dir(+) * (+0.3) * fb * gain  → 동일
+        // ROBOTIS 원본 `balance = dir × internal_gain × (goal - measured) × gain`.
+        // `goal = 0` 이라 `(goal - measured) = -measured` 부호 변환.
+        // `internal_gain = -0.3`. 따라서 효과 multiplier:
+        //   hip_roll  (lateral): dir × -0.3 × -1 × gain = dir × 0.3 × gain (× imuRoll)
+        //                        → 그러나 ROBOTIS 식: + dir × -0.3 × rl_err × gain
+        //                          where rl_err = -imuRoll
+        //                        → -dir × 0.3 × imuRoll × gain
+        //   ankle_roll(lateral): -dir × 0.3 × imuRoll × gain  (동일 식, dir 다름)
+        //   knee     (sagittal): +dir × 0.3 × imuPitch × gain  (Walking.cpp 의 -dir × ...)
+        //   ank_pitch(sagittal): +dir × 0.3 × imuPitch × gain
+        //
+        // dir 대입한 결과를 명시적으로 코딩:
 
-        let hipRoll    = internalGain * rollErrDeg * hipRollGain * intensity
-        let knee       = -internalGain * pitchErrDeg * kneeGain * intensity
-        let anklePitch = -internalGain * pitchErrDeg * anklePitchGain * intensity
-        let ankleRoll  = internalGain * rollErrDeg * ankleRollGain * intensity
+        let m = 0.3 * intensity  // common multiplier (= |internal_gain| × intensity)
+
+        // hip_roll: dir = -1 → multiplier = -(-1) × 0.3 × gain = 0.3 × gain
+        //   → -dir × 0.3 × imuRoll × gain = -(-1) × ... → wait, let me restart cleanly.
+
+        // ROBOTIS 식 (rl = -imuRoll, fb = -imuPitch 대입):
+        //   r_hip_roll  = +dir(r_hip_roll)  × (-0.3) × rl × hip_roll_gain
+        //               = +(-1) × (-0.3) × (-imuRoll) × 0.5
+        //               = -0.15 × imuRoll
+        //   l_hip_roll  = 동일 (dir 같음) = -0.15 × imuRoll
+        //   r_knee      = -dir(r_knee) × (-0.3) × fb × knee_gain
+        //               = -(+1) × (-0.3) × (-imuPitch) × 0.3
+        //               = -0.09 × imuPitch
+        //   l_knee      = -dir(l_knee) × (-0.3) × fb × knee_gain
+        //               = -(-1) × (-0.3) × (-imuPitch) × 0.3
+        //               = +0.09 × imuPitch
+        //   r_ank_pitch = -dir(r_ank_pitch) × (-0.3) × fb × ankle_pitch_gain
+        //               = -(-1) × (-0.3) × (-imuPitch) × 0.9
+        //               = +0.27 × imuPitch
+        //   l_ank_pitch = -dir(l_ank_pitch) × (-0.3) × fb × ankle_pitch_gain
+        //               = -(+1) × (-0.3) × (-imuPitch) × 0.9
+        //               = -0.27 × imuPitch
+        //   r_ank_roll  = +dir(r_ank_roll) × (-0.3) × rl × ankle_roll_gain
+        //               = +(+1) × (-0.3) × (-imuRoll) × 1.0
+        //               = +0.30 × imuRoll
+        //   l_ank_roll  = 동일 (dir 같음) = +0.30 × imuRoll
+
+        let hipRollBoth     = -m * rollErrDeg * hipRollGain        // = -0.15 × imuRoll
+        let kneeR           = -m * pitchErrDeg * kneeGain          // = -0.09 × imuPitch
+        let kneeL           = +m * pitchErrDeg * kneeGain          // = +0.09 × imuPitch
+        let anklePitchR     = +m * pitchErrDeg * anklePitchGain    // = +0.27 × imuPitch
+        let anklePitchL     = -m * pitchErrDeg * anklePitchGain    // = -0.27 × imuPitch
+        let ankleRollBoth   = +m * rollErrDeg * ankleRollGain      // = +0.30 × imuRoll
 
         return Corrections(
-            rHipRoll:    clamp(hipRoll),
-            lHipRoll:    clamp(hipRoll),
-            rKnee:       clamp(knee),
-            lKnee:       clamp(knee),
-            rAnklePitch: clamp(anklePitch),
-            lAnklePitch: clamp(anklePitch),
-            rAnkleRoll:  clamp(ankleRoll),
-            lAnkleRoll:  clamp(ankleRoll)
+            rHipRoll:    clamp(hipRollBoth),
+            lHipRoll:    clamp(hipRollBoth),
+            rKnee:       clamp(kneeR),
+            lKnee:       clamp(kneeL),
+            rAnklePitch: clamp(anklePitchR),
+            lAnklePitch: clamp(anklePitchL),
+            rAnkleRoll:  clamp(ankleRollBoth),
+            lAnkleRoll:  clamp(ankleRollBoth)
         )
     }
 

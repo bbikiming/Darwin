@@ -277,37 +277,50 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertEqual(c.internalGain,  -0.3, accuracy: 0.001)  // Walking.cpp:892
     }
 
-    /// **부호 정합 — roll error 양수 (오른쪽 기울) → hip_roll 음수 보정 (왼쪽으로 lean 회복)**.
-    /// Walking.cpp: `dir * -0.3 * rl * gain` = +1 * -0.3 * (+roll) * 0.5 = -0.15 * roll (음수).
+    /// **부호 정합 (정정 후)** — roll +10° → URDF dir 적용 후 8 관절 정확 값.
+    ///
+    /// 정정 (2026-05-16): URDF `getJointDirection` 적용해서 R/L 부호 차이 반영:
+    /// - hip_roll: 둘 다 -1.5° (lateral, R/L 동일)
+    /// - ank_roll: 둘 다 **+3.0°** (lateral, R/L 동일, **부호 reverse**)
+    /// - 다른 관절: roll=0 일 때 보정 0
     func testCorrectionPolarityRollPositive() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: 10, pitchErrDeg: 0)
-        // hip_roll = -0.3 * 10 * 0.5 = -1.5 (음수, 왼쪽 lean)
-        XCTAssertLessThan(result.rHipRoll, 0, "roll +양 → R hipRoll 음수여야 (왼쪽 lean 회복)")
-        XCTAssertEqual(result.rHipRoll, result.lHipRoll, accuracy: 0.001,
-            "R/L hipRoll 동일 부호 (lateral CoP shift) 위반")
+        // hipRoll = -0.15 * 10 = -1.5°
         XCTAssertEqual(result.rHipRoll, -1.5, accuracy: 0.001,
-            "hipRoll = -0.3 * 10 * 0.5 = -1.5 (정량)")
-        // ankle_roll 도 같은 부호 + 큰 gain (1.0).
-        XCTAssertLessThan(result.rAnkleRoll, 0)
-        XCTAssertEqual(result.rAnkleRoll, -3.0, accuracy: 0.001,
-            "ankleRoll = -0.3 * 10 * 1.0 = -3.0")
+            "hipRoll = -0.15 × imuRoll = -1.5 (정량)")
+        XCTAssertEqual(result.lHipRoll, -1.5, accuracy: 0.001,
+            "L hipRoll = R 동일 (lateral CoP shift)")
+        // ankleRoll = +0.30 * 10 = +3.0° (정정 후 부호)
+        XCTAssertEqual(result.rAnkleRoll, +3.0, accuracy: 0.001,
+            "ankleRoll = +0.30 × imuRoll = +3.0 (URDF dir +1 적용)")
+        XCTAssertEqual(result.lAnkleRoll, +3.0, accuracy: 0.001,
+            "L ankleRoll = R 동일 (lateral)")
         // pitch=0 → knee, ank_pitch 보정 0.
         XCTAssertEqual(result.rKnee, 0, accuracy: 0.001)
+        XCTAssertEqual(result.lKnee, 0, accuracy: 0.001)
         XCTAssertEqual(result.rAnklePitch, 0, accuracy: 0.001)
+        XCTAssertEqual(result.lAnklePitch, 0, accuracy: 0.001)
     }
 
-    /// **부호 정합 — pitch error 양수 (앞 기울) → knee 양수 보정 (굽힘 = 뒤로 lean)**.
-    /// Walking.cpp: `-dir * -0.3 * fb * gain` = +0.3 * (+pitch) * 0.3 = +0.09 * pitch (양수).
+    /// **부호 정합 (정정 후)** — pitch +10° → R/L mirror 부호 (sagittal recovery).
+    ///
+    /// 정정 (2026-05-16): knee/ankle_pitch 의 L 부호 reverse:
+    /// - knee_R = -0.9°, knee_L = +0.9° (mirror)
+    /// - anklePitch_R = +2.7°, anklePitch_L = -2.7° (mirror)
     func testCorrectionPolarityPitchPositive() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: 0, pitchErrDeg: 10)
-        // knee = +0.3 * 10 * 0.3 = +0.9 (양수, 굽힘)
-        XCTAssertGreaterThan(result.rKnee, 0, "pitch +양 → knee 양수 (굽힘)")
-        XCTAssertEqual(result.rKnee, 0.9, accuracy: 0.001,
-            "knee = +0.3 * 10 * 0.3 = 0.9 (정량)")
-        // ankle_pitch = +0.3 * 10 * 0.9 = +2.7
-        XCTAssertEqual(result.rAnklePitch, 2.7, accuracy: 0.001)
+        // knee = mirror — R 음수, L 양수.
+        XCTAssertEqual(result.rKnee, -0.9, accuracy: 0.001,
+            "R knee = -0.09 × imuPitch = -0.9 (URDF dir +1, mirror with L)")
+        XCTAssertEqual(result.lKnee, +0.9, accuracy: 0.001,
+            "L knee = +0.09 × imuPitch = +0.9 (URDF dir -1, R mirror)")
+        // anklePitch = mirror — R 양수, L 음수.
+        XCTAssertEqual(result.rAnklePitch, +2.7, accuracy: 0.001,
+            "R anklePitch = +0.27 × imuPitch")
+        XCTAssertEqual(result.lAnklePitch, -2.7, accuracy: 0.001,
+            "L anklePitch = -0.27 × imuPitch (mirror)")
         // roll=0 → hip/ankle roll 0.
         XCTAssertEqual(result.rHipRoll, 0, accuracy: 0.001)
         XCTAssertEqual(result.rAnkleRoll, 0, accuracy: 0.001)
@@ -316,15 +329,20 @@ final class WalkLabFallPreventionTests: XCTestCase {
     /// **max clamp** — 큰 error 시 ±maxCorrectionDeg 로 잘림.
     func testCorrectionClampedAtMax() {
         let c = BalanceCorrector.robotisDefault  // maxCorrectionDeg = 15
-        // roll 100° → ankle_roll = -0.3 * 100 * 1.0 = -30 → clamp -15.
+        // roll 100° → ankleRoll = +0.30 * 100 = +30 → clamp +15 (양수 한도).
         let result = c.corrections(rollErrDeg: 100, pitchErrDeg: 0)
-        XCTAssertEqual(result.rAnkleRoll, -15, accuracy: 0.001,
-            "큰 roll error 에서 ankleRoll clamp -15° 실패")
-        // hip_roll = -0.3 * 100 * 0.5 = -15 → 정확히 clamp 경계.
+        XCTAssertEqual(result.rAnkleRoll, +15, accuracy: 0.001,
+            "큰 roll +error 에서 ankleRoll clamp +15° (양수 한도)")
+        // hip_roll = -0.15 * 100 = -15 → 음수 한도 정확.
         XCTAssertEqual(result.rHipRoll, -15, accuracy: 0.001)
+        // 음수 roll 입력 — 부호 reverse 확인.
+        let neg = c.corrections(rollErrDeg: -100, pitchErrDeg: 0)
+        XCTAssertEqual(neg.rAnkleRoll, -15, accuracy: 0.001,
+            "음수 roll -100° 에서 ankleRoll clamp -15° (음수 한도)")
+        XCTAssertEqual(neg.rHipRoll, +15, accuracy: 0.001)
     }
 
-    /// **gain ramp** — 시작 0초 / 0.5초 / 1초+ 시 보정 비율.
+    /// **gain ramp** — 시작 0초 / 0.5초 / 1초+ 시 보정 비율. R hipRoll 음수 방향으로.
     func testBalanceCorrectorGainRamp() {
         let c = BalanceCorrector.robotisDefault
         let pose = RobotPose.walkReady
@@ -345,6 +363,22 @@ final class WalkLabFallPreventionTests: XCTestCase {
         let dMid = p05.degrees(.rHipRoll) - pose.degrees(.rHipRoll)
         XCTAssertEqual(dMid, -0.75, accuracy: 0.5,
             "ramp 0.5초 → 50% 보정 (-0.75° delta)")
+    }
+
+    /// **URDF dir 부호 lock-in** — 정상 보행 시 self-collision / over-extension 회피.
+    /// roll +10° + pitch +10° 동시 입력 → 8 관절 delta 가 모두 정확 부호.
+    func testCorrectionFullSignTableLockIn() {
+        let c = BalanceCorrector.robotisDefault
+        let r = c.corrections(rollErrDeg: 10, pitchErrDeg: 10)
+        // 정확 부호 매트릭스 (URDF dir × Walking.cpp 식 유도):
+        XCTAssertEqual(r.rHipRoll,    -1.5, accuracy: 0.001)  // -0.15 × 10
+        XCTAssertEqual(r.lHipRoll,    -1.5, accuracy: 0.001)
+        XCTAssertEqual(r.rKnee,       -0.9, accuracy: 0.001)  // -0.09 × 10
+        XCTAssertEqual(r.lKnee,       +0.9, accuracy: 0.001)  // +0.09 × 10 (mirror)
+        XCTAssertEqual(r.rAnklePitch, +2.7, accuracy: 0.001)  // +0.27 × 10
+        XCTAssertEqual(r.lAnklePitch, -2.7, accuracy: 0.001)  // -0.27 × 10 (mirror)
+        XCTAssertEqual(r.rAnkleRoll,  +3.0, accuracy: 0.001)  // +0.30 × 10
+        XCTAssertEqual(r.lAnkleRoll,  +3.0, accuracy: 0.001)
     }
 
     /// **disabled 시 identity** — enabled=false → pose 그대로.
@@ -372,11 +406,11 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "pitch=5 일 때 knee 양수 보정 실패 (NaN 격리 못 함)")
     }
 
-    /// **maxAbs** — 모든 delta 의 최대 절댓값 helper.
+    /// **maxAbs** — 모든 delta 의 최대 절댓값 helper. roll=pitch=10° 시 ankleRoll +3°.
     func testBalanceCorrectorMaxAbs() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: 10, pitchErrDeg: 10)
-        // ankle_roll = -3, ankle_pitch = +2.7, knee = +0.9, hip_roll = -1.5 → max=3
+        // 정정 후: ankleRoll +3.0, anklePitch ±2.7, hipRoll -1.5, knee ±0.9 → max=3.0
         XCTAssertEqual(result.maxAbs, 3.0, accuracy: 0.001)
     }
 
