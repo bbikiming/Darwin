@@ -367,25 +367,37 @@ struct FallPreventionMonitor: View {
     /// 그 외 vertical stack (각 차트 full-width). HSplitView detail
     /// minWidth 480 - sidebar 240 = 240pt 일 때도 vertical 로 사용 가능.
     private var timeSeriesRow: some View {
+        // **2026-05-16 최적화**: 이전엔 timeline 을 4번 iterate (filter + 3× map).
+        // 정정: 단일 pass 로 3 array 동시 build — 50ms tick 마다 O(N) × 4 → O(N) × 1.
         let now = Date()
         let cutoff = now.addingTimeInterval(-10)
-        let recent = session.safetyTimeline.filter { $0.timestamp >= cutoff }
+        var rollSamples: [(Date, Double)] = []
+        var pitchSamples: [(Date, Double)] = []
+        var scoreSamples: [(Date, Double)] = []
+        rollSamples.reserveCapacity(session.safetyTimeline.count)
+        pitchSamples.reserveCapacity(session.safetyTimeline.count)
+        scoreSamples.reserveCapacity(session.safetyTimeline.count)
+        for sample in session.safetyTimeline where sample.timestamp >= cutoff {
+            rollSamples.append((sample.timestamp, sample.rollDeg))
+            pitchSamples.append((sample.timestamp, sample.pitchDeg))
+            scoreSamples.append((sample.timestamp, sample.predictionScore))
+        }
         let rollSp = makeSparkline(
-            samples: recent.map { ($0.timestamp, $0.rollDeg) },
+            samples: rollSamples,
             valueRange: -35...35,
             tiltLineColor: sparklineColor(forTilt: session.imuRollDeg),
             currentLabel: String(format: "%+.1f°", session.imuRollDeg),
             title: "Roll", isTiltAxis: true
         )
         let pitchSp = makeSparkline(
-            samples: recent.map { ($0.timestamp, $0.pitchDeg) },
+            samples: pitchSamples,
             valueRange: -35...35,
             tiltLineColor: sparklineColor(forTilt: session.imuPitchDeg),
             currentLabel: String(format: "%+.1f°", session.imuPitchDeg),
             title: "Pitch", isTiltAxis: true
         )
         let scoreSp = makeSparkline(
-            samples: recent.map { ($0.timestamp, $0.predictionScore) },
+            samples: scoreSamples,
             valueRange: 0...100,
             tiltLineColor: sparklineColor(forScore: session.fallPrediction.score),
             currentLabel: String(format: "%.0f", session.fallPrediction.score),
@@ -541,12 +553,12 @@ struct FallPreventionMonitor: View {
                         // 양수 쪽 tick.
                         Rectangle()
                             .fill(DFColor.textSecondary.opacity(DFOpacity.o25))
-                            .frame(width: DFSize.borderHairline, height: 4)
+                            .frame(width: DFSize.borderHairline, height: DFSpace.xs)  // 4pt tick mark
                             .offset(x: halfW + halfW * CGFloat(tickFrac))
                         // 음수 쪽 tick.
                         Rectangle()
                             .fill(DFColor.textSecondary.opacity(DFOpacity.o25))
-                            .frame(width: DFSize.borderHairline, height: 4)
+                            .frame(width: DFSize.borderHairline, height: DFSpace.xs)  // 4pt tick mark
                             .offset(x: halfW - halfW * CGFloat(tickFrac))
                     }
                     // 양수 / 음수 deflection.
@@ -570,7 +582,7 @@ struct FallPreventionMonitor: View {
                         .offset(x: halfW - DFSize.borderHairline / 2)
                 }
             }
-            .frame(height: DFSize.dot + 2)  // tick (5pt) 위로 살짝 확장
+            .frame(height: DFSize.dot + DFSpace.micro2)  // 7pt: dot(5) + micro(2) — tick 위로 확장
             Text(String(format: "%+.2f°", value))
                 .font(DFFont.dataMicro)
                 .foregroundStyle(absVal > 0.05 ? color : DFColor.textSecondary)

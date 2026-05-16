@@ -176,9 +176,8 @@ struct SafetySparkline: View {
 
     @ViewBuilder
     private func thresholdLabelText(_ value: Double, color: Color) -> some View {
-        // 7pt = threshold label 전용 micro size. 차트 우측 가장자리에 비-침습적 표시.
         Text(value >= 0 ? String(format: "%+.0f", value) : String(format: "%.0f", value))
-            .font(.system(size: 7, weight: .medium, design: .monospaced))
+            .font(DFFont.microThreshold)
             .foregroundStyle(color.opacity(DFOpacity.dim))
             .padding(.horizontal, DFSpace.micro2)
             .background(
@@ -283,7 +282,11 @@ struct SafetySparkline: View {
             }
             return pad + h
         }()
+
+        // **2026-05-16 최적화**: 이전엔 area + line 을 separate iteration (samples × 2).
+        // 정정: 단일 pass 로 두 path 동시 build — sample N 개일 때 2N → N point 계산.
         var areaPath = Path()
+        var linePath = Path()
         for (i, s) in samples.enumerated() {
             let tNorm = (s.0.timeIntervalSinceReferenceDate - tFirst) / tSpan
             let x = pad + w * CGFloat(tNorm)
@@ -292,8 +295,10 @@ struct SafetySparkline: View {
             if i == 0 {
                 areaPath.move(to: CGPoint(x: x, y: baselineY))
                 areaPath.addLine(to: CGPoint(x: x, y: y))
+                linePath.move(to: CGPoint(x: x, y: y))
             } else {
                 areaPath.addLine(to: CGPoint(x: x, y: y))
+                linePath.addLine(to: CGPoint(x: x, y: y))
             }
         }
         // 마지막 sample 의 x 에서 baseline 으로 내림.
@@ -303,19 +308,7 @@ struct SafetySparkline: View {
         ctx.fill(areaPath, with: .color(lineColor.opacity(DFOpacity.o20)))
 
         // 데이터 line (area 위에 그림 — 강조).
-        var path = Path()
-        for (i, s) in samples.enumerated() {
-            let tNorm = (s.0.timeIntervalSinceReferenceDate - tFirst) / tSpan
-            let x = pad + w * CGFloat(tNorm)
-            let yNorm = (yMax - s.1) / ySpan
-            let y = pad + h * CGFloat(max(0, min(1, yNorm)))
-            if i == 0 {
-                path.move(to: CGPoint(x: x, y: y))
-            } else {
-                path.addLine(to: CGPoint(x: x, y: y))
-            }
-        }
-        ctx.stroke(path, with: .color(lineColor),
+        ctx.stroke(linePath, with: .color(lineColor),
                    style: StrokeStyle(lineWidth: Self.lineW,
                                       lineCap: .round, lineJoin: .round))
 
@@ -329,6 +322,7 @@ struct SafetySparkline: View {
 
     /// **2026-05-16 시인성**: 임계 라인 — zone stripe 위에 명확한 dashed line.
     /// 음수/양수 대칭 지원 (mirror=true 시).
+    /// **2026-05-16 최적화**: 양수/음수 분기 → 공통 line draw helper 추출.
     private func drawThresholdLine(ctx: GraphicsContext, size: CGSize, pad: CGFloat,
                                    value: Double, color: Color, mirror: Bool) {
         let yMin = valueRange.lowerBound
@@ -337,27 +331,35 @@ struct SafetySparkline: View {
         guard ySpan > 0 else { return }
         let h = size.height - pad * 2
         let w = size.width - pad * 2
+        let strokeStyle = StrokeStyle(lineWidth: Self.thresholdLineW,
+                                      dash: Self.thresholdDash)
+        let strokeColor = GraphicsContext.Shading.color(color.opacity(DFOpacity.o40))
 
         // 양수 영역.
         if value <= yMax, value >= yMin {
             let y = pad + h * CGFloat((yMax - value) / ySpan)
-            var line = Path()
-            line.move(to: CGPoint(x: pad, y: y))
-            line.addLine(to: CGPoint(x: pad + w, y: y))
-            ctx.stroke(line, with: .color(color.opacity(DFOpacity.o40)),
-                       style: StrokeStyle(lineWidth: 0.5,
-                                          dash: [3, 2]))
+            ctx.stroke(Self.horizontalLine(at: y, fromX: pad, toX: pad + w),
+                       with: strokeColor, style: strokeStyle)
         }
         // 음수 영역 (mirror).
         if mirror, value > 0, -value >= yMin, -value <= yMax {
             let y = pad + h * CGFloat((yMax - (-value)) / ySpan)
-            var line = Path()
-            line.move(to: CGPoint(x: pad, y: y))
-            line.addLine(to: CGPoint(x: pad + w, y: y))
-            ctx.stroke(line, with: .color(color.opacity(DFOpacity.o40)),
-                       style: StrokeStyle(lineWidth: 0.5,
-                                          dash: [3, 2]))
+            ctx.stroke(Self.horizontalLine(at: y, fromX: pad, toX: pad + w),
+                       with: strokeColor, style: strokeStyle)
         }
+    }
+
+    /// Threshold dashed line stroke 두께 — NASA PFD attitude indicator hairline.
+    private static let thresholdLineW: CGFloat = DFSize.borderHairline
+    /// Threshold dashed pattern — [dash, gap].
+    private static let thresholdDash: [CGFloat] = [DFRadius.tiny + 1, DFSpace.micro2]
+
+    /// 가로 라인 path 생성 — 반복 코드 제거 helper.
+    private static func horizontalLine(at y: CGFloat, fromX: CGFloat, toX: CGFloat) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: fromX, y: y))
+        p.addLine(to: CGPoint(x: toX, y: y))
+        return p
     }
 
     /// Current value dot — NN/g 권장 (현재 값 강조).

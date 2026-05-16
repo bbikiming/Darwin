@@ -170,6 +170,9 @@ public enum DFFont {
     public static let modalHero = Font.system(size: 20, weight: .bold)
     /// 10pt semibold — emphasized small label (status badge text).
     public static let labelStrong = Font.system(size: 10, weight: .semibold)
+    /// 7pt medium mono — micro threshold label (sparkline 우측 가장자리).
+    /// 매우 작은 비-침습적 표시기 — 차트 area 가리지 않음.
+    public static let microThreshold = Font.system(size: 7, weight: .medium, design: .monospaced)
 }
 
 /// 타이포 raw size 토큰 — `font.system(size: ...)` 사용 시 raw 숫자 대신 사용.

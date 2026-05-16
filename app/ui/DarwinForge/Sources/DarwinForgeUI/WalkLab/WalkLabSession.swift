@@ -1161,9 +1161,19 @@ public final class WalkLabSession: ObservableObject {
             correctorMaxDelta: maxDelta
         )
         safetyTimeline.append(sample)
-        // 10초 윈도우 + 안전 상한 250.
+        // **2026-05-16 최적화**: samples 가 chronological 정렬되므로 expired
+        // sample 은 앞쪽에만 있음. removeAll(where:) 의 O(N) full scan 대신
+        // 앞에서부터 cutoff 도달 시점까지만 scan — O(k) where k=expired count.
+        // 매 tick 보통 1-2 개만 expire → O(1-2) avg.
         let cutoff = now.addingTimeInterval(-Self.safetyTimelineMaxWindowSec)
-        safetyTimeline.removeAll { $0.timestamp < cutoff }
+        var firstValidIdx = 0
+        while firstValidIdx < safetyTimeline.count,
+              safetyTimeline[firstValidIdx].timestamp < cutoff {
+            firstValidIdx += 1
+        }
+        if firstValidIdx > 0 {
+            safetyTimeline.removeFirst(firstValidIdx)
+        }
         if safetyTimeline.count > Self.safetyTimelineMaxSamples {
             safetyTimeline.removeFirst(safetyTimeline.count - Self.safetyTimelineMaxSamples)
         }
