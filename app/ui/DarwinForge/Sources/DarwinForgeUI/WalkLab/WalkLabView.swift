@@ -191,6 +191,16 @@ public struct WalkLabView: View {
                             RoundedRectangle(cornerRadius: DFRadius.xs2)
                                 .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
                         )
+                    // **Stage 1 (v1.1 fall prevention)**: 실 IMU 출처 라벨 표시.
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(imuSourceColor)
+                            .frame(width: 6, height: 6)
+                        Text("IMU 출처: \(session.imuSource.label)")
+                            .font(.system(size: DFFontSize.s10, design: .monospaced))
+                            .foregroundStyle(DFColor.textSecondary)
+                        Spacer()
+                    }
                     IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
                     IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
                 }
@@ -304,6 +314,16 @@ public struct WalkLabView: View {
         if t >= 50 { return DFLoadColor.high }
         if t >= 45 { return DFColor.warning }
         return DFColor.textSecondary
+    }
+
+    /// **Stage 1 (v1.1 fall prevention)**: IMU 출처별 색.
+    /// sim = 회색 (참고용), real = 녹색 (정상), stale = 주황 (경고).
+    private var imuSourceColor: Color {
+        switch session.imuSource {
+        case .sim:   return DFColor.textSecondary
+        case .real:  return .green
+        case .stale: return DFColor.warning
+        }
     }
 
     private var actionBar: some View {

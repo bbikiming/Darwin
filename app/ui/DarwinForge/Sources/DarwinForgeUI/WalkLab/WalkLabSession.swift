@@ -58,9 +58,29 @@ public final class WalkLabSession: ObservableObject {
     @Published public var footTrail: [FootTrailPoint] = []
     @Published public var imuRollDeg: Double = 0
     @Published public var imuPitchDeg: Double = 0
+    /// **Stage 1 (v1.1 fall prevention)**: IMU 출처 표시 — UI 가 sim/real/stale 구분.
+    @Published public private(set) var imuSource: ImuSource = .sim
     @Published public var maxMotorTemp: Double = 35.0
     @Published public var balanceLost: Bool = false
     @Published public var thermalAlarm: Bool = false
+
+    /// IMU 데이터 출처 — Stage 1 wire-up 이후 도입.
+    public enum ImuSource: Equatable, Sendable {
+        /// 실 robot 미연결 또는 테스트 — `updateSimIMU` 모델 값.
+        case sim
+        /// 실 robot 연결 + `ConnectionStore.imuFilter` 5Hz polling 값.
+        case real
+        /// 실 robot 연결 됐으나 IMU 갱신 5초+ 지연 — 마지막 값 hold.
+        case stale
+
+        public var label: String {
+            switch self {
+            case .sim:   return "시뮬"
+            case .real:  return "실 IMU"
+            case .stale: return "IMU 지연"
+            }
+        }
+    }
     /// **Phase G11 (2026-05-15)**: 3D 모델 시각화용 현재 자세.
     ///
     /// 보행 중 매 step 갱신 (`runContinuousWalk` / `runWalkCycle` 에서 송출 직전 publish).
@@ -801,7 +821,7 @@ public final class WalkLabSession: ObservableObject {
             visualPose = .walkReady
         }
 
-        updateSimIMU()
+        updateImuFromRealOrSim()
         updateSimThermal()
 
         // 자동 stop (시간 초과)
@@ -812,7 +832,7 @@ public final class WalkLabSession: ObservableObject {
             }
         }
 
-        // L3 — 균형 손실
+        // L3 — 균형 손실 (실 IMU 또는 sim 둘 다 동일 임계)
         if abs(imuRollDeg) > 30 || abs(imuPitchDeg) > 30 {
             balanceLost = true
             emergencyStop()
@@ -823,6 +843,30 @@ public final class WalkLabSession: ObservableObject {
             thermalAlarm = true
             emergencyStop()
         }
+    }
+
+    /// **Stage 1 (v1.1 fall prevention)**: 실 robot 연결 시 `ConnectionStore.imuFilter`
+    /// 의 실 IMU 값 사용 (5Hz polling 자동 갱신). 미연결·stale 시 sim 모델 fallback.
+    ///
+    /// L3 자동 정지 게이트 (`|roll/pitch| > 30°`) 는 동일하게 작동 — 실 IMU 가
+    /// 30° 도달하면 즉시 emergency.
+    private func updateImuFromRealOrSim() {
+        // 1) 실 robot 연결 + IMU 신선도 확인.
+        if let s = store, s.bus != nil, !s.imuFilter.isStale() {
+            imuRollDeg = s.imuFilter.rollDeg
+            imuPitchDeg = s.imuFilter.pitchDeg
+            imuSource = .real
+            return
+        }
+        // 2) IMU stale (5초+ 갱신 없음) → 안전 가드. UI 에 노출.
+        if let s = store, s.bus != nil, s.imuFilter.isStale() {
+            imuSource = .stale
+            // 값은 유지 (마지막 알려진) — sim 덮어쓰기 회피.
+            return
+        }
+        // 3) 그 외 (미연결 / 테스트) → 기존 sim 모델 fallback.
+        updateSimIMU()
+        imuSource = .sim
     }
 
     /// Sim IMU — 워킹 중 본체 흔들림 모델.
