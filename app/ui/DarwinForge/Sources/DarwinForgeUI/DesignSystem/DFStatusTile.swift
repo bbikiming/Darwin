@@ -84,11 +84,11 @@ public struct DFStatusTile<SourcePill: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(DFOpacity.o06))
         .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.xs)
+            RoundedRectangle(cornerRadius: DFRadius.statusTile)
                 .stroke(tint.opacity(DFOpacity.o25),
                         lineWidth: DFSize.borderHairline)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.statusTile))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(name) \(valueLabel)\(unit ?? "")")
         .accessibilityValue(thresholdLabel)

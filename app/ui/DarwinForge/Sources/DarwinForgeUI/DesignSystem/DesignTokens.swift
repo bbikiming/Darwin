@@ -208,16 +208,26 @@ public enum DFFontSize {
     public static let s32: CGFloat = 32
 }
 
-/// 스페이싱 — Apple HIG 4pt 그리드 (8pt semantic + 4pt interstitial).
+/// 스페이싱 — Apple HIG 8pt 그리드 (semantic) + 4pt half-grid (보조) + 1-2pt micro.
+///
+/// # Grid 계층 (Apple HIG / Material Design 정합)
+///
+/// 1. **8pt 그리드** (primary semantic) — section / card / hero spacing 기준.
+///    값: `sm (8)`, `md (16)`, `lg (24)`, `xl (32)`, `xxl (48)`
+/// 2. **4pt half-grid** (sub-step) — 작은 조정.
+///    값: `xs (4)`, `sm3 (12)`, `md2 (20)`
+/// 3. **2pt micro** (hairline / pill 전용 — off-grid 의도된 예외).
+///    값: `micro (1)`, `micro2 (2)`, `xs2 (6)`, `sm2 (10)`
 ///
 /// # 사용 규칙
-/// 1. 매직 넘버 금지 — 모든 padding/spacing 은 본 토큰 또는 `DFSize.pillPadding*` 사용.
-/// 2. semantic (`xs/sm/md/lg`) 우선 — component 의 호흡 의도 표현.
-/// 3. interstitial (`xs2/sm2/sm3/md2`) 보조 — 정확한 픽셀 정합이 필요한 곳.
-/// 4. raw 0.5/1/2 micro 단위는 border / pixel-perfect 정렬에 한해 허용 — 주석 필수.
+/// 1. 매직 넘버 금지 — 모든 padding/spacing 은 본 토큰 사용.
+/// 2. **Semantic alias 우선** (`.pillV`, `.pillH`, `.toolbarGap`, `.cardInner`)
+///    — 의도 명확. NEW (2026-05-16).
+/// 3. **Numeric (`xs/sm/md`)** — semantic alias 가 없는 경우.
+/// 4. **Micro (`micro/micro2`)** — border / pixel-perfect 정렬에 한해.
 ///
-/// # 명명 컨벤션
-/// `xs` < `xs2` < `sm` < `sm2` < `sm3` < `md` < `md2` < `lg` < `xl` < `xxl`
+/// # 명명 컨벤션 (legacy 호환)
+/// `xs (4)` < `xs2 (6)` < `sm (8)` < `sm2 (10)` < `sm3 (12)` < `md (16)` < `md2 (20)` < `lg (24)` < `xl (32)` < `xxl (48)`
 /// 숫자 접미사 (`xs2 = 6`) = "xs(4) 보다 큰 첫 interstitial".
 public enum DFSpace {
     public static let none: CGFloat = 0
@@ -225,48 +235,97 @@ public enum DFSpace {
     public static let micro: CGFloat = 1
     /// 2pt — 매우 조밀한 inline gap (badge 내부, super-tight).
     public static let micro2: CGFloat = 2
-    /// 4pt — tight grouping (icon ↔ label).
+    /// 4pt — tight grouping (icon ↔ label). **4pt half-grid**.
     public static let xs: CGFloat = 4
-    /// 6pt — pill vertical padding, 조밀 그룹.
+    /// 6pt — pill vertical padding, 조밀 그룹. **off-grid (pill 표준 예외)**.
     public static let xs2: CGFloat = 6
-    /// 8pt — standard inner spacing (button padding, card inner).
+    /// 8pt — standard inner spacing (button padding, card inner). **8pt 그리드**.
     public static let sm: CGFloat = 8
-    /// 10pt — inline gap (toolbar pill 사이).
+    /// 10pt — inline gap (toolbar pill 사이). **off-grid (toolbar 표준 예외)**.
     public static let sm2: CGFloat = 10
-    /// 12pt — pill horizontal padding, 작은 카드 패딩.
+    /// 12pt — pill horizontal padding, 작은 카드 패딩. **4pt half-grid**.
     public static let sm3: CGFloat = 12
-    /// 16pt — section padding (sidebar 좌·우, card 내부 큰).
+    /// 16pt — section padding (sidebar 좌·우, card 내부 큰). **8pt 그리드**.
     public static let md: CGFloat = 16
-    /// 20pt — generous spacing (모달 내부, 큰 카드).
+    /// 20pt — generous spacing (모달 내부, 큰 카드). **4pt half-grid**.
     public static let md2: CGFloat = 20
-    /// 24pt — section breathing (페이지 외곽).
+    /// 24pt — section breathing (페이지 외곽). **8pt 그리드**.
     public static let lg: CGFloat = 24
-    /// 32pt — hero spacing.
+    /// 32pt — hero spacing. **8pt 그리드**.
     public static let xl: CGFloat = 32
-    /// 48pt — big hero spacing.
+    /// 48pt — big hero spacing. **8pt 그리드**.
     public static let xxl: CGFloat = 48
+
+    // MARK: - 2026-05-16: Semantic aliases (의도 명확)
+
+    /// 6pt — pill 의 vertical padding. KS Apple HIG pill 표준.
+    public static let pillV: CGFloat = xs2
+    /// 12pt — pill 의 horizontal padding. KS Apple HIG pill 표준.
+    public static let pillH: CGFloat = sm3
+    /// 10pt — toolbar 의 inline gap (pill 사이, status indicator 사이).
+    public static let toolbarGap: CGFloat = sm2
+    /// 8pt — card / panel 의 inner padding (compact).
+    public static let cardInnerCompact: CGFloat = sm
+    /// 16pt — card / panel 의 inner padding (standard).
+    public static let cardInner: CGFloat = md
+    /// 20pt — modal / sheet 의 inner padding.
+    public static let modalInner: CGFloat = md2
+    /// 4pt — icon ↔ label 의 tight gap.
+    public static let iconLabel: CGFloat = xs
+    /// 8pt — 일반 section content gap (8pt grid 기본).
+    public static let sectionGap: CGFloat = sm
 }
 
 /// 코너 라운드 — Apple HIG + Linear/Vercel Geist 스케일.
 ///
-/// # 사용 규칙
-/// - `xs2 (6)` = 버튼 / pill / 작은 인디케이터.
-/// - `sm (8)` = 표준 카드.
-/// - `md (12)` = 큰 카드 / 패널.
-/// - `lg (16)` = 모달 / sheet.
-/// - `full` = capsule (height 의 절반 이상).
+/// # 사용 규칙 (각 토큰의 의도)
+/// | 토큰 | 값 | 용도 |
+/// |---|---:|---|
+/// | `tiny` | 2 | event log row hint, 매우 좁은 ribbon |
+/// | `xs` | 4 | status tile (dense, snug) |
+/// | `xs2` | 6 | 버튼 / pill / 작은 indicator |
+/// | `sm` | 8 | 표준 card |
+/// | `md` | 12 | 큰 card / 패널 |
+/// | `lg` | 16 | 모달 / sheet |
+/// | `xl` | 20 | hero card |
+/// | `full` | 999 | capsule (height 의 절반 이상) |
+///
+/// # 시맨틱 alias 우선
+/// `.button`, `.statusTile`, `.card`, `.panel`, `.modal`, `.hero`, `.capsule` — 의도 명확.
 public enum DFRadius {
     public static let none: CGFloat = 0
     /// 2pt — 매우 좁은 pill / event log row 의 hint background.
     public static let tiny: CGFloat = 2
+    /// 4pt — status tile / dense rounded element.
     public static let xs: CGFloat = 4
     /// 6pt — 버튼 / pill / 작은 indicator (이전 raw 6 통일).
     public static let xs2: CGFloat = 6
+    /// 8pt — 표준 card.
     public static let sm: CGFloat = 8
+    /// 12pt — 큰 card / panel.
     public static let md: CGFloat = 12
+    /// 16pt — 모달 / sheet.
     public static let lg: CGFloat = 16
+    /// 20pt — hero card.
     public static let xl: CGFloat = 20
     public static let full: CGFloat = 999
+
+    // MARK: - 2026-05-16: Semantic aliases (의도 명확)
+
+    /// 6pt — 버튼 / pill 의 표준 corner (= xs2).
+    public static let button: CGFloat = xs2
+    /// 4pt — dense status tile (= xs).
+    public static let statusTile: CGFloat = xs
+    /// 8pt — 표준 card 의 corner (= sm).
+    public static let card: CGFloat = sm
+    /// 12pt — panel 의 corner (= md).
+    public static let panel: CGFloat = md
+    /// 16pt — 모달 / sheet 의 corner (= lg).
+    public static let modal: CGFloat = lg
+    /// 20pt — hero card 의 corner (= xl).
+    public static let hero: CGFloat = xl
+    /// 999pt — capsule (= full).
+    public static let capsule: CGFloat = full
 }
 
 /// 컴포넌트 표준 크기 — 버튼 / 입력 / 인디케이터 / 패널.
@@ -406,27 +465,49 @@ public enum DFAnimation {
 
 /// **2026-05-16**: Icon 시스템 — 텍스트와 짝지어진 아이콘의 크기 / weight 일관성.
 ///
-/// # 사용 패턴 (두 가지)
+/// # 사용 패턴 — **결정 트리**
 ///
-/// 1. **인라인 (텍스트 옆 아이콘)** — `.font()` 사용 (텍스트와 자동 정렬):
+/// ```
+/// ┌─────────────────────────────────────────────────────────────┐
+/// │ Q1: 아이콘이 텍스트와 인라인 (옆) 있는가?                       │
+/// │   ├─ YES → DFFont.* (텍스트와 같은 토큰) — 자동 baseline 정렬   │
+/// │   │       예: HStack { Image.font(DFFont.label) + Text.font(DFFont.label) } │
+/// │   └─ NO (독립) → Q2                                          │
+/// │ Q2: 아이콘이 고정 크기 박스 안에 있는가?                       │
+/// │   ├─ YES → DFIcon.* (font) + DFSize.* (frame)                │
+/// │   │       예: Image.font(DFIcon.hero).frame(40,40)            │
+/// │   └─ NO (flex) → DFIcon.* (font) only                       │
+/// └─────────────────────────────────────────────────────────────┘
+/// ```
+///
+/// # 1. 인라인 패턴 (텍스트 옆)
+/// 아이콘과 텍스트가 같은 행 — `DFFont.*` 사용 (자동 정렬):
 /// ```swift
 /// HStack {
 ///     Image(systemName: "checkmark").font(DFFont.label)
 ///     Text("확인").font(DFFont.label)
 /// }
 /// ```
+/// 이유: `.font()` 가 텍스트의 baseline 과 line-height 에 자동 맞춤.
 ///
-/// 2. **독립 (배경 위 아이콘)** — `.frame(width:height:)` + `.font()` 사용:
+/// # 2. 독립 패턴 (큰 아이콘 + 박스)
+/// 아이콘이 색 배경 박스 안 — `DFIcon.*` (font) + `DFSize.*` (frame):
 /// ```swift
 /// Image(systemName: "figure.balanced")
 ///     .font(DFIcon.hero)
 ///     .frame(width: DFSize.heroBox, height: DFSize.heroBox)
+///     .background(color.opacity(DFOpacity.o15))
 /// ```
+/// 이유: `font` = 아이콘 자체 크기 / `frame` = 박스 크기 (독립 제어).
 ///
 /// # Weight 규칙
-/// - **state indicator (danger/warning/success)**: `.semibold` (강조)
-/// - **decorative / inline**: `.regular`
-/// - **action button label icon**: `.medium`
+/// - **state indicator (danger/warning/success)**: `.semibold` → `DFIcon.stateSmall/Medium/Large`
+/// - **decorative / inline**: `.regular` → `DFIcon.body/caption/label/micro`
+/// - **action button label icon**: `.medium` → `DFIcon.action`
+///
+/// # ❌ 비추천 패턴
+/// - `Image.font(.system(size: 10))` — raw 숫자, 의미 X
+/// - `Image.frame(width: 14)` only (font 없음) — 아이콘 크기가 frame 에 종속
 public enum DFIcon {
     /// Hero icon (28pt semibold) — banner / 큰 표시기.
     public static let hero = Font.system(size: 28, weight: .semibold)
@@ -491,7 +572,24 @@ public enum DFOpacity {
 // MARK: - View modifiers (정형 helper)
 
 public extension View {
-    /// 카드 표준 스타일 — corner + border + shadow.
+    /// **카드 표준 modifier** — corner + border + shadow.
+    ///
+    /// # 사용 vs DFPanel
+    ///
+    /// | 사용 | 컴포넌트 |
+    /// |---|---|
+    /// | **간단한 카드** (just chrome) | `dfCard()` modifier (이) |
+    /// | **구조화 카드** (title + content + footer) | `DFPanel` component |
+    /// | **inline 패턴** (raw `.background + .clipShape`) | **❌ 비추천** — `dfCard()` 사용 |
+    ///
+    /// # 예시
+    /// ```swift
+    /// VStack { ... }
+    ///     .dfCard()                          // 표준 (md radius, no shadow)
+    ///     .dfCard(radius: DFRadius.card)     // 명시 (= sm 8pt)
+    ///     .dfCard(shadow: true)              // shadow 추가
+    ///     .dfCard(padded: false)             // padding 없이 chrome 만
+    /// ```
     func dfCard(radius: CGFloat = DFRadius.md, padded: Bool = true,
                 shadow: Bool = false) -> some View {
         self

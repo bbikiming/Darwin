@@ -128,7 +128,18 @@ public struct DFChip: View {
 
 // MARK: - DFBadge — 작은 dot indicator
 
-/// status dot — 색만으로 의미 전달.
+/// status DOT indicator — 색만으로 상태 표시 (8pt 원).
+///
+/// # 사용 vs 다른 컴포넌트
+///
+/// | 컴포넌트 | 형태 | 용도 |
+/// |---|---|---|
+/// | **DFBadge** (이) | 작은 dot 원 | 상태 ON/OFF, 연결 상태 등 — 텍스트 없이 색만 |
+/// | **`DFSourcePill`** | 텍스트 + 색 capsule | 데이터 출처 라벨 ("실 IMU", "시뮬") |
+/// | **`DFChip`** | 텍스트 + tint capsule | 카테고리 / 토글 chip |
+///
+/// **2026-05-16**: DFBadge 와 DFSourcePill 는 의미가 다름 — Badge=DOT, Pill=TEXT.
+/// 중복 X.
 public struct DFBadge: View {
     public let tint: Color
     public let pulsing: Bool

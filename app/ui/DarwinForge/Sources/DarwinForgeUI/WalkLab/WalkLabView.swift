@@ -186,9 +186,9 @@ public struct WalkLabView: View {
                         footTrace: session.footTrail.map { $0.left }
                     )
                     .frame(minHeight: 360, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
                     .overlay(
-                        RoundedRectangle(cornerRadius: DFRadius.sm)
+                        RoundedRectangle(cornerRadius: DFRadius.card)
                             .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
                     )
 
@@ -198,9 +198,9 @@ public struct WalkLabView: View {
                                         leftFoot: session.leftFoot,
                                         rightFoot: session.rightFoot)
                             .frame(height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+                            .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
                             .overlay(
-                                RoundedRectangle(cornerRadius: DFRadius.xs2)
+                                RoundedRectangle(cornerRadius: DFRadius.button)
                                     .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
                             )
                         // **Stage 1 (v1.1 fall prevention)**: 실 IMU 출처 라벨 표시.
@@ -308,11 +308,11 @@ public struct WalkLabView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DFColor.elev2)
         .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.xs2)
+            RoundedRectangle(cornerRadius: DFRadius.button)
                 .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
                         lineWidth: DFSize.borderHairline)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
     }
 
     private var monitorBadgeColor: Color {
@@ -353,10 +353,10 @@ public struct WalkLabView: View {
         .padding(.vertical, DFSpace.xs2)
         .background(tint.opacity(DFOpacity.o10))
         .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.xs2)
+            RoundedRectangle(cornerRadius: DFRadius.button)
                 .stroke(tint.opacity(DFOpacity.o30), lineWidth: DFSize.borderStrong)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
     }
 
     private func banner(systemImage: String, message: String, tint: Color) -> some View {
@@ -377,7 +377,7 @@ public struct WalkLabView: View {
         .padding(.vertical, DFSpace.sm)
         .background(tint.opacity(DFOpacity.o18))
         .foregroundStyle(tint)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
     }
 
     /// **2026-05-16 검증**: 좁은 detail 폭 (480pt) 에서 HStack 컬럼 5개 + Spacer +
@@ -424,7 +424,7 @@ public struct WalkLabView: View {
         }
         .padding(DFSpace.sm2)
         .background(DFColor.elev2)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -476,11 +476,11 @@ public struct WalkLabView: View {
         .padding(DFSpace.sm)
         .background(balanceStateColor.opacity(DFOpacity.o10))
         .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.xs2)
+            RoundedRectangle(cornerRadius: DFRadius.button)
                 .stroke(balanceStateColor.opacity(DFOpacity.o40),
                         lineWidth: DFSize.borderHairline)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("안전 상태 카드 — \(session.balanceState.label)")
     }
@@ -562,11 +562,11 @@ public struct WalkLabView: View {
         .padding(DFSpace.sm)
         .background(DFColor.textSecondary.opacity(DFOpacity.ghost))
         .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.xs2)
+            RoundedRectangle(cornerRadius: DFRadius.button)
                 .stroke(DFColor.textSecondary.opacity(DFOpacity.o25),
                         lineWidth: DFSize.borderHairline)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(session.enableBalanceCorrection
             ? "자세 보정 ON — 최대 보정 \(String(format: "%.1f", session.lastCorrections?.maxAbs ?? 0))°"

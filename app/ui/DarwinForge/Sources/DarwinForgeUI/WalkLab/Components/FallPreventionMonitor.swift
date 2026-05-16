@@ -63,9 +63,9 @@ struct FallPreventionMonitor: View {
         // **2026-05-16**: Apple HIG Liquid Glass — `.regularMaterial` 사용.
         // Reduce Transparency ON 시 자동으로 solid elev2 fallback.
         .dfMaterial(.regularMaterial, fallback: DFColor.elev2)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
         .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.sm)
+            RoundedRectangle(cornerRadius: DFRadius.card)
                 .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
                         lineWidth: DFSize.borderHairline)
         )
@@ -102,7 +102,7 @@ struct FallPreventionMonitor: View {
                 .foregroundStyle(color)
                 .frame(width: DFSize.heroBox, height: DFSize.heroBox)
                 .background(color.opacity(DFOpacity.o15))
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
                 .accessibilityLabel("안전 상태 \(state.label)")
                 .help(stateMessage(state).isEmpty
                       ? "안전 상태 \(state.label) — 정상 보행"
@@ -154,11 +154,11 @@ struct FallPreventionMonitor: View {
         .padding(DFSpace.sm2)
         .background(color.opacity(DFOpacity.o10))
         .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.xs2)
+            RoundedRectangle(cornerRadius: DFRadius.button)
                 .stroke(color.opacity(DFOpacity.o35),
                         lineWidth: DFSize.borderHairline)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
     }
 
     // MARK: - 2. 6-Layer status grid
