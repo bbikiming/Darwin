@@ -36,9 +36,14 @@ public struct SynthInspectorPanel: View {
             Group {
                 switch model.selectedOperator {
                 case .sequence:
-                    paramSlider("Transition (ms)", value: $model.transitionMs, range: 0...3000, step: 100)
+                    DFSlider("Transition", value: $model.transitionMs,
+                             in: 0...3000, step: 100, unit: "ms")
+                        .padding(.horizontal)
                 case .mutate:
-                    paramSlider("Time Scale", value: $model.timeScale, range: 0.25...4.0, step: 0.05)
+                    DFSlider("Time Scale", value: $model.timeScale,
+                             in: 0.25...4.0, step: 0.05, unit: "×",
+                             ticks: [0.5, 1.0, 2.0])
+                        .padding(.horizontal)
                 case .layer, .morph, .mirror, .procedural:
                     Text("기본 파라미터 사용 (자동)").font(.caption).foregroundStyle(.secondary)
                         .padding(.horizontal)
@@ -89,18 +94,6 @@ public struct SynthInspectorPanel: View {
         .sheet(isPresented: $showingHelp) {
             helpSheet()
         }
-    }
-
-    private func paramSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double) -> some View {
-        VStack(alignment: .leading, spacing: DFSpace.xs) {
-            HStack {
-                Text(label).font(.caption)
-                Spacer()
-                Text(String(format: "%.2f", value.wrappedValue)).font(.caption.monospacedDigit())
-            }
-            Slider(value: value, in: range, step: step)
-        }
-        .padding(.horizontal)
     }
 
     private func validatorRow(_ r: SynthValidatorOutcome) -> some View {

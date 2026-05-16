@@ -190,6 +190,7 @@ public struct PilotHeadTrackerSettingsSheet: View {
                 }
             }
             Slider(value: binding, in: range, step: step)
+                .tint(DFColor.accent)
             Text(help)
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)

@@ -153,6 +153,7 @@ public struct WalkLab: View {
                     engine.setCommand(x: x, y: y, a: a, enabled: enabled)
                 }
             }
+            .tint(DFColor.accent)
             StepperField(
                 value: value,
                 in: range,

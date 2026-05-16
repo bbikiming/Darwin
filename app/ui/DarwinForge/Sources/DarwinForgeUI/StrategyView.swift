@@ -58,6 +58,7 @@ public struct StrategyView: View {
                 .font(.system(size: DFFontSize.s12))
                 .frame(width: 160, alignment: .leading)
             Slider(value: value, in: range)
+                .tint(DFColor.accent)
             StepperField(
                 value: value,
                 in: range,

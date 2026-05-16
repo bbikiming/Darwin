@@ -180,6 +180,7 @@ public struct PoseInspector: View {
                     }
                 }
             )
+            .tint(limitNear ? DFColor.warning : DFColor.accent)
 
             VStack(alignment: .trailing, spacing: DFSpace.micro2) {
                 StepperField(

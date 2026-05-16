@@ -67,22 +67,17 @@ struct JointDetailView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: DFSpace.sm) {
-                Text("Goal Position (raw)")
-                    .font(.system(size: DFFontSize.s14, weight: .semibold))
-                HStack {
-                    Slider(value: $goalPosition, in: positionRange, step: 1) { editing in
-                        isAdjusting = editing
-                        if !editing { commitPosition() }
-                    }
-                    Text("\(Int(goalPosition))")
-                        .frame(width: 60, alignment: .trailing)
-                        .fontDesign(.monospaced)
+            DFSlider(
+                "Goal Position",
+                value: $goalPosition,
+                in: positionRange, step: 1, unit: "raw",
+                showRangeLabels: true,
+                caption: "Center 2048 (0°)",
+                onEditingChanged: { editing in
+                    isAdjusting = editing
+                    if !editing { commitPosition() }
                 }
-                Text("Range: \(Int(positionRange.lowerBound))..\(Int(positionRange.upperBound))  ·  Center: 2048 (0°)")
-                    .font(DFFont.caption)
-                    .foregroundStyle(DFColor.textSecondary)
-            }
+            )
 
             HStack(spacing: DFSpace.sm3) {
                 Button("Torque ON") {

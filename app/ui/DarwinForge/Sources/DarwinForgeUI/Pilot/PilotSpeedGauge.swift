@@ -37,6 +37,7 @@ public struct PilotSpeedGauge: View {
                         .foregroundStyle(DFColor.textSecondary)
                 }
                 .controlSize(.small)
+                .tint(currentTint)
             }
         }
     }
