@@ -460,9 +460,9 @@ struct FallPreventionMonitor: View {
             ViewThatFits(in: .horizontal) {
                 // Wide: 3 columns horizontal (preferred — Tufte small multiples)
                 HStack(spacing: DFSpace.xs) {
-                    rollSp.frame(minWidth: Self.sparklineMinW, height: Self.sparklineWideH)
-                    pitchSp.frame(minWidth: Self.sparklineMinW, height: Self.sparklineWideH)
-                    scoreSp.frame(minWidth: Self.sparklineMinW, height: Self.sparklineWideH)
+                    rollSp.frame(minWidth: Self.sparklineMinW).frame(height: Self.sparklineWideH)
+                    pitchSp.frame(minWidth: Self.sparklineMinW).frame(height: Self.sparklineWideH)
+                    scoreSp.frame(minWidth: Self.sparklineMinW).frame(height: Self.sparklineWideH)
                 }
                 // Narrow: vertical stack (각 차트 full-width)
                 VStack(spacing: DFSpace.xs) {
