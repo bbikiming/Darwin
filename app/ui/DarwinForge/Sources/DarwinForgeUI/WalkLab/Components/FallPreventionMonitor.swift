@@ -98,7 +98,7 @@ struct FallPreventionMonitor: View {
         let tiltMax = max(abs(session.imuRollDeg), abs(session.imuPitchDeg))
         return HStack(spacing: DFSpace.sm3) {
             Image(systemName: icon)
-                .font(.system(size: DFFontSize.s28, weight: .semibold))
+                .font(DFFont.heroIcon)
                 .foregroundStyle(color)
                 .frame(width: DFSize.heroBox, height: DFSize.heroBox)
                 .background(color.opacity(DFOpacity.o15))
@@ -110,7 +110,7 @@ struct FallPreventionMonitor: View {
             VStack(alignment: .leading, spacing: DFSpace.micro2) {
                 HStack(spacing: DFSpace.xs2) {
                     Text("안전 상태")
-                        .font(.system(size: DFFontSize.s10))
+                        .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(1)
                     Spacer(minLength: DFSpace.xs)
@@ -127,25 +127,24 @@ struct FallPreventionMonitor: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: DFSpace.sm) {
                     Text(state.label)
-                        .font(.system(size: DFFontSize.s20, weight: .semibold))
+                        .font(DFFont.heroState)
                         .foregroundStyle(color)
                         .lineLimit(1)
                         .layoutPriority(1)
                     Spacer(minLength: DFSpace.xs)
                     Text(String(format: "%.1f°", tiltMax))
-                        .font(.system(size: DFFontSize.s18, weight: .semibold,
-                                      design: .monospaced).monospacedDigit())
+                        .font(DFFont.dataLarge)
                         .foregroundStyle(color)
                         .lineLimit(1)
                         .layoutPriority(1)
                     Text("max|tilt|")
-                        .font(.system(size: DFFontSize.s10))
+                        .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(1)
                 }
                 if !stateMessage(state).isEmpty {
                     Text(stateMessage(state))
-                        .font(.system(size: DFFontSize.s10))
+                        .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -174,7 +173,7 @@ struct FallPreventionMonitor: View {
         let layers: [LayerStatus] = currentLayers()
         return VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("6-Layer 안전 시스템")
-                .font(.system(size: DFFontSize.s10, weight: .medium))
+                .font(DFFont.sectionLabel)
                 .foregroundStyle(DFColor.textSecondary)
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: Self.layerTileMinW),
@@ -364,7 +363,7 @@ struct FallPreventionMonitor: View {
         )
         return VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("최근 10초 — Roll / Pitch / Predictor Score")
-                .font(.system(size: DFFontSize.s10, weight: .medium))
+                .font(DFFont.sectionLabel)
                 .foregroundStyle(DFColor.textSecondary)
             ViewThatFits(in: .horizontal) {
                 // Wide: 3 columns horizontal (preferred — Tufte small multiples)
@@ -406,12 +405,12 @@ struct FallPreventionMonitor: View {
         let thresholds: [SafetySparkline.Threshold] = isTiltAxis
             ? [
                 .init(value: 15, color: DFColor.warning),
-                .init(value: 22, color: .orange),
+                .init(value: 22, color: DFColor.severe),
                 .init(value: 30, color: DFColor.danger),
               ]
             : [
                 .init(value: 30, color: DFColor.warning),
-                .init(value: 60, color: .orange),
+                .init(value: 60, color: DFColor.severe),
                 .init(value: 80, color: DFColor.danger),
               ]
         return SafetySparkline(
@@ -432,20 +431,20 @@ struct FallPreventionMonitor: View {
         VStack(alignment: .leading, spacing: DFSpace.xs) {
             HStack(spacing: DFSpace.xs2) {
                 Text("자세 보정 delta (8 관절)")
-                    .font(.system(size: DFFontSize.s10, weight: .medium))
+                    .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer()
                 if let progress = session.rampProgress {
                     Text(String(format: "Ramp %.0f%%", progress * 100))
-                        .font(.system(size: DFFontSize.s10, design: .monospaced))
+                        .font(DFFont.monoLabel)
                         .foregroundStyle(progress >= 1 ? DFColor.success : DFColor.accent)
                 } else if session.enableBalanceCorrection {
                     Text("Ramp pending")
-                        .font(.system(size: DFFontSize.s10))
+                        .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                 } else {
                     Text("Corrector OFF")
-                        .font(.system(size: DFFontSize.s10))
+                        .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                 }
             }
@@ -492,7 +491,7 @@ struct FallPreventionMonitor: View {
         let color: Color = isPositive ? DFColor.info : DFColor.forge
         return HStack(spacing: DFSpace.xs) {
             Text(name)
-                .font(.system(size: DFFontSize.s9))
+                .font(DFFont.micro)
                 .foregroundStyle(DFColor.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -528,7 +527,7 @@ struct FallPreventionMonitor: View {
             }
             .frame(height: DFSize.dot)
             Text(String(format: "%+.2f°", value))
-                .font(.system(size: DFFontSize.s9, design: .monospaced).monospacedDigit())
+                .font(DFFont.dataMicro)
                 .foregroundStyle(absVal > 0.05 ? color : DFColor.textSecondary)
                 .frame(width: Self.jointValueColW, alignment: .trailing)
                 .lineLimit(1)
@@ -550,7 +549,7 @@ struct FallPreventionMonitor: View {
         VStack(alignment: .leading, spacing: DFSpace.xs) {
             HStack(spacing: DFSpace.xs2) {
                 Text("이벤트 로그")
-                    .font(.system(size: DFFontSize.s10, weight: .medium))
+                    .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer()
                 if !session.safetyEvents.isEmpty {
@@ -558,7 +557,7 @@ struct FallPreventionMonitor: View {
                         session.clearSafetyEvents()
                     } label: {
                         Text("지우기")
-                            .font(.system(size: DFFontSize.s9))
+                            .font(DFFont.micro)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(DFColor.textSecondary)
@@ -569,7 +568,7 @@ struct FallPreventionMonitor: View {
             }
             if session.safetyEvents.isEmpty {
                 Text("(아직 이벤트 없음 — 보행 시작 시 로그 누적)")
-                    .font(.system(size: DFFontSize.s10))
+                    .font(DFFont.label)
                     .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.dim))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, DFSpace.xs2)
@@ -594,16 +593,16 @@ struct FallPreventionMonitor: View {
     private func eventRow(_ evt: WalkLabSession.SafetyEvent) -> some View {
         HStack(spacing: DFSpace.xs2) {
             Image(systemName: eventIcon(evt.kind))
-                .font(.system(size: DFFontSize.s10))
+                .font(DFFont.label)
                 .foregroundStyle(eventColor(evt.kind))
                 .frame(width: DFSize.iconCol)
                 .accessibilityHidden(true)
             Text(timeString(evt.timestamp))
-                .font(.system(size: DFFontSize.s9, design: .monospaced))
+                .font(DFFont.monoMicro)
                 .foregroundStyle(DFColor.textSecondary)
                 .frame(width: Self.eventTimeColW, alignment: .leading)
             Text(evt.message)
-                .font(.system(size: DFFontSize.s10))
+                .font(DFFont.label)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -640,7 +639,7 @@ struct FallPreventionMonitor: View {
         switch s {
         case .normal:    return DFColor.success
         case .caution:   return DFColor.warning
-        case .warning:   return .orange
+        case .warning:   return DFColor.severe
         case .danger:    return DFColor.danger
         case .emergency: return DFColor.danger
         }
@@ -669,14 +668,14 @@ struct FallPreventionMonitor: View {
     private func sparklineColor(forTilt deg: Double) -> Color {
         let abs = Swift.abs(deg)
         if abs >= 30 { return DFColor.danger }
-        if abs >= 22 { return .orange }
+        if abs >= 22 { return DFColor.severe }
         if abs >= 15 { return DFColor.warning }
         return DFColor.accent
     }
 
     private func sparklineColor(forScore score: Double) -> Color {
         if score >= 80 { return DFColor.danger }
-        if score >= 60 { return .orange }
+        if score >= 60 { return DFColor.severe }
         if score >= 30 { return DFColor.warning }
         return DFColor.accent
     }

@@ -60,6 +60,14 @@ public enum DFColor {
         highContrastLight: "#8E2CC2", highContrastDark: "#E3AAFF"
     )
 
+    /// **2026-05-16**: 5-tier safety state 의 intermediate "심각" 단계.
+    /// warning(노랑) ↔ danger(빨강) 사이 — fall prevention 의 22-30° 등.
+    /// macOS `.orange` 와 유사하지만 light/dark + highContrast 명시 제어.
+    public static let severe = Color(
+        light: "#FF6F00", dark: "#FF9F0A",
+        highContrastLight: "#C24A00", highContrastDark: "#FFB733"
+    )
+
     // MARK: - Interaction state (2026-05-16)
 
     /// 마우스 hover background — Apple HIG `controlBackgroundColor` 변형.
@@ -81,6 +89,7 @@ public enum DFColor {
 /// - **Numeric size (`DFFontSize.s9` ~ `.s28`)** — custom weight / monospaced 가 필요할 때만.
 /// - `font.system(size: DFFontSize.s11, weight: .semibold)` 패턴 권장.
 public enum DFFont {
+    // MARK: - Display / Hero (existing)
     public static let display = Font.system(size: 28, weight: .bold, design: .default)
     public static let title = Font.system(size: 22, weight: .semibold, design: .default)
     public static let subtitle = Font.system(size: 20, weight: .regular, design: .default)
@@ -88,6 +97,79 @@ public enum DFFont {
     public static let bodyEmph = Font.system(size: 13, weight: .semibold, design: .default)
     public static let caption = Font.system(size: 11, weight: .regular, design: .default)
     public static let mono = Font.system(size: 12, weight: .regular, design: .monospaced)
+
+    // MARK: - 2026-05-16: 모니터링 dashboard semantic tokens
+    //
+    // dashboard 영역 (FallPreventionMonitor, DFSourcePill, DFStatusTile,
+    // SafetySparkline) 의 dense layout 용. 일반 view 가 사용 가능하지만
+    // 디자인 의도는 데이터-밀집 (Edward Tufte data-ink ratio 극대화).
+
+    // Hero
+    /// 28pt semibold — hero icon (FallPreventionMonitor heroIcon).
+    public static let heroIcon = Font.system(size: 28, weight: .semibold)
+    /// 20pt semibold — 큰 상태 label (state.label 등).
+    public static let heroState = Font.system(size: 20, weight: .semibold)
+    /// 18pt semibold — secondary hero data (medium).
+    public static let heroSecondary = Font.system(size: 18, weight: .semibold)
+
+    // Section headings
+    /// 18pt semibold — large section heading.
+    public static let sectionLarge = Font.system(size: 18, weight: .semibold)
+    /// 16pt semibold — medium section heading.
+    public static let sectionMedium = Font.system(size: 16, weight: .semibold)
+    /// 14pt semibold — small section heading.
+    public static let sectionSmall = Font.system(size: 14, weight: .semibold)
+    /// 12pt semibold — body section heading (toggle bar title).
+    public static let sectionBody = Font.system(size: 12, weight: .semibold)
+    /// 10pt medium — sub-section heading (dashboard sub-section labels).
+    public static let sectionLabel = Font.system(size: 10, weight: .medium)
+
+    // Body / Caption / Label
+    /// 13pt semibold — body emphasis.
+    public static let bodySmall = Font.system(size: 12, weight: .regular)
+    public static let bodySmallEmph = Font.system(size: 12, weight: .semibold)
+    /// 11pt medium — caption emphasis (card heading).
+    public static let captionEmph = Font.system(size: 11, weight: .medium)
+    /// 10pt regular — generic small label.
+    public static let label = Font.system(size: 10, weight: .regular)
+    /// 9pt regular — micro label (threshold, joint name).
+    public static let micro = Font.system(size: 9, weight: .regular)
+
+    // Monospace variants (data display)
+    /// 11pt regular mono — caption-sized data.
+    public static let monoCaption = Font.system(size: 11, weight: .regular, design: .monospaced)
+    /// 10pt regular mono — label-sized mono data.
+    public static let monoLabel = Font.system(size: 10, weight: .regular, design: .monospaced)
+    /// 9pt regular mono — micro mono (event log time, joint name).
+    public static let monoMicro = Font.system(size: 9, weight: .regular, design: .monospaced)
+
+    // Data values (semibold mono + monospacedDigit for aligned numbers)
+    /// 18pt semibold mono digit — large data display (hero tilt).
+    public static let dataLarge = Font.system(size: 18, weight: .semibold, design: .monospaced)
+        .monospacedDigit()
+    /// 12pt semibold mono digit — tile value display.
+    public static let dataMedium = Font.system(size: 12, weight: .semibold, design: .monospaced)
+        .monospacedDigit()
+    /// 11pt semibold mono digit — current value display.
+    public static let dataSmall = Font.system(size: 11, weight: .semibold, design: .monospaced)
+        .monospacedDigit()
+    /// 9pt regular mono digit — micro data (joint delta value).
+    public static let dataMicro = Font.system(size: 9, weight: .regular, design: .monospaced)
+        .monospacedDigit()
+
+    // Pill (very small)
+    /// 8pt medium mono — source pill / very small tag.
+    public static let pill = Font.system(size: 8, weight: .medium, design: .monospaced)
+
+    // Additional semantic tokens (WalkLabView migration completeness)
+    /// 13pt semibold mono — phase label (footTargetsCard).
+    public static let monoBody = Font.system(size: 13, weight: .semibold, design: .monospaced)
+    /// 22pt semibold — modal heading (riskConfirmSheet).
+    public static let modalHeader = Font.system(size: 22, weight: .semibold)
+    /// 20pt bold — modal hero (riskConfirmSheet).
+    public static let modalHero = Font.system(size: 20, weight: .bold)
+    /// 10pt semibold — emphasized small label (status badge text).
+    public static let labelStrong = Font.system(size: 10, weight: .semibold)
 }
 
 /// 타이포 raw size 토큰 — `font.system(size: ...)` 사용 시 raw 숫자 대신 사용.

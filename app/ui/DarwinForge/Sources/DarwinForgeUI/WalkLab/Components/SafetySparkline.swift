@@ -48,13 +48,12 @@ struct SafetySparkline: View {
         VStack(alignment: .leading, spacing: DFSpace.micro2) {
             HStack(spacing: DFSpace.xs) {
                 Text(title)
-                    .font(.system(size: DFFontSize.s10, weight: .medium))
+                    .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer()
                 if let l = currentValueLabel {
                     Text(l)
-                        .font(.system(size: DFFontSize.s11, weight: .semibold,
-                                      design: .monospaced).monospacedDigit())
+                        .font(DFFont.dataSmall)
                         .foregroundStyle(lineColor)
                         .lineLimit(1)
                 }

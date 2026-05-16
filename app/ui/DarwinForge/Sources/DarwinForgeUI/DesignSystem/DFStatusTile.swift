@@ -49,10 +49,10 @@ public struct DFStatusTile<SourcePill: View>: View {
         VStack(alignment: .leading, spacing: DFSpace.micro) {
             HStack(spacing: DFSpace.xs) {
                 Image(systemName: icon)
-                    .font(.system(size: DFFontSize.s10))
+                    .font(DFFont.label)
                     .foregroundStyle(tint)
                 Text(name)
-                    .font(.system(size: DFFontSize.s10, weight: .medium))
+                    .font(DFFont.sectionLabel)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
@@ -61,21 +61,20 @@ public struct DFStatusTile<SourcePill: View>: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: DFSpace.micro2) {
                 Text(valueLabel)
-                    .font(.system(size: DFFontSize.s12, weight: .semibold,
-                                  design: .monospaced).monospacedDigit())
+                    .font(DFFont.dataMedium)
                     .foregroundStyle(tint)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if let unit {
                     Text(unit)
-                        .font(.system(size: DFFontSize.s9))
+                        .font(DFFont.micro)
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
             }
             Text(thresholdLabel)
-                .font(.system(size: DFFontSize.s9))
+                .font(DFFont.micro)
                 .foregroundStyle(DFColor.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.middle)

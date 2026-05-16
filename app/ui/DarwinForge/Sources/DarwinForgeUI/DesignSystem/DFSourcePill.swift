@@ -27,15 +27,16 @@ public struct DFSourcePill: View {
     /// 라벨 앞에 붙는 prefix (예: "IMU", "모터"). nil 이면 미표시.
     public let leading: String?
 
-    /// pill 폰트 크기 — 매우 작은 monospace (8pt) 가 dashboard 표준.
-    public let fontSize: CGFloat
+    /// pill 폰트 — 디자인 시스템 시맨틱 토큰 (`DFFont.pill` = 8pt medium mono).
+    /// custom 폰트 override 가능 — `nil` 이면 system default `pill`.
+    public let font: Font?
 
     public init(label: String, tint: Color, leading: String? = nil,
-                fontSize: CGFloat = DFFontSize.s8) {
+                font: Font? = nil) {
         self.label = label
         self.tint = tint
         self.leading = leading
-        self.fontSize = fontSize
+        self.font = font
     }
 
     public var body: some View {
@@ -46,7 +47,7 @@ public struct DFSourcePill: View {
             return label
         }()
         return Text(displayText)
-            .font(.system(size: fontSize, weight: .medium, design: .monospaced))
+            .font(font ?? DFFont.pill)
             .foregroundStyle(tint)
             .padding(.horizontal, DFSpace.xs2 - 2)  // 4pt — 매우 좁은 pill 표준
             .padding(.vertical, 0.5)
