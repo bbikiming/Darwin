@@ -283,4 +283,63 @@ public final class Bus: @unchecked Sendable {
     public func emergencyStop() throws {
         try checkForgeReturn(fc_emergency_stop(raw()))
     }
+
+    // MARK: - Motion play (Sprint 15 라이브러리 노출 — 2026-05-16 v1.1 통합)
+
+    /// `motion_4096.bin` 의 `slot` 페이지를 실 robot 에 동기 송출.
+    ///
+    /// - Parameters:
+    ///   - slot: 페이지 번호 (예: 24/27 단발, 9 walkready, 12/13 HighRisk get-up)
+    ///   - binPath: nil 이면 `FORGE_MOTION_BIN` env 또는 소스 트리 기본 경로 사용
+    ///   - dryRun: true 면 stdout 로그만 (실 송출 없음)
+    ///   - confirmRisk: HighRisk 모션 (page 12/13 등) 실행 허용
+    ///   - singleFootOk: 단일 발 지지 페이지 허용 (PRD §7.1 — confirmRisk 와 등가)
+    ///   - followChain: `page.next_page` chain 을 따라감. 기본 false (단일 page only)
+    ///   - maxChainDepth: chain 최대 깊이. 0 이면 내부 기본값 10
+    ///
+    /// **블로킹**. `Task.detached(priority: .userInitiated)` 또는 별도 thread 에서 호출.
+    /// 취소는 다른 thread 에서 `motionPlayCancel()`.
+    public func motionPlaySlot(
+        slot: UInt8,
+        binPath: String? = nil,
+        dryRun: Bool = false,
+        confirmRisk: Bool = false,
+        singleFootOk: Bool = false,
+        followChain: Bool = false,
+        maxChainDepth: Int = 10
+    ) throws {
+        let result: Int32
+        if let p = binPath {
+            result = p.withCString { ptr in
+                fc_motion_play_slot(
+                    raw(), slot, ptr,
+                    dryRun ? 1 : 0,
+                    confirmRisk ? 1 : 0,
+                    singleFootOk ? 1 : 0,
+                    followChain ? 1 : 0,
+                    UInt(max(0, maxChainDepth))
+                )
+            }
+        } else {
+            result = fc_motion_play_slot(
+                raw(), slot, nil,
+                dryRun ? 1 : 0,
+                confirmRisk ? 1 : 0,
+                singleFootOk ? 1 : 0,
+                followChain ? 1 : 0,
+                UInt(max(0, maxChainDepth))
+            )
+        }
+        try checkForgeReturn(result)
+    }
+
+    /// 진행 중인 motion play 를 다른 thread 에서 취소. 다음 8 ms 체크 시점에 중단.
+    public func motionPlayCancel() throws {
+        try checkForgeReturn(fc_motion_play_cancel(raw()))
+    }
+
+    /// motion play 가 재생 중이면 true.
+    public var isMotionPlaying: Bool {
+        fc_motion_play_is_running(raw()) == 1
+    }
 }

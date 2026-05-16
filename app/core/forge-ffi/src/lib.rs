@@ -23,7 +23,7 @@ use forge_core::controller::{
 };
 use forge_core::dynamixel::Bus;
 use forge_core::joint::{JointId, JointState};
-use forge_core::motion::{parse_mtn, write_mtn, Motion};
+use forge_core::motion::{parse_mtn, write_mtn, CancelHandle, Motion};
 use forge_core::serial::{LoopbackBus, PosixSerial, TcpBus};
 use forge_core::strategy::{StrategyInput, StrategyState};
 use forge_core::vision::{detect_blob, BlobResult, Frame, HsvRange, Pixel};
@@ -141,6 +141,10 @@ pub unsafe extern "C" fn fc_serial_list_ports(out_err: *mut c_int) -> *mut c_cha
 /// Bus 핸들. PosixSerial / LoopbackBus / TcpBus를 감쌈.
 pub struct FcBus {
     backend: BusBackend,
+    /// 진행 중인 motion play 취소 핸들. play 중이 아니면 None.
+    motion_cancel: Option<CancelHandle>,
+    /// play 가 진행 중이면 true.
+    motion_playing: std::sync::atomic::AtomicBool,
 }
 
 #[allow(dead_code)] // Loopback은 in-process 테스트 후크용.
@@ -175,6 +179,8 @@ pub unsafe extern "C" fn fc_bus_open(
             }
             Box::into_raw(Box::new(FcBus {
                 backend: BusBackend::Posix(bus),
+                motion_cancel: None,
+                motion_playing: std::sync::atomic::AtomicBool::new(false),
             }))
         }
         Ok(Err(e)) => {
@@ -218,6 +224,8 @@ pub unsafe extern "C" fn fc_bus_open_tcp(
             }
             Box::into_raw(Box::new(FcBus {
                 backend: BusBackend::Tcp(bus),
+                motion_cancel: None,
+                motion_playing: std::sync::atomic::AtomicBool::new(false),
             }))
         }
         Ok(Err(e)) => {
@@ -971,6 +979,193 @@ pub unsafe extern "C" fn fc_vision_detect_ball(
     })
 }
 
+// ============================================================================
+// Motion play (Sprint 15 라이브러리 노출, Phase v1.1 — 2026-05-16 통합)
+// ============================================================================
+//
+// `forge-core::motion::player::MotionPlayer` 를 FFI 로 노출. Swift `Bus` 가
+// `motionPlaySlot()` / `motionPlayCancel()` / `isMotionPlaying` 으로 호출.
+//
+// 설계 노트:
+// - `fc_motion_play_slot` 는 **블로킹**. Swift 호출자는 Task / DispatchQueue
+//   에서 실행해야 함. 취소는 다른 thread 에서 `fc_motion_play_cancel`.
+// - `bin_path == NULL` 이면 환경변수 `FORGE_MOTION_BIN` 또는 소스 트리의 기본
+//   경로 (`research/robotis-official/.../motion_4096.bin`) fallback.
+// - `confirm_risk != 0` 또는 `single_foot_ok != 0` 이면 HighRisk 모션 허용
+//   (PRD §7.1 — page 12/13 confirm 게이트 우회).
+// - `follow_chain != 0` 이면 page.next_page chain 을 `max_chain_depth` 깊이
+//   까지 따라감. v1.0 권장값 = 0 (single page only).
+
+/// `motion_4096.bin` 의 `slot` 페이지를 실 robot 에 동기 송출.
+///
+/// 반환: 0=OK, 음수=에러 (`FC_ERR_INVALID` / `FC_ERR_IO` / `FC_ERR_GENERIC`).
+#[no_mangle]
+pub unsafe extern "C" fn fc_motion_play_slot(
+    handle: *mut FcBus,
+    slot: u8,
+    bin_path: *const c_char,
+    dry_run: c_int,
+    confirm_risk: c_int,
+    single_foot_ok: c_int,
+    follow_chain: c_int,
+    max_chain_depth: usize,
+) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        use forge_core::control::ExecuteOptions;
+        use forge_core::motion::bin4096::read_bin4096_file;
+        use forge_core::motion::player::MotionPlayer;
+        use forge_core::motion::SafetyClass;
+        use forge_core::synth::library::decode_raw_page;
+        use std::path::PathBuf;
+        use std::sync::atomic::Ordering;
+
+        let bin = if bin_path.is_null() {
+            if let Ok(env) = std::env::var("FORGE_MOTION_BIN") {
+                PathBuf::from(env)
+            } else {
+                let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                p.push(
+                    "../../../research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin",
+                );
+                p
+            }
+        } else {
+            match cstr_to_str(bin_path) {
+                Some(s) => PathBuf::from(s),
+                None => return FC_ERR_INVALID,
+            }
+        };
+
+        let raws = match read_bin4096_file(&bin) {
+            Ok(r) => r,
+            Err(_) => return FC_ERR_IO,
+        };
+
+        // 카탈로그에서 해당 슬롯의 safety_class 를 조회.
+        let catalog_safety = forge_core::motion::OFFICIAL_CATALOG
+            .iter()
+            .find(|e| e.id == slot as u16)
+            .map(|e| e.safety)
+            .unwrap_or(SafetyClass::Safe);
+
+        // chain 로드 — visited 로 cycle 차단, depth 제한으로 무한루프 차단.
+        let depth = if max_chain_depth == 0 { 10 } else { max_chain_depth };
+        let do_chain = follow_chain != 0;
+        let mut pages = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut current = slot;
+        loop {
+            if !visited.insert(current) || pages.len() >= depth {
+                break;
+            }
+            let raw = match raws.iter().find(|r| r.index == current) {
+                Some(r) => r,
+                None => return FC_ERR_INVALID,
+            };
+            if raw.is_empty() {
+                return FC_ERR_INVALID;
+            }
+            // 첫 페이지만 catalog safety 적용 — chain 후속은 Safe 로 (precheck 게이트 통과 가정).
+            let page_safety = if current == slot {
+                catalog_safety
+            } else {
+                SafetyClass::Safe
+            };
+            let page = match decode_raw_page(raw, page_safety) {
+                Ok(p) => p,
+                Err(_) => return FC_ERR_GENERIC,
+            };
+            let next = page.next_page;
+            pages.push(page);
+            if !do_chain || next == 0 {
+                break;
+            }
+            current = next;
+        }
+
+        if dry_run != 0 {
+            for p in &pages {
+                println!(
+                    "[dry-run] page {} '{}' {} step(s)",
+                    p.id,
+                    p.name,
+                    p.steps.len()
+                );
+            }
+            return FC_OK;
+        }
+
+        let opts = ExecuteOptions {
+            confirm_risk: confirm_risk != 0 || single_foot_ok != 0,
+        };
+
+        let bus = &mut *handle;
+        bus.motion_playing.store(true, Ordering::SeqCst);
+
+        let player = MotionPlayer::new();
+        bus.motion_cancel = Some(player.cancel_handle());
+
+        let result = match &mut bus.backend {
+            BusBackend::Posix(b) => {
+                let mut jc = forge_core::control::JointController::new(b);
+                player.play_pages(&mut jc, &pages, opts)
+            }
+            BusBackend::Tcp(b) => {
+                let mut jc = forge_core::control::JointController::new(b);
+                player.play_pages(&mut jc, &pages, opts)
+            }
+            BusBackend::Loopback(b) => {
+                let mut jc = forge_core::control::JointController::new(b);
+                player.play_pages(&mut jc, &pages, opts)
+            }
+        };
+
+        bus.motion_playing.store(false, Ordering::SeqCst);
+        bus.motion_cancel = None;
+
+        match result {
+            Ok(()) => FC_OK,
+            Err(e) => err_code(&e),
+        }
+    })
+}
+
+/// 진행 중인 motion play 를 취소. 다음 8 ms 체크 시점에 중단.
+/// 반환: 0=OK (취소 신호 전송), -2=핸들 invalid.
+#[no_mangle]
+pub unsafe extern "C" fn fc_motion_play_cancel(handle: *mut FcBus) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let bus = &mut *handle;
+        if let Some(ref h) = bus.motion_cancel {
+            h.cancel();
+        }
+        FC_OK
+    })
+}
+
+/// motion play 가 진행 중인지 확인. 1=재생 중, 0=정지, -2=핸들 invalid.
+#[no_mangle]
+pub unsafe extern "C" fn fc_motion_play_is_running(handle: *mut FcBus) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        use std::sync::atomic::Ordering;
+        let bus = &*handle;
+        if bus.motion_playing.load(Ordering::SeqCst) {
+            1
+        } else {
+            0
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1015,6 +1210,68 @@ mod tests {
             let t = t.assume_init();
             assert!(t.elapsed_ms > 99.0);
             fc_walk_free(h);
+        }
+    }
+
+    // ---- motion play FFI tests (Sprint 15 라이브러리 노출) ----
+
+    #[test]
+    fn motion_play_null_handle_returns_invalid() {
+        unsafe {
+            assert_eq!(
+                fc_motion_play_slot(ptr::null_mut(), 1, ptr::null(), 1, 0, 0, 0, 0),
+                FC_ERR_INVALID
+            );
+            assert_eq!(fc_motion_play_cancel(ptr::null_mut()), FC_ERR_INVALID);
+            assert_eq!(fc_motion_play_is_running(ptr::null_mut()), FC_ERR_INVALID);
+        }
+    }
+
+    #[test]
+    fn motion_play_is_running_false_when_idle() {
+        unsafe {
+            let mut h = Box::new(FcBus {
+                backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
+                motion_cancel: None,
+                motion_playing: std::sync::atomic::AtomicBool::new(false),
+            });
+            assert_eq!(fc_motion_play_is_running(h.as_mut() as *mut _), 0);
+        }
+    }
+
+    #[test]
+    fn motion_play_cancel_ok_when_no_play() {
+        unsafe {
+            let mut h = Box::new(FcBus {
+                backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
+                motion_cancel: None,
+                motion_playing: std::sync::atomic::AtomicBool::new(false),
+            });
+            // cancel with no active play — should still return OK (idempotent no-op).
+            assert_eq!(fc_motion_play_cancel(h.as_mut() as *mut _), FC_OK);
+        }
+    }
+
+    #[test]
+    fn motion_play_dry_run_with_missing_bin_returns_error() {
+        unsafe {
+            let path = std::ffi::CString::new("/nonexistent/motion.bin").unwrap();
+            let mut h = Box::new(FcBus {
+                backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
+                motion_cancel: None,
+                motion_playing: std::sync::atomic::AtomicBool::new(false),
+            });
+            let result = fc_motion_play_slot(
+                h.as_mut() as *mut _,
+                1,
+                path.as_ptr(),
+                1, // dry_run
+                0,
+                0,
+                0,
+                0,
+            );
+            assert!(result < 0, "expected error for missing bin, got {result}");
         }
     }
 }

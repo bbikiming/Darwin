@@ -86,4 +86,26 @@ public actor BusActor {
         }
         return RobotPose(positions: applied)
     }
+
+    // MARK: - Motion play (Sprint 15 라이브러리 노출 — 2026-05-16 v1.1 통합)
+
+    /// `Bus.motionPlaySlot` actor wrapper — 블로킹이므로 actor isolation 내에서 직렬화.
+    /// 호출자가 `Task.detached` 로 호출하면 actor 큐가 막히지 않음.
+    public func motionPlaySlot(
+        slot: UInt8,
+        confirmRisk: Bool = false,
+        followChain: Bool = false
+    ) throws {
+        try bus.motionPlaySlot(slot: slot, confirmRisk: confirmRisk, followChain: followChain)
+    }
+
+    /// 진행 중인 motion play 취소 — 다른 Task 에서 호출 가능.
+    public func motionPlayCancel() throws {
+        try bus.motionPlayCancel()
+    }
+
+    /// motion play 재생 중이면 true.
+    public var isMotionPlaying: Bool {
+        bus.isMotionPlaying
+    }
 }

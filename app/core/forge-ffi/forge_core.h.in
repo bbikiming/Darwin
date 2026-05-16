@@ -329,6 +329,31 @@ int fc_vision_detect_ball(const uint8_t *pixels,
                           uint32_t height,
                           struct fc_blob_result *out);
 
+/*
+ `motion_4096.bin` 의 `slot` 페이지를 실 robot 에 동기 송출.
+
+ 반환: 0=OK, 음수=에러 (`FC_ERR_INVALID` / `FC_ERR_IO` / `FC_ERR_GENERIC`).
+ */
+int fc_motion_play_slot(struct fc_bus *handle,
+                        uint8_t slot,
+                        const char *bin_path,
+                        int dry_run,
+                        int confirm_risk,
+                        int single_foot_ok,
+                        int follow_chain,
+                        uintptr_t max_chain_depth);
+
+/*
+ 진행 중인 motion play 를 취소. 다음 8 ms 체크 시점에 중단.
+ 반환: 0=OK (취소 신호 전송), -2=핸들 invalid.
+ */
+int fc_motion_play_cancel(struct fc_bus *handle);
+
+/*
+ motion play 가 진행 중인지 확인. 1=재생 중, 0=정지, -2=핸들 invalid.
+ */
+int fc_motion_play_is_running(struct fc_bus *handle);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
