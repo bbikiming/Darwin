@@ -1025,38 +1025,52 @@ public final class ConnectionStore: ObservableObject {
     private func runTelemetryLoop(periodNs: UInt64) async {
         var tick = 0
         while !Task.isCancelled, let bus = self.bus {
+            // 2026-05-17 perf audit T3.2 fix: bus I/O 를 background thread 에서 수행.
+            // 종전: boardSnapshot (~200ms timeout) / readImu / readState 가 MainActor
+            //       에서 동기 실행 → main thread 200-400ms stall → UI freeze.
+            // 신규: Task.detached 로 background hop. Bus 가 `@unchecked Sendable` 이고
+            //       BusActor 의 cross-thread access 안전성 보장됨 (Dynamixel SDK 가 mutex).
+            //       결과만 MainActor 에서 publish — UI freeze 해소.
+
             // P0-D: 보드 read는 매 5 tick (1 Hz). throw 감지 시 watchdog 카운터 +1.
-            // 연속 임계 도달 시 forceDisconnectWithError 가 status를 .error로 전환.
             var didFail = false
             var board: BoardSnapshot? = lastTelemetry?.board
             var imu: ImuRaw? = lastTelemetry?.imu
             if tick % 5 == 0 {
                 let t0 = Date()
-                do {
-                    board = try bus.boardSnapshot()
+                // background bus I/O.
+                let result: Result<BoardSnapshot, Error> = await Task.detached(priority: .userInitiated) {
+                    do { return .success(try bus.boardSnapshot()) }
+                    catch { return .failure(error) }
+                }.value
+                switch result {
+                case .success(let snap):
+                    board = snap
                     let rtt = Date().timeIntervalSince(t0) * 1000
                     self.lastRoundTripMs = rtt
                     self.lastSuccessAt = Date()
                     self.successCount &+= 1
-                } catch {
+                case .failure(let error):
                     didFail = true
                     self.failureCount &+= 1
                     handleBusError(error)
                 }
             }
 
-            // IMU — Sprint 18 Phase E (Codex 잔여 3 v1.5 minimal viable): 매 tick 5Hz 폴링.
-            // 이전엔 board 와 같은 1Hz — gyro 적분 의미 없음. 5Hz 면 tau=0.5s 와 결합 시 약간 개선.
-            // global watchdog 트리거 안 함 — IMU register 미지원 펌웨어/모델 오진 방지.
+            // IMU 5Hz polling — background hop.
             if self.bus != nil, let busRef = self.bus {
-                do {
-                    let value = try busRef.readImu()
+                let imuResult: Result<ImuRaw, Error> = await Task.detached(priority: .userInitiated) {
+                    do { return .success(try busRef.readImu()) }
+                    catch { return .failure(error) }
+                }.value
+                switch imuResult {
+                case .success(let value):
                     imu = value
                     self.imuFilter.update(value)
                     self.lastImuSuccessAt = Date()
                     self.imuConsecutiveFailures = 0
                     self.lastImuError = nil
-                } catch {
+                case .failure(let error):
                     self.imuConsecutiveFailures &+= 1
                     self.lastImuError = error.localizedDescription
                 }
@@ -1065,12 +1079,14 @@ public final class ConnectionStore: ObservableObject {
             // 카운터 임계 도달 시 self.bus가 nil이 되어 다음 iteration의 while 조건에서 종료.
             if self.bus == nil { return }
 
+            // Joint reads — background. readJoints 자체는 MainActor (per-joint
+            // counter 업데이트 때문) 이지만 read 호출만 background로 위임.
             let joints: [JointID: JointState]
             switch cadence {
             case .full:
-                joints = readJoints(bus: bus, list: JointID.allCases, didFail: &didFail)
+                joints = await readJointsDetached(bus: bus, list: JointID.allCases, didFail: &didFail)
             case .light:
-                joints = readJoints(bus: bus, list: Self.lightSampleJoints, didFail: &didFail)
+                joints = await readJointsDetached(bus: bus, list: Self.lightSampleJoints, didFail: &didFail)
             case .off:
                 return
             }
@@ -1142,5 +1158,42 @@ public final class ConnectionStore: ObservableObject {
         case .timeout, .deviceNotFound: return true
         case .io, .codec, .generic, .invalid, .panic: return false
         }
+    }
+
+    /// 2026-05-17 T3.2 perf: readJoints 의 bus.readState 호출만 background 위임.
+    /// per-joint counter 업데이트 + watchdog 호출은 MainActor 격리 유지.
+    /// MainActor 동기 readJoints 대비: ~20 joint × ~5ms = 100ms freeze 해소.
+    private func readJointsDetached(bus: Bus, list: [JointID], didFail: inout Bool) async -> [JointID: JointState] {
+        // Background: 모든 joint read 를 한 번에 위임 (per-joint Task.detached 의 overhead 회피).
+        let results: [(JointID, Result<JointState, Error>)] = await Task.detached(priority: .userInitiated) {
+            var out: [(JointID, Result<JointState, Error>)] = []
+            out.reserveCapacity(list.count)
+            for j in list {
+                do { out.append((j, .success(try bus.readState(j)))) }
+                catch { out.append((j, .failure(error))) }
+            }
+            return out
+        }.value
+
+        // MainActor: 결과를 jointStates / per-joint counter / watchdog 에 반영.
+        var out: [JointID: JointState] = [:]
+        for (j, result) in results {
+            switch result {
+            case .success(let state):
+                out[j] = state
+                if jointConsecutiveFailures[j] != nil {
+                    jointConsecutiveFailures[j] = nil
+                }
+            case .failure(let error):
+                didFail = true
+                if isJointLevelError(error) {
+                    jointConsecutiveFailures[j, default: 0] += 1
+                } else {
+                    handleBusError(error)
+                    if self.bus == nil { return out }
+                }
+            }
+        }
+        return out
     }
 }
