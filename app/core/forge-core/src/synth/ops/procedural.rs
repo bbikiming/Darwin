@@ -173,15 +173,17 @@ mod tests {
     use crate::motion::MotionPage;
 
     fn page_with_step_value(slot: usize, value: u16) -> MotionPage {
+        // 2026-05-17 clippy field_reassign_with_default fix.
         let mut positions = [2048u16; NUM_JOINTS_IN_STEP];
         positions[slot] = value;
-        let mut p = MotionPage::default();
-        p.steps = vec![MotionStep {
-            positions,
-            pause_time: 0,
-            play_time: 16,
-        }];
-        p
+        MotionPage {
+            steps: vec![MotionStep {
+                positions,
+                pause_time: 0,
+                play_time: 16,
+            }],
+            ..Default::default()
+        }
     }
 
     #[test]

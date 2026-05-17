@@ -315,6 +315,8 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]  // 2026-05-17: 본 test 가 deprecated API self-invariant
+                          // 검증. with_official_catalog 함수 자체 제거 시 같이 제거.
     fn with_official_catalog_imports_from_bin4096() {
         let raw_pages = parse_bin4096(OFFICIAL_BIN).unwrap();
         let lib = Library::with_official_catalog(&raw_pages);

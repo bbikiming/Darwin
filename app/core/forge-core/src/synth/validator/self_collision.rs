@@ -59,14 +59,16 @@ mod tests {
     use crate::motion::{MotionPage, MotionStep, SafetyClass};
 
     fn neutral_page() -> MotionPage {
-        let mut p = MotionPage::default();
-        p.safety_class = SafetyClass::Safe;
-        p.steps = vec![MotionStep {
-            positions: [2048u16; NUM_JOINTS_IN_STEP],
-            pause_time: 0,
-            play_time: 16,
-        }];
-        p
+        // 2026-05-17 clippy field_reassign_with_default fix — struct literal.
+        MotionPage {
+            safety_class: SafetyClass::Safe,
+            steps: vec![MotionStep {
+                positions: [2048u16; NUM_JOINTS_IN_STEP],
+                pause_time: 0,
+                play_time: 16,
+            }],
+            ..Default::default()
+        }
     }
 
     #[test]

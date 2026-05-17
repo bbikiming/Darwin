@@ -129,17 +129,19 @@ mod tests {
     use crate::motion::{MotionPage, MotionStep, SafetyClass};
 
     fn page_with_hip_pitch(r_raw: u16, l_raw: u16) -> MotionPage {
-        let mut p = MotionPage::default();
-        p.safety_class = SafetyClass::Safe;
+        // 2026-05-17 clippy field_reassign_with_default fix.
         let mut positions = [2048u16; NUM_JOINTS_IN_STEP];
         positions[JointId::RHipPitch as usize] = r_raw;
         positions[JointId::LHipPitch as usize] = l_raw;
-        p.steps = vec![MotionStep {
-            positions,
-            pause_time: 0,
-            play_time: 16,
-        }];
-        p
+        MotionPage {
+            safety_class: SafetyClass::Safe,
+            steps: vec![MotionStep {
+                positions,
+                pause_time: 0,
+                play_time: 16,
+            }],
+            ..Default::default()
+        }
     }
 
     #[test]

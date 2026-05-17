@@ -146,9 +146,11 @@ mod tests {
     }
 
     fn page_with_steps(steps: Vec<MotionStep>) -> MotionPage {
-        let mut p = MotionPage::default();
-        p.steps = steps;
-        p
+        // 2026-05-17 clippy field_reassign_with_default fix.
+        MotionPage {
+            steps,
+            ..Default::default()
+        }
     }
 
     #[test]

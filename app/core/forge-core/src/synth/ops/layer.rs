@@ -229,11 +229,13 @@ mod tests {
     }
 
     fn page_for_region(slot: usize, value: u16) -> MotionPage {
+        // 2026-05-17 clippy field_reassign_with_default fix.
         let mut positions = [2048u16; NUM_JOINTS_IN_STEP];
         positions[slot] = value;
-        let mut p = MotionPage::default();
-        p.steps = vec![step(positions); 3];
-        p
+        MotionPage {
+            steps: vec![step(positions); 3],
+            ..Default::default()
+        }
     }
 
     #[test]

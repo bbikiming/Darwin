@@ -159,12 +159,11 @@ fn main() {
     // JSON 직접 직렬화 (serde_json deps 가 dev-dep 인 경우 회피).
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str(&format!(
-        "  \"source\": \"research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin\",\n"
-    ));
+    // 2026-05-17 clippy unnecessary_to_string fix — &str literal 이미 &str.
+    out.push_str("  \"source\": \"research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin\",\n");
     out.push_str(&format!("  \"catalog_pages\": {},\n", CATALOG_IDS.len()));
     out.push_str(&format!("  \"total_samples\": {},\n", n));
-    out.push_str(&format!("  \"unit\": \"raw_delta_per_ms\",\n"));
+    out.push_str("  \"unit\": \"raw_delta_per_ms\",\n");
     out.push_str("  \"overall\": {\n");
     out.push_str(&format!("    \"p50\": {:.4},\n", p50));
     out.push_str(&format!("    \"p90\": {:.4},\n", p90));

@@ -1151,9 +1151,12 @@ mod tests {
     fn commit_without_bin_errors() {
         // In-memory engine 은 bin_path 가 None → commit 거부.
         let e = Engine::new_in_memory();
-        let mut page = MotionPage::default();
-        page.id = 100;
-        page.name = "test".to_string();
+        // 2026-05-17 clippy field_reassign_with_default fix.
+        let mut page = MotionPage {
+            id: 100,
+            name: "test".to_string(),
+            ..Default::default()
+        };
         page.steps[0].positions = [2048; 31];
         let json = motion_to_json(&motion_from_pages(vec![page])).unwrap();
         let r = call_tool(
@@ -1166,8 +1169,11 @@ mod tests {
 
     #[test]
     fn encode_page_to_raw_size_512() {
-        let mut page = MotionPage::default();
-        page.name = "init".to_string();
+        // 2026-05-17 clippy field_reassign_with_default fix.
+        let page = MotionPage {
+            name: "init".to_string(),
+            ..Default::default()
+        };
         let raw = encode_page_to_raw(&page);
         assert_eq!(raw.len(), 512);
         // ROBOTIS schedule offset 16 = 0x0A
@@ -1182,8 +1188,11 @@ mod tests {
     #[test]
     fn encode_page_passes_robotis_verify_checksum() {
         use forge_core::synth::library::verify_action_checksum;
-        let mut page = MotionPage::default();
-        page.name = "init".to_string();
+        // 2026-05-17 clippy field_reassign_with_default fix.
+        let page = MotionPage {
+            name: "init".to_string(),
+            ..Default::default()
+        };
         let mut buf = [0u8; 512];
         buf.copy_from_slice(&encode_page_to_raw(&page));
         assert!(
@@ -1201,9 +1210,12 @@ mod tests {
     #[test]
     fn preview_ascii_uses_official_joint_indexing() {
         use forge_core::motion::Motion;
-        let mut page = MotionPage::default();
-        page.id = 1;
-        page.name = "test".to_string();
+        // 2026-05-17 clippy field_reassign_with_default fix.
+        let mut page = MotionPage {
+            id: 1,
+            name: "test".to_string(),
+            ..Default::default()
+        };
         // 각 관절에 unique 식별 값 — output 에서 라벨 매칭 검증용. 12-bit 범위 (0..4095).
         page.steps[0].positions[1] = 1111;  // R_SH_PITCH
         page.steps[0].positions[11] = 2222; // R_HIP_PITCH

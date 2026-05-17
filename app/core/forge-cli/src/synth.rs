@@ -890,9 +890,10 @@ fn current_iso8601_for_filename() -> String {
 /// motion 이 깨질 수 있는 P0 버그였다. Codex audit 2026-05-14 에서 발견.
 ///
 /// **Phase G8 (2026-05-15)**: schedule(offset 16) = `TIME_BASE_SCHEDULE` (0x0A) 추가
-/// + 최종 checksum 계산 추가. 이전엔 둘 다 누락 → ROBOTIS `Action::LoadPage` (Action.cpp:
-/// 239-253) 의 `VerifyChecksum` 이 false → `ResetPage` 가 페이지를 0 으로 wipe →
-/// 사용자가 commit 한 모션이 실 로봇에서 빈 페이지로 사라지는 P0 데이터 손실 버그.
+/// + 최종 checksum 계산 추가. 이전엔 둘 다 누락 → ROBOTIS `Action::LoadPage`
+///   (Action.cpp:239-253) 의 `VerifyChecksum` 이 false → `ResetPage` 가 페이지를 0
+///   으로 wipe → 사용자가 commit 한 모션이 실 로봇에서 빈 페이지로 사라지는 P0
+///   데이터 손실 버그.
 fn encode_page_to_raw(page: &MotionPage, slot: u8) -> anyhow::Result<[u8; 512]> {
     use forge_core::synth::library::{
         set_action_checksum, HEADER_OFFSET_ACCEL, HEADER_OFFSET_EXIT, HEADER_OFFSET_NEXT,

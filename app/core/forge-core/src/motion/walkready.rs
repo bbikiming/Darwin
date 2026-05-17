@@ -178,12 +178,15 @@ mod tests {
     fn unused_slots_default_to_center() {
         // slot 0, 21..30 은 unused — 2048 (중심) default.
         assert_eq!(ACTION_PAGE9_WALKREADY_RAW[0], 2048);
-        for i in 21..NUM_JOINTS_IN_STEP {
-            assert_eq!(ACTION_PAGE9_WALKREADY_RAW[i], 2048, "slot {i} not 2048");
+        // 2026-05-17 clippy needless_range_loop fix.
+        for (i, &raw) in ACTION_PAGE9_WALKREADY_RAW.iter().enumerate().skip(21) {
+            assert_eq!(raw, 2048, "slot {i} not 2048");
         }
     }
 
     #[test]
+    #[allow(deprecated)]  // 2026-05-17: 본 test 자체가 deprecated walkready_step
+                          // self-anchor invariant 검증 — 함수 자체 제거 시 같이 제거.
     fn walkready_step_is_self_anchor() {
         let s = walkready_step();
         assert_eq!(rms_distance_from_walkready(&s), 0.0);
@@ -246,6 +249,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]  // walkready_step deprecated — 본 test 도 함께 제거 예정.
     fn invalid_flag_slots_excluded_from_distance() {
         // INVALID 플래그가 켜진 슬롯은 비교 제외.
         let mut s = walkready_step();
