@@ -55,7 +55,7 @@ import ForgeCore
 /// `stop()` 또는 `Task.cancel()` 시 byte iterator 중단. URLSession 자동
 /// connection close.
 @MainActor
-public final class MjpegStreamingClient: ObservableObject {
+public final class MjpegStreamingClient: NSObject, ObservableObject, @preconcurrency URLSessionDataDelegate {
     public enum Phase: Equatable {
         case idle
         case connecting
@@ -76,31 +76,80 @@ public final class MjpegStreamingClient: ObservableObject {
     /// Multi-color HSV preset — Phase E. nil 이면 ROBOTIS default 사용.
     public var hsvPreset: VisionHsvPreset?
 
-    private let session: URLSession
+    /// 2026-05-17 T3.4 chunk parser: URLSession 은 delegate 기반으로 생성.
+    /// session 자체는 init 후 immutable, URLSession 은 thread-safe → nonisolated
+    /// 접근 안전 (runStream 이 background task 에서 호출).
+    private nonisolated(unsafe) var session: URLSession!
     private var task: Task<Void, Never>?
     private var endpoint: PilotCameraEndpoint?
-    /// 2026-05-17: Codex LOW fix — `URLSession.AsyncBytes.task` (URLSessionDataTask) 명시 보관.
-    /// `stop()` 시 Swift Task cancel + URLSessionDataTask cancel **둘 다** 호출 →
-    /// connection 즉시 drop, byte iterator buffered drain 차단. 종전엔 Task cancel 만
-    /// 호출 → AsyncBytes iterator 가 다음 byte 받을 때까지 정지 안 함.
+    /// dataTask 보관 — `stop()` 시 즉시 cancel (Swift Task + URLSessionDataTask 둘 다).
     private var dataTask: URLSessionDataTask?
 
-    public convenience init() {
+    // MARK: - URLSessionDataDelegate plumbing (T3.4 — 2026-05-17)
+    //
+    // 종전 byte-by-byte AsyncBytes (30fps × 50KB = 1.5M await/sec, 추정 15-20% CPU)
+    // → URLSessionDataDelegate 가 Data chunk 단위 전달 → AsyncStream<Data> → chunk
+    // parser. await 횟수 1.5M/sec → ~30/sec (chunk 빈도) 로 절감.
+    //
+    // delegate methods 는 `nonisolated` (URLSession 이 background queue 에서 호출).
+    // continuation 은 main actor 격리 우회 위해 `nonisolated(unsafe)`. 단일 stream
+    // 인스턴스만 활성 (start() 가 stop() 호출 후 새 stream 시작) — race 없음.
+
+    /// Chunk producer — delegate didReceive 가 yield, runStream 이 소비.
+    private nonisolated(unsafe) var chunkContinuation: AsyncStream<Data>.Continuation?
+    /// Response producer — delegate didReceive response 가 resume, runStream 이 await.
+    private nonisolated(unsafe) var responseContinuation: CheckedContinuation<HTTPURLResponse?, Never>?
+
+    public override init() {
+        super.init()
         let config = URLSessionConfiguration.ephemeral
-        // 스트리밍은 connection 유지 — request timeout 길게, resource timeout 무제한.
         config.timeoutIntervalForRequest = 10.0
         config.timeoutIntervalForResource = 0
         config.waitsForConnectivity = false
         config.httpShouldUsePipelining = false
-        self.init(session: URLSession(configuration: config))
+        // delegate queue — serial (maxConcurrentOperationCount = 1) → didReceive
+        // callback 순서 보장 (response 먼저, data 그 후, completion 마지막).
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInitiated
+        self.session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
     }
 
+    /// 테스트용 — 외부 session 주입.
     public init(session: URLSession) {
+        super.init()
         self.session = session
     }
 
     deinit {
         task?.cancel()
+        chunkContinuation?.finish()
+        responseContinuation?.resume(returning: nil)
+        session?.invalidateAndCancel()
+    }
+
+    // MARK: - URLSessionDataDelegate
+
+    nonisolated public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                                       didReceive response: URLResponse,
+                                       completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        responseContinuation?.resume(returning: response as? HTTPURLResponse)
+        responseContinuation = nil
+        completionHandler(.allow)
+    }
+
+    nonisolated public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                                       didReceive data: Data) {
+        chunkContinuation?.yield(data)
+    }
+
+    nonisolated public func urlSession(_ session: URLSession, task: URLSessionTask,
+                                       didCompleteWithError error: Error?) {
+        chunkContinuation?.finish()
+        chunkContinuation = nil
+        // response 가 안 왔는데 task 완료 (예: connection refused) → nil 로 resume.
+        responseContinuation?.resume(returning: nil)
+        responseContinuation = nil
     }
 
     /// 스트림 시작.
@@ -132,13 +181,17 @@ public final class MjpegStreamingClient: ObservableObject {
     }
 
     public func stop(resetImage: Bool = true) {
-        // 2026-05-17 강화: Swift Task + URLSessionDataTask 둘 다 cancel.
-        // - task.cancel(): byte iterator 가 CancellationError throw (다음 await 시점)
-        // - dataTask.cancel(): TCP connection 즉시 drop — buffered byte drain 차단
+        // 2026-05-17 T3.4 강화: Swift Task + URLSessionDataTask + chunk continuation
+        // 모두 정리.
+        // - task.cancel(): chunk for-await 가 Task.isCancelled 감지 후 break
+        // - dataTask.cancel(): TCP connection 즉시 drop → delegate didCompleteWithError 호출
+        // - chunkContinuation.finish(): for-await chunks 자연 종료 (race 가드)
         task?.cancel()
         task = nil
         dataTask?.cancel()
         dataTask = nil
+        chunkContinuation?.finish()
+        chunkContinuation = nil
         endpoint = nil
         phase = .idle
         framesReceived = 0
@@ -150,9 +203,17 @@ public final class MjpegStreamingClient: ObservableObject {
 
     // MARK: - Stream loop (background)
 
-    /// **Codex HIGH fix (2026-05-16)**: `nonisolated` — byte loop / JPEG decode /
-    /// vision detection 모두 background thread. UI 입력 / 메뉴 / 정지 버튼 응답성
-    /// 보장. `@Published` 갱신만 `MainActor.run` 으로 hop.
+    /// **2026-05-17 T3.4 chunk parser refactor**: byte-by-byte AsyncBytes →
+    /// URLSessionDataDelegate + AsyncStream<Data>. 30fps × 50KB 스트림에서 1.5M
+    /// await/sec → ~30/sec 으로 절감 (chunk 빈도).
+    ///
+    /// 흐름:
+    ///   1. AsyncStream<Data> + responseContinuation 셋업 (delegate callback 대상)
+    ///   2. dataTask 생성 + resume → delegate 가 response/chunks/error 전달
+    ///   3. response await → header 검증 (200..<300, multipart boundary)
+    ///   4. chunks 소비 → parseFramesChunked 가 chunk 누적 + boundary 검색
+    ///   5. 정상 종료 / cancel 시 chunkContinuation.finish() 자동 호출 (delegate
+    ///      didCompleteWithError 안)
     nonisolated private func runStream(endpoint: PilotCameraEndpoint) async {
         guard let url = endpoint.streamURL else {
             await reportPhase(.failed(.invalidURL))
@@ -161,44 +222,50 @@ public final class MjpegStreamingClient: ObservableObject {
 
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        // Apple URLSession 이 자동 Keep-alive — 추가 헤더 불필요.
 
-        do {
-            // session 은 immutable property — nonisolated 안전 capture.
-            let session = self.session
-            let (bytes, response) = try await session.bytes(for: request)
-            // 2026-05-17: AsyncBytes.task (URLSessionDataTask) 명시 보관 → stop() 시 즉시 cancel.
-            let underlyingTask = bytes.task
-            await self.storeDataTask(underlyingTask)
-            defer {
-                // runStream 종료 시 dataTask 정리 — instance 변수 잔존 방지.
-                Task { @MainActor [weak self] in self?.dataTask = nil }
-            }
-            guard let http = response as? HTTPURLResponse else {
-                await reportPhase(.failed(.other("응답 형식 오류")))
-                return
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                await reportPhase(.failed(.httpStatus(http.statusCode)))
-                return
-            }
-            let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? ""
-            guard let boundary = Self.boundary(fromContentType: contentType) else {
-                // stream endpoint 미지원 (ROBOTIS demo 가 snapshot 만 노출하는 경우 등).
-                await reportPhase(.failed(.decodeFailed))
-                return
-            }
+        // AsyncStream<Data> 셋업 — delegate didReceive 가 yield.
+        let (chunks, chunkCont) = AsyncStream<Data>.makeStream(bufferingPolicy: .unbounded)
+        self.chunkContinuation = chunkCont
 
-            await reportPhase(.live)
-            await parseFrames(bytes: bytes, boundary: boundary)
-            // stream 자연 종료 (서버 close 또는 cancel).
+        // Response continuation 셋업 — delegate didReceive response 가 resume.
+        let response: HTTPURLResponse? = await withCheckedContinuation { cont in
+            self.responseContinuation = cont
+            let task = session.dataTask(with: request)
+            Task { @MainActor [weak self] in self?.storeDataTask(task) }
+            task.resume()
+        }
+
+        defer {
+            // runStream 종료 시 dataTask 정리.
+            Task { @MainActor [weak self] in self?.dataTask = nil }
+            chunkCont.finish()
+            self.chunkContinuation = nil
+        }
+
+        // task 가 response 받기 전 cancel / fail 한 경우 — nil response.
+        guard let http = response else {
             if !Task.isCancelled {
+                await reportPhase(.failed(.other("응답 받기 실패 — 연결 끊김")))
+            } else {
                 await reportPhase(.idle)
             }
-        } catch is CancellationError {
+            return
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            await reportPhase(.failed(.httpStatus(http.statusCode)))
+            return
+        }
+        let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? ""
+        guard let boundary = Self.boundary(fromContentType: contentType) else {
+            await reportPhase(.failed(.decodeFailed))
+            return
+        }
+
+        await reportPhase(.live)
+        await parseFramesChunked(chunks: chunks, boundary: boundary)
+        if !Task.isCancelled {
             await reportPhase(.idle)
-        } catch {
-            await reportPhase(.failed(.from(error: error)))
         }
     }
 
@@ -224,85 +291,92 @@ public final class MjpegStreamingClient: ObservableObject {
         case readingJPEG
     }
 
-    nonisolated private func parseFrames(bytes: URLSession.AsyncBytes, boundary: String) async {
-        let boundaryDelim = Array("--\(boundary)".utf8)
-        let crlf2: [UInt8] = [0x0D, 0x0A, 0x0D, 0x0A]
+    /// 2026-05-17 T3.4 chunk parser — byte-by-byte → chunk-based.
+    ///
+    /// 입력: `AsyncStream<Data>` (delegate 가 보내는 raw byte chunks).
+    /// 알고리즘:
+    ///   - rollingBuffer: chunk 들 누적 (state 진행 중 처리 안 된 잔여).
+    ///   - state machine: seekingBoundary → readingHeaders → readingJPEG.
+    ///   - boundary 검색: chunk 경계 넘어서도 동작 — buffer 안에서 찾기.
+    ///   - jpegRemaining 만큼 bulk drain (한 chunk 안에 전체 또는 여러 chunk).
+    ///
+    /// 안전:
+    ///   - rollingBuffer 크기 cap = 8 MB (5 MB jpeg + 보호 마진). 초과 시 reset.
+    ///   - chunk 안에 boundary / headers / jpegPayload 모두 가능 — 한 chunk 처리
+    ///     중 multiple frame 완성 가능.
+    ///   - cancel: chunkContinuation.finish() → for await 자연 종료.
+    nonisolated private func parseFramesChunked(chunks: AsyncStream<Data>, boundary: String) async {
+        let boundaryDelim = Data("--\(boundary)".utf8)
+        let crlf2 = Data([0x0D, 0x0A, 0x0D, 0x0A])
+        let maxBufferSize = 8 * 1024 * 1024  // 8 MB hard cap
 
         var state: ParseState = .seekingBoundary
-        // sliding window — boundary / CRLFCRLF 검색용.
-        var window: [UInt8] = []
-        window.reserveCapacity(8192)
-        // 헤더 누적 — Content-Length 파싱용.
-        var headerBytes: [UInt8] = []
-        headerBytes.reserveCapacity(512)
-        // JPEG payload 누적.
-        var jpegBytes: [UInt8] = []
-        // 남은 JPEG payload byte 수 (Content-Length 기반).
+        var buffer = Data()
         var jpegRemaining: Int = 0
 
-        do {
-            for try await byte in bytes {
+        for await chunk in chunks {
+            if Task.isCancelled { return }
+            buffer.append(chunk)
+
+            // 한 chunk 안에 여러 frame 완성 가능 → 종료 조건까지 inner loop.
+            innerLoop: while !buffer.isEmpty {
                 if Task.isCancelled { return }
 
                 switch state {
                 case .seekingBoundary:
-                    window.append(byte)
-                    // window 크기 cap (8 KB) — 안 끝나는 stream 의 메모리 폭주 방지.
-                    if window.count > 8192 {
-                        window.removeFirst(window.count - 4096)
-                    }
-                    if Self.windowEndsWith(window, suffix: boundaryDelim) {
-                        // boundary 발견 — 다음 라인까지 (CRLF 스킵 후) 헤더 시작.
-                        // 헤더 시작 직전 byte (CRLF) 는 다음 state 에서 자연스럽게 처리.
-                        window.removeAll(keepingCapacity: true)
-                        headerBytes.removeAll(keepingCapacity: true)
+                    // buffer 안에서 boundary 검색.
+                    if let range = buffer.range(of: boundaryDelim) {
+                        // boundary 직후부터 다음 단계로. 이전 byte 모두 폐기 (이전 frame
+                        // tail 또는 stream prelude).
+                        buffer.removeSubrange(buffer.startIndex..<range.upperBound)
                         state = .readingHeaders
+                    } else {
+                        // boundary 미발견 — buffer 끝까지 keep, 다음 chunk 대기.
+                        // 단 buffer 크기 cap 초과 시 앞쪽 폐기 (boundary 가 마지막 N byte
+                        // 안에 있을 가능성 유지).
+                        if buffer.count > maxBufferSize {
+                            let dropCount = buffer.count - boundaryDelim.count * 2
+                            buffer.removeSubrange(buffer.startIndex..<buffer.index(buffer.startIndex, offsetBy: dropCount))
+                        }
+                        break innerLoop  // 다음 chunk 받기.
                     }
 
                 case .readingHeaders:
-                    headerBytes.append(byte)
-                    if headerBytes.count > 4096 {
-                        // 비정상적으로 긴 헤더 → 스트림 손상 → boundary 다시 검색.
-                        state = .seekingBoundary
-                        window.removeAll(keepingCapacity: true)
-                        headerBytes.removeAll(keepingCapacity: true)
-                        continue
-                    }
-                    if headerBytes.count >= 4,
-                       Array(headerBytes.suffix(4)) == crlf2 {
-                        // 헤더 종료 — Content-Length 파싱.
-                        let headerStr = String(decoding: headerBytes, as: UTF8.self)
+                    // CRLFCRLF 검색 — 헤더 종료.
+                    if let range = buffer.range(of: crlf2) {
+                        // 헤더 영역 추출 + Content-Length 파싱.
+                        let headerData = buffer.subdata(in: buffer.startIndex..<range.upperBound)
+                        let headerStr = String(decoding: headerData, as: UTF8.self)
+                        buffer.removeSubrange(buffer.startIndex..<range.upperBound)
                         if let n = Self.contentLength(fromHeaders: headerStr) {
-                            jpegBytes.removeAll(keepingCapacity: true)
-                            jpegBytes.reserveCapacity(n)
                             jpegRemaining = n
                             state = .readingJPEG
                         } else {
-                            // Content-Length 없음 — 일반적 mjpg-streamer 아님. 안전한
-                            // fallback: boundary 다시 검색 (frame 1개 skip).
+                            // Content-Length 없음 → frame 1개 skip + boundary 재검색.
                             state = .seekingBoundary
-                            window.removeAll(keepingCapacity: true)
                         }
-                        headerBytes.removeAll(keepingCapacity: true)
+                    } else if buffer.count > 4096 {
+                        // 헤더가 비정상적으로 김 — boundary 재검색.
+                        state = .seekingBoundary
+                    } else {
+                        break innerLoop  // 더 받기.
                     }
 
                 case .readingJPEG:
-                    jpegBytes.append(byte)
-                    jpegRemaining -= 1
-                    if jpegRemaining <= 0 {
-                        // 한 frame 완성.
-                        let frameData = Data(jpegBytes)
+                    // jpegRemaining 만큼 bulk drain. 한 chunk 안에 전체 또는 분할.
+                    if buffer.count >= jpegRemaining {
+                        let frameData = buffer.subdata(in: buffer.startIndex..<buffer.index(buffer.startIndex, offsetBy: jpegRemaining))
+                        buffer.removeSubrange(buffer.startIndex..<buffer.index(buffer.startIndex, offsetBy: jpegRemaining))
+                        jpegRemaining = 0
+                        // 한 frame 완성 — main 으로 deliver.
                         await deliverFrame(data: frameData)
-                        jpegBytes.removeAll(keepingCapacity: true)
                         state = .seekingBoundary
-                        window.removeAll(keepingCapacity: true)
+                    } else {
+                        // buffer 가 jpegRemaining 보다 작음 — 다음 chunk 대기.
+                        break innerLoop
                     }
                 }
             }
-        } catch is CancellationError {
-            // ok — 호출자가 stop 또는 task cancel.
-        } catch {
-            await reportPhase(.failed(.from(error: error)))
         }
     }
 
@@ -417,14 +491,7 @@ public final class MjpegStreamingClient: ObservableObject {
         // `source` ARC release at function return — caller holds only CGImage ref.
     }
 
-    /// `window` 의 마지막 N byte 가 `suffix` 와 일치하는지.
-    /// boundary 검색용 — O(suffix.count).
-    nonisolated static func windowEndsWith(_ window: [UInt8], suffix: [UInt8]) -> Bool {
-        if window.count < suffix.count { return false }
-        let start = window.count - suffix.count
-        for i in 0..<suffix.count {
-            if window[start + i] != suffix[i] { return false }
-        }
-        return true
-    }
+    // 2026-05-17 T3.4: windowEndsWith helper 제거 — chunk parser 는 Data.range(of:)
+    // 로 boundary/CRLFCRLF 검색 (Swift 표준 라이브러리, KMP-like). byte-by-byte
+    // suffix 비교 helper 불필요.
 }
