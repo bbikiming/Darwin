@@ -91,12 +91,15 @@ impl SynthOp for Morph {
 pub fn morph_step(a: &MotionStep, b: &MotionStep, alpha: f32) -> MotionStep {
     let a_clamped = alpha.clamp(0.0, 1.0);
     let mut positions = [2048u16; NUM_JOINTS_IN_STEP];
-    for i in 0..NUM_JOINTS_IN_STEP {
-        let av = a.positions[i];
-        let bv = b.positions[i];
+    // 2026-05-17 clippy needless_range_loop: zip + iter_mut idiomatic.
+    for ((pos, &av), &bv) in positions
+        .iter_mut()
+        .zip(a.positions.iter())
+        .zip(b.positions.iter())
+    {
         let a_skip = av == SKIP_MARKER || (av & FLAG_MASK) != 0;
         let b_skip = bv == SKIP_MARKER || (bv & FLAG_MASK) != 0;
-        positions[i] = match (a_skip, b_skip) {
+        *pos = match (a_skip, b_skip) {
             (false, false) => {
                 let aval = (av & POSITION_MASK) as f32;
                 let bval = (bv & POSITION_MASK) as f32;

@@ -1,0 +1,79 @@
+# 2026-05-17 — Audit-100 Round 2 Tier 3 #8: PR/push 회귀 자동 차단.
+# 종전: 수동 `make lint && make test && make app` 만 — 머지 후 회귀 발견.
+# 신규: 매 PR + push 자동 빌드/테스트. fmt/clippy/Rust test/Swift test.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: Rust (forge-core / forge-ffi / forge-cli / forge-mcp-synth)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/core
+
+      - name: cargo fmt --check
+        working-directory: app/core
+        run: cargo fmt --all --check
+
+      # 2026-05-17: 점진적 clippy 회복 — production code 만 strict, test/example
+      # warning 은 일단 허용 (T3.8 backlog). 다음 sprint 에서 -D warnings 통일.
+      - name: cargo clippy (lib only — strict)
+        working-directory: app/core
+        run: cargo clippy --workspace --lib -- -D warnings
+
+      - name: cargo clippy (all-targets — warn-only)
+        working-directory: app/core
+        run: cargo clippy --workspace --all-targets
+
+      - name: cargo build
+        working-directory: app/core
+        run: cargo build --workspace --verbose
+
+      - name: cargo test
+        working-directory: app/core
+        run: cargo test --workspace --verbose
+
+  swift:
+    name: Swift (DarwinForgeUI + ForgeCore)
+    runs-on: macos-14
+    timeout-minutes: 30
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/core
+
+      - name: Build Rust vendor lib (for Swift FFI)
+        run: bash scripts/build-mac.sh --skip-rust || bash scripts/build-mac.sh
+
+      - name: Swift build
+        working-directory: app/ui/DarwinForge
+        run: swift build
+
+      - name: Swift test
+        working-directory: app/ui/DarwinForge
+        run: swift test --parallel

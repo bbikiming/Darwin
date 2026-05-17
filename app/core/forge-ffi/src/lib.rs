@@ -1397,7 +1397,7 @@ mod tests {
                 "overflow 시 FC_ERR_INVALID 반환 (checked_mul 가드)");
 
             // 정상 작은 입력 — positive control (4x4 RGBA = 64 bytes).
-            let buf = vec![0u8; 4 * 4 * 4];
+            let buf = [0u8; 4 * 4 * 4];
             let rc2 = fc_vision_detect_ball(
                 buf.as_ptr(),
                 buf.len() as u32,

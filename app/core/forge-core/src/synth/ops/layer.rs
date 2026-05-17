@@ -110,9 +110,10 @@ pub fn layer_pages(inputs: &LayerInputs<'_>, params: &LayerParams) -> Result<Mot
         let mut play_time = 16u8;
         let mut pause_time = 0u8;
 
-        for slot in 0..NUM_JOINTS_IN_STEP {
+        // 2026-05-17 clippy needless_range_loop: iter_mut + enumerate idiomatic.
+        for (slot, pos) in positions.iter_mut().enumerate() {
             let region = region_for_slot(slot);
-            positions[slot] = pick_region_value(
+            *pos = pick_region_value(
                 region,
                 upper_step,
                 lower_step,

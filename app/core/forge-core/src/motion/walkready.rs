@@ -105,13 +105,18 @@ pub fn rms_distance_from_walkready(step: &MotionStep) -> f64 {
     const POSITION_MASK: u16 = 0x0FFF;
     let mut sum_sq = 0i64;
     let mut count = 0i64;
-    for i in 1..=18 {
-        let raw = step.positions[i];
+    // 2026-05-17 clippy needless_range_loop: enumerate + zip 으로 idiomatic.
+    for (i, (&raw, &wr_raw)) in step.positions[1..=18]
+        .iter()
+        .zip(ACTION_PAGE9_WALKREADY_RAW[1..=18].iter())
+        .enumerate()
+    {
+        let _ = i;
         if (raw & FLAG_MASK) != 0 {
             continue; // INVALID 또는 TORQUE_OFF — anchor 비교 X
         }
         let val = (raw & POSITION_MASK) as i32;
-        let wr = (ACTION_PAGE9_WALKREADY_RAW[i] & POSITION_MASK) as i32;
+        let wr = (wr_raw & POSITION_MASK) as i32;
         let d = val - wr;
         sum_sq += (d * d) as i64;
         count += 1;
