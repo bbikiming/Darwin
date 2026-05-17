@@ -70,6 +70,9 @@ public struct PilotModePicker: View {
                 .pickerStyle(.segmented)
                 .controlSize(.large)
                 .labelsHidden()
+                // 2026-05-17 a11y: labelsHidden 후 VoiceOver 가 "Picker" 만 announce.
+                .accessibilityLabel("조작 모드 선택")
+                .accessibilityValue(mode == .manual ? "수동" : "공 추적")
                 .disabled(!flags.ballFollow && mode != .manual)
                 .onChange(of: mode) { _, newMode in
                     if newMode == .ballFollow && !flags.ballFollow {

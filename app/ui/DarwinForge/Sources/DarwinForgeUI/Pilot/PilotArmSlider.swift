@@ -51,10 +51,41 @@ public struct PilotArmSlider: View {
                 .frame(height: trackHeight)
                 .opacity(demoOccupiesBus ? DFOpacity.disabled : 1.0)
                 .allowsHitTesting(!demoOccupiesBus)
+                // 2026-05-17 a11y CRITICAL (audit Round 2 Pilot): 시각/운동 장애
+                // 사용자는 drag thumb 조작 불가 → 안전 게이트 자체 사용 불가능했음.
+                // .isAdjustable + accessibilityAdjustableAction 으로 VoiceOver
+                // swipe up/down 으로 ARM/DISARM 가능. WCAG 4.1.2.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("안전 잠금 슬라이더")
+                .accessibilityValue(armedAccessibilityValue)
+                .accessibilityHint(demoOccupiesBus
+                    ? "데모 모드 활성 — 수동 모드 전환 필요"
+                    : (gate.armed ? "위로 쓸어 잠금" : "아래로 쓸어 잠금 해제"))
+                // accessibilityAdjustableAction 자체가 adjustable trait 부여.
+                .accessibilityAdjustableAction { direction in
+                    guard !demoOccupiesBus else { return }
+                    switch direction {
+                    case .increment:
+                        if !gate.armed {
+                            Task { await channel.arm() }
+                        }
+                    case .decrement:
+                        if gate.armed {
+                            channel.disarm()
+                        }
+                    @unknown default:
+                        break
+                    }
+                }
 
                 stageLabel
             }
         }
+    }
+
+    private var armedAccessibilityValue: String {
+        if demoOccupiesBus { return "사용 불가, 데모 모드" }
+        return gate.armed ? "잠금 해제됨" : "잠김"
     }
 
     private var subtitleText: String {

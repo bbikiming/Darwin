@@ -38,8 +38,18 @@ public struct PilotSpeedGauge: View {
                 }
                 .controlSize(.small)
                 .tint(currentTint)
+                // 2026-05-17 a11y: accessibilityValue 한국어 zone 정보 추가.
+                // 종전엔 "0.45" raw decimal 만 → 사용자는 안전/주의/위험 인지 못 함.
+                .accessibilityLabel("보행 속도")
+                .accessibilityValue("\(Int(speedFraction * 100))퍼센트, \(currentTintLabel)")
             }
         }
+    }
+
+    private var currentTintLabel: String {
+        if speedFraction < 0.40 { return "안전" }
+        if speedFraction < 0.70 { return "주의" }
+        return "위험"
     }
 
     private var gaugeBar: some View {
