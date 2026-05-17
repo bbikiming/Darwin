@@ -307,6 +307,11 @@ public final class WalkLabSession: ObservableObject {
             case userCancelled
             case lowerBodyWriteFailure
             case bulkWriteFailure
+            /// 2026-05-17 chaos audit #1 fix: cycle 중 store.bus 가 nil 로 변경됨
+            /// (USB disconnect / 네트워크 끊김 / forceDisconnectWithError 발동).
+            /// 종전엔 walkCycleTask 가 dead bus 에 계속 송출 → bulkWriteFailure 누적
+            /// 까지 부분 정지. 신규: 명시적 abort + 명확한 사용자 메시지.
+            case busDisconnected
         }
         public let reason: EndReason
         public let stepsExecuted: Int
@@ -328,13 +333,15 @@ public final class WalkLabSession: ObservableObject {
             case .bulkWriteFailure:
                 let suffix = sampleError.map { " · 예: \($0)" } ?? ""
                 return "보행 중단 — 통신 절반 이상 실패 (위치 \(positionWriteFailures)·속도 \(speedWriteFailures))\(suffix)"
+            case .busDisconnected:
+                return "보행 중단 — 로봇 연결 끊김 (\(stepsExecuted) step 후). 재연결 후 다시 시작해 주세요"
             }
         }
 
         public var isSuccess: Bool {
             switch reason {
             case .completedMaxDuration, .userCancelled: return true
-            case .lowerBodyWriteFailure, .bulkWriteFailure: return false
+            case .lowerBodyWriteFailure, .bulkWriteFailure, .busDisconnected: return false
             }
         }
     }
@@ -676,14 +683,20 @@ public final class WalkLabSession: ObservableObject {
         if let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: currentWalkTuning()) {
             isRobotWalking = true
             lastRobotEvent = "🤖 연속 보행 시작 — \(presetLabel)"
-            walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
+            // 2026-05-17 chaos #1: weak store capture — Task 내부에서 매 step 마다
+            // store?.bus !== nil 확인 가능. 종전엔 bus strong capture 로 dead handle
+            // 송출 ~5 step 지속.
+            walkCycleTask = Task.detached(priority: .userInitiated) { [weak self, weak store = self.store] in
                 await prev?.value
                 let result = await Self.runContinuousWalk(
                     bus: bus, plan: plan,
                     maxDurationSec: maxDurationSec,
                     lowerBodyJoints: lowerBody,
                     onPose: onPose,
-                    transformPose: transformPose
+                    transformPose: transformPose,
+                    isBusAlive: { [weak store] in
+                        await MainActor.run { store?.bus != nil }
+                    }
                 )
                 await MainActor.run { [weak self] in
                     guard let self else { return }
@@ -706,7 +719,7 @@ public final class WalkLabSession: ObservableObject {
         }
         isRobotWalking = true
         lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(presetLabel)"
-        walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
+        walkCycleTask = Task.detached(priority: .userInitiated) { [weak self, weak store = self.store] in
             await prev?.value
             let result = await Self.runWalkCycle(
                 bus: bus, page: page,
@@ -714,7 +727,10 @@ public final class WalkLabSession: ObservableObject {
                 lowerBodyJoints: lowerBody,
                 loop: false,   // jog 는 kick chain 끝나면 종료.
                 onPose: onPose,
-                transformPose: transformPose
+                transformPose: transformPose,
+                isBusAlive: { [weak store] in
+                    await MainActor.run { store?.bus != nil }
+                }
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -798,7 +814,11 @@ public final class WalkLabSession: ObservableObject {
         bus: Bus, plan: WalkMotionLibrary.ContinuousWalkPlan, maxDurationSec: Int,
         lowerBodyJoints: Set<JointID>,
         onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil,
-        transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil
+        transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil,
+        // 2026-05-17 chaos #1 fix: store.bus 가 nil (disconnect) 됐는지 매 step
+        // 시작 전 체크. true 면 정상, false 면 즉시 .busDisconnected 로 abort.
+        // 종전 ~5 step (400-800ms) 의 dead bus 송출 latency → 즉시 차단.
+        isBusAlive: @Sendable () async -> Bool = { true }
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -860,6 +880,11 @@ public final class WalkLabSession: ObservableObject {
         // 2. Entry — walkReady → phase[0] (1회만).
         entryLoop: for step in plan.entry {
             if Task.isCancelled { cancelledMidStep = true; break entryLoop }
+            // 2026-05-17 chaos #1: bus 끊김 즉시 abort (1 step 이전 = dead write 0).
+            if !(await isBusAlive()) {
+                endReason = .busDisconnected
+                break entryLoop
+            }
             previous = await sendStep(step, previousIn: previous)
             stepsExecuted += 1
             if !lowerBodyPositionFails.isEmpty {
@@ -875,6 +900,11 @@ public final class WalkLabSession: ObservableObject {
                 for step in plan.cycle {
                     if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
                     if let end = endDate, Date() >= end { break cycleLoop }
+                    // 2026-05-17 chaos #1: 매 step 진입 전 bus 생존 확인.
+                    if !(await isBusAlive()) {
+                        endReason = .busDisconnected
+                        break cycleLoop
+                    }
                     previous = await sendStep(step, previousIn: previous)
                     stepsExecuted += 1
 
@@ -950,7 +980,9 @@ public final class WalkLabSession: ObservableObject {
         lowerBodyJoints: Set<JointID>,
         loop: Bool = true,
         onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil,
-        transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil
+        transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil,
+        // 2026-05-17 chaos #1 fix: bus 끊김 즉시 abort. runContinuousWalk 와 동일.
+        isBusAlive: @Sendable () async -> Bool = { true }
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -980,6 +1012,11 @@ public final class WalkLabSession: ObservableObject {
             for step in page.steps {
                 if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
                 if let end = endDate, Date() >= end { break cycleLoop }
+                // 2026-05-17 chaos #1: 매 step 진입 전 bus 생존 확인.
+                if !(await isBusAlive()) {
+                    endReason = .busDisconnected
+                    break cycleLoop
+                }
 
                 let rawTarget = step.toPose()
                 // **Stage 4b (v1.1 fall prevention)**: corrector 적용.
