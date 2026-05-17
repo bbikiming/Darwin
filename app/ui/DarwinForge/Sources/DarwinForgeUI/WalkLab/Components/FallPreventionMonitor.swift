@@ -479,10 +479,14 @@ struct FallPreventionMonitor: View {
     /// Sparkline 최소 너비 — ViewThatFits 폭 분기점. 130pt = Roll/Pitch 10초 trace
     /// 가 인지 가능한 최소 (10 sample × 10pt 간격 + padding).
     private static let sparklineMinW: CGFloat = 130
-    /// Sparkline horizontal 모드 높이 — Apple HIG chart canvas 표준 ≥ 48pt.
-    private static let sparklineWideH: CGFloat = 56
+    /// Sparkline horizontal 모드 높이 — 2026-05-17 56pt 에서 라벨 겹침 결함.
+    /// 수직 라벨 분포 수학: tilt valueRange ±35 + 3 thresholds (15/22/30) 면
+    /// 최소 delta = 7° → (7/70)·H ≥ 12pt 필요 → H ≥ 120pt.
+    /// 차트 너비 (~100pt) 와 1:1 box 형태가 되지만 6개 라벨 가독성 확보 우선.
+    private static let sparklineWideH: CGFloat = 120
     /// Sparkline vertical 모드 높이 — 좁은 폭에서 컨텍스트 손실 최소화 + 가독성.
-    private static let sparklineNarrowH: CGFloat = 44
+    /// Wide 의 75% — narrow 화면에서도 라벨 ≥ 9pt spacing 유지.
+    private static let sparklineNarrowH: CGFloat = 90
 
     /// Sparkline factory — wide/narrow ViewThatFits 모두 동일 구성으로 생성.
     /// `isTiltAxis = true` 시 IMU tilt 임계 (15/22/30°), false 시 score 임계 (30/60/80).
