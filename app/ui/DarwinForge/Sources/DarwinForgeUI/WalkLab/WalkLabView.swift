@@ -272,12 +272,14 @@ public struct WalkLabView: View {
                 }
                 if session.thermalAlarm {
                     banner(systemImage: "thermometer.sun.fill",
-                           message: "모터 60°C 도달 — 자동 정지 + LiPo 분리 권고",
+                           message: "모터 60°C 도달 — 자동 정지됨. 배터리를 분리해 주세요",
                            tint: DFColor.danger)
                 }
                 if session.advanced && session.stabilityScore.category == .critical {
+                    // 2026-05-17 UX audit: 이중부정 "해제를 끄세요" → "다시 잠그세요" 직관화.
+                    // 토스트 길이 단축 (96자 → 핵심만).
                     banner(systemImage: "xmark.octagon.fill",
-                           message: "낙상 위험 점수 \(Int(session.stabilityScore.score))/100 — 시작 차단. 슬라이더 값을 줄이거나 안전 한도 해제를 끄세요.",
+                           message: "위험도 \(Int(session.stabilityScore.score))/100 — 시작 차단됨. 슬라이더를 줄이거나 '안전 한도 해제'를 다시 잠그세요.",
                            tint: DFColor.danger)
                 }
 

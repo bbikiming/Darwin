@@ -1428,8 +1428,8 @@ public final class WalkLabSession: ObservableObject {
         }
         // 2) IMU stale (5초+ 갱신 없음) → 안전 가드. UI 에 노출.
         if let s = store, s.bus != nil, s.imuFilter.isStale() {
+            let wasStale = (imuSource == .stale)
             imuSource = .stale
-            // 값은 유지 (마지막 알려진) — sim 덮어쓰기 회피.
             // 2026-05-17 C4 fix: stale IMU 로 balance corrector 가 outdated 데이터 기반
             // 으로 잘못 보정하는 위험 차단. 자동 OFF + 이벤트 로그 (사용자에게 안내).
             if enableBalanceCorrection {
@@ -1438,6 +1438,23 @@ public final class WalkLabSession: ObservableObject {
                     kind: .imuSourceChange,
                     message: "IMU 지연 — 자세 보정 자동 OFF (outdated 데이터 위험)"
                 )
+            }
+            // 2026-05-17 chaos audit HIGH #4: stale 진입 시 마지막 값 |≥25°| 면
+            // L3 hard gate (30°) 가 frozen 값으로 잘못 emergency trigger 또는 false sense
+            // of safety 위험. 안전 측에서 보수적으로 0 으로 reset — fall predictor 도
+            // stale gate (직전 commit) 로 차단되므로 정합.
+            // 값 freeze 유지의 이유 (UI 컨텍스트 보존) 와 위험 (frozen 가까운 30° 평가)
+            // 사이 trade-off 에서 안전 우선.
+            if !wasStale {
+                let frozenMax = max(abs(imuRollDeg), abs(imuPitchDeg))
+                if frozenMax >= 25 {
+                    logSafetyEvent(
+                        kind: .imuSourceChange,
+                        message: "IMU 지연 — 직전 기울기 \(Int(frozenMax))° 위험 영역, 안전상 0으로 재설정"
+                    )
+                    imuRollDeg = 0
+                    imuPitchDeg = 0
+                }
             }
             return
         }

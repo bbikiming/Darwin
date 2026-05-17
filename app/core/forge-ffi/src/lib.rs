@@ -1373,4 +1373,67 @@ mod tests {
             assert!(result < 0, "expected error for missing bin, got {result}");
         }
     }
+
+    // 2026-05-17 Round 2 audit (test-architect 권고): width * height * 4 overflow
+    // 검증 회귀 가드. 종전엔 u32 silent wrap → false-positive pass → UB.
+    #[test]
+    fn fc_vision_detect_ball_overflow_refused() {
+        unsafe {
+            let dummy = [0u8; 4];
+            let mut out = FfiBlobResult {
+                pixel_count: 0,
+                centroid_x: 0.0,
+                centroid_y: 0.0,
+            };
+            // u32::MAX * u32::MAX = silent wrap. checked_mul 가 차단해야 함.
+            let rc = fc_vision_detect_ball(
+                dummy.as_ptr(),
+                dummy.len() as u32,
+                u32::MAX,
+                u32::MAX,
+                &mut out as *mut _,
+            );
+            assert_eq!(rc, FC_ERR_INVALID,
+                "overflow 시 FC_ERR_INVALID 반환 (checked_mul 가드)");
+
+            // 정상 작은 입력 — positive control (4x4 RGBA = 64 bytes).
+            let buf = vec![0u8; 4 * 4 * 4];
+            let rc2 = fc_vision_detect_ball(
+                buf.as_ptr(),
+                buf.len() as u32,
+                4,
+                4,
+                &mut out as *mut _,
+            );
+            assert_eq!(rc2, FC_OK, "정상 입력 — FC_OK");
+        }
+    }
+
+    // 2026-05-17 Round 2 audit: fc_walk_tick safe_call 회귀 가드.
+    // null handle 시 panic 대신 FC_ERR_INVALID.
+    #[test]
+    fn fc_walk_tick_null_handle_returns_invalid() {
+        unsafe {
+            let mut tgt = FfiFootTargets {
+                elapsed_ms: 0.0,
+                phase: 0,
+                feet: [0.0; 6],
+            };
+            // null handle — INVALID.
+            let rc = fc_walk_tick(std::ptr::null_mut(), 100, &mut tgt as *mut _);
+            assert_eq!(rc, FC_ERR_INVALID);
+
+            // null out_targets — INVALID.
+            let h = fc_walk_new();
+            assert!(!h.is_null());
+            let rc2 = fc_walk_tick(h, 100, std::ptr::null_mut());
+            assert_eq!(rc2, FC_ERR_INVALID);
+
+            // valid input — FC_OK.
+            let rc3 = fc_walk_tick(h, 50, &mut tgt as *mut _);
+            assert_eq!(rc3, FC_OK);
+
+            fc_walk_free(h);
+        }
+    }
 }

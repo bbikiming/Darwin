@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import ForgeCore
 
@@ -118,12 +119,28 @@ public final class ConnectionStore: ObservableObject {
            let ep = try? JSONDecoder().decode(Endpoint.self, from: data) {
             self.lastSuccessfulEndpoint = ep
         }
+
+        // 2026-05-17 chaos audit CRITICAL #2: macOS sleep 시 자동 emergency stop.
+        // 종전: 보행 중 시스템 sleep → wake 시 walkCycleTask 가 마지막 step 이후
+        //       자세로 갑작스러운 큰 변화 송출 → fall 위험. 또한 sleep 동안 robot
+        //       이 외력에 의해 다른 자세 됐을 수 있음 — 그 상태에서 motor 명령 = 위험.
+        // 신규: willSleep → emergencyStop (torque OFF + 정지). wake 후 사용자가
+        //       명시적 재연결 (현재 자세부터 시작) 필요.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.emergencyStop()
+            }
+        }
     }
 
     /// 2026-05-17 concurrency review (agent #1 CRITICAL): pollTask / reconnectTask
-    /// 누수 차단. stopTelemetry() / disconnect() 미호출 채 store 가 dealloc 되면
-    /// telemetry polling 또는 재연결 백오프 Task 가 영구 실행 → bus handle leak.
+    /// 누수 차단 + NSWorkspace observer 해제.
     deinit {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         pollTask?.cancel()
         reconnectTask?.cancel()
     }
@@ -742,7 +759,7 @@ public final class ConnectionStore: ObservableObject {
         } catch {
             await MainActor.run {
                 self.lastRecoveryOutcome = .failure
-                self.lastRecoveryResult = "Dynamixel 전원 ON 실패 — \(error.localizedDescription)"
+                self.lastRecoveryResult = "모터 전원 ON 실패 — \(error.localizedDescription)"
             }
             scheduleResultDismiss()
             return

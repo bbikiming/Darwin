@@ -179,16 +179,7 @@ mod tests {
         }
     }
 
-    fn safe_page_with_step(step: MotionStep) -> MotionPage {
-        MotionPage {
-            id: 1,
-            name: "test".to_string(),
-            safety_class: SafetyClass::Safe,
-            steps: vec![step],
-            repeat: 1,
-            ..Default::default()
-        }
-    }
+    // 2026-05-17 dead code purge: `safe_page_with_step` (clippy "never used") 제거.
 
     #[test]
     fn precheck_high_risk_blocked_without_confirm() {

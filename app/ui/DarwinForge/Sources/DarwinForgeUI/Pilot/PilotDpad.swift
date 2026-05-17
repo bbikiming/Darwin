@@ -36,6 +36,21 @@ public enum DpadZone: String, CaseIterable, Sendable {
         case .stop: return "Space"
         }
     }
+
+    /// 2026-05-17 a11y audit CRITICAL fix (WCAG 2.1.1 keyboard): 종전엔 keyChar
+    /// 라벨만 표시했으나 실 keyboardShortcut 바인딩 부재 → 키보드 전용 사용자
+    /// (운동 장애 / 시각 장애) 원격 조종 사용 불가.
+    public var keyboardEquivalent: KeyEquivalent {
+        switch self {
+        case .up:          return KeyEquivalent("w")
+        case .down:        return KeyEquivalent("s")
+        case .left:        return KeyEquivalent("a")
+        case .right:       return KeyEquivalent("d")
+        case .rotateLeft:  return KeyEquivalent("q")
+        case .rotateRight: return KeyEquivalent("e")
+        case .stop:        return .space
+        }
+    }
     public var koreanLabel: String {
         switch self {
         case .up:          return "전진"
@@ -99,9 +114,10 @@ public struct PilotDpad: View {
     }
 
     /// 방향 zone 이 비활성된 이유 — 사용자 toast/tooltip 용.
+    /// 2026-05-17 UX audit: 내부 issue tag ("BLOCKER C3", "v1.5") 노출 제거.
     private func directionUnavailableReason() -> String {
         if !flags.dpadRealMotor {
-            return "v1.5 에서 D-pad 실 송출 비활성 — 실 IK (BLOCKER C3) 해결 후 v2 활성"
+            return "D-pad 직접 송출은 아직 준비 중이에요 — 다음 업데이트에서 열립니다"
         }
         if store.bus == nil {
             return "실 로봇 미연결 — D-pad 방향 송출 불가 (sim 미리보기는 ARM 후)"
@@ -250,6 +266,10 @@ public struct PilotDpad: View {
               ? "\(zone.koreanLabel) — 현재 비활성 (\(directionUnavailableReason()))"
               : "\(zone.koreanLabel) — 키 \(zone.keyChar ?? "")")
         .accessibilityLabel(zone.koreanLabel)
+        .accessibilityHint(zone.keyChar.map { "단축키 \($0)" } ?? "")
+        // 2026-05-17 a11y CRITICAL fix (WCAG 2.1.1 keyboard): 키보드 전용 사용자
+        // 조작 가능. W/A/S/D/Q/E + Space 7 키. modifiers: [] = 단일 키만.
+        .keyboardShortcut(zone.keyboardEquivalent, modifiers: [])
     }
 
     /// 한 zone 누름 처리. 안전 + 단계별 활성화 규칙:

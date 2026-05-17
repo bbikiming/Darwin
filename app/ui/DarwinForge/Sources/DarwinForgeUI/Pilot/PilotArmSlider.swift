@@ -162,11 +162,11 @@ public struct PilotArmSlider: View {
         let (text, showProgress): (String, Bool) = {
             switch stage {
             case .idle:              return (gate.armed ? "준비됨 — 동작 버튼 활성" : "안전 잠금", false)
-            case .enablingPower:     return ("[1/3] Dynamixel 전원 ON…", true)
-            case .rampingTorque:     return ("[2/3] 관절 토크 ON…", true)
-            case .reachingWalkready: return ("[3/3] 보행 자세로 전환 중…", true)
+            case .enablingPower:     return ("1/3 모터 전원 켜는 중…", true)
+            case .rampingTorque:     return ("2/3 관절 토크 ON…", true)
+            case .reachingWalkready: return ("3/3 보행 자세로 전환 중…", true)
             case .ready:             return ("준비 완료", false)
-            case .readyDegraded:     return ("준비 (degraded) — 상체 일부 미응답", false)
+            case .readyDegraded:     return ("준비됨 — 상체 일부 응답 없음", false)
             case .disarming:         return ("잠금 중…", true)
             case .simReady:          return ("시뮬 준비 — 실 로봇 미연결", false)
             }

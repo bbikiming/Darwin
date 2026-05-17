@@ -151,9 +151,10 @@ public final class ConversationViewModel: ObservableObject {
         case .invalidPlan, .invalidWrapper:
             msg = KoreanUX.Errors.parseFailed
         default:
+            // 2026-05-17 UX audit: 무의미 "오류가 발생했어요" → 구체적 원인 + 행동 가능 안내.
             msg = KoreanUX.ErrorMessage(
-                title: err.errorDescription ?? "오류가 발생했어요",
-                body: "잠시 후 다시 시도해 주세요.",
+                title: err.errorDescription ?? "응답을 받지 못했어요",
+                body: "네트워크 연결을 확인하고 다시 보내 주세요.",
                 action: KoreanUX.Action.retry,
                 rawDetail: err.localizedDescription
             )

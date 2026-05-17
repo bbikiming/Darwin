@@ -894,4 +894,31 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertFalse(session.fallPrediction.recommendEmergency,
             "신규 session — recommendEmergency false")
     }
+
+    /// **WalkLabSession deinit Timer/Task 정리** — 2026-05-17 concurrency review
+    /// CRITICAL #1. View 전환 / @StateObject reinit 시 RunLoop 가 Timer 를 strong
+    /// retain → tick Task 영구 스케줄링 위험. weak ref 로 ARC 해제 검증.
+    func testWalkLabSessionDeinitReleasesResources() {
+        weak var weakSession: WalkLabSession?
+        autoreleasepool {
+            let session = WalkLabSession()
+            weakSession = session
+            // simTimer 시작 안 하고 바로 해제 — deinit 의 invalidate 호출 가드.
+            _ = session
+        }
+        XCTAssertNil(weakSession,
+            "WalkLabSession deinit 후 ARC 해제 안 됨 — Timer/Task strong retain 의심")
+    }
+
+    /// **ConnectionStore deinit pollTask/reconnectTask 정리** — 동일 패턴.
+    func testConnectionStoreDeinitReleasesResources() {
+        weak var weakStore: ConnectionStore?
+        autoreleasepool {
+            let store = ConnectionStore()
+            weakStore = store
+            _ = store
+        }
+        XCTAssertNil(weakStore,
+            "ConnectionStore deinit 후 ARC 해제 안 됨 — NSWorkspace observer/Task 누수 의심")
+    }
 }
