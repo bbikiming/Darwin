@@ -94,6 +94,14 @@ public final class ConnectionStore: ObservableObject {
     ///
     /// USB와 네트워크 endpoint는 jitter 특성이 매우 다르다 — 임계와 폴링 주기를 분리.
     private var consecutiveBusFailures: Int = 0
+
+    /// 2026-05-17 chaos audit #3 fix (HIGH): 개별 모터 timeout 격리 카운터.
+    /// 종전: HeadPan 만 응답 안 함 → handleBusError 호출 → 3번 누적 → 전체 USB
+    /// 끊김으로 오진 → 사용자는 "USB 케이블 확인" 메시지 받음 (실제는 모터 1개).
+    /// 신규: timeout / deviceNotFound 은 per-joint counter, io / 그 외만 global watchdog.
+    @Published public private(set) var jointConsecutiveFailures: [JointID: Int] = [:]
+    /// 개별 모터 "응답 없음" 표시 임계 — 5회 연속 실패 시 UI 에 명시.
+    private static let jointFailureDisplayThreshold = 5
     /// 연결 직후 안정화 grace — 이 시점까지는 watchdog disable.
     /// 첫 boardSnapshot 직후 TCP 큐가 비기 전 read를 시도하면 false-positive 가 잦다.
     private var stabilityGraceUntil: Date?
@@ -1095,18 +1103,44 @@ public final class ConnectionStore: ObservableObject {
         }
     }
 
-    /// 관절 상태 일괄 read. 실패가 1회라도 발생하면 didFail=true로 표시 — 호출자가 watchdog 카운터에 반영.
+    /// 관절 상태 일괄 read. 실패가 1회라도 발생하면 didFail=true로 표시.
+    ///
+    /// 2026-05-17 chaos audit #3 fix: 개별 모터 timeout / deviceNotFound 격리.
+    /// - `.timeout` / `.deviceNotFound`: per-joint counter — bus 전체는 살아있다
+    ///   (e.g. HeadPan ID 19 만 응답 없음, headTilt/rShoulderPitch 정상).
+    /// - 그 외 (`.io`, `.codec`, `.generic`): bus-level 실패 — global watchdog 트리거.
+    ///   (PosixSerial 자체 read() throw = port closed = 전체 bus dead)
+    /// 종전엔 모든 에러가 handleBusError 로 → 단일 모터 고장이 전체 disconnect 유발.
     private func readJoints(bus: Bus, list: [JointID], didFail: inout Bool) -> [JointID: JointState] {
         var out: [JointID: JointState] = [:]
         for j in list {
             do {
                 out[j] = try bus.readState(j)
+                // 성공 — per-joint counter reset.
+                if jointConsecutiveFailures[j] != nil {
+                    jointConsecutiveFailures[j] = nil
+                }
             } catch {
                 didFail = true
-                handleBusError(error)
-                if self.bus == nil { return out }    // watchdog trigger 시 즉시 중단
+                if isJointLevelError(error) {
+                    // Per-joint timeout — global watchdog 미트리거.
+                    jointConsecutiveFailures[j, default: 0] += 1
+                } else {
+                    // Bus-level (port closed / IO error) — global watchdog.
+                    handleBusError(error)
+                    if self.bus == nil { return out }
+                }
             }
         }
         return out
+    }
+
+    /// 개별 모터 응답 없음 vs bus 전체 죽음 구분.
+    private func isJointLevelError(_ error: Error) -> Bool {
+        guard let fe = error as? ForgeError else { return false }
+        switch fe {
+        case .timeout, .deviceNotFound: return true
+        case .io, .codec, .generic, .invalid, .panic: return false
+        }
     }
 }

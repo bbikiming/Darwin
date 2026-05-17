@@ -921,4 +921,12 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertNil(weakStore,
             "ConnectionStore deinit 후 ARC 해제 안 됨 — NSWorkspace observer/Task 누수 의심")
     }
+
+    /// **jointConsecutiveFailures 초기 비어있음** — T3.6 chaos #3 fix invariant.
+    /// per-joint counter 가 신규 store 에서 비어있어야 함 (false-positive UI 표시 차단).
+    func testJointConsecutiveFailuresInitiallyEmpty() {
+        let store = ConnectionStore()
+        XCTAssertTrue(store.jointConsecutiveFailures.isEmpty,
+            "신규 store — jointConsecutiveFailures 비어있어야 함")
+    }
 }
