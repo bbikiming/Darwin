@@ -10,8 +10,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::bin4096::RawPage;
-use super::page::{Motion, MotionPage, SafetyClass, NUM_JOINTS_IN_STEP};
+// 2026-05-17 cleanup: with_official_catalog 제거 후 RawPage / MotionPage /
+// NUM_JOINTS_IN_STEP import unused. Motion / SafetyClass 는 MotionRecord 와
+// OFFICIAL_CATALOG 에서 사용.
+use super::page::{Motion, SafetyClass};
 
 /// 모션 레코드 식별자 (UUID 대신 단순 문자열로 시작 — DB 스키마와 매칭).
 pub type MotionId = String;
@@ -73,64 +75,10 @@ impl Library {
         self.by_id.is_empty()
     }
 
-    /// ROBOTIS-OP2 공식 카탈로그 import (**legacy stub** — placeholder steps).
-    ///
-    /// ## ⚠️ Phase G7 (Codex audit P2-9, 2026-05-14): legacy / placeholder path
-    ///
-    /// 이 함수는 **raw page 의 step 본문을 디코드하지 않는다** — `steps: Vec::new()`
-    /// 빈 벡터와 placeholder header (compliance=[5;31], accel=0) 만 등록한다.
-    /// `MotionRecord` 의 이름/안전 분류 검색용 인덱스로만 의미가 있다.
-    ///
-    /// **실 raw step 이 필요하면** [`crate::synth::library::PageLibrary::from_official_bin`]
-    /// 사용. 그쪽은 `decode_raw_page` 로 31 슬롯 position + 7 step 모두 복원한다.
-    ///
-    /// 두 경로의 차이:
-    ///
-    /// | 함수 | steps 본문 | header (slope/accel) | metadata |
-    /// |---|---|---|---|
-    /// | `with_official_catalog` (이 함수) | 비어있음 | placeholder | display_name + safety |
-    /// | `PageLibrary::from_official_bin` | 7 step 모두 디코드 | 공식 raw 그대로 | tags + body_regions + duration |
-    ///
-    /// 등록되는 모션:
-    /// - **Safe** (11개): Stand up, Walk ready, Yes, No, Thank you, Sit down,
-    ///   Yes Go!, Wow!, Oops, Clap please, Bye bye.
-    /// - **Caution** (2개): Get up (Front), Get up (Back).
-    /// - **HighRisk** (3개): Right Kick, Left Kick, Hand Standing — 사용자
-    ///   confirmation 후에만 실행.
-    #[deprecated(since = "0.2.0", note = "Use synth::library::PageLibrary::from_official_bin for full raw page decode")]
-    pub fn with_official_catalog(raw_pages: &[RawPage]) -> Self {
-        let mut lib = Self::new();
-        for entry in OFFICIAL_CATALOG {
-            let Some(raw) = raw_pages.iter().find(|p| p.index as u16 == entry.id) else {
-                continue;
-            };
-            let motion = Motion {
-                version: 1,
-                robot_generation: "op2".to_string(),
-                pages: vec![MotionPage {
-                    id: entry.id as u8,
-                    name: entry.display_name.to_string(),
-                    compliance: [5u8; NUM_JOINTS_IN_STEP],
-                    next_page: 0,
-                    exit_page: 0,
-                    repeat: 1,
-                    speed: 32,
-                    accel: 0,
-                    steps: Vec::new(), // raw payload는 별도 보존 — Phase B2 의미 해석
-                    safety_class: entry.safety,
-                }],
-            };
-            lib.upsert(MotionRecord {
-                id: format!("op2-page-{:03}", entry.id),
-                name: entry.display_name.to_string(),
-                motion,
-                source_mtn: Some(format!("motion_4096.bin#page={}", entry.id)),
-            });
-            // raw page payload 도 메타로 보존하고 싶다면 추후 별도 필드.
-            let _ = raw; // borrow checker 만족
-        }
-        lib
-    }
+    // 2026-05-17 cleanup: `with_official_catalog` legacy stub 함수 제거.
+    // - 외부 caller 0 (test 1건만 호출 → 본 cleanup 에서 함께 제거).
+    // - 후속 API: `synth::library::PageLibrary::from_official_bin` (full raw decode).
+    // - `OFFICIAL_CATALOG` 데이터는 그대로 유지 — `PageLibrary` 가 활용.
 }
 
 /// 공식 카탈로그 엔트리.
@@ -236,7 +184,7 @@ pub const OFFICIAL_CATALOG: &[OfficialCatalogEntry] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::super::bin4096::parse_bin4096;
+    // 2026-05-17 cleanup: parse_bin4096 import 제거 (with_official_catalog test 삭제 후).
     use super::super::page::*;
     use super::*;
 
@@ -276,9 +224,8 @@ mod tests {
         assert_eq!(names, vec!["a", "b", "c"]);
     }
 
-    const OFFICIAL_BIN: &[u8] = include_bytes!(
-        "../../../../../research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin"
-    );
+    // 2026-05-17 cleanup: OFFICIAL_BIN const 제거 — with_official_catalog test 삭제 후 미사용.
+    // motion_4096.bin 실 파싱은 `synth::library::PageLibrary::from_official_bin` 의 별도 테스트.
 
     #[test]
     fn official_catalog_has_16_entries() {
@@ -314,24 +261,7 @@ mod tests {
         assert!(risk_ids.contains(&17)); // Hand Standing
     }
 
-    #[test]
-    #[allow(deprecated)]  // 2026-05-17: 본 test 가 deprecated API self-invariant
-                          // 검증. with_official_catalog 함수 자체 제거 시 같이 제거.
-    fn with_official_catalog_imports_from_bin4096() {
-        let raw_pages = parse_bin4096(OFFICIAL_BIN).unwrap();
-        let lib = Library::with_official_catalog(&raw_pages);
-        // 카탈로그의 모든 엔트리가 bin 의 해당 페이지에 있어야 함 — bin 이
-        // 페이지 0..=255 모두 가지므로 16개 모두 등록.
-        assert_eq!(lib.len(), 16);
-        // 라벨 확인.
-        let stand_up = lib.get("op2-page-001").unwrap();
-        assert_eq!(stand_up.name, "Stand Up");
-        assert_eq!(stand_up.motion.pages[0].safety_class, SafetyClass::Safe);
-        let hand_standing = lib.get("op2-page-017").unwrap();
-        assert_eq!(hand_standing.name, "Hand Standing");
-        assert_eq!(
-            hand_standing.motion.pages[0].safety_class,
-            SafetyClass::HighRisk
-        );
-    }
+    // 2026-05-17 cleanup: with_official_catalog 함수 제거와 함께 본 test 도 제거.
+    // 검증되던 invariant: bin → catalog 매핑 16건. 후속 API
+    // `PageLibrary::from_official_bin` 의 별도 테스트가 동일 invariant 커버.
 }

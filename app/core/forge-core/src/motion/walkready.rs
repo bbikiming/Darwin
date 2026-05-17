@@ -88,11 +88,9 @@ pub fn action_page9_walkready_step() -> MotionStep {
     }
 }
 
-/// **Deprecated**: [`action_page9_walkready_step`] 사용.
-#[deprecated(since = "0.2.0", note = "Use action_page9_walkready_step")]
-pub fn walkready_step() -> MotionStep {
-    action_page9_walkready_step()
-}
+// 2026-05-17 cleanup: `walkready_step()` 별칭 함수 제거.
+// - 외부 caller 0 (test 2건만 호출 → 본 cleanup 에서 함께 제거).
+// - 후속 API: `action_page9_walkready_step()` (동일 시그니처).
 
 /// 어떤 step 의 본체 관절(ID 1..=18) 자세가 walkready 와 얼마나 가까운지 RMS 측정.
 ///
@@ -185,10 +183,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]  // 2026-05-17: 본 test 자체가 deprecated walkready_step
-                          // self-anchor invariant 검증 — 함수 자체 제거 시 같이 제거.
-    fn walkready_step_is_self_anchor() {
-        let s = walkready_step();
+    fn action_page9_walkready_step_is_self_anchor() {
+        // 2026-05-17 cleanup: walkready_step deprecated alias 제거.
+        // 직접 action_page9_walkready_step 호출 (동일 시그니처).
+        let s = action_page9_walkready_step();
         assert_eq!(rms_distance_from_walkready(&s), 0.0);
         assert!(is_walkready_anchor(&s, 100.0));
     }
@@ -249,10 +247,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]  // walkready_step deprecated — 본 test 도 함께 제거 예정.
     fn invalid_flag_slots_excluded_from_distance() {
         // INVALID 플래그가 켜진 슬롯은 비교 제외.
-        let mut s = walkready_step();
+        let mut s = action_page9_walkready_step()
+        ;
         s.positions[11] = 0x4000; // R_HIP_PITCH INVALID
         s.positions[12] = 0x4000; // L_HIP_PITCH INVALID
         // 나머지 slot 은 walkready 그대로 → RMS 0.
