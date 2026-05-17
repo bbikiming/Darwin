@@ -57,8 +57,14 @@ public struct RobotCameraWindow: View {
             startFpsTimer()
         }
         .onDisappear {
-            fpsTimer?.cancel()
-            client.stop(resetImage: false)
+            cleanupOnHide()
+        }
+        // 2026-05-17 A6 fix: macOS `Window` scene 의 close 가 view onDisappear 만으로
+        // 항상 trigger 되지 않을 수 있음 (SwiftUI scene state 보존 패턴). NSWindow
+        // willCloseNotification 직접 observe 로 이중 안전망 — TCP stream / fpsTimer
+        // background leak 차단.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in
+            cleanupOnHide()
         }
     }
 
@@ -247,6 +253,13 @@ public struct RobotCameraWindow: View {
     }
 
     // MARK: - Actions
+
+    /// onDisappear / willClose 공통 정리 — idempotent.
+    private func cleanupOnHide() {
+        fpsTimer?.cancel()
+        fpsTimer = nil
+        client.stop(resetImage: false)
+    }
 
     private func startStream() {
         // Codex MEDIUM fix (2026-05-16): fps 계산 변수 reset — 빠른 재시작 시 잔상값

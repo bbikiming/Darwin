@@ -150,9 +150,12 @@ public final class TeleopChannel: ObservableObject {
                 lastTorqueError = "\(j.name): \(error.localizedDescription)"
             }
         }
-        // 실패가 있으면 100ms 후 retry.
+        // 2026-05-17 C1 fix: 실패가 있으면 endpoint 종류별 동적 delay 후 retry.
+        // USB 100ms 충분, network (TCP jitter) 는 250ms 필요. 종전 100ms hardcoded.
         if !failedJoints.isEmpty {
-            try? await Task.sleep(nanoseconds: 100_000_000)
+            let retryDelay = store?.activeEndpoint?.recommendedRetryDelayNanoseconds
+                ?? 100_000_000
+            try? await Task.sleep(nanoseconds: retryDelay)
             var stillFailed: [JointID] = []
             for j in failedJoints {
                 do { try bus.setTorque(j, enable: true) }

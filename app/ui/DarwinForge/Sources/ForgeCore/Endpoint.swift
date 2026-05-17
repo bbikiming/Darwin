@@ -27,6 +27,16 @@ public enum Endpoint: Equatable, Hashable, Codable, Sendable {
         }
     }
 
+    /// 2026-05-17 C1 fix: endpoint 별 권장 retry delay (nanoseconds).
+    /// - USB (~1ms RTT): 100ms 충분 — 짧은 latency.
+    /// - Network (TCP, jitter / packet queue): 250ms — TCP buffer drain 시간 보장.
+    public var recommendedRetryDelayNanoseconds: UInt64 {
+        switch self {
+        case .usbSerial: return 100_000_000   // 100ms
+        case .network:   return 250_000_000   // 250ms
+        }
+    }
+
     /// 종류 SF Symbol icon.
     public var iconSystemName: String {
         switch self {

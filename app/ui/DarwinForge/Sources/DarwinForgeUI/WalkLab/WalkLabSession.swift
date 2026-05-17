@@ -1400,6 +1400,15 @@ public final class WalkLabSession: ObservableObject {
         if let s = store, s.bus != nil, s.imuFilter.isStale() {
             imuSource = .stale
             // 값은 유지 (마지막 알려진) — sim 덮어쓰기 회피.
+            // 2026-05-17 C4 fix: stale IMU 로 balance corrector 가 outdated 데이터 기반
+            // 으로 잘못 보정하는 위험 차단. 자동 OFF + 이벤트 로그 (사용자에게 안내).
+            if enableBalanceCorrection {
+                enableBalanceCorrection = false
+                logSafetyEvent(
+                    kind: .imuSourceChange,
+                    message: "IMU 지연 — 자세 보정 자동 OFF (outdated 데이터 위험)"
+                )
+            }
             return
         }
         // 3) 그 외 (미연결 / 테스트) → 기존 sim 모델 fallback.

@@ -57,21 +57,46 @@ public struct PilotCameraEndpoint: Equatable, Sendable {
         "\(host):\(port)"
     }
 
+    /// 2026-05-17 A8 fix: IPv6 정식 지원 추가. 처리 가능 입력:
+    /// - `http://192.168.123.1` / `https://...` (scheme-ful URL)
+    /// - `http://[::1]:8080` (bracketed IPv6 + port)
+    /// - `[::1]:8080` (scheme-less bracketed IPv6 + port)
+    /// - `[::1]` (bracketed IPv6 only)
+    /// - `192.168.123.1:8080` / `192.168.123.1` (IPv4)
+    /// - `192.168.123.1/path` (path strip)
+    /// - `2001:db8::1` (bare IPv6 with multiple `:` — heuristic: 2+ colons & no `]` ⇒ IPv6, port 분리 안 함)
     private static func normalizeHost(_ raw: String) -> String {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.isEmpty { return "192.168.123.1" }
 
+        // scheme-ful URL — URL.host 가 IPv6 / IPv4 / hostname 자동 추출.
         if let url = URL(string: value),
            let host = url.host,
            url.scheme == "http" || url.scheme == "https" {
             return host
         }
 
+        // bracketed IPv6 — `[...]` 안 내용 추출.
+        if value.hasPrefix("[") {
+            if let closing = value.firstIndex(of: "]") {
+                let inner = String(value[value.index(after: value.startIndex)..<closing])
+                return inner.isEmpty ? "192.168.123.1" : inner
+            }
+        }
+
+        // path strip — '/' 이후 제거 (단 `[::1]/path` 는 위에서 처리됨).
         if let slash = value.firstIndex(of: "/") {
             value = String(value[..<slash])
         }
-        if value.filter({ $0 == ":" }).count == 1,
-           let colon = value.lastIndex(of: ":") {
+
+        // bare IPv6 (2+ colons, no brackets) — port 분리 안 함, 전체 host.
+        let colonCount = value.filter({ $0 == ":" }).count
+        if colonCount >= 2 {
+            return value
+        }
+
+        // 단일 `:` — IPv4:port → host 추출.
+        if colonCount == 1, let colon = value.lastIndex(of: ":") {
             value = String(value[..<colon])
         }
         return value.isEmpty ? "192.168.123.1" : value

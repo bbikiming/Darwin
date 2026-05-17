@@ -477,10 +477,11 @@ public struct MotionStudioView: View {
             case .editing:
                 return "선택한 단계의 자세를 화면에만 보여줍니다. 로봇은 움직이지 않아요."
             case .liveEditing:
-                // **Codex pass 2 [P3]**: PoseInspector 는 슬라이더 드래그 중엔 `commit: false` 로
-                // 화면만 갱신하고, 드래그를 ‘놓는 순간’ (또는 stepper 입력 끝) 에 onApplyToHardware
-                // 가 호출됨. 사용자가 드래그 중에 "로봇이 안 움직이네" 오해하지 않도록 commit 시점 명시.
-                return "슬라이더를 ‘놓는 순간’ 자세가 로봇으로 송출됩니다 (드래그 중에는 화면만 갱신). ‘로봇에 보내기’ 토글로 끌 수 있어요."
+                // **Codex pass 3 [P2]**: MotionStudioView 의 PoseInspector binding setter
+                // (line ~836) 가 매 변경마다 stagedPose 갱신 + `if sendToHardware`
+                // 즉시 송출 — PoseInspector 내부의 commit-only logic 을 우회한다.
+                // 따라서 드래그 중 매 frame 송출이 일어남. 사실대로 안내.
+                return "슬라이더가 움직이는 동안 매 변경이 곧바로 로봇으로 송출됩니다. 모터 부하가 클 수 있으니 큰 변경 전에는 ‘로봇에 보내기’ 토글을 끄세요."
             case .previewing:
                 return "모션을 화면에서만 재생합니다. 로봇은 움직이지 않아요."
             case .broadcasting:
