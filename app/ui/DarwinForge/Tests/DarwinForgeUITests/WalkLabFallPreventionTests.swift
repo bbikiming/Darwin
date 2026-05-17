@@ -841,4 +841,57 @@ final class WalkLabFallPreventionTests: XCTestCase {
         let _: LocalizedStringKey = "Fall Prevention 모니터링"
         let _: LocalizedStringKey = "지우기"
     }
+
+    // MARK: - 2026-05-17 — 실 telemetry 분기 안전화 (Codex/agent 검토 결과)
+
+    /// **staleTelemetryThresholdSec = 5.0** — IMU / 모터 온도 통일 임계 상수.
+    /// 이전 motor 분기는 하드코딩 `< 5.0` 사용. WalkLabSession 의 단일 상수로 통일.
+    /// drift 회귀 가드 — 누군가 IMU 만 7초로 늘리고 motor 는 5초 유지하는 경우 차단.
+    func testStaleTelemetryThresholdConstant() {
+        XCTAssertEqual(WalkLabSession.staleTelemetryThresholdSec, 5.0,
+            "staleTelemetryThresholdSec 가 5.0 초가 아니면 ImuFilter.isStale() 과 불일치")
+    }
+
+    /// **ImuFilter staleness boundary = 5.0 초** — `WalkLabSession.staleTelemetryThresholdSec`
+    /// 와 의미적 정합 검증. 두 상수가 다르면 IMU=real / motor=stale chimera state 가능.
+    func testImuFilterStalenessBoundary() {
+        var filter = ImuFilter()
+        // 새 filter — lastUpdatedAt nil → stale 판정 X (return false).
+        XCTAssertFalse(filter.isStale(now: Date()),
+            "lastUpdatedAt nil 일 때는 stale 이 아님")
+
+        // 첫 sample 주입.
+        let t0 = Date(timeIntervalSinceReferenceDate: 100_000)
+        let sample = ImuRaw(gyroX: 0, gyroY: 0, gyroZ: 0,
+                            accelX: 0, accelY: 0, accelZ: 0,
+                            rollDeg: 0, pitchDeg: 0)
+        filter.update(sample, at: t0)
+
+        // 5.0초 직전 — 아직 stale 아님.
+        XCTAssertFalse(filter.isStale(now: t0.addingTimeInterval(4.999)),
+            "5.0초 직전엔 stale 아니어야 함")
+        // 5.01초 후 — stale.
+        XCTAssertTrue(filter.isStale(now: t0.addingTimeInterval(5.01)),
+            "5.0초 초과면 stale 이어야 함")
+
+        // WalkLabSession 측 상수와 동일 5.0 인지 시멘틱 검증.
+        let walkLabBoundary = WalkLabSession.staleTelemetryThresholdSec
+        XCTAssertFalse(filter.isStale(now: t0.addingTimeInterval(walkLabBoundary - 0.01)),
+            "WalkLabSession.staleTelemetryThresholdSec - 0.01 에서는 stale 아님")
+        XCTAssertTrue(filter.isStale(now: t0.addingTimeInterval(walkLabBoundary + 0.01)),
+            "WalkLabSession.staleTelemetryThresholdSec + 0.01 에서는 stale 이어야 함")
+    }
+
+    /// **fallPrediction 초기 = .zero** — sample 없으면 0 점.
+    /// stale gate fix 의 sentinel 값. fix 가 `fallPrediction = .zero` 로 reset 시
+    /// 정상 idle 상태와 구별 불가하므로 의도된 invariant.
+    func testFallPredictionInitialZero() {
+        let session = WalkLabSession()
+        XCTAssertEqual(session.fallPrediction.score, 0,
+            "신규 session — fallPrediction.score 가 0")
+        XCTAssertNil(session.fallPrediction.etaMs,
+            "신규 session — etaMs nil")
+        XCTAssertFalse(session.fallPrediction.recommendEmergency,
+            "신규 session — recommendEmergency false")
+    }
 }

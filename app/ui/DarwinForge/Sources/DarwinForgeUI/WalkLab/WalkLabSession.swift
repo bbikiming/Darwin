@@ -1312,6 +1312,21 @@ public final class WalkLabSession: ObservableObject {
     /// - sim mode: derivative — `(roll_now - roll_prev) / dt` 를 gyro 로 근사
     private func updateFallPrediction() {
         let now = Date()
+
+        // 2026-05-17 stale gate (Codex/agent #6 권고): IMU 가 5초+ 지연 시 predictor 우회.
+        // 위험 시나리오: real → stale 전환 시 imuRollDeg/Pitch 가 freeze 되며 buffer 에
+        // mixed (real + frozen) sample 누적 → 일시적으로 false positive emergency trigger.
+        // L3 30° hard gate 는 imuRollDeg/Pitch 자체로 작동 (mitigationForState 분기) —
+        // 본 predictor 만 차단해도 안전 net 손실 없음. C4 balance corrector 와 동일 원칙.
+        if imuSource == .stale {
+            if fallPrediction != .zero { fallPrediction = .zero }
+            if !imuBuffer.isEmpty {
+                imuBuffer.removeAll(keepingCapacity: true)
+                lastBufferPushAt = nil
+            }
+            return
+        }
+
         // Polling jitter 허용 — 너무 잦은 push 회피.
         if let last = lastBufferPushAt, now.timeIntervalSince(last) < 0.15 {
             // 그대로 마지막 prediction 유지 (재계산 X — score 변동 줄임).
@@ -1382,6 +1397,11 @@ public final class WalkLabSession: ObservableObject {
             break
         }
     }
+
+    /// 실 telemetry stale 임계 — IMU / 모터 온도 둘 다 동일.
+    /// `ImuFilter.isStale()` 내부 5.0초 임계와 정합. 한 곳에서 변경 시 양쪽 자동 동기화.
+    /// 2026-05-17 통일: 이전엔 모터 온도가 하드코딩 `< 5.0` → IMU 와 chimera state 위험.
+    public static let staleTelemetryThresholdSec: TimeInterval = 5.0
 
     /// **Stage 1 (v1.1 fall prevention)**: 실 robot 연결 시 `ConnectionStore.imuFilter`
     /// 의 실 IMU 값 사용 (5Hz polling 자동 갱신). 미연결·stale 시 sim 모델 fallback.
@@ -1459,9 +1479,11 @@ public final class WalkLabSession: ObservableObject {
     /// **freshness 임계**: 5초 — ConnectionStore.isImuStale 과 정합.
     private func updateMotorTempFromRealOrSim() {
         // 1) 실 robot 연결 + telemetry 신선도 확인.
+        // 2026-05-17 통일: 하드코딩 5.0 → staleTelemetryThresholdSec.
+        // ImuFilter.isStale() 의 5초 임계와 동일 상수 — IMU/motor chimera state 차단.
         if let s = store, s.bus != nil,
            let snap = s.lastTelemetry,
-           Date().timeIntervalSince(snap.timestamp) < 5.0,
+           Date().timeIntervalSince(snap.timestamp) < Self.staleTelemetryThresholdSec,
            let hottest = snap.hottestJoint?.1 {
             // 실 robot — joint 의 max present_temperature 사용.
             maxMotorTemp = Double(hottest.presentTemperature)
