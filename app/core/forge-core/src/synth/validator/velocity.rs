@@ -211,7 +211,10 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/velocity_calibration.json");
         if !path.exists() {
-            eprintln!("skip: {} not present — run examples/calibrate_velocity first", path.display());
+            eprintln!(
+                "skip: {} not present — run examples/calibrate_velocity first",
+                path.display()
+            );
             return;
         }
         let s = std::fs::read_to_string(&path).expect("read");

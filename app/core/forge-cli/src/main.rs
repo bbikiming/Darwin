@@ -897,9 +897,9 @@ fn handle_motion(action: MotionAction) -> anyhow::Result<()> {
                         "\n  ✓ {} 페이지가 motion_4096.bin 에서 import 됨",
                         lib.len()
                     ),
-                    Err(_) => println!(
-                        "\n  ⚠️  motion_4096.bin 파싱 실패 — 카탈로그 ID 표시만 제공"
-                    ),
+                    Err(_) => {
+                        println!("\n  ⚠️  motion_4096.bin 파싱 실패 — 카탈로그 ID 표시만 제공")
+                    }
                 }
             } else {
                 println!(

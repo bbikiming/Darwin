@@ -418,7 +418,10 @@ mod tests {
         }
         set_action_checksum(&mut buf);
         let sum: u8 = buf.iter().fold(0u8, |a, b| a.wrapping_add(*b));
-        assert_eq!(sum, 0xff, "Action.cpp VerifyChecksum requires total sum == 0xff");
+        assert_eq!(
+            sum, 0xff,
+            "Action.cpp VerifyChecksum requires total sum == 0xff"
+        );
         assert!(verify_action_checksum(&buf));
     }
 

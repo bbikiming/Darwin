@@ -1094,13 +1094,32 @@ mod tests {
         assert_eq!(&raw[..4], b"init");
         // Action.h:48-54 offsets (공식). 이전 1~4 byte 시프트되어 있던 P0 버그 회귀 방지.
         assert_eq!(raw[15], page.repeat, "repeat byte must be at offset 15");
-        assert_eq!(raw[20], page.steps.len() as u8, "stepnum at offset 20 (was 19 — pre-G1 bug)");
-        assert_eq!(raw[22], page.speed, "speed at offset 22 (was 21 — pre-G1 bug)");
-        assert_eq!(raw[24], page.accel, "accel at offset 24 (was 23 — pre-G1 bug)");
-        assert_eq!(raw[25], page.next_page, "next at offset 25 (was 24 — pre-G1 bug)");
-        assert_eq!(raw[26], page.exit_page, "exit at offset 26 (was 25 — pre-G1 bug)");
+        assert_eq!(
+            raw[20],
+            page.steps.len() as u8,
+            "stepnum at offset 20 (was 19 — pre-G1 bug)"
+        );
+        assert_eq!(
+            raw[22], page.speed,
+            "speed at offset 22 (was 21 — pre-G1 bug)"
+        );
+        assert_eq!(
+            raw[24], page.accel,
+            "accel at offset 24 (was 23 — pre-G1 bug)"
+        );
+        assert_eq!(
+            raw[25], page.next_page,
+            "next at offset 25 (was 24 — pre-G1 bug)"
+        );
+        assert_eq!(
+            raw[26], page.exit_page,
+            "exit at offset 26 (was 25 — pre-G1 bug)"
+        );
         // slope[31] = 32..62. compliance[0] 이 byte 32 에 들어가야 함.
-        assert_eq!(raw[32], page.compliance[0], "slope[0] at offset 32 (was 28 — pre-G1 bug)");
+        assert_eq!(
+            raw[32], page.compliance[0],
+            "slope[0] at offset 32 (was 28 — pre-G1 bug)"
+        );
         if page.compliance.len() > 1 {
             assert_eq!(raw[33], page.compliance[1], "slope[1] at offset 33");
         }
@@ -1111,8 +1130,8 @@ mod tests {
     #[test]
     fn encode_then_decode_preserves_header_fields() {
         use forge_core::motion::bin4096::RawPage;
-        use forge_core::synth::library::decode_raw_page;
         use forge_core::motion::SafetyClass;
+        use forge_core::synth::library::decode_raw_page;
 
         let lib_path = {
             let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

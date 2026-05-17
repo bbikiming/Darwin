@@ -481,10 +481,7 @@ pub unsafe extern "C" fn fc_bus_read_imu(handle: *mut FcBus, out: *mut FfiImuRaw
     }
     safe_call(|| {
         let bus = &mut *handle;
-        fn run<P: forge_core::serial::SerialPort>(
-            b: &mut Bus<P>,
-            out: *mut FfiImuRaw,
-        ) -> c_int {
+        fn run<P: forge_core::serial::SerialPort>(b: &mut Bus<P>, out: *mut FfiImuRaw) -> c_int {
             let mut cm = CmController::new(b);
             match cm.read_imu() {
                 Ok(s) => {
@@ -690,11 +687,7 @@ pub unsafe extern "C" fn fc_joint_set_moving_speed(
 ///
 /// Dynamixel MX-28T factory default P_GAIN = 32.
 #[no_mangle]
-pub unsafe extern "C" fn fc_joint_set_p_gain(
-    handle: *mut FcBus,
-    raw_id: u8,
-    p_gain: u8,
-) -> c_int {
+pub unsafe extern "C" fn fc_joint_set_p_gain(handle: *mut FcBus, raw_id: u8, p_gain: u8) -> c_int {
     if handle.is_null() {
         return FC_ERR_INVALID;
     }
@@ -1159,7 +1152,11 @@ pub unsafe extern "C" fn fc_motion_play_slot(
             .unwrap_or(SafetyClass::Safe);
 
         // chain 로드 — visited 로 cycle 차단, depth 제한으로 무한루프 차단.
-        let depth = if max_chain_depth == 0 { 10 } else { max_chain_depth };
+        let depth = if max_chain_depth == 0 {
+            10
+        } else {
+            max_chain_depth
+        };
         let do_chain = follow_chain != 0;
         let mut pages = Vec::new();
         let mut visited = std::collections::HashSet::new();
@@ -1244,7 +1241,9 @@ pub unsafe extern "C" fn fc_motion_play_slot(
                 }
             }
         }
-        let _guard = PlayGuard { state: state.clone() };
+        let _guard = PlayGuard {
+            state: state.clone(),
+        };
 
         let result = match &mut bus.backend {
             BusBackend::Posix(b) => {
@@ -1438,18 +1437,15 @@ mod tests {
                 u32::MAX,
                 &mut out as *mut _,
             );
-            assert_eq!(rc, FC_ERR_INVALID,
-                "overflow 시 FC_ERR_INVALID 반환 (checked_mul 가드)");
+            assert_eq!(
+                rc, FC_ERR_INVALID,
+                "overflow 시 FC_ERR_INVALID 반환 (checked_mul 가드)"
+            );
 
             // 정상 작은 입력 — positive control (4x4 RGBA = 64 bytes).
             let buf = [0u8; 4 * 4 * 4];
-            let rc2 = fc_vision_detect_ball(
-                buf.as_ptr(),
-                buf.len() as u32,
-                4,
-                4,
-                &mut out as *mut _,
-            );
+            let rc2 =
+                fc_vision_detect_ball(buf.as_ptr(), buf.len() as u32, 4, 4, &mut out as *mut _);
             assert_eq!(rc2, FC_OK, "정상 입력 — FC_OK");
         }
     }

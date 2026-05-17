@@ -402,8 +402,8 @@ mod tests {
         // factor != 1.0 일 때 모든 valid slot 의 값이 (중심 거리 기준) 변하도록.
         // page 9 walkready 는 모든 valid joint 에 non-2048 값.
         let mut p = page_9_walkready();
-        let before_slot_0 = p.steps[0].positions[0];      // reserved — 안 건드려야 함
-        let before_slot_20 = p.steps[0].positions[20];    // HEAD_TILT — 건드려야 함
+        let before_slot_0 = p.steps[0].positions[0]; // reserved — 안 건드려야 함
+        let before_slot_20 = p.steps[0].positions[20]; // HEAD_TILT — 건드려야 함
 
         apply_mutation(
             &mut p,
@@ -514,7 +514,10 @@ mod tests {
         // R_SHOULDER_PITCH (id 1, positions[1]) 의 flag bit 도 보존.
         let before_id1 = p.steps[0].positions[1] & FLAG_MASK;
         let after_id1 = out[0].steps[0].positions[1] & FLAG_MASK;
-        assert_eq!(before_id1, after_id1, "id 1 (R_SHOULDER_PITCH) flag bits must be preserved");
+        assert_eq!(
+            before_id1, after_id1,
+            "id 1 (R_SHOULDER_PITCH) flag bits must be preserved"
+        );
         // slot 0 (reserved) 는 mutation 자체가 안 닿음.
         assert_eq!(
             p.steps[0].positions[0], out[0].steps[0].positions[0],

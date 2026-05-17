@@ -1217,7 +1217,7 @@ mod tests {
             ..Default::default()
         };
         // 각 관절에 unique 식별 값 — output 에서 라벨 매칭 검증용. 12-bit 범위 (0..4095).
-        page.steps[0].positions[1] = 1111;  // R_SH_PITCH
+        page.steps[0].positions[1] = 1111; // R_SH_PITCH
         page.steps[0].positions[11] = 2222; // R_HIP_PITCH
         page.steps[0].positions[13] = 3333; // R_KNEE
         page.steps[0].positions[20] = 2700; // HEAD_TILT (12-bit max=4095)
@@ -1229,10 +1229,22 @@ mod tests {
         let out = preview_ascii(&motion);
 
         // 라벨 + 값 짝이 정확히 표시돼야 함.
-        assert!(out.contains("R_SH=1111"), "preview missing R_SH=1111: {out}");
-        assert!(out.contains("R_HIP=2222"), "preview missing R_HIP=2222: {out}");
-        assert!(out.contains("R_KNEE=3333"), "preview missing R_KNEE=3333: {out}");
-        assert!(out.contains("HEAD=2700"), "preview missing HEAD=2700: {out}");
+        assert!(
+            out.contains("R_SH=1111"),
+            "preview missing R_SH=1111: {out}"
+        );
+        assert!(
+            out.contains("R_HIP=2222"),
+            "preview missing R_HIP=2222: {out}"
+        );
+        assert!(
+            out.contains("R_KNEE=3333"),
+            "preview missing R_KNEE=3333: {out}"
+        );
+        assert!(
+            out.contains("HEAD=2700"),
+            "preview missing HEAD=2700: {out}"
+        );
         // 회귀 가드 — 이전 off-by-one 인덱스가 다시 들어오면 fail.
         assert!(
             !out.contains("R_KNEE=2222"),

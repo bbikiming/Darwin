@@ -170,9 +170,10 @@ impl WalkPreset {
     /// 안전 등급.
     pub fn safety(self) -> WalkSafety {
         match self {
-            WalkPreset::Idle | WalkPreset::March | WalkPreset::SlowWalk | WalkPreset::NormalWalk => {
-                WalkSafety::Safe
-            }
+            WalkPreset::Idle
+            | WalkPreset::March
+            | WalkPreset::SlowWalk
+            | WalkPreset::NormalWalk => WalkSafety::Safe,
             WalkPreset::FastWalk | WalkPreset::TurnLeft | WalkPreset::TurnRight => {
                 WalkSafety::Caution
             }
@@ -391,7 +392,7 @@ mod tests {
     /// 으로도 sim 결과가 안전 박스 안. 즉 advanced 모드 사용자도 sim 가 깨지지 않음.
     #[test]
     fn full_slider_range_sim_stays_bounded() {
-        use crate::walk::{WalkEngine, WalkParams, WalkCommand};
+        use crate::walk::{WalkCommand, WalkEngine, WalkParams};
         use std::time::Duration;
         let params = WalkParams::default();
         let cases = [

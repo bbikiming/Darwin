@@ -787,7 +787,10 @@ mod tests {
         for j in 1..=18usize {
             let first = p.steps[0].positions[j];
             for s in &p.steps[1..] {
-                assert_eq!(s.positions[j], first, "joint {j} should be static in No gesture");
+                assert_eq!(
+                    s.positions[j], first,
+                    "joint {j} should be static in No gesture"
+                );
             }
         }
         // HEAD_PAN (positions[19]) 은 변동
@@ -827,7 +830,12 @@ mod tests {
         let max_knee = p
             .steps
             .iter()
-            .flat_map(|s| [s.positions[13] & POSITION_MASK, s.positions[14] & POSITION_MASK])
+            .flat_map(|s| {
+                [
+                    s.positions[13] & POSITION_MASK,
+                    s.positions[14] & POSITION_MASK,
+                ]
+            })
             .max()
             .unwrap();
         assert!(

@@ -60,22 +60,35 @@ use crate::motion::{MotionStep, NUM_JOINTS_IN_STEP};
 /// | 20 | HEAD_TILT       | 2161 |  +9.9° |
 pub const ACTION_PAGE9_WALKREADY_RAW: [u16; NUM_JOINTS_IN_STEP] = {
     let mut v = [2048u16; NUM_JOINTS_IN_STEP];
-    v[1] = 1498;  v[2] = 2518;   // SHOULDER_PITCH
-    v[3] = 1845;  v[4] = 2248;   // SHOULDER_ROLL
-    v[5] = 2381;  v[6] = 1712;   // ELBOW
-    v[7] = 2048;  v[8] = 2048;   // HIP_YAW
-    v[9] = 2052;  v[10] = 2044;  // HIP_ROLL
-    v[11] = 1637; v[12] = 2459;  // HIP_PITCH (deep squat 시작)
-    v[13] = 2653; v[14] = 1443;  // KNEE (deep squat)
-    v[15] = 2389; v[16] = 1707;  // ANKLE_PITCH (CoM 보정)
-    v[17] = 2057; v[18] = 2039;  // ANKLE_ROLL
-    v[19] = 2048; v[20] = 2161;  // HEAD_PAN / TILT
+    v[1] = 1498;
+    v[2] = 2518; // SHOULDER_PITCH
+    v[3] = 1845;
+    v[4] = 2248; // SHOULDER_ROLL
+    v[5] = 2381;
+    v[6] = 1712; // ELBOW
+    v[7] = 2048;
+    v[8] = 2048; // HIP_YAW
+    v[9] = 2052;
+    v[10] = 2044; // HIP_ROLL
+    v[11] = 1637;
+    v[12] = 2459; // HIP_PITCH (deep squat 시작)
+    v[13] = 2653;
+    v[14] = 1443; // KNEE (deep squat)
+    v[15] = 2389;
+    v[16] = 1707; // ANKLE_PITCH (CoM 보정)
+    v[17] = 2057;
+    v[18] = 2039; // ANKLE_ROLL
+    v[19] = 2048;
+    v[20] = 2161; // HEAD_PAN / TILT
     v
 };
 
 /// **Deprecated**: 명확한 이름 [`ACTION_PAGE9_WALKREADY_RAW`] 사용.
 /// Phase G3 (Codex audit P0-3, 2026-05-14) — backward compat 만 위해 보존.
-#[deprecated(since = "0.2.0", note = "Use ACTION_PAGE9_WALKREADY_RAW. ini_pose 와 구분 위해 rename.")]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use ACTION_PAGE9_WALKREADY_RAW. ini_pose 와 구분 위해 rename."
+)]
 #[allow(dead_code)]
 pub const WALKREADY_RAW_DEPRECATED: [u16; NUM_JOINTS_IN_STEP] = ACTION_PAGE9_WALKREADY_RAW;
 
@@ -165,11 +178,27 @@ mod tests {
     fn walkready_has_deep_squat_geometry() {
         // 무릎 굽힘이 충분한지 (knee R+L < 4096 ± 100, knee 자체 값 검증).
         // R_KNEE = 2653 (+53°) 이 양수, L_KNEE = 1443 (-53°) 음수.
-        assert!(ACTION_PAGE9_WALKREADY_RAW[13] > 2200, "R_KNEE raw {} 너무 작음", ACTION_PAGE9_WALKREADY_RAW[13]);
-        assert!(ACTION_PAGE9_WALKREADY_RAW[14] < 1800, "L_KNEE raw {} 너무 큼", ACTION_PAGE9_WALKREADY_RAW[14]);
+        assert!(
+            ACTION_PAGE9_WALKREADY_RAW[13] > 2200,
+            "R_KNEE raw {} 너무 작음",
+            ACTION_PAGE9_WALKREADY_RAW[13]
+        );
+        assert!(
+            ACTION_PAGE9_WALKREADY_RAW[14] < 1800,
+            "L_KNEE raw {} 너무 큼",
+            ACTION_PAGE9_WALKREADY_RAW[14]
+        );
         // hip-ankle 균형 (hip 앞으로 + ankle 보정).
-        assert!(ACTION_PAGE9_WALKREADY_RAW[11] < 1900, "R_HIP_PITCH 부족 squat (raw {})", ACTION_PAGE9_WALKREADY_RAW[11]);
-        assert!(ACTION_PAGE9_WALKREADY_RAW[15] > 2200, "R_ANKLE_PITCH 보정 부족 (raw {})", ACTION_PAGE9_WALKREADY_RAW[15]);
+        assert!(
+            ACTION_PAGE9_WALKREADY_RAW[11] < 1900,
+            "R_HIP_PITCH 부족 squat (raw {})",
+            ACTION_PAGE9_WALKREADY_RAW[11]
+        );
+        assert!(
+            ACTION_PAGE9_WALKREADY_RAW[15] > 2200,
+            "R_ANKLE_PITCH 보정 부족 (raw {})",
+            ACTION_PAGE9_WALKREADY_RAW[15]
+        );
     }
 
     #[test]
@@ -222,8 +251,8 @@ mod tests {
 
         // 1° ≈ 11.4 raw. 차이 (raw 단위) — GPT audit 의 정량 데이터와 일치 검증.
         let pairs: [(JointId, usize, f64); 3] = [
-            (JointId::RHipPitch, 11, 29.0),  // page 9 -36°, ini -65° → 29° = 330 raw
-            (JointId::RKnee, 13, 77.0),       // page 9 +53°, ini +130° → 77° = 877 raw
+            (JointId::RHipPitch, 11, 29.0), // page 9 -36°, ini -65° → 29° = 330 raw
+            (JointId::RKnee, 13, 77.0),     // page 9 +53°, ini +130° → 77° = 877 raw
             (JointId::RAnklePitch, 15, 40.0), // page 9 +30°, ini +70° → 40° = 455 raw
         ];
 
@@ -249,11 +278,10 @@ mod tests {
     #[test]
     fn invalid_flag_slots_excluded_from_distance() {
         // INVALID 플래그가 켜진 슬롯은 비교 제외.
-        let mut s = action_page9_walkready_step()
-        ;
+        let mut s = action_page9_walkready_step();
         s.positions[11] = 0x4000; // R_HIP_PITCH INVALID
         s.positions[12] = 0x4000; // L_HIP_PITCH INVALID
-        // 나머지 slot 은 walkready 그대로 → RMS 0.
+                                  // 나머지 slot 은 walkready 그대로 → RMS 0.
         assert_eq!(rms_distance_from_walkready(&s), 0.0);
     }
 }
