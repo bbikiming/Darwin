@@ -192,9 +192,11 @@ public struct WalkLabView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("모니터링 패널 접기")
+                .help("모니터링 패널 접기 (⌘⇧M)")
                 .accessibilityLabel("모니터링 패널 접기")
-                .keyboardShortcut("m", modifiers: [.command, .shift])
+                // 2026-05-17 fix: ⌘⇧M 단축키 중복 매핑 제거 — `collapsedMonitoringStripe`
+                // 의 펼치기 버튼만 단축키 보유. 토글은 NotificationCenter `.dfToggleMonitoring`
+                // 으로 통합 (보기 메뉴 + 단축키 둘 다 같은 알림 발행).
             }
             .padding(.horizontal, DFSpace.sm2)
             .padding(.vertical, DFSpace.sm)
@@ -324,7 +326,8 @@ public struct WalkLabView: View {
                         // **Stage 2 (v1.1 fall prevention)**: 안전 상태 + 자동 보정 토글.
                         balanceStateCard
                         // **Stage 5 (v1.1 fall prevention)**: 예측 score + ETA.
-                        FallPredictionCard(prediction: session.fallPrediction)
+                        FallPredictionCard(prediction: session.fallPrediction,
+                                           imuSource: session.imuSource)
                         // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
                         balanceCorrectionCard
                         IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)

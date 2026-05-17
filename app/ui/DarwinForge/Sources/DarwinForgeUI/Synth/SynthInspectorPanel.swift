@@ -68,14 +68,32 @@ public struct SynthInspectorPanel: View {
             .disabled(model.canvas.isEmpty || model.isLoading)
             .padding(.horizontal)
 
-            // Validator overlay
+            // Validator overlay — Codex audit (2026-05-17) 이후 정직 표기.
+            // 이 화면은 `forge synth validate` 를 호출하지 않습니다. 결과는 모두 "미검증"
+            // 상태로 표기됩니다. 사용자가 의도치 않게 ✅ 로 오인하지 않도록.
             if !model.validatorResults.isEmpty {
                 Divider()
                 VStack(alignment: .leading, spacing: DFSpace.xs2) {
-                    Text("Validation").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: DFSpace.xs) {
+                        Text("검증 단계").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("자동 검증 미실행")
+                            .font(.system(size: DFFontSize.s9, weight: .bold))
+                            .foregroundStyle(DFColor.warning)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 2)
+                                    .stroke(DFColor.warning, lineWidth: 0.5)
+                            )
+                    }
                     ForEach(Array(model.validatorResults.enumerated()), id: \.offset) { _, r in
                         validatorRow(r)
                     }
+                    Text("정확한 검증은 터미널에서 `forge synth validate <page.json>` 를 실행하세요.")
+                        .font(.system(size: DFFontSize.s9))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
                 }
                 .padding(.horizontal)
             }
@@ -133,7 +151,7 @@ public struct SynthInspectorPanel: View {
                 Text("• Mutate — 첫 페이지에 time-scale 적용").font(.caption)
                 Text("• Mirror — 첫 페이지 좌우 반전").font(.caption)
                 Text("• Procedural — 첫·둘째 페이지를 anchor 로 sine 곡선").font(.caption)
-                Text("Validator 4 단계 모두 통과해야 commit 가능. WARN 은 진행 허용, FAIL 은 차단.")
+                Text("이 화면은 합성만 수행하며 자동 검증은 하지 않습니다. 4단계 검증은 터미널에서 `forge synth validate <page.json>` 로 실행해 확인하세요.")
                     .padding(.top, 8)
             }
             .padding()
@@ -175,12 +193,16 @@ public struct SynthInspectorPanel: View {
         switch result {
         case .success(let r):
             model.resultJSON = r.motionJSON
-            // 단순 stderr 파싱으로 validator 결과 mock — 실제 validate 는 별도 호출 필요.
+            // **Codex audit (2026-05-17)**: 이 화면은 검증을 수행하지 않습니다. 이전엔
+            // 4단계 모두 .pass 하드코딩으로 사용자가 검증 통과로 오인할 위험이 있었음.
+            // 이제 모든 단계를 .warn 으로 표기하여 "미검증" 임을 시각적으로 명시.
+            // 추후 SynthBridge 가 `forge synth validate` 를 노출하면 .pass/.fail 로 채움.
+            let missing = "이 화면에선 검증되지 않음"
             model.validatorResults = [
-                SynthValidatorOutcome(stage: "JointLimit",      status: .pass, message: ""),
-                SynthValidatorOutcome(stage: "Velocity",        status: .pass, message: ""),
-                SynthValidatorOutcome(stage: "SelfCollision",   status: .pass, message: ""),
-                SynthValidatorOutcome(stage: "StaticStability", status: .pass, message: "(추정) `forge synth validate` 로 정확한 결과 확인"),
+                SynthValidatorOutcome(stage: "JointLimit",      status: .warn, message: missing),
+                SynthValidatorOutcome(stage: "Velocity",        status: .warn, message: missing),
+                SynthValidatorOutcome(stage: "SelfCollision",   status: .warn, message: missing),
+                SynthValidatorOutcome(stage: "StaticStability", status: .warn, message: missing),
             ]
         case .failure(let err):
             model.lastError = "\(err)"

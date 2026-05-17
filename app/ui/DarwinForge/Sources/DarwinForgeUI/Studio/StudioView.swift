@@ -544,20 +544,58 @@ public struct StudioView: View {
             Text("\(j.name) (ID \(j.rawValue))")
                 .font(DFFont.caption.monospaced())
                 .foregroundStyle(DFColor.textSecondary)
-            HStack {
-                Text("자세").foregroundStyle(DFColor.textSecondary)
+            // 목표 위치 — 편집기 슬라이더가 가리키는 값. 항상 표시.
+            HStack(spacing: DFSpace.xs) {
+                Text("목표 위치")
+                    .foregroundStyle(DFColor.textSecondary)
+                Text("편집값")
+                    .font(.system(size: DFFontSize.s9))
+                    .foregroundStyle(DFColor.textSecondary.opacity(0.6))
+                    .padding(.horizontal, 3).padding(.vertical, 0.5)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2)
+                            .stroke(DFColor.textSecondary.opacity(0.25), lineWidth: 0.5)
+                    )
                 Spacer()
                 Text("\(Int(pose.degrees(j)))°")
                     .fontDesign(.monospaced)
             }
             .font(DFFont.caption)
+
+            // 현재 위치 — 실 로봇의 present_position. 연결 안 됐을 때는 placeholder.
+            // **Codex audit (2026-05-17)**: 이전엔 미연결 시 행 자체가 사라져
+            // "목표 위치" 가 마치 실측처럼 보이는 비대칭이었음.
             if let s = store.jointStates[j] {
-                HStack {
-                    Text("실측").foregroundStyle(DFColor.textSecondary)
+                let actualDeg = Int(Kinematics.degrees(fromRaw: Int(s.presentPosition)))
+                HStack(spacing: DFSpace.xs) {
+                    Text("현재 위치")
+                        .foregroundStyle(DFColor.textSecondary)
+                    Text("실측")
+                        .font(.system(size: DFFontSize.s9, weight: .semibold))
+                        .foregroundStyle(DFColor.success)
+                        .padding(.horizontal, 3).padding(.vertical, 0.5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(DFColor.success.opacity(0.5), lineWidth: 0.5)
+                        )
                     Spacer()
-                    Text("\(Int(Kinematics.degrees(fromRaw: Int(s.presentPosition))))°")
+                    Text("\(actualDeg)°")
                         .fontDesign(.monospaced)
                 }.font(DFFont.caption)
+
+                // 목표와 실측 차이가 클 때만 한 줄 추가 표시 — 노이즈는 숨김.
+                let diff = abs(Int(pose.degrees(j)) - actualDeg)
+                if diff >= 3 {
+                    HStack {
+                        Text("차이")
+                            .foregroundStyle(DFColor.textSecondary)
+                        Spacer()
+                        Text("\(diff)°")
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(diff >= 10 ? DFColor.warning : DFColor.textSecondary)
+                    }.font(DFFont.caption)
+                }
+
                 HStack {
                     Text("온도").foregroundStyle(DFColor.textSecondary)
                     Spacer()
@@ -565,6 +603,26 @@ public struct StudioView: View {
                         .foregroundStyle(s.presentTemperature >= 60 ? DFColor.danger : DFColor.textPrimary)
                         .fontDesign(.monospaced)
                 }.font(DFFont.caption)
+            } else {
+                // **Codex pass 1 [P3]**: nil joint state ≠ disconnected.
+                // `startTelemetry(cadence: .light)` 가 4개 핵심 관절만 폴링하므로 (헤드 2,
+                // 어깨 1, 무릎 1) 다른 관절은 연결돼 있어도 state 가 nil. 그래서 bus 존재
+                // 여부로 두 상태를 분리.
+                // **Codex pass 2 [P3]**: 이전엔 “새로고침 버튼 / 전체 폴링” 안내가
+                // 있었지만 StudioView 에는 해당 컨트롤이 없어 사용자가 따라 할 수 없는
+                // false action. 사실 그대로만 표기.
+                HStack {
+                    Text("현재 위치")
+                        .foregroundStyle(DFColor.textSecondary)
+                    Spacer()
+                    Text(store.bus != nil ? "자동 폴링 대상 아님" : "로봇 연결 필요")
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(DFColor.textSecondary.opacity(0.7))
+                }
+                .font(DFFont.caption)
+                .help(store.bus != nil
+                    ? "로봇은 연결돼 있지만, 가벼운 폴링 모드에서는 머리·우어깨·우무릎 4개 관절만 자동으로 읽어옵니다. 이 관절은 현재 자동 갱신 대상이 아닙니다."
+                    : "로봇이 연결되지 않아 현재 위치를 알 수 없습니다.")
             }
         }
         .padding(DFSpace.sm)

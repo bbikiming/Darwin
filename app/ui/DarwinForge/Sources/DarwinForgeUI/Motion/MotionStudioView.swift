@@ -423,8 +423,12 @@ public struct MotionStudioView: View {
                              highlight: inspectorJoint,
                              showAxes: true,
                              cameraController: camera)
-                pageMetaBadge
-                    .padding(DFSpace.md)
+                // 3D 가 무엇을 보여주는지 명확히 — 사용자가 편집/재생/송출을 한눈에 구분.
+                HStack(spacing: DFSpace.xs) {
+                    sourceModeBadge
+                    pageMetaBadge
+                }
+                .padding(DFSpace.md)
                 ViewportControls(camera: camera)
                     .frame(maxWidth: .infinity, maxHeight: .infinity,
                            alignment: .topTrailing)
@@ -438,6 +442,88 @@ public struct MotionStudioView: View {
                 .padding(DFSpace.md)
                 .background(DFColor.card)
         }
+    }
+
+    /// 3D 뷰포트의 데이터 출처 — 4가지 상태로 사용자가 자기 행동의 효과를 정확히 인지.
+    ///
+    /// **Codex pass 1 [P2]**: 이전엔 정지/일시정지 + sendToHardware ON 케이스가
+    /// `.editing` 으로 떨어져 "로봇은 움직이지 않아요" 라고 거짓말함. 실제로는 인스펙터
+    /// 슬라이더가 매번 `applyToHardware` 를 호출하여 로봇이 움직임. 새 `.liveEditing`
+    /// 케이스로 명시.
+    private enum SourceMode {
+        case editing       // 정지/일시정지 + 송출 OFF (또는 버스 nil) — 진정한 화면-only.
+        case liveEditing   // 정지/일시정지 + 송출 ON + 버스 있음 — 슬라이더 한 번에 모터 1번.
+        case previewing    // 재생 + 송출 OFF (또는 버스 nil) — 화면에서만 재생.
+        case broadcasting  // 재생 + 송출 ON + 버스 있음 — 모션 전체가 로봇으로 송출.
+
+        var title: String {
+            switch self {
+            case .editing:      return "편집 미리보기"
+            case .liveEditing:  return "실시간 편집 송출"
+            case .previewing:   return "재생 미리보기"
+            case .broadcasting: return "로봇으로 송출 중"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .editing:      return "pencil.tip"
+            case .liveEditing:  return "slider.horizontal.below.rectangle"
+            case .previewing:   return "play.tv"
+            case .broadcasting: return "antenna.radiowaves.left.and.right"
+            }
+        }
+        var help: String {
+            switch self {
+            case .editing:
+                return "선택한 단계의 자세를 화면에만 보여줍니다. 로봇은 움직이지 않아요."
+            case .liveEditing:
+                // **Codex pass 2 [P3]**: PoseInspector 는 슬라이더 드래그 중엔 `commit: false` 로
+                // 화면만 갱신하고, 드래그를 ‘놓는 순간’ (또는 stepper 입력 끝) 에 onApplyToHardware
+                // 가 호출됨. 사용자가 드래그 중에 "로봇이 안 움직이네" 오해하지 않도록 commit 시점 명시.
+                return "슬라이더를 ‘놓는 순간’ 자세가 로봇으로 송출됩니다 (드래그 중에는 화면만 갱신). ‘로봇에 보내기’ 토글로 끌 수 있어요."
+            case .previewing:
+                return "모션을 화면에서만 재생합니다. 로봇은 움직이지 않아요."
+            case .broadcasting:
+                return "재생 중인 모션이 실 로봇으로 송출되고 있습니다."
+            }
+        }
+    }
+
+    private var currentSourceMode: SourceMode {
+        // sendToHardware 토글이 켜져 있더라도 bus == nil 이면 송출은 silent no-op
+        // (applyToHardware:guard let bus = store.bus else { return }) — UI 도 그에 맞춰
+        // "송출 중" 으로 가짜 안내하지 않음.
+        let live = sendToHardware && store.bus != nil
+        let playing = (player.mode == .playing)
+        if playing && live  { return .broadcasting }
+        if playing          { return .previewing }
+        if live             { return .liveEditing }
+        return .editing
+    }
+
+    private var sourceModeBadge: some View {
+        let mode = currentSourceMode
+        let tint: Color = {
+            switch mode {
+            case .editing:      return DFColor.textSecondary
+            case .liveEditing:  return DFColor.warning  // 송출은 맞지만 부분적 — 주황.
+            case .previewing:   return DFColor.info
+            case .broadcasting: return DFColor.danger   // 전체 모션 송출 — 빨강.
+            }
+        }()
+        return HStack(spacing: DFSpace.xs) {
+            Image(systemName: mode.icon)
+                .font(.system(size: DFFontSize.s10))
+                .foregroundStyle(tint)
+            Text(mode.title)
+                .font(.system(size: DFFontSize.s10, weight: .semibold))
+                .foregroundStyle(tint)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(.regularMaterial)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(tint.opacity(0.45), lineWidth: 0.8))
+        .help(mode.help)
     }
 
     private var pageMetaBadge: some View {

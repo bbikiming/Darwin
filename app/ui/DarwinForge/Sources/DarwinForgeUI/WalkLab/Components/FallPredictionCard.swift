@@ -5,11 +5,18 @@ import ForgeCore
 ///
 /// 0..100 score 게이지 + 30° 도달 예측 시간 (있을 때만). emergency 권고 시
 /// 빨간 깜박임 + "선제 정지 발동" 표시.
+///
+/// **출처 표기 (2026-05-17 Codex audit)**: 단독으로 다른 화면에 박힐 때 점수가 실 IMU
+/// 기반인지 시뮬인지 사용자가 알 수 없는 문제. optional `imuSource` 받으면 작은 칩으로 표시.
+/// 기본 nil 이면 표시 안 함 (기존 호출처 호환성 유지).
 public struct FallPredictionCard: View {
     public let prediction: FallPredictor.Prediction
+    public let imuSource: WalkLabSession.ImuSource?
 
-    public init(prediction: FallPredictor.Prediction) {
+    public init(prediction: FallPredictor.Prediction,
+                imuSource: WalkLabSession.ImuSource? = nil) {
         self.prediction = prediction
+        self.imuSource = imuSource
     }
 
     public var body: some View {
@@ -20,6 +27,9 @@ public struct FallPredictionCard: View {
                     .foregroundStyle(scoreColor)
                 Text("예측 낙상 위험")
                     .font(.system(size: DFFontSize.s11, weight: .medium))
+                if let source = imuSource {
+                    sourcePill(source)
+                }
                 Spacer()
                 Text("\(Int(prediction.score))")
                     .font(.system(size: DFFontSize.s13, weight: .semibold, design: .monospaced))
@@ -82,6 +92,24 @@ public struct FallPredictionCard: View {
         case ..<80:  return .orange
         default:     return .red
         }
+    }
+
+    /// 출처 칩 — 점수가 실 IMU/시뮬/지연 중 어느 데이터에 기반했는지 한눈에.
+    private func sourcePill(_ s: WalkLabSession.ImuSource) -> some View {
+        let tint: Color
+        switch s {
+        case .real:  tint = DFColor.success
+        case .sim:   tint = DFColor.info
+        case .stale: tint = DFColor.warning
+        }
+        return Text(s.label)
+            .font(.system(size: DFFontSize.s9, weight: .semibold, design: .monospaced))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: 2)
+                    .stroke(tint, lineWidth: 0.5)
+            )
     }
 
     private func etaLabel(_ ms: Double) -> String {

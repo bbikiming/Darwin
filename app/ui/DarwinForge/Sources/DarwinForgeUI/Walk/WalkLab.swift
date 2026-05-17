@@ -18,6 +18,9 @@ public struct WalkLab: View {
     @State private var sendToHardware: Bool = false
     @State private var torqueSidebarOpen: Bool = true
     @StateObject private var camera = CameraController()
+    /// 3D 모델에 표시할 자세 — 발 자취와 일관되도록 매 tick `walkPoseFromSample` 결과로 갱신.
+    /// 정지 시 `.walkReady` 로 복원. 이전엔 본체가 동결돼 발만 움직이는 비대칭이었음 (Codex audit 후 보강).
+    @State private var visualPose: RobotPose = .walkReady
 
     public init() {}
 
@@ -28,11 +31,16 @@ public struct WalkLab: View {
                 // 좁은 화면 — control panel을 ScrollView에 + 시각화는 위에 고정 비율.
                 VStack(spacing: DFSpace.none) {
                     ZStack(alignment: .topTrailing) {
-                        RobotScene3D(pose: .walkReady, footTrace: trace,
+                        RobotScene3D(pose: visualPose, footTrace: trace,
                                      showAxes: true, cameraController: camera)
                             .background(LinearGradient(
                                 colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                                 startPoint: .top, endPoint: .bottom))
+                        // 좌상단 — 출처 배지 (편집/미리보기/송출).
+                        walkSourceBadge
+                            .padding(DFSpace.md)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity,
+                                   alignment: .topLeading)
                         phaseBadge.padding(DFSpace.md)
                         ViewportControls(camera: camera)
                             .frame(maxWidth: .infinity, maxHeight: .infinity,
@@ -49,11 +57,16 @@ public struct WalkLab: View {
                     controlPanel
                     Divider()
                     ZStack(alignment: .topTrailing) {
-                        RobotScene3D(pose: .walkReady, footTrace: trace,
+                        RobotScene3D(pose: visualPose, footTrace: trace,
                                      showAxes: true, cameraController: camera)
                             .background(LinearGradient(
                                 colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                                 startPoint: .top, endPoint: .bottom))
+                        // 좌상단 — 출처 배지 (편집/미리보기/송출).
+                        walkSourceBadge
+                            .padding(DFSpace.md)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity,
+                                   alignment: .topLeading)
                         phaseBadge.padding(DFSpace.md)
                         ViewportControls(camera: camera)
                             .frame(maxWidth: .infinity, maxHeight: .infinity,
@@ -264,11 +277,13 @@ public struct WalkLab: View {
                 if trace.count > 80 { trace.removeFirst(trace.count - 80) }
                 if rightTrace.count > 80 { rightTrace.removeFirst(rightTrace.count - 80) }
 
+                // 3D 본체 자세도 매 tick 갱신 — 발 자취와 일관되도록.
+                // pose 는 sendToHardware 와 무관하게 항상 계산 (화면 표시 + 송출 모두에 사용).
+                let pose = walkPoseFromSample(sample)
+                visualPose = pose
+
                 // 실기 적용 — sendToHardware ON 일 때만 다리 joint 명령 전송.
-                // 시뮬레이션 sample 기반 IK는 별도 phase로 추가; 일단 walkReady 자세
-                // 위에 phase에 따른 hip pitch 흔들림만 직접 send.
                 if sendToHardware, let bus = store.bus {
-                    let pose = walkPoseFromSample(sample)
                     // 다리 6 관절만 — 안전 위해 팔/머리는 건드리지 않음.
                     let legJoints: [JointID] = [
                         .rHipYaw, .lHipYaw, .rHipRoll, .lHipRoll,
@@ -300,5 +315,46 @@ public struct WalkLab: View {
     private func stop() {
         timer?.invalidate()
         timer = nil
+        // 본체와 발 자취 모두 기준 자세로 복원 — "정지=쉼 자세" 가 시각적으로 일관되도록.
+        visualPose = .walkReady
+    }
+
+    /// 3D 뷰포트의 데이터 출처 — 정지(쉼)/시뮬 미리보기/실 로봇 송출 셋 중 하나.
+    private var walkSourceBadge: some View {
+        let on = enabled
+        let sending = sendToHardware && store.bus != nil
+        let tint: Color
+        let icon: String
+        let label: String
+        let help: String
+        if on && sending {
+            tint = DFColor.danger
+            icon = "antenna.radiowaves.left.and.right"
+            label = "로봇 동작 중"
+            help = "지금 다리 12관절 명령이 50ms 마다 로봇으로 송출되고 있어요."
+        } else if on {
+            tint = DFColor.info
+            icon = "play.tv"
+            label = "걷는 모습 미리보기"
+            help = "화면 시뮬레이션만 보여줍니다. 로봇은 움직이지 않아요."
+        } else {
+            tint = DFColor.textSecondary
+            icon = "pause.circle"
+            label = "쉼 자세"
+            help = "기준 자세입니다. ‘걷기 시작’을 켜면 시뮬레이션이 시작돼요."
+        }
+        return HStack(spacing: DFSpace.xs) {
+            Image(systemName: icon)
+                .font(.system(size: DFFontSize.s10))
+                .foregroundStyle(tint)
+            Text(label)
+                .font(.system(size: DFFontSize.s10, weight: .semibold))
+                .foregroundStyle(tint)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(.regularMaterial)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(tint.opacity(0.45), lineWidth: 0.8))
+        .help(help)
     }
 }
