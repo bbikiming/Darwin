@@ -54,8 +54,11 @@ import ForgeCore
 ///
 /// `stop()` 또는 `Task.cancel()` 시 byte iterator 중단. URLSession 자동
 /// connection close.
+// v1.11.2 (2026-05-18): CI Swift toolchain (5.9 추정) 호환 — `@preconcurrency`
+// conformance attribute 가 5.10+ 에서만 지원되며 로컬에서도 "has no effect" warning
+// 만 발생. URLSessionDataDelegate 의 nonisolated 호출은 이미 Swift 5 부터 호환.
 @MainActor
-public final class MjpegStreamingClient: NSObject, ObservableObject, @preconcurrency URLSessionDataDelegate {
+public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionDataDelegate {
     public enum Phase: Equatable {
         case idle
         case connecting
