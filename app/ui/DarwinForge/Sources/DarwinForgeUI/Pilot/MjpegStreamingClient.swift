@@ -203,11 +203,15 @@ public final class MjpegStreamingClient: ObservableObject {
     }
 
     /// MainActor hop helper — nonisolated background 가 `@Published phase` 갱신용.
+    /// 2026-05-17 Major#1: `@MainActor` 명시 — Swift 6 strict concurrency 대비.
+    @MainActor
     private func reportPhase(_ newValue: Phase) {
         self.phase = newValue
     }
 
     /// MainActor hop helper — nonisolated background 가 `dataTask` 보관용.
+    /// 2026-05-17 Major#1: `@MainActor` 명시.
+    @MainActor
     private func storeDataTask(_ t: URLSessionDataTask) {
         self.dataTask = t
     }
@@ -312,9 +316,11 @@ public final class MjpegStreamingClient: ObservableObject {
     /// CGImage / CFData / CGImageSource 는 nonisolated thread-safe — background 사용 가능.
     /// background 에서 CGImage 디코딩 + detection → main 에서 NSImage 래핑 후 binding.
     nonisolated private func deliverFrame(data: Data) async {
-        // background: CGImage 디코딩 (NSImage 우회 — thread-safe).
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        // 2026-05-17 H1 fix: CGImage decode 를 helper 로 분리.
+        // 종전엔 `CGImageSource` (line 320) 가 await 2 번 사이 stack 에 보관 됨 →
+        // 30fps × 2 client 시 ImageIO 내부 buffer 충돌 / ARC pressure 가능. helper
+        // return 시점에 source ARC release → 다음 await 전 정리.
+        guard let cgImage = Self.decodeCGImage(from: data) else {
             // 디코딩 실패 1 frame 은 skip — stream 자체는 계속.
             return
         }
@@ -340,11 +346,15 @@ public final class MjpegStreamingClient: ObservableObject {
     }
 
     /// MainActor hop — `detectionEnabled` / `hsvPreset` snapshot 읽기.
+    /// 2026-05-17 Major#1: `@MainActor` 명시.
+    @MainActor
     private func readDetectionSnapshot() -> (enabled: Bool, preset: VisionHsvPreset?) {
         (detectionEnabled, hsvPreset)
     }
 
     /// MainActor hop — CGImage → NSImage 래핑 + `@Published` frame state 갱신.
+    /// 2026-05-17 Major#1: `@MainActor` 명시.
+    @MainActor
     private func publishFrame(
         cgImage: CGImage,
         detection: BallVision.Detection?,
@@ -394,6 +404,17 @@ public final class MjpegStreamingClient: ObservableObject {
             }
         }
         return nil
+    }
+
+    /// JPEG `Data` → `CGImage` 동기 decode helper.
+    /// 2026-05-17 H1 fix: `CGImageSource` 가 await 사이 stack 보관 안 되게 분리.
+    /// 함수 return 시점에 source ARC release → 30fps × multi-client GC pressure 차단.
+    nonisolated private static func decodeCGImage(from data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        // `source` ARC release at function return — caller holds only CGImage ref.
     }
 
     /// `window` 의 마지막 N byte 가 `suffix` 와 일치하는지.

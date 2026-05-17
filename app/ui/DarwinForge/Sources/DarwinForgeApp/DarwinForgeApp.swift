@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.applicationIconImage = AppIcon.loadBundledPNG() ?? AppIcon.make()
 
         for w in NSApp.windows {
-            configureWindow(w)
+            Self.configureWindow(w)
             w.makeKeyAndOrderFront(nil)
             w.orderFrontRegardless()
         }
@@ -106,11 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// - `styleMask += .resizable`: 윈도우 corner / edge 드래그 resize 명시.
     ///   `.windowResizability(.contentSize)` 와 결합해 RootView frame 의 maxWidth/Height = .infinity
     ///   가 발효되어 전체화면 가득 채움.
-    private func configureWindow(_ w: NSWindow) {
-        w.titleVisibility = .hidden
-        w.collectionBehavior.formUnion([.fullScreenPrimary, .fullScreenAllowsTiling])
-        w.styleMask.formUnion([.resizable])
-    }
+    // 2026-05-17 M1 fix: instance + static 동일 method 중복 제거.
+    // closure capture 패턴 + 외부 호출 모두 static 으로 통합 가능.
     private static func configureWindow(_ w: NSWindow) {
         w.titleVisibility = .hidden
         w.collectionBehavior.formUnion([.fullScreenPrimary, .fullScreenAllowsTiling])

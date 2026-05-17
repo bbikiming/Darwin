@@ -182,6 +182,17 @@ pub struct FcBus {
     motion_state: std::sync::Arc<MotionState>,
 }
 
+impl FcBus {
+    /// 2026-05-17: 인스턴스화 헬퍼 — 5 곳 반복 boilerplate 통합.
+    /// motion_state 는 idle Arc 자동 init — 호출자는 backend 만 명시.
+    fn new(backend: BusBackend) -> Self {
+        Self {
+            backend,
+            motion_state: std::sync::Arc::new(MotionState::new()),
+        }
+    }
+}
+
 #[allow(dead_code)] // Loopback은 in-process 테스트 후크용.
 enum BusBackend {
     Posix(Bus<PosixSerial>),
@@ -212,10 +223,7 @@ pub unsafe extern "C" fn fc_bus_open(
             if !out_err.is_null() {
                 *out_err = FC_OK;
             }
-            Box::into_raw(Box::new(FcBus {
-                backend: BusBackend::Posix(bus),
-                motion_state: std::sync::Arc::new(MotionState::new()),
-            }))
+            Box::into_raw(Box::new(FcBus::new(BusBackend::Posix(bus))))
         }
         Ok(Err(e)) => {
             if !out_err.is_null() {
@@ -256,10 +264,7 @@ pub unsafe extern "C" fn fc_bus_open_tcp(
             if !out_err.is_null() {
                 *out_err = FC_OK;
             }
-            Box::into_raw(Box::new(FcBus {
-                backend: BusBackend::Tcp(bus),
-                motion_state: std::sync::Arc::new(MotionState::new()),
-            }))
+            Box::into_raw(Box::new(FcBus::new(BusBackend::Tcp(bus))))
         }
         Ok(Err(e)) => {
             if !out_err.is_null() {
@@ -1306,10 +1311,9 @@ mod tests {
     #[test]
     fn motion_play_is_running_false_when_idle() {
         unsafe {
-            let mut h = Box::new(FcBus {
-                backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
-                motion_state: std::sync::Arc::new(MotionState::new()),
-            });
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
             assert_eq!(fc_motion_play_is_running(h.as_mut() as *mut _), 0);
         }
     }
@@ -1317,10 +1321,9 @@ mod tests {
     #[test]
     fn motion_play_cancel_ok_when_no_play() {
         unsafe {
-            let mut h = Box::new(FcBus {
-                backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
-                motion_state: std::sync::Arc::new(MotionState::new()),
-            });
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
             // cancel with no active play — should still return OK (idempotent no-op).
             assert_eq!(fc_motion_play_cancel(h.as_mut() as *mut _), FC_OK);
         }
@@ -1330,10 +1333,9 @@ mod tests {
     fn motion_play_dry_run_with_missing_bin_returns_error() {
         unsafe {
             let path = std::ffi::CString::new("/nonexistent/motion.bin").unwrap();
-            let mut h = Box::new(FcBus {
-                backend: BusBackend::Loopback(Bus::new(LoopbackBus::default())),
-                motion_state: std::sync::Arc::new(MotionState::new()),
-            });
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
             let result = fc_motion_play_slot(
                 h.as_mut() as *mut _,
                 1,
