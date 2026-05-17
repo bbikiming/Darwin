@@ -187,6 +187,125 @@ public final class WalkLabSession: ObservableObject {
     public var imuAccelZMagnitude: Double {
         store?.imuAccelZMagnitudeAvg ?? 0
     }
+
+    /// 2026-05-17 안전 강화: 보행 시작 전 종합 안전 체크리스트.
+    /// 사용자가 "지금 시작하면 안전한가" 한 눈에 인지.
+    /// nil 이면 모든 체크 통과 (시작 안전), 비어있지 않으면 차단 사유 명시.
+    public struct PreflightStatus: Equatable, Sendable {
+        public struct Check: Equatable, Sendable {
+            public enum State: Equatable, Sendable {
+                case pass         // ✓ 통과
+                case info         // ℹ️ 정보 (차단 안 함, sim 모드 등)
+                case warning      // ⚠️ 주의 (사용자 결정)
+                case blocking     // 🛑 차단 (보행 시작 불가)
+            }
+            public let label: String
+            public let state: State
+            public let detail: String
+        }
+        public let checks: [Check]
+        /// 보행 시작 가능 — blocking check 가 0건일 때 true.
+        public var canStart: Bool {
+            !checks.contains { $0.state == .blocking }
+        }
+        /// 사용자가 인지해야 할 주의 사항 (warning + blocking).
+        public var attentionItems: [Check] {
+            checks.filter { $0.state == .warning || $0.state == .blocking }
+        }
+    }
+
+    /// 종합 안전 체크리스트 — UI 가 시작 전 표시.
+    /// 6 layer 안전 시스템 + 신규 추가 layer (L0 voltage) 종합.
+    public var preflightStatus: PreflightStatus {
+        var checks: [PreflightStatus.Check] = []
+
+        // L0 — 연결 / Cradle
+        if store?.bus == nil {
+            checks.append(.init(label: "로봇 연결",
+                                state: .info,
+                                detail: "시뮬 모드 — 실 로봇 미연결"))
+        } else {
+            checks.append(.init(label: "로봇 연결", state: .pass,
+                                detail: "USB / 네트워크 연결됨"))
+        }
+
+        if cradleConfirmed {
+            checks.append(.init(label: "L1 거치", state: .pass,
+                                detail: "정비 스탠드 거치 확인됨"))
+        } else if store?.bus != nil {
+            checks.append(.init(label: "L1 거치", state: .blocking,
+                                detail: "정비 스탠드 거치 후 '거치됨' 체크 필요"))
+        } else {
+            checks.append(.init(label: "L1 거치", state: .info,
+                                detail: "시뮬 모드 — 거치 확인 불필요"))
+        }
+
+        // L0 — 배터리 voltage (실 로봇 연결 시만)
+        if let s = store, s.bus != nil,
+           let v = s.lastTelemetry?.board?.voltageVolts {
+            if v < 10.5 {
+                checks.append(.init(label: "L0 배터리",
+                                    state: .blocking,
+                                    detail: String(format: "%.1fV — 위험 (낮음). 충전 필요 (≥ 10.5V)", v)))
+            } else if v < 11.1 {
+                checks.append(.init(label: "L0 배터리",
+                                    state: .warning,
+                                    detail: String(format: "%.1fV — 주의 (≥ 11.1V 권장)", v)))
+            } else {
+                checks.append(.init(label: "L0 배터리",
+                                    state: .pass,
+                                    detail: String(format: "%.1fV — 정상", v)))
+            }
+        }
+
+        // L3 — IMU 신선도 + scale
+        if let s = store, s.bus != nil {
+            if s.isImuUnavailable {
+                checks.append(.init(label: "L3 IMU",
+                                    state: .warning,
+                                    detail: "IMU 응답 없음 — 자세 보정 불가"))
+            } else if s.isImuStale {
+                checks.append(.init(label: "L3 IMU", state: .warning,
+                                    detail: "IMU 지연 5초+ — 자세 보정 OFF"))
+            } else {
+                switch s.imuScaleSuspicion {
+                case .suspectedLegacy10Bit, .outOfRange:
+                    checks.append(.init(label: "L3 IMU scale",
+                                        state: .warning,
+                                        detail: s.imuScaleSuspicion.rawValue))
+                case .looksValid16Bit:
+                    checks.append(.init(label: "L3 IMU", state: .pass,
+                                        detail: "정상 (16-bit)"))
+                case .unknown:
+                    checks.append(.init(label: "L3 IMU", state: .info,
+                                        detail: "샘플 수집 중…"))
+                }
+            }
+        }
+
+        // L5 — Balance corrector + caution preset
+        if current.safety == .caution && !enableBalanceCorrection {
+            checks.append(.init(label: "L5 자세 보정",
+                                state: .blocking,
+                                detail: "\(current.label) 은 자세 보정 활성화 필요 (낙상 위험)"))
+        } else if enableBalanceCorrection {
+            checks.append(.init(label: "L5 자세 보정", state: .pass,
+                                detail: "활성 — IMU 기반 균형"))
+        }
+
+        // L6 — 모터 온도
+        if maxMotorTemp >= 60 {
+            checks.append(.init(label: "L6 모터 온도",
+                                state: .blocking,
+                                detail: String(format: "%.1f°C — 임계 초과. 냉각 후 다시 시도", maxMotorTemp)))
+        } else if maxMotorTemp >= 55 {
+            checks.append(.init(label: "L6 모터 온도",
+                                state: .warning,
+                                detail: String(format: "%.1f°C — 임계 직전", maxMotorTemp)))
+        }
+
+        return PreflightStatus(checks: checks)
+    }
     /// 마지막 송출 상태 — UI 토스트용.
     @Published public private(set) var lastRobotEvent: String?
     /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
@@ -929,7 +1048,28 @@ public final class WalkLabSession: ObservableObject {
         )
     }
 
+    /// 2026-05-17 안전 강화: bus disconnect 감지 시 cradleConfirmed 자동 해제.
+    /// 종전: bus 끊김 → 재연결 후 사용자 명시 cradle 거치 확인 없이 보행 시작 가능
+    ///       → wake / disconnect 사이 robot 자세 변화 인지 못 한 채 송출 = 낙상 위험.
+    /// 신규: 한 번이라도 bus = nil 관찰되면 cradleConfirmed 자동 false.
+    ///       사용자가 "정비 스탠드에 거치됨" 토글 다시 체크해야 보행 가능.
+    private var lastSeenBusConnected: Bool = false
+
     private func tick() {
+        // 2026-05-17 disconnect 감지 + cradle 재확인 강제.
+        let currentlyConnected = store?.bus != nil
+        if lastSeenBusConnected && !currentlyConnected {
+            // 연결 끊김 감지 — cradleConfirmed 강제 해제 + 이벤트 로그.
+            if cradleConfirmed {
+                cradleConfirmed = false
+                logSafetyEvent(
+                    kind: .preflightFailure,
+                    message: "로봇 연결 끊김 — 거치 확인 자동 해제 (재연결 후 다시 확인 필요)"
+                )
+            }
+        }
+        lastSeenBusConnected = currentlyConnected
+
         let foot = engine.tick(dtMs: 50)
         leftFoot = foot.leftXYZ
         rightFoot = foot.rightXYZ
@@ -1019,6 +1159,21 @@ public final class WalkLabSession: ObservableObject {
             logSafetyEvent(
                 kind: .thermalAlarm,
                 message: String(format: "모터 %.1f°C — 60°C 임계 도달 → 정지", maxMotorTemp)
+            )
+            emergencyStop()
+        }
+
+        // 2026-05-17 안전 강화 — L0 voltage layer (under-volt 자동 정지).
+        // ROBOTIS-OP2 LiPo 11.1V nominal, 10.5V cutoff. 9.5V 이하 = critical (모터
+        // brown-out 위험, 배터리 영구 손상). 보행 중 voltage 급락은 motor stall 또는
+        // 배터리 고갈 징후 — 즉시 정지.
+        if let s = store, s.bus != nil,
+           let v = s.lastTelemetry?.board?.voltageVolts,
+           v > 0,           // sensor 미응답 (0) 가드
+           v < 9.5 {
+            logSafetyEvent(
+                kind: .preflightFailure,
+                message: String(format: "L0 배터리 %.1fV — critical (≥ 9.5V 필요) → 정지", v)
             )
             emergencyStop()
         }
@@ -1130,11 +1285,57 @@ public final class WalkLabSession: ObservableObject {
             newEvents.removeFirst(newEvents.count - Self.safetyEventsMaxCount)
         }
         safetyEvents = newEvents
+        // 2026-05-17 안전 강화: 영구 로그 — UserDefaults postmortem.
+        Self.persistEvent(kind: kind, message: message)
     }
 
     /// 이벤트 로그 비우기 — UI 의 "지우기" 버튼.
     public func clearSafetyEvents() {
         safetyEvents.removeAll()
+    }
+
+    // MARK: - 영구 이벤트 로그 (2026-05-17 안전 강화)
+
+    /// UserDefaults 키 — 안전 이벤트 영구 저장 (최근 100건).
+    /// 앱 재시작 후에도 유지. 실 robot 사고 시 재현 가능한 trace 제공.
+    private static let persistentEventsKey = "df.walklab.persistentSafetyEvents"
+    private static let persistentEventsMaxCount = 100
+
+    /// 영구 저장된 이벤트 1건 — JSON serializable.
+    public struct PersistentEvent: Codable, Equatable, Sendable {
+        public let timestamp: Date
+        public let kindRaw: String  // SafetyEvent.Kind.rawValue
+        public let message: String
+    }
+
+    /// 이벤트 영구 저장 — UserDefaults 에 최근 100건 ring buffer.
+    private static func persistEvent(kind: SafetyEvent.Kind, message: String) {
+        var existing = loadPersistentEvents()
+        existing.append(PersistentEvent(
+            timestamp: Date(),
+            kindRaw: kind.rawValue,
+            message: message
+        ))
+        if existing.count > persistentEventsMaxCount {
+            existing.removeFirst(existing.count - persistentEventsMaxCount)
+        }
+        if let data = try? JSONEncoder().encode(existing) {
+            UserDefaults.standard.set(data, forKey: persistentEventsKey)
+        }
+    }
+
+    /// 영구 저장된 이벤트 로드 — 앱 시작 시 / postmortem UI 표시.
+    /// JSON decode 실패 시 빈 배열 반환 (storage 오염 안전 처리).
+    public static func loadPersistentEvents() -> [PersistentEvent] {
+        guard let data = UserDefaults.standard.data(forKey: persistentEventsKey),
+              let events = try? JSONDecoder().decode([PersistentEvent].self, from: data)
+        else { return [] }
+        return events
+    }
+
+    /// 영구 로그 전체 비우기 — 사용자 명시 액션 (privacy / disk 관리).
+    public static func clearPersistentEvents() {
+        UserDefaults.standard.removeObject(forKey: persistentEventsKey)
     }
 
     /// **Stage 4 + Phase C (v1.1 fall prevention)**: Balance corrector + balanceState
