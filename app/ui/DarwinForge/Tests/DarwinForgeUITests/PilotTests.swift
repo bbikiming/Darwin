@@ -75,7 +75,8 @@ final class PilotTests: XCTestCase {
         XCTAssertTrue(PilotFeatureFlags.v1_5.camera)
         XCTAssertTrue(PilotFeatureFlags.v1_5.imuTelemetry, "Phase D3 IMU FFI 활성")
         XCTAssertTrue(PilotFeatureFlags.v1_5.headTracking, "Phase D5 Mac PID 활성")
-        XCTAssertFalse(PilotFeatureFlags.v1_5.dpadRealMotor)
+        // v1.7 (2026-05-17): dpadRealMotor 활성화 — D-pad 방향키 실 송출 (좌/우회전).
+        XCTAssertTrue(PilotFeatureFlags.v1_5.dpadRealMotor, "v1.7 — D-pad 방향키 활성")
         XCTAssertFalse(PilotFeatureFlags.v1_5.pageChain)
         XCTAssertFalse(PilotFeatureFlags.v1_5.autoRecovery)
 
@@ -83,7 +84,8 @@ final class PilotTests: XCTestCase {
         XCTAssertTrue(PilotFeatureFlags.v1_1_future.imuTelemetry)
         XCTAssertTrue(PilotFeatureFlags.v1_1_future.autoRecovery)
         XCTAssertTrue(PilotFeatureFlags.v1_1_future.headTracking)
-        XCTAssertFalse(PilotFeatureFlags.v1_1_future.dpadRealMotor)
+        // v1.7: v1_1_future 는 v1_5 를 base — dpadRealMotor 도 자동 활성.
+        XCTAssertTrue(PilotFeatureFlags.v1_1_future.dpadRealMotor, "v1.7 — v1_5 에서 dpadRealMotor 활성, v1_1_future inherits")
 
         XCTAssertTrue(PilotFeatureFlags.v2_future.dpadRealMotor)
         XCTAssertTrue(PilotFeatureFlags.v2_future.camera)
@@ -159,8 +161,8 @@ final class PilotTests: XCTestCase {
         XCTAssertTrue(v15.actionBarMore)
         XCTAssertTrue(v15.imuTelemetry, "Phase D3 — fc_bus_read_imu FFI")
         XCTAssertTrue(v15.headTracking, "Phase D5 — Mac PID")
-        // dpadRealMotor / autoRecovery 는 여전히 OFF — 별도 Sprint.
-        XCTAssertFalse(v15.dpadRealMotor)
+        // v1.7 (2026-05-17): dpadRealMotor 활성화 — 좌/우회전 가능.
+        XCTAssertTrue(v15.dpadRealMotor, "v1.7 — D-pad 방향키 활성")
         XCTAssertFalse(v15.autoRecovery)
     }
 
@@ -667,13 +669,17 @@ final class PilotTests: XCTestCase {
     }
 
     /// Helper — test 용 ImuRaw 생성 (public init 직접 사용).
+    /// v1.7: 10-bit ADC raw u16. center 512. gyro_x_dps = (raw-512) × (2000/512).
     private func makeImuSample(rollDeg: Double, pitchDeg: Double, gyroXDps: Double = 0) -> ImuRaw {
-        let toRaw: (Double) -> Int16 = { dps in
-            Int16(clamping: Int(dps * 32767 / 2000))
+        let toRaw: (Double) -> UInt16 = { dps in
+            // raw = 512 + dps / (2000/512). clamp into 10-bit ADC range [0, 1023].
+            let offset = dps / ImuRaw.gyroDpsPerLsb
+            let raw = max(0.0, min(1023.0, 512.0 + offset))
+            return UInt16(raw.rounded())
         }
         return ImuRaw(
-            gyroX: toRaw(gyroXDps), gyroY: 0, gyroZ: 0,
-            accelX: 0, accelY: 0, accelZ: 16384,
+            gyroX: toRaw(gyroXDps), gyroY: 512, gyroZ: 512,
+            accelX: 512, accelY: 512, accelZ: 768,  // 768 = +1g gravity (raw center+256)
             rollDeg: rollDeg, pitchDeg: pitchDeg
         )
     }

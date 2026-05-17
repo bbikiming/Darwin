@@ -50,6 +50,11 @@ public struct WalkDiagnosticsView: View {
     @State private var lastLiveImuTimestamp: Date?
     /// Live 모드 누적 시작 시각 — chart x 축 origin.
     @State private var liveStartedAt: Date?
+    /// 실측 모드 전용 — Walk Command 의 결과를 실 로봇 다리 12관절로 송출 할지.
+    /// 기본 OFF. ON 시 100ms 마다 WalkLab.swift 의 walkPoseFromSample 패턴으로 송출.
+    @State private var sendWalkToRobot: Bool = false
+    /// 실 로봇 송출 타이머 — sendWalkToRobot && enabled && bus 있음 일 때만 가동.
+    @State private var walkSenderTicker: Timer?
 
     // MARK: - Units
     @State private var unitGyro: GyroUnit = .radPerSec
@@ -356,10 +361,13 @@ public struct WalkDiagnosticsView: View {
     private var leftPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DFSpace.md) {
+                // Walk Command — 양쪽 모드에 표시. 일관된 UX + 실측에서도 보행 명령 테스트 가능.
+                commandCard
                 if source == .preview {
-                    commandCard
                     noiseCard
                 } else {
+                    // 실측 모드 전용 — 위 명령을 실 로봇으로 송출하는 토글 + 안전 가드.
+                    walkSendCard
                     powerCard
                     linkCard
                     imuCard
@@ -444,6 +452,64 @@ public struct WalkDiagnosticsView: View {
         guard let lo = vs.min(), let hi = vs.max() else { return 0...1 }
         if lo == hi { return (lo - pad)...(hi + pad) }
         return (lo - pad)...(hi + pad)
+    }
+
+    /// 실측 모드 전용 — 위 Walk Command 의 결과를 실 로봇으로 송출할지 결정하는 카드.
+    /// 토글 ON + 보행 enabled + bus 있음 → 100ms 마다 다리 12관절 명령 송출.
+    ///
+    /// **안전 설계**:
+    ///   - 기본 OFF — 사용자가 명시적으로 켜야 송출 시작.
+    ///   - bus == nil 시 토글 자체 disabled.
+    ///   - 송출 중일 때 빨간 경고 메시지 + 카드 외곽선 빨강.
+    ///   - 모드 전환·뷰 사라짐 시 자동 OFF + Timer 정지.
+    private var walkSendCard: some View {
+        let isSending = sendWalkToRobot && isStoreConnected && enabled
+        let tint: Color = isSending ? DFColor.danger : DFColor.textSecondary
+        return DFPanel(
+            "보행 명령 송출",
+            subtitle: "위 명령을 실 로봇 다리 12관절로",
+            icon: isSending ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash",
+            tint: tint
+        ) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
+                Toggle(isOn: $sendWalkToRobot) {
+                    Label(
+                        sendWalkToRobot ? "송출 켜짐" : "송출 꺼짐",
+                        systemImage: sendWalkToRobot ? "bolt.fill" : "bolt.slash"
+                    )
+                    .foregroundStyle(sendWalkToRobot ? DFColor.danger : DFColor.textSecondary)
+                }
+                .toggleStyle(.switch)
+                .disabled(!isStoreConnected)
+                .help(isStoreConnected
+                    ? "켜면 위 슬라이더·preset 의 명령이 100ms 마다 다리 12관절로 송출됩니다. 안전한 환경에서만 사용하세요."
+                    : "로봇 연결 후 사용 가능합니다.")
+                .onChange(of: sendWalkToRobot) { _, _ in updateWalkSender() }
+                .onChange(of: enabled) { _, _ in updateWalkSender() }
+
+                if !isStoreConnected {
+                    Text("로봇이 연결되지 않아 송출할 수 없습니다.")
+                        .font(.system(size: DFFontSize.s9))
+                        .foregroundStyle(DFColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if isSending {
+                    Text("⚠ 슬라이더·preset 변경이 즉시 모터로 송출됩니다. ‘쉼’ preset 또는 토글을 꺼서 중단하세요.")
+                        .font(.system(size: DFFontSize.s9, weight: .semibold))
+                        .foregroundStyle(DFColor.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if sendWalkToRobot && !enabled {
+                    Text("‘보행 시작’ 또는 preset 을 눌러 동작을 시작하면 송출이 시작됩니다.")
+                        .font(.system(size: DFFontSize.s9))
+                        .foregroundStyle(DFColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("OFF: 슬라이더 변경은 차트(실 IMU)만 영향. 실 모터는 움직이지 않습니다.")
+                        .font(.system(size: DFFontSize.s9))
+                        .foregroundStyle(DFColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     private struct BatteryLevel { let label: String; let tint: Color; let icon: String }
@@ -1040,12 +1106,14 @@ public struct WalkDiagnosticsView: View {
                 Task { @MainActor in previewTick(dt: dt) }
             }
         case .live:
-            // 실측 모드는 ConnectionStore 가 이미 백그라운드에서 폴링 중.
-            // 여기서는 "기록 활성화" flag 만 켜고 onReceive 가 append 를 수행.
+            // 실측 모드는 ConnectionStore 가 IMU 폴링 중. ‘기록 활성화’ + WalkEngine 도
+            // 함께 시작 — walk sender 가 켜져 있으면 실 로봇으로 명령이 송출됨.
             guard isStoreConnected else { return }
             enabled = true
             liveStartedAt = Date()
             lastLiveImuTimestamp = nil
+            pushCommand()       // WalkEngine 에 enabled=true 알림 (tick 결과가 의미)
+            updateWalkSender()  // sendWalkToRobot 켜져 있으면 송출 Timer 시작.
         }
     }
 
@@ -1053,9 +1121,8 @@ public struct WalkDiagnosticsView: View {
         enabled = false
         ticker?.invalidate()
         ticker = nil
-        if source == .preview {
-            engine.setCommand(x: cmdX, y: cmdY, a: cmdA, enabled: false)
-        }
+        engine.setCommand(x: cmdX, y: cmdY, a: cmdA, enabled: false)
+        updateWalkSender()  // enabled==false 이면 walk sender 자동 정지.
     }
 
     private func restart() {
@@ -1075,10 +1142,70 @@ public struct WalkDiagnosticsView: View {
     }
 
     private func pushCommand() {
-        // Walk command 는 미리보기(Mac WalkEngine) 에만 의미. 실측 모드에선 no-op —
-        // 실 로봇에 명령 전송은 별도 wiring (원격 명령 메뉴) 의 책임.
-        guard source == .preview else { return }
+        // Walk command 는 양쪽 모드에서 WalkEngine 갱신 — preview 는 차트 생성용,
+        // live 는 walk sender 가 ticking 할 때 다리 명령 산출용. 명령 전송 자체는
+        // sendWalkToRobot 토글이 통제 (walkSendCard).
         engine.setCommand(x: cmdX, y: cmdY, a: cmdA, enabled: enabled)
+    }
+
+    // MARK: - Live walk sender (실측 모드 전용 — 실 로봇 다리 12관절 송출)
+
+    /// Walk sender Timer 의 활성화 조건을 재평가하고 start/stop 결정.
+    /// - 조건 모두 true: source==.live, sendWalkToRobot, enabled, bus != nil.
+    /// - 토글 / enabled / source / bus 변경 시마다 호출.
+    private func updateWalkSender() {
+        let shouldRun = (source == .live) && sendWalkToRobot && enabled && isStoreConnected
+        if shouldRun {
+            startWalkSender()
+        } else {
+            stopWalkSender()
+        }
+    }
+
+    private func startWalkSender() {
+        walkSenderTicker?.invalidate()
+        // 100ms cadence — WalkLab.swift 와 동일. 너무 빠르면 모터 부담, 너무 느리면 swing 끊김.
+        walkSenderTicker = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            Task { @MainActor in walkSenderTick() }
+        }
+    }
+
+    private func stopWalkSender() {
+        walkSenderTicker?.invalidate()
+        walkSenderTicker = nil
+    }
+
+    /// 매 tick — WalkEngine.tick(100ms) → walkPoseFromSample → 다리 12관절 setPosition.
+    /// **WalkLab.swift 의 walkPoseFromSample 과 동일 alg** (코드 중복은 차후 ForgeCore 로 추출).
+    @MainActor
+    private func walkSenderTick() {
+        guard let bus = store.bus, enabled, sendWalkToRobot else {
+            stopWalkSender()
+            return
+        }
+        let sample = engine.tick(dtMs: 100)
+        let pose = walkPoseFromSample(sample)
+        let legJoints: [JointID] = [
+            .rHipYaw, .lHipYaw, .rHipRoll, .lHipRoll,
+            .rHipPitch, .lHipPitch, .rKnee, .lKnee,
+            .rAnklePitch, .lAnklePitch, .rAnkleRoll, .lAnkleRoll
+        ]
+        for j in legJoints {
+            _ = try? bus.setPosition(j, raw: UInt16(clamping: pose.raw(j)))
+        }
+    }
+
+    /// WalkLab.swift 와 동일한 단순 IK — walkReady 기반에 phase swing 적용.
+    /// 별도 IK 모듈 추출 전까지 임시 중복. v1.6 에서 ForgeCore.WalkIK 로 옮길 예정.
+    private func walkPoseFromSample(_ s: FootTargets) -> RobotPose {
+        let phaseT = s.elapsedMs / 1000.0
+        let swing = sin(phaseT * 2.0 * .pi) * 0.15  // ±0.15 rad ~ ±8.6°
+        var p = RobotPose.walkReady.positions
+        let lHipPitchBase = p[.lHipPitch] ?? 1896
+        let rHipPitchBase = p[.rHipPitch] ?? 2200
+        p[.lHipPitch] = lHipPitchBase + Int(swing * 2048.0 / .pi)
+        p[.rHipPitch] = rHipPitchBase - Int(swing * 2048.0 / .pi)
+        return RobotPose(positions: p)
     }
 
     private func stepOnce() {
@@ -1119,9 +1246,9 @@ public struct WalkDiagnosticsView: View {
     /// 실측 모드 — `TelemetrySnapshot` 의 새 IMU sample 을 chart 버퍼에 append.
     /// onReceive 에서 호출. `enabled == true` 일 때만 기록 (사용자가 "▶ 실행" 누른 상태).
     ///
-    /// **변환**: forge-core 의 `ImuRaw` 는 16-bit signed ±2000°/s / ±2g 가정. cm.rs:166-184
-    /// 의 변환식은 v1.6 검증 예정 — 실 robot 정지 시 accel_z 가 16384 (16-bit) 인지 512
-    /// (10-bit) 인지로 결정. 일단 forge-core 가 주는 helper (gyroXDps, …) 그대로 사용.
+    /// **변환** (v1.7, 2026-05-17 정정): ROBOTIS-OP2 firmware 기준 10-bit ADC raw u16,
+    /// center 512. `gyroXDps` / `accelXG` accessor 가 (raw-512) × LSB scale 을 자동 처리.
+    /// atan2 비율은 scale 무관이라 raw 부호만 ROBOTIS RL=X / FB=Y 매핑에 맞으면 정확.
     private func liveAppend(_ snap: TelemetrySnapshot) {
         guard source == .live, enabled, let imu = snap.imu else { return }
         // ConnectionStore 가 같은 sample 을 publish 할 수도 있어 timestamp 기준 dedup.
@@ -1133,19 +1260,19 @@ public struct WalkDiagnosticsView: View {
         let t = snap.timestamp.timeIntervalSince(start)
         simTime = t
 
-        // ImuRaw → SI units. gyroXDps 는 °/s → rad/s 변환.
+        // ImuRaw → SI units. gyroXDps 는 (raw-512) × (2000/512) °/s → rad/s 변환.
         let degToRad = Double.pi / 180.0
         let gyro = SIMD3<Double>(
             imu.gyroXDps * degToRad,
             imu.gyroYDps * degToRad,
             imu.gyroZDps * degToRad
         )
-        // accel: g → m/s².
+        // accel: g → m/s². accelXG = (raw-512) × (1/256) (provisional 10-bit ADC scale).
         let gToMs2 = 9.80665
         let accel = SIMD3<Double>(
-            Double(imu.accelX) * 2.0 / 32767.0 * gToMs2,
-            Double(imu.accelY) * 2.0 / 32767.0 * gToMs2,
-            Double(imu.accelZ) * 2.0 / 32767.0 * gToMs2
+            imu.accelXG * gToMs2,
+            imu.accelYG * gToMs2,
+            imu.accelZG * gToMs2
         )
 
         // dt 추정: 직전 sample 과의 timestamp 간격. 첫 sample 은 5Hz 가정.
@@ -1160,8 +1287,9 @@ public struct WalkDiagnosticsView: View {
         let imuSample = ImuSampleSwift(gyro: gyro, accel: accel)
         filter.update(imuSample, dtSeconds: dt)
 
-        let accRoll  = atan2(accel.y, accel.z)
-        let accPitch = atan2(-accel.x, (accel.y * accel.y + accel.z * accel.z).squareRoot())
+        // ROBOTIS axis convention: RL_ACCEL=X (roll), FB_ACCEL=Y (pitch).
+        let accRoll  = atan2(accel.x, (accel.y * accel.y + accel.z * accel.z).squareRoot())
+        let accPitch = atan2(accel.y, (accel.x * accel.x + accel.z * accel.z).squareRoot())
 
         // 실측 모드는 WalkEngine phase 가 없음 — phase0 (idle) 로 표기. foot=nil.
         data.append(

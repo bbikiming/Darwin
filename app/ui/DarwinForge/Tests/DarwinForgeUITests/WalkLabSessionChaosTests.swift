@@ -90,18 +90,18 @@ final class WalkLabSessionChaosTests: XCTestCase {
 
     // MARK: - BalanceState boundary (off-by-one 회귀 가드)
 
-    /// **30.0° 경계는 emergency, 29.999... 는 danger**. T3.9 회귀 가드 보강.
+    /// **v1.8 (2026-05-17) BalanceState boundary** — 25/35/45/50°.
     func testBalanceStateExactBoundary() {
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 30.0), .emergency,
-            "30.0° = emergency (≥ 임계)")
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 29.9999), .danger,
-            "30.0° 직전 = danger")
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 28.0), .danger)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 27.9999), .warning)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 22.0), .warning)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 21.9999), .caution)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 15.0), .caution)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 14.9999), .normal)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 50.0), .emergency,
+            "50.0° = emergency (ROBOTIS FALLEN)")
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 49.9999), .danger,
+            "50.0° 직전 = danger")
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 45.0), .danger)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 44.9999), .warning)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 35.0), .warning)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 34.9999), .caution)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 25.0), .caution)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 24.9999), .normal)
     }
 
     /// **BalanceState.speedScale 모든 case 정합**.
@@ -119,14 +119,16 @@ final class WalkLabSessionChaosTests: XCTestCase {
 
     // MARK: - ImuScaleSuspicion (사용자 보고 critical)
 
-    /// **ImuScaleSuspicion 4개 case 의 rawValue 가 사용자 facing 메시지**.
+    /// **v1.7 ImuScaleSuspicion 4개 case 의 rawValue 사용자 facing 의미체계**.
+    /// cm.rs 10-bit ADC 정정 후: looksValid=정상(중력 감지), suspectedLegacy10Bit=중력 약함,
+    /// outOfRange=raw 범위 외. enum 이름은 backward-compat 위해 보존.
     func testImuScaleSuspicionUserMessages() {
         XCTAssertEqual(ConnectionStore.ImuScaleSuspicion.unknown.rawValue,
                        "unknown")
         XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.looksValid16Bit.rawValue.contains("정상"),
             "정상 — 한국어 라벨")
-        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.suspectedLegacy10Bit.rawValue.contains("32배"),
-            "10-bit 의심 시 '32배 작음' 사용자 명시")
+        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.suspectedLegacy10Bit.rawValue.contains("주의"),
+            "중력 신호 약할 때 '주의' 표시")
         XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.outOfRange.rawValue.contains("비정상"),
             "범위 밖 — '비정상' 한국어 라벨")
     }
@@ -206,11 +208,13 @@ final class WalkLabSessionChaosTests: XCTestCase {
     }
 
     /// **caution preset + balance OFF → preflightStatus 차단** (L5 blocking).
+    /// v1.7 default ON 이라 명시적으로 OFF 후 검증.
     func testPreflightStatusBlocksCautionWithoutBalance() {
         let session = WalkLabSession()
+        session.enableBalanceCorrection = false  // v1.7: default ON, 명시 OFF
         session.current = .fastWalk  // caution 등급
         XCTAssertFalse(session.enableBalanceCorrection,
-            "default — balance OFF")
+            "명시 OFF 후 confirmed")
         let status = session.preflightStatus
         let l5 = status.checks.first { $0.label == "L5 자세 보정" }
         XCTAssertEqual(l5?.state, .blocking,
@@ -272,5 +276,72 @@ final class WalkLabSessionChaosTests: XCTestCase {
         let decoded = try! JSONDecoder().decode(WalkLabSession.PersistentEvent.self, from: data)
         XCTAssertEqual(original, decoded,
             "JSON encode/decode 후 동일")
+    }
+
+    // MARK: - 2026-05-17 emergency-stop recovery 회귀 가드
+
+    /// **Bus.setPGain API 가 존재 + 시그니처 정합**.
+    /// 종전: emergency_stop 가 P_GAIN=0 으로 만들지만 recovery 에서 복원 못 함 →
+    /// 모터 weak hold. setPGain wrapper 가 Bus 에 노출됐는지 컴파일 검증.
+    func testBusSetPGainAPIExists() {
+        // 컴파일 가능 = API 존재. value: UInt8 시그니처 검증.
+        let _: (Bus, JointID, UInt8) throws -> Void = { bus, joint, value in
+            try bus.setPGain(joint, value: value)
+        }
+        // factory default 32 가 유효 UInt8 범위 (0-254).
+        XCTAssertTrue((0...254).contains(UInt8(32)),
+            "P_GAIN 32 는 MX-28T 유효 범위")
+    }
+
+    /// **ConnectionStore.recoverFromEStop API 시그니처 정합**.
+    /// cradleConfirmed: Bool 가 첫 인자, async function 검증.
+    func testRecoverFromEStopAPI() {
+        let store = ConnectionStore()
+        // 컴파일 가능 = API 존재. cradleConfirmed default false.
+        let _: () async -> Void = {
+            await store.recoverFromEStop()
+            await store.recoverFromEStop(cradleConfirmed: false)
+            await store.recoverFromEStop(cradleConfirmed: true)
+        }
+        XCTAssertEqual(store.isRecovering, false,
+            "신규 store — isRecovering false")
+    }
+
+    // MARK: - 2026-05-17 v1.7 IMU ROBOTIS 일치 회귀 가드
+
+    /// **ImuRaw raw 가 UInt16** (10-bit ADC 정합).
+    /// 종전 Int16 + ±32767 가정은 raw 512 → atan2(512,512) = 45° false tilt 의 원인.
+    /// v1.7 정정: UInt16 + center 512 + ROBOTIS RL=X / FB=Y axis.
+    func testImuRawTypesMatchRobotis10BitAdc() {
+        // public init 이 UInt16 만 받음 — 컴파일 가능하면 OK.
+        let upright = ImuRaw(
+            gyroX: 512, gyroY: 512, gyroZ: 512,
+            accelX: 512, accelY: 512, accelZ: 768,  // 1g gravity on Z
+            rollDeg: 0, pitchDeg: 0
+        )
+        // centered = raw - 512.
+        XCTAssertEqual(upright.gyroXCentered, 0, accuracy: 0.001,
+            "gyro X 512 = center → centered 0")
+        XCTAssertEqual(upright.accelZCentered, 256, accuracy: 0.001,
+            "accel Z 768 = 1g (center+256) → centered 256")
+        // ROBOTIS adcCenter constant 노출.
+        XCTAssertEqual(ImuRaw.adcCenter, 512.0,
+            "ADC center = 512 (ROBOTIS-OP2 MotionManager.cpp:73)")
+    }
+
+    /// **Swift accessor 가 (raw-512) × LSB 스케일 적용**.
+    func testImuRawAccessorsApplyCenteredScale() {
+        let sample = ImuRaw(
+            gyroX: 768, gyroY: 512, gyroZ: 256,   // +256, 0, -256 LSB
+            accelX: 768, accelY: 256, accelZ: 768,
+            rollDeg: 0, pitchDeg: 0
+        )
+        // gyroDpsPerLsb = 2000/512 ≈ 3.906
+        XCTAssertEqual(sample.gyroXDps, 256 * (2000.0 / 512.0), accuracy: 0.001)
+        XCTAssertEqual(sample.gyroYDps, 0, accuracy: 0.001)
+        XCTAssertEqual(sample.gyroZDps, -256 * (2000.0 / 512.0), accuracy: 0.001)
+        // accelGPerLsb = 1/256
+        XCTAssertEqual(sample.accelZG, 256 * (1.0 / 256.0), accuracy: 0.001,
+            "accel Z 768 raw → +1g (256 LSB above center)")
     }
 }

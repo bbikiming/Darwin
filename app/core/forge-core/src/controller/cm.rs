@@ -49,77 +49,132 @@ pub struct DetectResult {
     pub map: JointMap,
 }
 
-/// CM-730/740 의 IMU raw — gyro X/Y/Z + accel X/Y/Z (16-bit signed).
+/// CM-730/740 의 IMU raw — gyro X/Y/Z + accel X/Y/Z (10-bit ADC, unsigned).
 ///
-/// **공식 매핑** (ROBOTIS-OP2 LinuxCM730.cpp 기준):
-///   - 38 (Z low), 40 (Y low), 42 (X low) — gyro 6 byte 연속.
-///   - 44 (X low), 46 (Y low), 48 (Z low) — accel 6 byte 연속.
+/// **Sprint 18 v1.7 (2026-05-17) 정정**: ROBOTIS-OP2 v1.6.0 공식 펌웨어 oracle 확인 결과,
+///   - `CM730::MakeWord` (CM730.cpp:666-675) — unsigned u16 zero-extend.
+///   - `MotionManager` (MotionManager.cpp:73-74) — m_FBGyroCenter = 512, m_RLGyroCenter = 512.
+///   - `MotionStatus` (MotionStatus.h:27-28) — FALLEN_F_LIMIT = 390, FALLEN_B_LIMIT = 580 → 10-bit (0-1023) 범위.
+///   - 우리 종전 i16 signed + ±32767 scaling 가정은 **잘못**. raw 512 - 0 = 512 → atan2(512,512) ≈ 45° false tilt.
 ///
-/// **변환** (CM-730 / MPU-9150 datasheet):
-///   - Gyro: full-scale ±2000°/s → 32767 LSB = 2000°/s. raw × 2000.0 / 32767 = °/s.
-///   - Accel: full-scale ±2g → 32767 LSB = 2g. raw × 2.0 / 32767 = g.
-///   - Tilt 근사: atan2(accel_y, accel_z) = roll, atan2(-accel_x, sqrt(y²+z²)) = pitch.
+/// **공식 register 매핑** (ROBOTIS-OP2 CM730.h:105-116):
+///   - 38 (GYRO_Z), 40 (GYRO_Y), 42 (GYRO_X) — gyro 6 byte 연속.
+///   - 44 (ACCEL_X), 46 (ACCEL_Y), 48 (ACCEL_Z) — accel 6 byte 연속.
+///
+/// **Axis convention** (MotionManager.cpp:246-249):
+///   - `RL_ACCEL = ReadWord(P_ACCEL_X_L)` — Roll(좌우) 축 = X.
+///   - `FB_ACCEL = ReadWord(P_ACCEL_Y_L)` — Forward/Back(앞뒤) 축 = Y.
+///   - `RL_GYRO = ReadWord(P_GYRO_X_L) - m_RLGyroCenter` (512).
+///   - `FB_GYRO = ReadWord(P_GYRO_Y_L) - m_FBGyroCenter` (512).
+///
+/// **Tilt 근사**: roll = atan2(ax_centered, ‖(ay,az)‖), pitch = atan2(ay_centered, ‖(ax,az)‖).
+/// atan2 비율은 LSB scale 에 무관 → centered 값으로 그대로 사용 가능.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImuRaw {
-    /// Gyro X 16-bit raw (LSB). 변환 `× 2000/32767 = °/s`.
-    pub gyro_x: i16,
-    /// Gyro Y 16-bit raw (LSB).
-    pub gyro_y: i16,
-    /// Gyro Z 16-bit raw (LSB).
-    pub gyro_z: i16,
-    /// Accel X 16-bit raw (LSB). 변환 `× 2/32767 = g`.
-    pub accel_x: i16,
-    /// Accel Y 16-bit raw (LSB).
-    pub accel_y: i16,
-    /// Accel Z 16-bit raw (LSB).
-    pub accel_z: i16,
+    /// Gyro X 10-bit ADC raw (0..1023, center 512). RL_GYRO (roll-rate).
+    pub gyro_x: u16,
+    /// Gyro Y 10-bit ADC raw. FB_GYRO (pitch-rate).
+    pub gyro_y: u16,
+    /// Gyro Z 10-bit ADC raw. Yaw-rate.
+    pub gyro_z: u16,
+    /// Accel X 10-bit ADC raw. RL_ACCEL (lateral / roll axis).
+    pub accel_x: u16,
+    /// Accel Y 10-bit ADC raw. FB_ACCEL (sagittal / pitch axis).
+    pub accel_y: u16,
+    /// Accel Z 10-bit ADC raw. Up axis (1g 직립 시 ~512+offset).
+    pub accel_z: u16,
 }
 
 impl ImuRaw {
-    /// Gyro X (°/s).
+    /// CM-730/740 IMU ADC center (10-bit). ROBOTIS-OP2 MotionManager.cpp:73-74 = 512.
+    pub const ADC_CENTER: u16 = 512;
+
+    /// L3G4200D 계열 ±2000dps (CM-740 IMU 일반적 chip). 10-bit ADC → ±512 LSB span → ±2000°/s.
+    /// → 1 LSB ≈ 3.91 °/s. **Note**: bench-calibration 전 provisional.
+    pub const GYRO_DPS_PER_LSB: f32 = 2000.0 / 512.0;
+
+    /// ADXL345 계열 ±4g 또는 ±2g (chip variant 따라 다름). 10-bit ADC center 512.
+    /// 1g ≈ 256 LSB (ROBOTIS legacy code 의 1g offset 약 200 ~ 256 관찰). provisional.
+    pub const ACCEL_G_PER_LSB: f32 = 1.0 / 256.0;
+
+    /// Gyro X centered (raw - 512). NaN 없이 안전.
+    pub fn gyro_x_centered(&self) -> f32 {
+        self.gyro_x as f32 - Self::ADC_CENTER as f32
+    }
+    /// Gyro Y centered.
+    pub fn gyro_y_centered(&self) -> f32 {
+        self.gyro_y as f32 - Self::ADC_CENTER as f32
+    }
+    /// Gyro Z centered.
+    pub fn gyro_z_centered(&self) -> f32 {
+        self.gyro_z as f32 - Self::ADC_CENTER as f32
+    }
+    /// Accel X centered.
+    pub fn accel_x_centered(&self) -> f32 {
+        self.accel_x as f32 - Self::ADC_CENTER as f32
+    }
+    /// Accel Y centered.
+    pub fn accel_y_centered(&self) -> f32 {
+        self.accel_y as f32 - Self::ADC_CENTER as f32
+    }
+    /// Accel Z centered.
+    pub fn accel_z_centered(&self) -> f32 {
+        self.accel_z as f32 - Self::ADC_CENTER as f32
+    }
+
+    /// Gyro X (°/s) — provisional. Use `gyro_x_centered()` for ratio-based logic.
     pub fn gyro_x_dps(&self) -> f32 {
-        self.gyro_x as f32 * 2000.0 / 32767.0
+        self.gyro_x_centered() * Self::GYRO_DPS_PER_LSB
     }
     /// Gyro Y (°/s).
     pub fn gyro_y_dps(&self) -> f32 {
-        self.gyro_y as f32 * 2000.0 / 32767.0
+        self.gyro_y_centered() * Self::GYRO_DPS_PER_LSB
     }
     /// Gyro Z (°/s).
     pub fn gyro_z_dps(&self) -> f32 {
-        self.gyro_z as f32 * 2000.0 / 32767.0
+        self.gyro_z_centered() * Self::GYRO_DPS_PER_LSB
     }
     /// Accel X (g).
     pub fn accel_x_g(&self) -> f32 {
-        self.accel_x as f32 * 2.0 / 32767.0
+        self.accel_x_centered() * Self::ACCEL_G_PER_LSB
     }
     /// Accel Y (g).
     pub fn accel_y_g(&self) -> f32 {
-        self.accel_y as f32 * 2.0 / 32767.0
+        self.accel_y_centered() * Self::ACCEL_G_PER_LSB
     }
     /// Accel Z (g).
     pub fn accel_z_g(&self) -> f32 {
-        self.accel_z as f32 * 2.0 / 32767.0
+        self.accel_z_centered() * Self::ACCEL_G_PER_LSB
     }
-    /// Roll (도) — accelerometer 기반 정적 tilt.
+
+    /// Roll (도) — 좌우 기울기. ROBOTIS RL = X axis.
+    ///
+    /// Formula: `atan2(ax_centered, sqrt(ay² + az²))`. atan2 비율 → LSB scale 무관.
+    /// 직립 시 (ax≈0, ay≈0, az≈+offset) → atan2(0, offset) = 0°. ✓
     pub fn roll_degrees(&self) -> f32 {
-        let ay = self.accel_y as f32;
-        let az = self.accel_z as f32;
-        if az == 0.0 && ay == 0.0 {
+        let ax = self.accel_x_centered();
+        let ay = self.accel_y_centered();
+        let az = self.accel_z_centered();
+        let denom = (ay.powi(2) + az.powi(2)).sqrt();
+        if denom < 1.0 {
             0.0
         } else {
-            ay.atan2(az) * 180.0 / std::f32::consts::PI
+            ax.atan2(denom) * 180.0 / std::f32::consts::PI
         }
     }
-    /// Pitch (도) — accelerometer 기반 정적 tilt.
+
+    /// Pitch (도) — 앞뒤 기울기. ROBOTIS FB = Y axis.
+    ///
+    /// Formula: `atan2(ay_centered, sqrt(ax² + az²))`.
     pub fn pitch_degrees(&self) -> f32 {
-        let ax = self.accel_x as f32;
-        let ay = self.accel_y as f32;
-        let az = self.accel_z as f32;
-        let denom = (ay.powi(2) + az.powi(2)).sqrt();
-        if denom == 0.0 {
+        let ax = self.accel_x_centered();
+        let ay = self.accel_y_centered();
+        let az = self.accel_z_centered();
+        let denom = (ax.powi(2) + az.powi(2)).sqrt();
+        if denom < 1.0 {
             0.0
         } else {
-            (-ax).atan2(denom) * 180.0 / std::f32::consts::PI
+            ay.atan2(denom) * 180.0 / std::f32::consts::PI
         }
     }
 }
@@ -164,32 +219,18 @@ impl<'a, P: SerialPort> CmController<'a, P> {
             .write(CONTROLLER, cm_register::DXL_POWER, &[on as u8])
     }
 
-    /// IMU raw 6 channels read — Phase D3 (Sprint 18).
+    /// IMU raw 6 channels read — Phase D3 (Sprint 18) → v1.7 정정 (2026-05-17).
     ///
     /// CM-730/740 의 register 38 (GYRO_Z low) 부터 12 byte 연속 read.
     /// 순서: GYRO_Z, GYRO_Y, GYRO_X, ACCEL_X, ACCEL_Y, ACCEL_Z (각 2 byte little-endian).
     /// 단일 burst read 라 forge-bridge ~1ms 응답.
     ///
-    /// # Scale 변환의 정직성 (Codex 잔여 2 분석)
+    /// # Word composition — unsigned u16 (ROBOTIS CM730::MakeWord 일치)
     ///
-    /// 현재 `ImuRaw::gyro_x_dps()` 등은 MPU-6050 ±2000dps / ±2g full scale 을 가정:
-    ///     raw × 2000.0 / 32767 = °/s
-    ///     raw × 2.0  / 32767 = g
-    ///
-    /// **하지만 ROBOTIS-OP2 legacy code 와 차이 가능**:
-    ///   - `Framework/src/motion/MotionStatus.cpp` 의 `FB_GYRO`, `FB_ACCEL` 은
-    ///     `(BulkRead[H] << 8) | BulkRead[L]` — unsigned 16-bit composition.
-    ///   - MotionStatus 가 그 raw word 를 그대로 사용 (보통 512 center, 즉 10-bit ADC 결과).
-    ///   - 만약 CM-730/740 펌웨어가 10-bit ADC 결과를 register 에 그대로 쓴다면,
-    ///     우리 i16 ±32767 가정은 wrong → 변환식이 ÷ 32 만큼 부정확.
-    ///
-    /// **검증 방법**: Mac UI 의 `PilotImuRawDiagnosticsSheet` 의 "정지 측정" 으로
-    /// accel Z 가 ~1.0g (raw ~16384 if 16-bit, ~512 if 10-bit) 인지 확인.
-    /// - raw ~16384 → 16-bit signed 가정 OK. 변경 불필요.
-    /// - raw ~512   → 10-bit ADC. 변환식 정정 필요 (raw - 512) × scale.
-    ///
-    /// 실 로봇에서 측정 전까지 이 코드는 "추정 변환" 이며 사용자에게도 "정적 tilt"
-    /// 로 표시. v1.6 의 검증 결과에 따라 변환식 정정 예정.
+    /// CM730.cpp:666-675 의 `MakeWord` 는 `(highbyte << 8) | lowbyte` 를 unsigned short 로
+    /// 합성 후 int 로 zero-extend. 우리 종전 `i16::from_le_bytes` 는 sign-extend 라 같은
+    /// 비트 패턴이라도 의미적으로 다름. 10-bit ADC 결과(0..1023)는 bit-15=0 이라 수치는
+    /// 동일하지만 타입 안전성 차원에서 u16 으로 통일.
     pub fn read_imu(&mut self) -> Result<ImuRaw> {
         // 12 byte 한 번 — GYRO_Z(38) → ACCEL_Z(48)+1.
         let buf = self.bus.read(CONTROLLER, cm_register::GYRO_Z, 12)?;
@@ -199,12 +240,12 @@ impl<'a, P: SerialPort> CmController<'a, P> {
             ));
         }
         Ok(ImuRaw {
-            gyro_z: i16::from_le_bytes([buf[0], buf[1]]),
-            gyro_y: i16::from_le_bytes([buf[2], buf[3]]),
-            gyro_x: i16::from_le_bytes([buf[4], buf[5]]),
-            accel_x: i16::from_le_bytes([buf[6], buf[7]]),
-            accel_y: i16::from_le_bytes([buf[8], buf[9]]),
-            accel_z: i16::from_le_bytes([buf[10], buf[11]]),
+            gyro_z: u16::from_le_bytes([buf[0], buf[1]]),
+            gyro_y: u16::from_le_bytes([buf[2], buf[3]]),
+            gyro_x: u16::from_le_bytes([buf[4], buf[5]]),
+            accel_x: u16::from_le_bytes([buf[6], buf[7]]),
+            accel_y: u16::from_le_bytes([buf[8], buf[9]]),
+            accel_z: u16::from_le_bytes([buf[10], buf[11]]),
         })
     }
 
@@ -313,6 +354,114 @@ mod tests {
             button: 0,
         };
         assert!(snap_740.controller_label().contains("CM-740"));
+    }
+
+    #[test]
+    fn imu_raw_centered_subtracts_512_per_robotis_convention() {
+        // ROBOTIS-OP2 MotionManager.cpp:73 → m_FBGyroCenter = 512.
+        let imu = ImuRaw {
+            gyro_z: 512,
+            gyro_y: 512,
+            gyro_x: 512,
+            accel_x: 512,
+            accel_y: 512,
+            accel_z: 512,
+        };
+        assert!(imu.gyro_x_centered().abs() < 1e-3);
+        assert!(imu.gyro_y_centered().abs() < 1e-3);
+        assert!(imu.accel_x_centered().abs() < 1e-3);
+        assert!(imu.accel_z_centered().abs() < 1e-3);
+    }
+
+    #[test]
+    fn imu_raw_standing_upright_returns_zero_tilt() {
+        // 직립: ax=512, ay=512, az=712 (1g 다운 = +200 LSB offset from 512 center).
+        // 기존 i16-signed 가정 시 atan2(512,512) ≈ 45° false tilt 발생했었음.
+        let imu = ImuRaw {
+            gyro_z: 512,
+            gyro_y: 512,
+            gyro_x: 512,
+            accel_x: 512,
+            accel_y: 512,
+            accel_z: 712,
+        };
+        assert!(
+            imu.roll_degrees().abs() < 0.5,
+            "roll should be ~0° upright, got {}",
+            imu.roll_degrees()
+        );
+        assert!(
+            imu.pitch_degrees().abs() < 0.5,
+            "pitch should be ~0° upright, got {}",
+            imu.pitch_degrees()
+        );
+    }
+
+    #[test]
+    fn imu_raw_roll_uses_x_axis_per_robotis_rl_accel() {
+        // ROBOTIS: RL_ACCEL = P_ACCEL_X_L → Roll uses X axis (NOT Y as in old code).
+        // 좌로 30° 기울임: ax = 512 + 200*sin(30°) ≈ 612, az = 512 + 200*cos(30°) ≈ 685
+        let imu = ImuRaw {
+            gyro_z: 512,
+            gyro_y: 512,
+            gyro_x: 512,
+            accel_x: 612, // +100 LSB
+            accel_y: 512,
+            accel_z: 685, // +173 LSB
+        };
+        let r = imu.roll_degrees();
+        assert!(
+            (r - 30.0).abs() < 1.5,
+            "roll for 30° left-tilt should be ~30°, got {}",
+            r
+        );
+        // Pitch 는 변화 없어야 함.
+        assert!(
+            imu.pitch_degrees().abs() < 1.0,
+            "pitch should stay 0° during pure roll, got {}",
+            imu.pitch_degrees()
+        );
+    }
+
+    #[test]
+    fn imu_raw_pitch_uses_y_axis_per_robotis_fb_accel() {
+        // ROBOTIS: FB_ACCEL = P_ACCEL_Y_L → Pitch uses Y axis.
+        // 앞으로 30° 기울임: ay = +100 LSB, az = +173 LSB.
+        let imu = ImuRaw {
+            gyro_z: 512,
+            gyro_y: 512,
+            gyro_x: 512,
+            accel_x: 512,
+            accel_y: 612,
+            accel_z: 685,
+        };
+        let p = imu.pitch_degrees();
+        assert!(
+            (p - 30.0).abs() < 1.5,
+            "pitch for 30° forward-tilt should be ~30°, got {}",
+            p
+        );
+        assert!(
+            imu.roll_degrees().abs() < 1.0,
+            "roll should stay 0° during pure pitch, got {}",
+            imu.roll_degrees()
+        );
+    }
+
+    #[test]
+    fn imu_raw_zero_input_does_not_nan() {
+        // All raw zero (uninitialized / pre-boot) → centered (-512, -512, -512).
+        // sqrt(ay²+az²) = sqrt(262144+262144) > 1.0 → no div-by-zero.
+        let imu = ImuRaw {
+            gyro_z: 0,
+            gyro_y: 0,
+            gyro_x: 0,
+            accel_x: 0,
+            accel_y: 0,
+            accel_z: 0,
+        };
+        assert!(imu.roll_degrees().is_finite());
+        assert!(imu.pitch_degrees().is_finite());
     }
 
     #[test]

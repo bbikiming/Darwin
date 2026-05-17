@@ -63,9 +63,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$VERSION</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0-$VERSION</string>
+    <string>1.11.2</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -249,7 +249,7 @@ xattr -dr com.apple.quarantine "$DEST_DIR/$APP_NAME.app" 2>/dev/null || true
 
 echo ""
 echo "✅ 설치 완료: $DEST_DIR/$APP_NAME.app"
-echo "   • 버전: 1.0.0-$VERSION"
+echo "   • 버전: 1.11.2 (build $VERSION)"
 echo "   • Bundle ID: $BUNDLE_ID"
 echo ""
 echo "실행:"

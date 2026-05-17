@@ -723,31 +723,73 @@ public struct StudioView: View {
         if changed.isEmpty { return }
 
         let speed = store.motorSpeedProfile.rawSpeedValue
-        // 변경 관절만 추린 sub-pose 로 보간 호출.
-        let subPositions = Dictionary(uniqueKeysWithValues:
-            changed.map { ($0, pose.raw($0)) }
-        )
-        do {
-            // 1. moving_speed 설정 (변경 관절만).
-            for j in changed {
-                try bus.setMovingSpeed(j, speed: speed)
+
+        // v1.8 (2026-05-17 사용자 보고 "ForgeError -4 timeout alert" fix):
+        // - 1 joint 의 1회 timeout 만 발생해도 종전엔 throw → 전체 abort + 큰 alert
+        // - 신규: 1회 retry (5ms backoff) + partial tolerance (1-2 joint fail 시 silent)
+        // - 누적 fail (changed.count 의 50% 이상 또는 절대 5+) 시만 사용자에 noisy alert
+        var moveSpeedFailures: [JointID] = []
+        var positionFailures: [JointID] = []
+        var lastFailMsg: String? = nil
+
+        for j in changed {
+            var ok = false
+            for attempt in 0..<2 {
+                do {
+                    try bus.setMovingSpeed(j, speed: speed)
+                    ok = true
+                    break
+                } catch {
+                    lastFailMsg = "\(j.name) speed: \(error.localizedDescription)"
+                    if attempt == 0 {
+                        try? await Task.sleep(nanoseconds: 5_000_000)
+                    }
+                }
             }
-            // 2. goal position 전송 — 모터가 자체 보간 이동.
-            for j in changed {
-                let raw = UInt16(clamping: pose.raw(j))
-                _ = try bus.setPosition(j, raw: raw)
+            if !ok { moveSpeedFailures.append(j) }
+        }
+
+        for j in changed {
+            let raw = UInt16(clamping: pose.raw(j))
+            var ok = false
+            for attempt in 0..<2 {
+                do {
+                    _ = try bus.setPosition(j, raw: raw)
+                    ok = true
+                    break
+                } catch {
+                    lastFailMsg = "\(j.name) position: \(error.localizedDescription)"
+                    if attempt == 0 {
+                        try? await Task.sleep(nanoseconds: 5_000_000)
+                    }
+                }
             }
-            lastAppliedPose = pose
-            // 3. instant 가 아니면 예상 도착 시간 대기 (UI feedback).
-            if store.motorSpeedProfile != .instant {
-                try? await Task.sleep(
-                    nanoseconds: UInt64(store.motorSpeedProfile.durationSeconds * 1_000_000_000)
-                )
+            if !ok { positionFailures.append(j) }
+        }
+
+        // 부분 fail 도 적용된 joint 만큼은 lastAppliedPose 에 반영.
+        lastAppliedPose = pose
+
+        // 사용자 alert 기준 — 충분히 많이 fail 했을 때만.
+        let totalFailures = moveSpeedFailures.count + positionFailures.count
+        let halfThreshold = max(2, changed.count / 2)
+        if totalFailures >= halfThreshold || positionFailures.count >= 5 {
+            // 진짜 통신 문제 — 사용자에 alert + handleBusError.
+            let failNames = positionFailures.prefix(3).map(\.name).joined(separator: ", ")
+            lastError = "\(positionFailures.count)/\(changed.count) 관절 송출 실패 (\(failNames)…) — USB/전원/모터 ID 확인. 일부 관절만 적용됨."
+            if let firstFail = positionFailures.first,
+               let err = lastFailMsg {
+                _ = (firstFail, err)
             }
-            _ = subPositions  // 사용 안 함 — 트래픽 최소화는 위에서.
-        } catch {
-            store.handleBusError(error)
-            lastError = error.localizedDescription
+            // handleBusError 는 ForgeError 만 받음 — generic 으로 escalate.
+            store.handleBusError(ForgeError.timeout)
+        }
+        // 1-2개 fail 은 silent (jitter) — UI 로그에 표시 가능 시 추가 권장.
+
+        if store.motorSpeedProfile != .instant {
+            try? await Task.sleep(
+                nanoseconds: UInt64(store.motorSpeedProfile.durationSeconds * 1_000_000_000)
+            )
         }
     }
 

@@ -20,6 +20,15 @@ public struct WalkLabView: View {
     @State private var showingRiskConfirm: Bool = false
     @State private var pendingHighRiskPreset: WalkLabPreset?
 
+    /// **v1.11 (2026-05-17 사용자 요청)**: Fall Prevention 패널 너비 — 사용자 drag
+    /// 으로 조절 + 다음 실행 시 복원. UserDefaults key `df.walklab.fallPanelWidth`.
+    /// 기본 380pt, range 280..720.
+    @AppStorage("df.walklab.fallPanelWidth") private var fallPanelWidth: Double = 380
+    /// Drag 시작 시점의 너비 — translation 누적 계산용.
+    @State private var fallPanelDragStartWidth: Double? = nil
+    /// Drag handle hover 상태 — 시각 highlight 용.
+    @State private var fallPanelHandleHovering: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -152,13 +161,16 @@ public struct WalkLabView: View {
 
     private var detail: some View {
         // 2026-05-16 layout: 좌측 세로 dashboard + 세로 toggle stripe + 우측 main.
-        // - 펼침: 모니터링 column (320pt) + 우측 main 동시 시각
+        // - 펼침: 모니터링 column (사용자 drag, 기본 380pt) + 우측 main 동시 시각
         // - 접힘: 세로 stripe (36pt) 만 — 좌측 edge 에서 클릭 시 펼침
         // - 세로 toggle 만 사용 (가로 monitoringToggleBar 제거) — macOS Mail sidebar
         //   collapse 패턴 정합
+        // **v1.11 (2026-05-17 사용자 요청)**: 명시 drag handle — `fallPanelDragHandle`
+        // 으로 사용자가 좌우 마우스 drag 으로 너비 조절. AppStorage 자동 복원.
         HStack(alignment: .top, spacing: DFSpace.none) {
             if session.monitoringExpanded {
                 monitoringSidebar
+                fallPanelDragHandle
             } else {
                 collapsedMonitoringStripe
             }
@@ -166,18 +178,69 @@ public struct WalkLabView: View {
         }
     }
 
+    /// **v1.11 (2026-05-17 사용자 요청) — Fall Prevention 패널 drag handle**.
+    ///
+    /// 6pt 너비 hit area + 1pt visible line (hover 시 3pt + accent). 좌우 drag 으로
+    /// `fallPanelWidth` 업데이트 (clamp 280..720). `NSCursor.resizeLeftRight` 자동.
+    /// 사용자 마지막 너비는 `@AppStorage` 가 다음 실행 때 자동 복원.
+    private var fallPanelDragHandle: some View {
+        let isActive = fallPanelHandleHovering || fallPanelDragStartWidth != nil
+        return ZStack {
+            // Hit area (cursor + drag) — 투명 6pt.
+            Color.clear
+                .contentShape(Rectangle())
+            // Visible line — 1pt 또는 3pt (hover/drag 시).
+            Rectangle()
+                .fill(isActive ? DFColor.accent : DFColor.textSecondary.opacity(DFOpacity.o20))
+                .frame(width: isActive ? 3 : 1)
+                .animation(DFAnimation.fast, value: isActive)
+        }
+        .frame(width: 6)
+        .frame(maxHeight: .infinity)
+        .onHover { hovering in
+            fallPanelHandleHovering = hovering
+            if hovering {
+                NSCursor.resizeLeftRight.push()
+            } else if fallPanelDragStartWidth == nil {
+                NSCursor.pop()
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    if fallPanelDragStartWidth == nil {
+                        fallPanelDragStartWidth = fallPanelWidth
+                    }
+                    let newWidth = (fallPanelDragStartWidth ?? fallPanelWidth)
+                                 + Double(value.translation.width)
+                    fallPanelWidth = max(280, min(720, newWidth))
+                }
+                .onEnded { _ in
+                    fallPanelDragStartWidth = nil
+                    if !fallPanelHandleHovering {
+                        NSCursor.pop()
+                    }
+                }
+        )
+        .help("좌우 drag — Fall Prevention 패널 너비 조절")
+        .accessibilityLabel("패널 너비 조절")
+        .accessibilityHint("좌우 드래그하여 너비를 조절합니다")
+    }
+
     /// 좌측 세로 모니터링 dashboard column — `monitoringExpanded` 시만 표시.
     /// 헤더에 닫기 버튼 (chevron.left) + 본문 `FallPreventionMonitor` ScrollView.
-    /// 좁은 폭 (320pt) 에서 모니터 내부 `ViewThatFits` 가 narrow layout 자동 적응.
+    /// **v1.11 (2026-05-17 사용자 요청)**: 명시 drag handle (`fallPanelDragHandle`)
+    /// 로 너비 조절. 기본 380pt, range 280..720pt. `@AppStorage` 가 사용자 마지막
+    /// 너비를 다음 실행 시 자동 복원.
     private var monitoringSidebar: some View {
-        VStack(spacing: DFSpace.none) {
-            // 헤더 — 라벨 + 닫기 버튼.
+        VStack(spacing: 0) {
+            // **macOS-native header** — Inspector style. material background.
             HStack(spacing: DFSpace.sm) {
-                Image(systemName: "waveform.path.ecg.rectangle")
-                    .font(DFFont.sectionBody)
-                    .foregroundStyle(DFColor.accent)
-                Text("Fall Prevention 모니터링")
-                    .font(DFFont.sectionBody)
+                Image(systemName: "waveform.path.ecg.rectangle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DFColor.accent.gradient)
+                Text("Fall Prevention")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DFColor.textPrimary)
                 Spacer()
                 Button {
@@ -185,8 +248,8 @@ public struct WalkLabView: View {
                         session.monitoringExpanded = false
                     }
                 } label: {
-                    Image(systemName: "chevron.left")
-                        .font(DFFont.sectionBody)
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(DFColor.textSecondary)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
@@ -194,13 +257,10 @@ public struct WalkLabView: View {
                 .buttonStyle(.plain)
                 .help("모니터링 패널 접기 (⌘⇧M)")
                 .accessibilityLabel("모니터링 패널 접기")
-                // 2026-05-17 fix: ⌘⇧M 단축키 중복 매핑 제거 — `collapsedMonitoringStripe`
-                // 의 펼치기 버튼만 단축키 보유. 토글은 NotificationCenter `.dfToggleMonitoring`
-                // 으로 통합 (보기 메뉴 + 단축키 둘 다 같은 알림 발행).
             }
             .padding(.horizontal, DFSpace.sm2)
             .padding(.vertical, DFSpace.sm)
-            .background(DFColor.elev3)
+            .background(.thinMaterial)
 
             Divider()
 
@@ -208,16 +268,20 @@ public struct WalkLabView: View {
                 FallPreventionMonitor(session: session)
                     .padding(DFSpace.sm)
             }
+            .scrollIndicators(.automatic)
         }
-        .frame(width: 320)
-        .background(DFColor.elev2)
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(DFColor.textSecondary.opacity(DFOpacity.subtle))
-                .frame(width: DFSize.borderHairline)
-        }
+        // **v1.11 (2026-05-17)**: AppStorage 가 관리하는 사용자 drag 너비 적용.
+        // `fallPanelDragHandle` 이 옆에서 lifecycle 관리.
+        .frame(width: CGFloat(fallPanelWidth))
+        .background(.regularMaterial)
         .transition(.move(edge: .leading).combined(with: .opacity))
     }
+
+    /// **v1.11 모니터링 패널 너비 한계** (사용자 drag resize).
+    /// 실제 적용은 `fallPanelWidth` (@AppStorage) + drag handle 이 clamp.
+    private var monitorMinWidth: CGFloat { 280 }
+    private var monitorIdealWidth: CGFloat { 380 }
+    private var monitorMaxWidth: CGFloat { 720 }
 
     /// 접힘 상태의 좌측 edge 세로 stripe — 펼치기 버튼 + 라벨.
     /// macOS Mail / Notes 의 sidebar collapse 패턴 정합.
@@ -287,6 +351,10 @@ public struct WalkLabView: View {
                 // 토글은 `collapsedMonitoringStripe` 또는 `monitoringSidebar` 헤더의
                 // chevron 버튼에서 수행.
 
+                // **v1.11 (2026-05-17 사용자 요청) — 반응형 hero row**:
+                // 3D scene 카메라가 frame width 적응으로 zoom in (InteractiveSceneView
+                // .setFrameSize), 사이드 패널 240→280 으로 확장. scene 좌상단에 walking
+                // phase/elapsed 오버레이로 빈 영역 정보화.
                 HStack(spacing: DFSpace.sm3) {
                     // Hero: 3D 모델 — **Phase G11 (2026-05-15)**: pose 가 보행 cycle 마다 갱신.
                     // 실 로봇 송출 중: `runContinuousWalk` 의 onPose 가 매 step 마다 visualPose publish.
@@ -302,6 +370,11 @@ public struct WalkLabView: View {
                         RoundedRectangle(cornerRadius: DFRadius.card)
                             .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
                     )
+                    .overlay(alignment: .topLeading) {
+                        // v1.11: 빈 영역 시각 채움 — walking phase / elapsed / 보정 Δ.
+                        sceneInfoOverlay
+                            .padding(DFSpace.sm)
+                    }
 
                     // 사이드 패널: 2D 발자취 (top-down) + IMU 게이지 2개.
                     VStack(spacing: DFSpace.sm2) {
@@ -332,10 +405,12 @@ public struct WalkLabView: View {
                                            imuSource: session.imuSource)
                         // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
                         balanceCorrectionCard
-                        IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 30)
-                        IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 30)
+                        IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 50)
+                        IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 50)
                     }
-                    .frame(width: 240)
+                    // v1.11 재작업: 고정 280 → 가변 (좁은 화면 260, 와이드 모니터 340 까지).
+                    // SwiftUI 가 hero scene 과 사이드 패널 사이 공간 분배 시 자연스러운 호흡.
+                    .frame(minWidth: 260, idealWidth: 280, maxWidth: 340)
                 }
                 .frame(minHeight: 360)
 
@@ -481,6 +556,93 @@ public struct WalkLabView: View {
         case .real:  return DFColor.success
         case .stale: return DFColor.warning
         }
+    }
+
+    /// **v1.11 (2026-05-17 사용자 요청) — 3D scene 좌상단 floating chip**:
+    /// 빈 영역 시각 채움 + 정보 가치 추가. **항상 표시** (idle 도 안내):
+    /// - idle 시: 보행 대기 안내 + walk_ready 자세 표기
+    /// - walking 시: preset / cycle phase progress / 보정 Δ
+    private var sceneInfoOverlay: some View {
+        let isWalking = session.current != .idle
+        return VStack(alignment: .leading, spacing: 4) {
+            // 1행: preset 또는 idle 안내
+            HStack(spacing: 6) {
+                Image(systemName: isWalking ? "figure.walk.motion" : "figure.stand")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isWalking ? DFColor.accent : DFColor.textSecondary)
+                Text(isWalking ? session.current.label : "보행 대기 · walk_ready")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DFColor.textPrimary)
+            }
+            // 2행: walking 시 cycle phase, idle 시 안내 부제
+            if isWalking,
+               let elapsedMs = session.lastWalkCycleElapsedMs,
+               let periodMs = session.lastWalkPeriodMs,
+               periodMs > 0 {
+                HStack(spacing: 6) {
+                    Text(String(format: "%.0f/%.0fms", elapsedMs, periodMs))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(DFColor.textSecondary)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(DFColor.textSecondary.opacity(DFOpacity.o20))
+                            Capsule().fill(DFColor.accent)
+                                .frame(width: geo.size.width
+                                       * CGFloat(min(1, elapsedMs / periodMs)))
+                        }
+                    }
+                    .frame(width: 60, height: 3)
+                }
+            } else if !isWalking {
+                Text("프리셋을 시작하면 cycle phase 표시")
+                    .font(.system(size: 10))
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+            // 3행: 보정 status — 항상 표시 (config mode 인지)
+            HStack(spacing: 6) {
+                let modeIcon: String = {
+                    switch session.balanceExperimentConfig.algorithmMode {
+                    case .off:             return "power.circle"
+                    case .robotisPControl: return "shield.fill"
+                    case .hybridBA:        return "brain"
+                    case .observeOnly:     return "eye.fill"
+                    }
+                }()
+                let modeColor: Color = {
+                    switch session.balanceExperimentConfig.algorithmMode {
+                    case .off:             return DFColor.textSecondary
+                    case .robotisPControl: return DFColor.success
+                    case .hybridBA:        return DFColor.warning
+                    case .observeOnly:     return DFColor.info
+                    }
+                }()
+                Image(systemName: modeIcon)
+                    .font(.system(size: 10))
+                    .foregroundStyle(modeColor)
+                if let delta = session.lastCorrections?.maxAbs, delta > 0.01 {
+                    Text(String(format: "Δ%.1f° %@",
+                                delta,
+                                session.lastCorrectionApplied ? "적용" : "관찰"))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(DFColor.textSecondary)
+                } else {
+                    Text(session.balanceExperimentConfig.algorithmMode.label)
+                        .font(.system(size: 10))
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.o15),
+                        lineWidth: DFSize.borderHairline)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(isWalking ? "보행 \(session.current.label) 진행 중" : "보행 대기")
     }
 
     /// **Stage 2 (v1.1 fall prevention)**: 안전 상태 카드 + 자동 보정 토글.

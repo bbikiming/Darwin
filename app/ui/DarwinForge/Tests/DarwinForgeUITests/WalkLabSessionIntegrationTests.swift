@@ -87,35 +87,39 @@ final class WalkLabSessionIntegrationTests: XCTestCase {
     }
 
     /// **enableBalanceCorrection ON/OFF → safety event 로그** (.correctorOn/.correctorOff).
+    /// v1.7 default ON 기준 — 먼저 OFF, 그 다음 ON 으로 두 이벤트 확인.
     func testBalanceCorrectionToggleLogsEvent() {
         let session = WalkLabSession()
         let initialCount = session.safetyEvents.count
-        session.enableBalanceCorrection = true
-        XCTAssertGreaterThan(session.safetyEvents.count, initialCount,
-            "corrector ON → safety event 추가")
-        XCTAssertTrue(
-            session.safetyEvents.contains { $0.kind == .correctorOn },
-            "correctorOn event 존재"
-        )
-
-        let afterOnCount = session.safetyEvents.count
+        // v1.7: default ON → OFF 로 전환하면 correctorOff event.
         session.enableBalanceCorrection = false
-        XCTAssertGreaterThan(session.safetyEvents.count, afterOnCount,
+        XCTAssertGreaterThan(session.safetyEvents.count, initialCount,
             "corrector OFF → safety event 추가")
         XCTAssertTrue(
             session.safetyEvents.contains { $0.kind == .correctorOff },
             "correctorOff event 존재"
         )
+
+        let afterOffCount = session.safetyEvents.count
+        session.enableBalanceCorrection = true
+        XCTAssertGreaterThan(session.safetyEvents.count, afterOffCount,
+            "corrector ON → safety event 추가")
+        XCTAssertTrue(
+            session.safetyEvents.contains { $0.kind == .correctorOn },
+            "correctorOn event 존재"
+        )
     }
 
     /// **enableBalanceCorrection 같은 값 set → 이벤트 중복 안 됨** (didSet guard).
+    /// v1.7 default ON 기준 — 다른 값으로 한 번 전환 후 같은 값 재set.
     func testBalanceCorrectionIdempotent() {
         let session = WalkLabSession()
-        session.enableBalanceCorrection = true
+        // v1.7: default ON. 명시 OFF 로 한 번 전환 → 그 다음 OFF idempotent.
+        session.enableBalanceCorrection = false
         let countAfterFirstSet = session.safetyEvents.count
 
-        // 같은 값 다시 set
-        session.enableBalanceCorrection = true
+        // 같은 값 (false) 다시 set — didSet guard 로 이벤트 중복 안 함.
+        session.enableBalanceCorrection = false
         XCTAssertEqual(session.safetyEvents.count, countAfterFirstSet,
             "동일 값 set 은 didSet 가드로 이벤트 중복 안 함")
     }

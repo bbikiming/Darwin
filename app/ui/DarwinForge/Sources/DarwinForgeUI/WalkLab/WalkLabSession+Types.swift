@@ -58,14 +58,18 @@ extension WalkLabSession {
 
     /// 안전 상태 — `|max(|roll|, |pitch|)|` 기준 5단계.
     ///
-    /// **임계** (deg):
+    /// **v1.8 (2026-05-17) 임계 상향 — 사용자 보고 "조금만 기울어도 중단" false-positive**.
+    /// 종전 15/22/28/30° 는 ROBOTIS Walking.cpp 의 FALLEN_F/B_LIMIT (raw 390/580, ~45-50°)
+    /// 대비 너무 보수적 → 일반 보행의 정상 흔들림 (5-15°) 도 caution → warning false trigger.
+    ///
+    /// **신규 임계 (ROBOTIS 정신 + 안전 buffer)**:
     /// | 상태 | 임계 | 동작 |
     /// |---|---|---|
-    /// | `.normal` | < 15° | 정상 |
-    /// | `.caution` | 15-22° | UI 경고만 |
-    /// | `.warning` | 22-28° | 보행 속도 70% 자동 감속 |
-    /// | `.danger` | 28-30° | 자세 동결 (cycle 일시 정지) |
-    /// | `.emergency` | ≥ 30° | 토크 OFF + walkReady 복귀 (기존 L3) |
+    /// | `.normal` | < 25° | 정상 (정상 보행 흔들림 cover) |
+    /// | `.caution` | 25-35° | UI 경고만 |
+    /// | `.warning` | 35-45° | 보행 속도 70% 자동 감속 |
+    /// | `.danger` | 45-50° | 자세 동결 |
+    /// | `.emergency` | ≥ 50° | 토크 OFF + walkReady (ROBOTIS FALLEN 수준) |
     public enum BalanceState: Int, Comparable, Equatable, Sendable {
         case normal = 0, caution, warning, danger, emergency
 
@@ -73,12 +77,12 @@ extension WalkLabSession {
             l.rawValue < r.rawValue
         }
 
-        /// IMU |max| 각도로부터 상태 결정.
+        /// IMU |max| 각도로부터 상태 결정 (v1.8 상향).
         public static func from(maxTilt: Double) -> BalanceState {
-            if maxTilt >= 30 { return .emergency }
-            if maxTilt >= 28 { return .danger }
-            if maxTilt >= 22 { return .warning }
-            if maxTilt >= 15 { return .caution }
+            if maxTilt >= 50 { return .emergency }
+            if maxTilt >= 45 { return .danger }
+            if maxTilt >= 35 { return .warning }
+            if maxTilt >= 25 { return .caution }
             return .normal
         }
 

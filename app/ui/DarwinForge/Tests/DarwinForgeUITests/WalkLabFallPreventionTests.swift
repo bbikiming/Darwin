@@ -39,38 +39,34 @@ final class WalkLabFallPreventionTests: XCTestCase {
     }
 
     /// L3 자동 정지 게이트가 imuSource 와 무관하게 작동 — sim 모드에서 직접 값 주입.
-    /// **L3 gate boundary 검증** — BalanceState.from(maxTilt:) 와 L3 gate 가
-    /// 둘 다 `>= 30` 임계 사용 (off-by-one 정정 회귀).
-    /// 2026-05-16: 이전 misleading 이름 (testL3GateWorksRegardlessOfSource) →
-    /// 실제 invariant 만 검증 (boundary 정합).
+    /// **L3 gate boundary 검증** — v1.8 (2026-05-17): 50° (ROBOTIS FALLEN 수준).
     func testL3GateThresholdBoundaryConsistency() {
-        // BalanceState.from 의 30° boundary — `.emergency`.
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 30.0), .emergency,
-            "30.0° 는 .emergency — `>=` 임계 정합")
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 29.99), .danger,
-            "29.99° 는 .danger")
-        // L3 gate 의 직접 검증은 simTimer private 라 불가능 — BalanceState 의
-        // 임계만 boundary 정합 (실 gate 도 동일 `>=` 사용 정정 후).
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 50.0), .emergency,
+            "50.0° = .emergency (ROBOTIS FALLEN 수준)")
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 49.99), .danger,
+            "49.99° = .danger")
         let session = WalkLabSession()
         XCTAssertFalse(session.balanceLost,
             "초기 balanceLost 는 false — 정상 초기 invariant")
     }
 
-    // MARK: - Stage 2 — 다단계 안전 임계
+    // MARK: - Stage 2 — 다단계 안전 임계 (v1.8 상향)
 
-    /// BalanceState 임계 정확성.
+    /// **v1.8 BalanceState 임계** (25/35/45/50°) — 사용자 보고 false-positive 정정.
     func testBalanceStateThresholds() {
         XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 0),    .normal)
         XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 10),   .normal)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 14.9), .normal)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 15),   .caution)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 21.9), .caution)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 22),   .warning)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 27.9), .warning)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 28),   .danger)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 29.9), .danger)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 30),   .emergency)
-        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 45),   .emergency)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 24.9), .normal,
+            "v1.8: 정상 보행 흔들림 (5-15°) 모두 .normal — false caution 차단")
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 25),   .caution)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 34.9), .caution)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 35),   .warning)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 44.9), .warning)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 45),   .danger)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 49.9), .danger)
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 50),   .emergency,
+            "v1.8: 50° = ROBOTIS FALLEN 수준")
+        XCTAssertEqual(WalkLabSession.BalanceState.from(maxTilt: 65),   .emergency)
     }
 
     /// 속도 배수 — Warning 70%, Danger 0%.
@@ -278,28 +274,23 @@ final class WalkLabFallPreventionTests: XCTestCase {
     /// **gain 정합성** — `robotisDefault` 가 WalkParams.default() 와 동일 4개 gain.
     func testBalanceCorrectorDefaultsMatchRobotis() {
         let c = BalanceCorrector.robotisDefault
-        XCTAssertEqual(c.hipRollGain,    0.5, accuracy: 0.001)  // Walking.cpp:110
-        XCTAssertEqual(c.kneeGain,       0.3, accuracy: 0.001)  // Walking.cpp:111
-        XCTAssertEqual(c.ankleRollGain,  1.0, accuracy: 0.001)  // Walking.cpp:112
-        XCTAssertEqual(c.anklePitchGain, 0.9, accuracy: 0.001)  // Walking.cpp:113
-        XCTAssertEqual(c.internalGain,  -0.3, accuracy: 0.001)  // Walking.cpp:892
+        // v1.11 (2026-05-17): robotisDefault = robotisOriginal — ROBOTIS Walking.cpp 값.
+        XCTAssertEqual(c.hipRollGain,    0.5, accuracy: 0.001)
+        XCTAssertEqual(c.kneeGain,       0.3, accuracy: 0.001)
+        XCTAssertEqual(c.ankleRollGain,  1.0, accuracy: 0.001)  // v1.11: ROBOTIS 환원
+        XCTAssertEqual(c.anklePitchGain, 0.9, accuracy: 0.001)  // v1.11: ROBOTIS 환원
+        XCTAssertEqual(c.internalGain,  -0.3, accuracy: 0.001)
     }
 
-    /// **부호 정합 (Phase B 2026-05-16 정정 후)** — roll +10° → 4-source 정합 부호.
-    ///
-    /// doc + URDF + walkReady + 본 함수 일치:
-    /// - hip_roll: 둘 다 -1.5° (lateral 회복)
-    /// - ankle_roll: 둘 다 **-3.0°** (lateral 회복, hip_roll 과 동일 부호)
-    /// - 다른 관절: roll=0 일 때 보정 0
+    /// **v1.11 ROBOTIS 환원 — roll +10° → ankleRoll gain 1.0 (oracle 값)**.
     func testCorrectionPolarityRollPositive() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: 10, pitchErrDeg: 0)
-        XCTAssertEqual(result.rHipRoll, -1.5, accuracy: 0.001,
-            "hipRoll = -0.15 × imuRoll = -1.5")
-        XCTAssertEqual(result.lHipRoll, -1.5, accuracy: 0.001,
-            "L hipRoll = R 동일 (lateral)")
+        XCTAssertEqual(result.rHipRoll, -1.5, accuracy: 0.001)
+        XCTAssertEqual(result.lHipRoll, -1.5, accuracy: 0.001)
+        // v1.11: ankleRoll gain 1.0 → -0.30 × 10 = -3.0
         XCTAssertEqual(result.rAnkleRoll, -3.0, accuracy: 0.001,
-            "ankleRoll = -0.30 × imuRoll = -3.0 (lateral 회복, hip_roll 과 동일 부호)")
+            "v1.11 ankleRoll = -0.30 × imuRoll = -3.0 (gain 1.0 ROBOTIS)")
         XCTAssertEqual(result.lAnkleRoll, -3.0, accuracy: 0.001)
         XCTAssertEqual(result.rKnee, 0, accuracy: 0.001)
         XCTAssertEqual(result.lKnee, 0, accuracy: 0.001)
@@ -307,22 +298,18 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertEqual(result.lAnklePitch, 0, accuracy: 0.001)
     }
 
-    /// **부호 정합 (Phase B 2026-05-16 정정 후)** — pitch +10° → R/L mirror 굽힘.
-    ///
-    /// doc "굽힘 R+ / L-" 일치:
-    /// - knee_R = +0.9°, knee_L = -0.9° (mirror, 양 다리 굽힘)
-    /// - anklePitch_R = +2.7°, anklePitch_L = -2.7° (mirror, 양 발끝 위)
+    /// **v1.11 ROBOTIS 환원 — pitch +10° → anklePitch gain 0.9 (oracle 값)**.
     func testCorrectionPolarityPitchPositive() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: 0, pitchErrDeg: 10)
-        XCTAssertEqual(result.rKnee, +0.9, accuracy: 0.001,
-            "R knee = +0.09 × imuPitch = +0.9 (굽힘 = 회복)")
-        XCTAssertEqual(result.lKnee, -0.9, accuracy: 0.001,
-            "L knee = -0.09 × imuPitch = -0.9 (mirror 굽힘)")
+        XCTAssertEqual(result.rKnee, -0.9, accuracy: 0.001,
+            "R knee = -0.09 × imuPitch (ROBOTIS dir[3]=+1)")
+        XCTAssertEqual(result.lKnee, +0.9, accuracy: 0.001,
+            "L knee = +0.09 × imuPitch (ROBOTIS dir[9]=-1, mirror)")
+        // v1.11: anklePitch gain 0.9 → 0.3 × 0.9 × 10 = 2.7
         XCTAssertEqual(result.rAnklePitch, +2.7, accuracy: 0.001,
-            "R anklePitch = +0.27 × imuPitch (dorsiflex)")
-        XCTAssertEqual(result.lAnklePitch, -2.7, accuracy: 0.001,
-            "L anklePitch = -0.27 × imuPitch (mirror dorsiflex)")
+            "v1.11 R anklePitch = +0.27 × imuPitch (gain 0.9 ROBOTIS)")
+        XCTAssertEqual(result.lAnklePitch, -2.7, accuracy: 0.001)
         XCTAssertEqual(result.rHipRoll, 0, accuracy: 0.001)
         XCTAssertEqual(result.rAnkleRoll, 0, accuracy: 0.001)
     }
@@ -364,19 +351,17 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "ramp 0.5초 → 50% 보정 (-0.75° delta)")
     }
 
-    /// **4-source 부호 lock-in (Phase B 2026-05-16 정정 후)** — doc + URDF + walkReady + 본 함수.
-    /// roll +10° + pitch +10° 동시 입력 → 8 관절 delta 가 회복 방향.
+    /// **v1.11 ROBOTIS 환원 부호 lock-in** — Walking.cpp oracle gain 으로 환원.
     func testCorrectionFullSignTableLockIn() {
         let c = BalanceCorrector.robotisDefault
         let r = c.corrections(rollErrDeg: 10, pitchErrDeg: 10)
-        // 정합 부호 매트릭스 (Agent 3 cross-check + 정정):
-        XCTAssertEqual(r.rHipRoll,    -1.5, accuracy: 0.001)  // lateral 회복
+        XCTAssertEqual(r.rHipRoll,    -1.5, accuracy: 0.001)
         XCTAssertEqual(r.lHipRoll,    -1.5, accuracy: 0.001)
-        XCTAssertEqual(r.rKnee,       +0.9, accuracy: 0.001)  // R 굽힘 회복
-        XCTAssertEqual(r.lKnee,       -0.9, accuracy: 0.001)  // L 굽힘 (mirror)
-        XCTAssertEqual(r.rAnklePitch, +2.7, accuracy: 0.001)  // R dorsiflex
-        XCTAssertEqual(r.lAnklePitch, -2.7, accuracy: 0.001)  // L dorsiflex (mirror)
-        XCTAssertEqual(r.rAnkleRoll,  -3.0, accuracy: 0.001)  // lateral 회복 (hip_roll 과 동일 부호)
+        XCTAssertEqual(r.rKnee,       -0.9, accuracy: 0.001)
+        XCTAssertEqual(r.lKnee,       +0.9, accuracy: 0.001)
+        XCTAssertEqual(r.rAnklePitch, +2.7, accuracy: 0.001)  // v1.11: gain 0.9
+        XCTAssertEqual(r.lAnklePitch, -2.7, accuracy: 0.001)
+        XCTAssertEqual(r.rAnkleRoll,  -3.0, accuracy: 0.001)  // v1.11: gain 1.0
         XCTAssertEqual(r.lAnkleRoll,  -3.0, accuracy: 0.001)
     }
 
@@ -393,38 +378,43 @@ final class WalkLabFallPreventionTests: XCTestCase {
         }
     }
 
-    /// **NaN 입력 robust** — NaN error 가 들어와도 clamp 0.
+    /// **NaN 입력 robust** — NaN error 가 들어와도 clamp 0. (v1.10: knee 부호 reverse)
     func testBalanceCorrectorRejectsNaN() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: .nan, pitchErrDeg: 5)
-        // NaN 검출 → clamp 0.
         XCTAssertEqual(result.rHipRoll, 0, accuracy: 0.001,
-            "NaN rollErr → hipRoll 0 으로 fallback 안 함")
-        // pitch 는 정상값이라 knee/ankle_pitch 정상.
-        XCTAssertGreaterThan(result.rKnee, 0,
-            "pitch=5 일 때 knee 양수 보정 실패 (NaN 격리 못 함)")
+            "NaN rollErr → hipRoll 0")
+        // v1.10: pitch +5 → rKnee = -0.09 × 5 = -0.45 (ROBOTIS 정정 후 음수)
+        XCTAssertLessThan(result.rKnee, 0,
+            "pitch=5 → R knee 음수 (ROBOTIS -fb×gain)")
     }
 
-    /// **maxAbs** — 모든 delta 의 최대 절댓값 helper. roll=pitch=10° 시 ankleRoll +3°.
+    /// **v1.11 maxAbs** — ROBOTIS 환원 후 ankleRoll -3.0 가 max.
     func testBalanceCorrectorMaxAbs() {
         let c = BalanceCorrector.robotisDefault
         let result = c.corrections(rollErrDeg: 10, pitchErrDeg: 10)
-        // 정정 후: ankleRoll +3.0, anklePitch ±2.7, hipRoll -1.5, knee ±0.9 → max=3.0
-        XCTAssertEqual(result.maxAbs, 3.0, accuracy: 0.001)
+        // v1.11: ankleRoll -3.0 (gain 1.0), anklePitch ±2.7, hipRoll -1.5, knee ±0.9.
+        XCTAssertEqual(result.maxAbs, 3.0, accuracy: 0.001,
+            "v1.11: ankleRoll gain 1.0 → ±3.0° 가 max")
     }
 
-    /// **WalkLabSession 통합** — enableBalanceCorrection toggle default OFF.
-    func testBalanceCorrectionDefaultOff() {
+    /// **v1.7 (2026-05-17): WalkLabSession enableBalanceCorrection default ON**.
+    /// 사용자 보고 "목각인형처럼 뻣뻣" — cm.rs/lib.rs IMU 정정 후 active balance 자동 활성.
+    /// ROBOTIS-OP Walking.cpp 의 BALANCE_HIP_ROLL_GAIN=0.5 등 자동 적용.
+    func testBalanceCorrectionDefaultOn() {
         let session = WalkLabSession()
-        XCTAssertFalse(session.enableBalanceCorrection,
-            "default OFF — 실 robot 검증 + Codex audit 전 활성화 위험")
-        XCTAssertNil(session.lastCorrections, "default 시 lastCorrections nil")
+        XCTAssertTrue(session.enableBalanceCorrection,
+            "v1.7 default ON — IMU active balance 자동 적용")
+        // didSet 으로 toggle 이벤트 발생 (true → true: 이벤트 없음).
+        XCTAssertNotNil(session.rampProgress,
+            "default ON 이면 ramp 시작 시점 기록됨")
     }
 
     /// **applyBalanceCorrectionIfEnabled — disabled 시 identity.**
     func testSessionApplyDisabledReturnsIdentity() {
         let session = WalkLabSession()
-        // default enableBalanceCorrection = false.
+        // v1.7 default ON 이라 명시적으로 OFF 후 검증.
+        session.enableBalanceCorrection = false
         let result = session.applyBalanceCorrectionIfEnabled(to: .walkReady)
         for j in JointID.allCases {
             XCTAssertEqual(result.raw(j), RobotPose.walkReady.raw(j))
@@ -501,16 +491,203 @@ final class WalkLabFallPreventionTests: XCTestCase {
 
     /// **BalanceCorrector intensity clamp (Agent 3 발견)**.
     /// intensity > 1.0 입력 시 1.0 으로 clamp.
-    func testBalanceCorrectorIntensityClampsAboveOne() {
+    /// **v1.8 (2026-05-17): intensity clamp 0..1 → 0..2 확장**. 사용자가 ROBOTIS default
+    /// 보다 강한 보정 (1.5x, 2.0x) 선택 가능. 안전 가드는 maxCorrectionDeg 가 보장.
+    func testBalanceCorrectorIntensityClampsAboveTwo() {
         let corrector = BalanceCorrector(
-            intensity: 2.0,  // out of range
+            intensity: 3.0,  // out of range (> 2)
             maxCorrectionDeg: 15,
             hipRollGain: 0.5, kneeGain: 0.3,
             anklePitchGain: 0.9, ankleRollGain: 1.0
         )
-        XCTAssertEqual(corrector.intensity, 1.0, accuracy: 1e-9,
-            "intensity > 1.0 입력 → 1.0 clamp")
+        XCTAssertEqual(corrector.intensity, 2.0, accuracy: 1e-9,
+            "v1.8: intensity > 2.0 입력 → 2.0 clamp (사용자 5단계 slider level 4 = 2.0x 허용)")
     }
+
+    /// **v1.8: 5단계 intensity multiplier 매핑**.
+    func testCorrectorIntensityMultiplierMapping() {
+        XCTAssertEqual(WalkLabSession.intensityMultiplier(level: 0), 0.0)
+        XCTAssertEqual(WalkLabSession.intensityMultiplier(level: 1), 0.5)
+        XCTAssertEqual(WalkLabSession.intensityMultiplier(level: 2), 1.0,
+            "level 2 = ROBOTIS default")
+        XCTAssertEqual(WalkLabSession.intensityMultiplier(level: 3), 1.5)
+        XCTAssertEqual(WalkLabSession.intensityMultiplier(level: 4), 2.0)
+        // out-of-range clamp
+        XCTAssertEqual(WalkLabSession.intensityMultiplier(level: -1), 0.0)
+        XCTAssertEqual(WalkLabSession.intensityMultiplier(level: 99), 2.0)
+    }
+
+    /// **v1.11 (2026-05-17): default level 2 (ROBOTIS 권장) 환원**.
+    /// v1.10 의 level 3 default 는 실 robot 검증 전 over-claim 으로 판단되어 환원.
+    func testCorrectorIntensityLevelDefault() {
+        let session = WalkLabSession()
+        XCTAssertEqual(session.correctorIntensityLevel, 2,
+            "v1.11 default level 2 = ROBOTIS 표준")
+        XCTAssertEqual(session.balanceCorrector.intensity, 1.0, accuracy: 1e-9,
+            "v1.11 default corrector intensity = 1.0 (ROBOTIS)")
+    }
+
+    // MARK: - v1.10 Hybrid B+A correctness
+
+    /// **Hybrid B+A: slow EMA 가 chronic bias 를 점진 보정**.
+    func testHybridSlowEmaConvergence() {
+        let corrector = BalanceCorrector.v110Experimental  // v1.11: hybrid 검증은 v110 profile
+        var state = HybridBalanceState()
+        // chronic pitch -13° (사용자 robot 측정값) 으로 1초 sample (5 steps @ 200ms).
+        let now = Date()
+        for i in 0..<5 {
+            let t = now.addingTimeInterval(Double(i) * 0.2)
+            _ = corrector.hybridCorrections(
+                imuRollDeg: 0, imuPitchDeg: -13.0,
+                elapsedMs: 0, periodMs: 0,  // walking idle
+                state: &state, now: t
+            )
+        }
+        // 1초 후 EMA 는 약 10% 도달 (tau 10s × 1초 = 0.1 의 1-exp 비율).
+        // chronic -13° × ~0.1 ≈ -1.3° 정도 절댓값.
+        XCTAssertTrue(abs(state.pitchEma) > 0.1 && abs(state.pitchEma) < 13.0,
+            "slow EMA 가 점진적으로 chronic bias 추적 (현재 \(state.pitchEma)°)")
+        // 60초 sample 시 약 99% 도달 — 별도 long-run test 가능.
+    }
+
+    /// **Hybrid B+A: enableHybrid=false 면 기존 P-control fallback**.
+    func testHybridDisabledFallback() {
+        let corrector = BalanceCorrector(
+            intensity: 1.0, maxCorrectionDeg: 15.0,
+            hipRollGain: 0.5, kneeGain: 0.3, anklePitchGain: 0.9, ankleRollGain: 1.0,
+            enableHybrid: false  // ← OFF
+        )
+        var state = HybridBalanceState()
+        let result = corrector.hybridCorrections(
+            imuRollDeg: 5.0, imuPitchDeg: 10.0,
+            elapsedMs: 0, periodMs: 0,
+            state: &state
+        )
+        // Hybrid disabled — slow = 0, fast = imu directly (P-control 등가).
+        XCTAssertEqual(result.slowPitchDelta, 0, accuracy: 1e-9)
+        XCTAssertEqual(result.fastPitchDelta, 10.0, accuracy: 1e-9,
+            "enableHybrid=false 면 fast = imu raw 그대로 (P-control)")
+    }
+
+    /// **Hybrid B+A: state stale 5초+ 시 reset (chronic drift 가 stale 이면 의미 없음)**.
+    func testHybridStateResetOnStale() {
+        let corrector = BalanceCorrector.robotisDefault
+        var state = HybridBalanceState(pitchEma: 99, rollEma: -99,
+                                        lastUpdateAt: Date().addingTimeInterval(-10))
+        // 10초 전 update → stale → reset.
+        _ = corrector.hybridCorrections(
+            imuRollDeg: 0, imuPitchDeg: 5,
+            elapsedMs: 0, periodMs: 0,
+            state: &state
+        )
+        // Reset 후 EMA 가 새 input 으로 초기화.
+        XCTAssertNotEqual(state.pitchEma, 99, "stale 후 EMA reset")
+    }
+
+    /// **Hybrid B+A: walking elapsed + period 가 양수면 phase-locked expected sway 빼기**.
+    func testHybridPhaseLockedExpectedSwayRemoval() {
+        let corrector = BalanceCorrector.v110Experimental  // sagittalSwayAmpDeg=5°, hybrid ON
+        var state = HybridBalanceState()
+        // 첫 sample — state 초기화 (EMA 0).
+        let r1 = corrector.hybridCorrections(
+            imuRollDeg: 0, imuPitchDeg: 5.0,
+            elapsedMs: 150, periodMs: 600,  // phase 1/4 = sin(π/2) = 1 → expected = 5°
+            state: &state
+        )
+        // expected_pitch = 5° × sin(2π × 150/600) = 5° × 1 = 5°
+        // residual = (imu 5 - ema 0.5) - 5 ≈ -0.5
+        // fast_delta = -0.27 × -0.5 ≈ +0.135
+        // 즉 corrector input 이 5° 거의 그대로가 아닌 작은 residual.
+        XCTAssertLessThan(abs(r1.fastPitchDelta), 1.0,
+            "phase-locked: imu 5° 가 expected 5° 와 일치 → residual 작음, fast_delta < 1°")
+    }
+
+    /// **v1.11 default gain — ROBOTIS Walking.cpp 환원**.
+    func testRobotisDefaultGains() {
+        let c = BalanceCorrector.robotisDefault
+        XCTAssertEqual(c.anklePitchGain, 0.9, accuracy: 1e-9,
+            "v1.11: anklePitchGain 0.9 (ROBOTIS Walking.cpp:41)")
+        XCTAssertEqual(c.ankleRollGain, 1.0, accuracy: 1e-9,
+            "v1.11: ankleRollGain 1.0 (ROBOTIS Walking.cpp:43)")
+        XCTAssertFalse(c.enableHybrid,
+            "v1.11: enableHybrid default OFF (실 검증 전)")
+        XCTAssertEqual(c.slowDriftTauSec, 10.0, accuracy: 1e-9)
+        XCTAssertEqual(c.sagittalSwayAmpDeg, 5.0, accuracy: 1e-9)
+    }
+
+    /// **v1.11: v110Experimental profile 도 정상 정의됨**.
+    func testV110ExperimentalProfile() {
+        let c = BalanceCorrector.v110Experimental
+        XCTAssertEqual(c.anklePitchGain, 1.5, accuracy: 1e-9, "v1.10 random search")
+        XCTAssertEqual(c.ankleRollGain, 0.5, accuracy: 1e-9)
+        XCTAssertTrue(c.enableHybrid, "v1.10 Hybrid B+A 명시 ON")
+        XCTAssertEqual(c.intensity, 1.5, accuracy: 1e-9, "level 3 ×1.5")
+    }
+
+    // MARK: - v1.8 Hysteresis state machine (10x review P0 fix)
+
+    /// **warning state 가 단발 spike 만 있으면 cancel 안 함**. 3 tick 연속 시만 trigger.
+    func testWarningHysteresisRequiresThreeConsecutiveTicks() {
+        let session = WalkLabSession()
+        XCTAssertEqual(session._testInspectWarningHysteresis(), 0,
+            "초기 warning counter = 0")
+
+        // 1번째 warning tick (37°): counter 1 — cancel 안 됨.
+        session._testForceImuAndTick(rollDeg: 37, pitchDeg: 0)
+        XCTAssertEqual(session._testInspectWarningHysteresis(), 1)
+        XCTAssertFalse(session.balanceLost, "1 tick spike — cancel 안 됨")
+
+        // 2번째: counter 2 — cancel 안 됨.
+        session._testForceImuAndTick(rollDeg: 38, pitchDeg: 0)
+        XCTAssertEqual(session._testInspectWarningHysteresis(), 2)
+        XCTAssertFalse(session.balanceLost, "2 tick — cancel 안 됨")
+
+        // 3번째: counter 3 — bus 미연결이라 cancelWalkCycle 안 호출되지만 카운터는 도달.
+        session._testForceImuAndTick(rollDeg: 36, pitchDeg: 0)
+        XCTAssertGreaterThanOrEqual(session._testInspectWarningHysteresis(), 0,
+            "3 tick 도달 — bus 없으면 reset 만, 있으면 cancel")
+    }
+
+    /// **normal/caution 진입 시 warning/danger counter 모두 reset**.
+    func testHysteresisCounterResetOnNormalTransition() {
+        let session = WalkLabSession()
+
+        // Warning 2 tick 누적.
+        session._testForceImuAndTick(rollDeg: 37, pitchDeg: 0)
+        session._testForceImuAndTick(rollDeg: 38, pitchDeg: 0)
+        XCTAssertEqual(session._testInspectWarningHysteresis(), 2)
+
+        // Normal 진입 → counter 모두 reset.
+        session._testForceImuAndTick(rollDeg: 5, pitchDeg: 0)
+        XCTAssertEqual(session._testInspectWarningHysteresis(), 0,
+            "normal 진입 → warning counter reset")
+        XCTAssertEqual(session._testInspectDangerHysteresis(), 0,
+            "normal 진입 → danger counter reset")
+    }
+
+    /// **warning → danger 전환 시 warning counter 는 reset, danger counter 는 별도 누적**.
+    func testWarningCounterResetsWhenDangerEntered() {
+        let session = WalkLabSession()
+
+        // Warning 2 tick.
+        session._testForceImuAndTick(rollDeg: 37, pitchDeg: 0)
+        session._testForceImuAndTick(rollDeg: 38, pitchDeg: 0)
+        XCTAssertEqual(session._testInspectWarningHysteresis(), 2)
+
+        // Danger 진입.
+        session._testForceImuAndTick(rollDeg: 47, pitchDeg: 0)
+        XCTAssertEqual(session._testInspectDangerHysteresis(), 1,
+            "danger 진입 → danger counter 1")
+    }
+
+    /// **v1.8 safety constants 정확성 — 10x review P2 fix**.
+    func testV18SafetyConstants() {
+        XCTAssertEqual(WalkLabSession.hysteresisTriggerCount, 3)
+        XCTAssertEqual(WalkLabSession.setPositionRetryBackoffNs, 5_000_000)
+        XCTAssertEqual(WalkLabSession.lowerBodyDistinctFailureThreshold, 3)
+        XCTAssertEqual(WalkLabSession.perJointConsecutiveFailureLimit, 5)
+    }
+
 
     // MARK: - Monitoring Dashboard (2026-05-16): 시계열 + 이벤트 로그 회귀
 
@@ -525,20 +702,21 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "기본 펼침 OFF — progressive disclosure (NN/g)")
     }
 
-    /// **Corrector 토글 — 이벤트 로그 발행**.
-    /// OFF→ON / ON→OFF 각각 이벤트 1건씩.
+    /// **Corrector 토글 — 이벤트 로그 발행** (v1.7 default ON 기준).
+    /// ON→OFF / OFF→ON 각각 이벤트 1건씩.
     func testCorrectorToggleLogsEvents() {
         let session = WalkLabSession()
+        // v1.7 default ON → 먼저 OFF 로 전환.
         let initialCount = session.safetyEvents.count
-        session.enableBalanceCorrection = true
-        XCTAssertEqual(session.safetyEvents.count, initialCount + 1,
-            "OFF→ON 시 이벤트 1건 발행")
-        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOn,
-            "마지막 이벤트가 correctorOn 이어야 함")
         session.enableBalanceCorrection = false
+        XCTAssertEqual(session.safetyEvents.count, initialCount + 1,
+            "ON→OFF 시 이벤트 1건 발행")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff,
+            "마지막 이벤트가 correctorOff 이어야 함")
+        session.enableBalanceCorrection = true
         XCTAssertEqual(session.safetyEvents.count, initialCount + 2,
-            "ON→OFF 시 추가 이벤트 1건")
-        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff)
+            "OFF→ON 시 추가 이벤트 1건")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOn)
     }
 
     /// **clearSafetyEvents — 이벤트 비움**.
@@ -567,21 +745,24 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff)
     }
 
-    /// **rampProgress** — 토글 OFF 시 nil, ON 직후 ≈ 0.
+    /// **rampProgress** — v1.7 default ON 이라 새 session 은 progress != nil.
+    /// 토글 OFF 시 nil, 재 ON 직후 ≈ 0.
     func testRampProgressMatchesToggleState() {
         let session = WalkLabSession()
-        XCTAssertNil(session.rampProgress, "토글 OFF 시 rampProgress nil")
+        // v1.7: default ON → rampProgress 는 non-nil 시작.
+        XCTAssertNotNil(session.rampProgress, "v1.7 default ON — rampProgress 존재")
+        session.enableBalanceCorrection = false
+        XCTAssertNil(session.rampProgress, "OFF 후 nil")
         session.enableBalanceCorrection = true
-        // 토글 직후 — progress ≈ 0 (< 0.1).
         if let p = session.rampProgress {
             XCTAssertLessThan(p, 0.5,
-                "토글 직후 progress 가 너무 큼 — \(p)")
+                "재 ON 직후 progress 가 너무 큼 — \(p)")
             XCTAssertGreaterThanOrEqual(p, 0)
         } else {
-            XCTFail("토글 ON 시 rampProgress 가 nil")
+            XCTFail("재 ON 시 rampProgress 가 nil")
         }
         session.enableBalanceCorrection = false
-        XCTAssertNil(session.rampProgress, "토글 OFF 후 다시 nil")
+        XCTAssertNil(session.rampProgress, "다시 OFF 후 nil")
     }
 
     /// **SafetySample 필드 정합** — 모든 필드가 Equatable.
@@ -862,8 +1043,9 @@ final class WalkLabFallPreventionTests: XCTestCase {
 
         // 첫 sample 주입.
         let t0 = Date(timeIntervalSinceReferenceDate: 100_000)
-        let sample = ImuRaw(gyroX: 0, gyroY: 0, gyroZ: 0,
-                            accelX: 0, accelY: 0, accelZ: 0,
+        // v1.7: ImuRaw raw is UInt16 (10-bit ADC). 512 = center (zero gyro/accel).
+        let sample = ImuRaw(gyroX: 512, gyroY: 512, gyroZ: 512,
+                            accelX: 512, accelY: 512, accelZ: 768,  // 768 = +1g gravity
                             rollDeg: 0, pitchDeg: 0)
         filter.update(sample, at: t0)
 
@@ -984,17 +1166,22 @@ final class WalkLabFallPreventionTests: XCTestCase {
 
     // MARK: - 2026-05-17 사용자 보고 critical fix 회귀 가드
 
-    /// **Issue 1 — ImuScaleSuspicion enum 4 case + userMessage 명확성** (사용자 보고).
-    /// 10-bit ADC 의심 case 의 한국어 메시지에 "32배 작음" 포함 검증.
+    /// **v1.7 (2026-05-17) — ImuScaleSuspicion enum case + userMessage 의미체계 정정**.
+    /// cm.rs 가 ROBOTIS-OP2 10-bit ADC u16 으로 정정된 후, suspicion 분류 의미가:
+    ///   - `looksValid16Bit` = "정상 (10-bit ADC, 1g 중력 감지됨)" (enum 이름 보존)
+    ///   - `suspectedLegacy10Bit` = "주의 — 중력 신호 약함 (센서 응답 확인)"
+    ///   - `outOfRange` = "비정상 — raw 범위 외 (chip variant?)"
     func testImuScaleSuspicionUserMessages() {
         XCTAssertEqual(ConnectionStore.ImuScaleSuspicion.unknown.rawValue, "unknown",
             "unknown rawValue identity 검증")
-        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.suspectedLegacy10Bit.rawValue.contains("10-bit"),
-            "10-bit 의심 메시지에 명확히 '10-bit' 포함 — 사용자가 즉시 인지")
-        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.suspectedLegacy10Bit.rawValue.contains("32배"),
-            "사용자 보고 critical: 32배 오차 가능성 명시")
-        XCTAssertEqual(ConnectionStore.ImuScaleSuspicion.looksValid16Bit.rawValue, "정상 (16-bit ADC)")
-        XCTAssertEqual(ConnectionStore.ImuScaleSuspicion.outOfRange.rawValue, "비정상 — 센서 응답 확인 필요")
+        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.looksValid16Bit.rawValue.contains("10-bit"),
+            "정상 메시지에 10-bit ADC 명시 (v1.7 ROBOTIS 일치)")
+        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.looksValid16Bit.rawValue.contains("1g"),
+            "정상 메시지에 '1g 중력 감지됨' 표시 — 사용자에게 plausibility 명확")
+        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.suspectedLegacy10Bit.rawValue.contains("주의"),
+            "주의 메시지에 '주의' 포함")
+        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.outOfRange.rawValue.contains("비정상"),
+            "비정상 메시지에 '비정상' 포함")
     }
 
     /// **Issue 1 — 신규 store imuScaleSuspicion = .unknown** (sample 부족).

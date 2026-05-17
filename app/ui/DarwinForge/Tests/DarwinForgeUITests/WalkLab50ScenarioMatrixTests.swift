@@ -91,10 +91,11 @@ final class WalkLab50ScenarioMatrixTests: XCTestCase {
                     if abs(r.rAnkleRoll) > 0.01 { failures.append("\(cell): rAnkleRoll \(r.rAnkleRoll) ≠ 0") }
                 }
 
-                // pitch +양 → R knee +양수 (굽힘) / L knee -음수 (mirror 굽힘)
+                // v1.10 (ROBOTIS knee 부호 정정 후): pitch +양 → R knee 음수, L knee 양수.
+                // ROBOTIS Walking.cpp `-= dir[3=+1] × fb × gain` → R knee 음수.
                 if dist.pitchDeg > 0 {
-                    if r.rKnee <= 0 { failures.append("\(cell): rKnee \(r.rKnee) 음수 (R 굽힘 반대)") }
-                    if r.lKnee >= 0 { failures.append("\(cell): lKnee \(r.lKnee) 양수 (L 굽힘 mirror 반대)") }
+                    if r.rKnee >= 0 { failures.append("\(cell): rKnee \(r.rKnee) 양수 (v1.10: ROBOTIS -fb×gain 위반)") }
+                    if r.lKnee <= 0 { failures.append("\(cell): lKnee \(r.lKnee) 음수 (v1.10: mirror 위반)") }
                     if r.rAnklePitch <= 0 { failures.append("\(cell): rAnklePitch \(r.rAnklePitch) 음수 (R dorsiflex 반대)") }
                     if r.lAnklePitch >= 0 { failures.append("\(cell): lAnklePitch \(r.lAnklePitch) 양수 (L dorsiflex mirror 반대)") }
                 }

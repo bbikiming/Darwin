@@ -101,3 +101,6 @@ DARwIn-OP_ROBOTIS_v1.6.0/
 # 디렉토리 + 파일 둘 다 exception 명시 (negation 은 parent dir 까지 거슬러 올라가야 효력).
 !app/icon/
 !app/icon/AppIcon.png
+
+# v1.11.2 (2026-05-18): Claude Code local auto-run harness — runtime logs only.
+.harness/

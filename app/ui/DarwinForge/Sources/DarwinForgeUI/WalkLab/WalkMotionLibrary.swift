@@ -154,7 +154,7 @@ public enum WalkMotionLibrary {
         return AdvancedTuning(
             strideMm: base.strideMm.clamped(to: 0...50),
             sideMm: base.sideMm.clamped(to: -25...25),
-            turnDeg: base.turnDeg.clamped(to: -20...20),
+            turnDeg: base.turnDeg.clamped(to: -45...45),
             periodMs: base.periodMs.clamped(to: 350...1000),
             footHeightMm: base.footHeightMm.clamped(to: 15...80),
             balanceGain: base.balanceGain.clamped(to: 0...5)
@@ -173,18 +173,27 @@ public enum WalkMotionLibrary {
             return AdvancedTuning(strideMm: 0, sideMm: 0, turnDeg: 0, periodMs: 600, footHeightMm: 40, balanceGain: 1.0)
         case .march:
             return AdvancedTuning(strideMm: 0, sideMm: 0, turnDeg: 0, periodMs: 650, footHeightMm: 38, balanceGain: 1.0)
+        // v1.8 (2026-05-17 사용자 보고 "동작 괴해짐" 정정):
+        // - turnLeft/Right 가 호 그리기 실패 (stride 8mm + turnDeg 20° → foot 직진 +
+        //   hip yaw twist) → stride 18mm + turnDeg 35° 로 호 곡률 확대.
+        // - fastWalk stride 45mm 는 IK 안정 marginal → 38mm.
         case .slowWalk:
-            return AdvancedTuning(strideMm: 15, sideMm: 0, turnDeg: 0, periodMs: 700, footHeightMm: 40, balanceGain: 1.0)
+            // 매우 천천히 — stride 12mm, period 800ms → ~15 mm/s.
+            return AdvancedTuning(strideMm: 12, sideMm: 0, turnDeg: 0, periodMs: 800, footHeightMm: 32, balanceGain: 1.0)
         case .normalWalk:
-            return AdvancedTuning(strideMm: 25, sideMm: 0, turnDeg: 0, periodMs: 600, footHeightMm: 40, balanceGain: 1.0)
+            // 일반 — stride 28mm, period 600ms → ~47 mm/s.
+            return AdvancedTuning(strideMm: 28, sideMm: 0, turnDeg: 0, periodMs: 600, footHeightMm: 40, balanceGain: 1.0)
         case .fastWalk:
-            return AdvancedTuning(strideMm: 32, sideMm: 0, turnDeg: 0, periodMs: 500, footHeightMm: 42, balanceGain: 1.1)
+            // 빠르게 — stride 38mm (IK 안정 margin), period 450ms → ~85 mm/s.
+            return AdvancedTuning(strideMm: 38, sideMm: 0, turnDeg: 0, periodMs: 450, footHeightMm: 46, balanceGain: 1.2)
         case .jog:
-            return AdvancedTuning(strideMm: 24, sideMm: 0, turnDeg: 0, periodMs: 620, footHeightMm: 40, balanceGain: 1.0)
+            return AdvancedTuning(strideMm: 32, sideMm: 0, turnDeg: 0, periodMs: 500, footHeightMm: 44, balanceGain: 1.1)
         case .turnLeft:
-            return AdvancedTuning(strideMm: 0, sideMm: 0, turnDeg: 10, periodMs: 650, footHeightMm: 38, balanceGain: 1.1)
+            // 좌회전 — stride 18mm 전진 + turnDeg 25° → 호 그리기.
+            // hip yaw 안전 가드 (60° 임계) 통과. (turnDeg 35° + multiplier 1.5x = 87° 위반)
+            return AdvancedTuning(strideMm: 18, sideMm: 0, turnDeg: 25, periodMs: 700, footHeightMm: 40, balanceGain: 1.1)
         case .turnRight:
-            return AdvancedTuning(strideMm: 0, sideMm: 0, turnDeg: -10, periodMs: 650, footHeightMm: 38, balanceGain: 1.1)
+            return AdvancedTuning(strideMm: 18, sideMm: 0, turnDeg: -25, periodMs: 700, footHeightMm: 40, balanceGain: 1.1)
         }
     }
 
@@ -308,7 +317,7 @@ public enum WalkMotionLibrary {
             zSwapAmplitude = 5.0
             zSwapAmplitudeShift = zSwapAmplitude
 
-            aMoveAmplitude = tuning.turnDeg.clamped(to: -20...20) * .pi / 180.0 / 2
+            aMoveAmplitude = tuning.turnDeg.clamped(to: -45...45) * .pi / 180.0 / 2
             aMoveAmplitudeShift = abs(aMoveAmplitude)
 
             xOffset = -10.0
@@ -383,7 +392,9 @@ public enum WalkMotionLibrary {
 
         // Sparse keyframes do not reproduce the 8 ms walking module yaw integration perfectly.
         // Add a bounded hip-yaw bias so turn sliders/presets have a deterministic physical direction.
-        let yawBias = Int((tuning.turnDeg.clamped(to: -20...20) * rawPerDegree * 1.5).rounded())
+        // v1.8 (2026-05-17): multiplier 1.5x → 1.0x. 35° × 1.5x = 87° hip yaw 변화 (안전 60° 초과).
+        // 1.0x 면 25° × 1.0x = 25° + cMove 12.5° = 37.5° (안전).
+        let yawBias = Int((tuning.turnDeg.clamped(to: -45...45) * rawPerDegree * 1.0).rounded())
         raw[0] -= yawBias
         raw[6] += yawBias
 

@@ -117,6 +117,10 @@ public struct PilotFeatureFlags: Sendable, Equatable {
         f.ballFollow = true
         f.imuTelemetry = true
         f.headTracking = true
+        // v1.7 (2026-05-17): 사용자 보고 "좌/우회전 안 됨" — D-pad 방향키 활성화.
+        // BLOCKER C3 는 WalkLab turn preset (id 205/206) 으로 우회 — D-pad 방향키가
+        // turnLeft/turnRight preset 을 트리거하도록 핸들러 연결.
+        f.dpadRealMotor = true
         f.hsvTuning = true   // Phase E: HSV preset + robot ini sync (Codex 잔여 3 v1.5).
         return f
     }()

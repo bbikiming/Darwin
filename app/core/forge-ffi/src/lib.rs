@@ -437,18 +437,23 @@ pub unsafe extern "C" fn fc_bus_board_snapshot(
     })
 }
 
-/// CM-730/740 IMU raw — Phase D3 (Sprint 18).
+/// CM-730/740 IMU raw — Phase D3 (Sprint 18) → v1.7 정정 (2026-05-17).
 ///
-/// 한 번 호출에 gyro (X/Y/Z) + accel (X/Y/Z) 의 raw 16-bit signed 6개 + accel 기반
-/// roll/pitch 도(°) 가 계산되어 노출. Mac 측 PilotHudStrip 이 직접 사용.
+/// **ABI break**: gyro/accel raw 가 `i16` 에서 `u16` 으로 변경. ROBOTIS-OP2 v1.6.0
+/// `CM730::MakeWord` 가 unsigned u16 zero-extend 라 의미적으로 일치. 10-bit ADC 결과
+/// (0..1023) 는 bit-15=0 이라 비트 패턴은 동일하지만 타입 안전성과 axis 매핑 정정을 위해
+/// 명시적으로 변경. 자세히는 `ImuRaw` doc 참고.
+///
+/// 한 번 호출에 gyro (X/Y/Z) + accel (X/Y/Z) raw u16 6개 + accel 기반 roll/pitch 도(°)
+/// 가 계산되어 노출. Mac 측 PilotHudStrip 이 직접 사용.
 #[repr(C)]
 pub struct FfiImuRaw {
-    pub gyro_x: i16,
-    pub gyro_y: i16,
-    pub gyro_z: i16,
-    pub accel_x: i16,
-    pub accel_y: i16,
-    pub accel_z: i16,
+    pub gyro_x: u16,
+    pub gyro_y: u16,
+    pub gyro_z: u16,
+    pub accel_x: u16,
+    pub accel_y: u16,
+    pub accel_z: u16,
     pub roll_deg: f32,
     pub pitch_deg: f32,
 }
@@ -671,6 +676,46 @@ pub unsafe extern "C" fn fc_joint_set_moving_speed(
             BusBackend::Posix(b) => run(b, joint, speed),
             BusBackend::Loopback(b) => run(b, joint, speed),
             BusBackend::Tcp(b) => run(b, joint, speed),
+        };
+        match result {
+            Ok(()) => FC_OK,
+            Err(e) => err_code(&e),
+        }
+    })
+}
+
+/// 2026-05-17 critical fix: 한 관절 P_GAIN 설정 — MX-28T address 28 (1 byte, 0-254).
+/// `emergencyStop` 가 P_GAIN=0 으로 만든 후 recovery 가 복원하지 않아 모터가 위치
+/// 명령에 응답 못 함 — "약한 토크" 증상. recovery 가 호출해서 default (32) 로 복원.
+///
+/// Dynamixel MX-28T factory default P_GAIN = 32.
+#[no_mangle]
+pub unsafe extern "C" fn fc_joint_set_p_gain(
+    handle: *mut FcBus,
+    raw_id: u8,
+    p_gain: u8,
+) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    let joint = match JointId::from_byte(raw_id) {
+        Some(j) => j,
+        None => return FC_ERR_INVALID,
+    };
+    safe_call(|| {
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            joint: JointId,
+            p_gain: u8,
+        ) -> Result<(), forge_core::Error> {
+            // MX-28T P_GAIN register address = 28 (1 byte).
+            b.write(joint as u8, 28, &[p_gain])
+        }
+        let result: Result<(), forge_core::Error> = match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, joint, p_gain),
+            BusBackend::Loopback(b) => run(b, joint, p_gain),
+            BusBackend::Tcp(b) => run(b, joint, p_gain),
         };
         match result {
             Ok(()) => FC_OK,

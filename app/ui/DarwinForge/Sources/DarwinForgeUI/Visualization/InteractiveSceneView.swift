@@ -30,10 +30,30 @@ public final class InteractiveSceneView: SCNView {
     // /knee ±53°) 자세에 맞춰 0.30→0.20, 0.345→0.265 로 정정 (floor 접지).
 
     /// 기본 시점: 정면(robot 가슴이 카메라 쪽) + 살짝 우측 isometric.
+    /// **v1.11 (2026-05-17 사용자 재요청)**: 1.80 → 1.45 (cinema-fit). 작은 창에서도
+    /// 로봇이 화면 ~45% 차지. 더 큰 frame 은 `autoDistance` 가 추가 zoom-in.
     public static let defaultAzimuth: CGFloat = .pi - 0.35
     public static let defaultElevation: CGFloat = 0.05
-    public static let defaultDistance: CGFloat = 1.80
+    public static let defaultDistance: CGFloat = 1.45
     public static let defaultTarget = SCNVector3(0, 0.20, 0)
+
+    /// **v1.11 (2026-05-17 사용자 요청)**: frame width 기준 distance auto-fit.
+    /// 사용자가 manual zoom (wheel/trackpad) 한 후엔 비활성 → manual override 우선.
+    private var hasUserAdjustedZoom: Bool = false
+
+    /// frame width 에 따른 auto distance. user override 없을 때만 적용.
+    /// **공격적 zoom 범위** (재작업):
+    ///   - 500pt 이하 → 1.55 (좁은 창, 약간만 가깝게)
+    ///   - 800pt   → 1.30
+    ///   - 1200pt  → 1.05
+    ///   - 1600pt+ → 0.85 (와이드 모니터, 로봇이 화면 ~65% 차지)
+    private static func autoDistance(forWidth width: CGFloat) -> CGFloat {
+        if width <= 500 { return 1.55 }
+        if width >= 1600 { return 0.85 }
+        // 500..1600 → 1.55..0.85 선형.
+        let t = (width - 500) / 1100
+        return 1.55 - t * 0.70
+    }
 
     private var desiredAzimuth:   CGFloat = InteractiveSceneView.defaultAzimuth
     private var desiredElevation: CGFloat = InteractiveSceneView.defaultElevation
@@ -224,6 +244,20 @@ public final class InteractiveSceneView: SCNView {
         desiredDistance = clampDistance(desiredDistance * scale)
         let velContribution: CGFloat = event.hasPreciseScrollingDeltas ? 0.15 : 0.50
         distVelocity = (distVelocity + (1 - scale)) * velContribution
+        // v1.11: 사용자가 manual zoom 한 후로는 frame-adaptive auto-fit 비활성.
+        hasUserAdjustedZoom = true
+    }
+
+    /// **v1.11 (2026-05-17 사용자 요청)**: frame width 변경 시 distance auto-fit.
+    /// macOS HSplitView drag 으로 detail 폭이 늘어나면 로봇이 가운데 작게 보이지 않게
+    /// distance 를 자동으로 줄여서 (zoom in) 빈 영역 해소. 사용자가 한 번이라도
+    /// manual zoom 한 후엔 override 됨 (`hasUserAdjustedZoom`).
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard !hasUserAdjustedZoom else { return }
+        let target = Self.autoDistance(forWidth: newSize.width)
+        // tick loop 가 smoothing 으로 따라감 (즉시 jerk 없음).
+        desiredDistance = clampDistance(target)
     }
 
     // MARK: - Pan helpers
@@ -252,7 +286,22 @@ public final class InteractiveSceneView: SCNView {
 
     // MARK: - 60Hz tick (smoothing + inertia)
 
+    /// **v1.11 (2026-05-17)**: frame width auto-fit 의 last applied snapshot.
+    /// `tick` 에서 5pt 이상 변경 감지하면 `desiredDistance` 업데이트 (`setFrameSize`
+    /// 가 SwiftUI Representable 라이프사이클에서 안정적으로 호출되지 않을 수도 있어서
+    /// 60Hz tick 가 source of truth — 강력한 보장).
+    private var lastAppliedAutoFitWidth: CGFloat = -1
+
     private func tick() {
+        // 0) **v1.11 frame-adaptive zoom** — manual override 없을 때만, 매 tick frame 감지.
+        if !hasUserAdjustedZoom {
+            let w = bounds.width
+            if w > 10, abs(w - lastAppliedAutoFitWidth) > 5 {
+                lastAppliedAutoFitWidth = w
+                desiredDistance = clampDistance(Self.autoDistance(forWidth: w))
+            }
+        }
+
         // 1) Inertia — 드래그 중이 아니면 마지막 속도를 desired에 적용 후 감속.
         if !isDragging {
             desiredAzimuth   += azVelocity

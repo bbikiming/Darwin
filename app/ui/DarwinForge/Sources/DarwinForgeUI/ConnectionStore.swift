@@ -56,6 +56,33 @@ public final class ConnectionStore: ObservableObject {
     @Published public private(set) var lastImuSuccessAt: Date?
     @Published public private(set) var imuConsecutiveFailures: Int = 0
     @Published public private(set) var lastImuError: String?
+
+    // MARK: - §4 wiring (2026-05-17 handoff)
+    //
+    // v2 pipeline 의 quality analyzer 는 IMU duplicate ratio (동일 sequence 중복 push)
+    // 와 bus 실패율을 계산해서 grade A..F + useClass 를 결정. 이 wiring 포인트로
+    // session 에 그 raw counter 노출.
+
+    /// **Mac-side** successful-read counter — IMU read 성공할 때마다 ++.
+    /// **주의 (Codex review 2026-05-18 MEDIUM-3)**: 이 값은 firmware 가 발행하는
+    /// 진짜 sensor sequence 가 아니라, Mac 이 polling 으로 새 packet 받았다는 횟수.
+    /// 따라서:
+    ///   - **유의미**: "이 tick 사이 새 IMU read 가 있었나?" (값이 변했는지 비교)
+    ///   - **무의미**: "같은 hardware sample 이 중복 push 됐나?" (Mac counter 는
+    ///     매번 다른 값이라 packet-level duplicate 검출 불가)
+    /// 진짜 duplicate ratio 가 필요하면 firmware 에 sequence field 추가 + ImuRaw 에
+    /// 노출 후 그 값으로 교체.
+    @Published public private(set) var imuSequenceCount: UInt32 = 0
+    /// 누적 bus write 실패 (setPosition / setTorque / setPGain 등). 시작 시점 0 가정.
+    @Published public private(set) var busWriteFailureCount: Int = 0
+    /// 누적 bus read 실패 (readImu / boardSnapshot / readState).
+    @Published public private(set) var busReadFailureCount: Int = 0
+
+    /// **v1.11.1 (2026-05-18 사용자 review MEDIUM-5)**: WalkLabSession 의 setPosition
+    /// catch 경로에서 호출. underscore prefix 는 internal API 표시. external 직접 호출 X.
+    public func _bumpBusWriteFailureCount() {
+        busWriteFailureCount &+= 1
+    }
     /// Mac-side complementary filter (Sprint 18 Phase E, Codex 잔여 4 v1.5 minimal viable).
     /// 5Hz IMU polling × tau=0.5s — alpha ≈ 0.71. 정적 tilt 보다 약간 개선.
     @Published public private(set) var imuFilter: ImuFilter = ImuFilter()
@@ -103,31 +130,33 @@ public final class ConnectionStore: ObservableObject {
     /// 개별 모터 "응답 없음" 표시 임계 — 5회 연속 실패 시 UI 에 명시.
     private static let jointFailureDisplayThreshold = 5
 
-    // MARK: - IMU scale 자동 진단 (2026-05-17 사용자 보고 critical)
+    // MARK: - IMU plausibility 자동 진단 (2026-05-17 v1.7 정정)
 
-    /// IMU raw 값 scale 진단 결과. 사용자 보고: `cm.rs` 변환식 `× 2000/32767` 이
-    /// CM-740 펌웨어 (10-bit ADC, raw ~512 center) 와 정합 안 되면 IMU 값이 **32배
-    /// 부정확**. UI 에 0.0° 표시되더라도 실제는 위험 영역 가능.
-    /// 자동 진단: idle robot 은 중력만 받아 |accelZ| ≈ 1g →
-    /// - 16-bit (32767 LSB / 2g): raw ≈ ±16384
-    /// - 10-bit (512 LSB / 2g): raw ≈ ±256
+    /// IMU raw 값 sanity 진단. v1.7 (2026-05-17) — cm.rs/lib.rs 10-bit ADC 정정 후의
+    /// 의미체계:
+    ///   - 10-bit ADC raw u16 (0..1023), center 512.
+    ///   - 직립 idle 시 accel Z 의 1g 중력 → raw 약 768 (center + 256 LSB).
+    ///   - centered = raw - 512. accel Z centered 절대값이 약 200-300 이면 1g 감지 OK.
+    ///
+    /// 종전 v1.6 의 i16 + ±32767 가정 시기 misleading 했던 case 이름 보존 (downstream
+    /// 영향 최소화), 분류 임계만 새 의미체계 기준.
     public enum ImuScaleSuspicion: String, Equatable, Sendable {
         /// 진단 불가 — sample 부족 또는 robot 움직임 중.
         case unknown
-        /// 16-bit 가정 정합 — accel Z |raw| 가 10000-25000 범위.
-        case looksValid16Bit = "정상 (16-bit ADC)"
-        /// 10-bit ADC 의심 — accel Z |raw| 가 100-1000 범위. **변환식 ÷32 오차 위험**.
-        case suspectedLegacy10Bit = "주의 — 10-bit ADC 의심 (값 32배 작음)"
-        /// 범위 밖 — 센서 결함 / IMU register 미지원 / 잘못된 mounting.
-        case outOfRange = "비정상 — 센서 응답 확인 필요"
+        /// 정상 — 10-bit ADC raw 가 1g 중력 패턴 보임 (accel Z |centered| ≈ 150-350).
+        case looksValid16Bit = "정상 (10-bit ADC, 1g 중력 감지됨)"
+        /// 주의 — 1g 중력 미감지 (사실상 자유낙하 추정치 또는 센서 stuck).
+        case suspectedLegacy10Bit = "주의 — 중력 신호 약함 (센서 응답 확인)"
+        /// 범위 밖 — 10-bit ADC 범위 (0..1023) 밖, chip variant 또는 firmware 변형 의심.
+        case outOfRange = "비정상 — raw 범위 외 (chip variant?)"
     }
     @Published public private(set) var imuScaleSuspicion: ImuScaleSuspicion = .unknown
-    /// 마지막 N sample 의 |accelZ| 절대값 평균. 0 = 아직 수집 안 됨.
+    /// 마지막 N sample 의 accel Z |centered| 평균. 0 = 아직 수집 안 됨.
     @Published public private(set) var imuAccelZMagnitudeAvg: Double = 0
-    private var imuAccelZSamples: [Int16] = []
+    private var imuAccelZSamples: [UInt16] = []
     private static let imuScaleSamplesRequired = 25  // 5Hz × 5초 = 안정 추정.
 
-    /// IMU sample 별 호출 — accel Z magnitude 기반 ADC 추정.
+    /// IMU sample 별 호출 — accel Z raw 기반 plausibility 추정 (v1.7 의미체계).
     private func diagnoseImuScale(_ sample: ImuRaw) {
         imuAccelZSamples.append(sample.accelZ)
         if imuAccelZSamples.count > Self.imuScaleSamplesRequired {
@@ -137,21 +166,26 @@ public final class ConnectionStore: ObservableObject {
             // 아직 sample 부족 — unknown 유지.
             return
         }
-        // |accelZ| 평균 — robot 이 정지 상태면 중력만 받아 안정.
-        let sumAbs = imuAccelZSamples.reduce(0) { $0 + abs(Double($1)) }
-        let avg = sumAbs / Double(imuAccelZSamples.count)
-        imuAccelZMagnitudeAvg = avg
+        // accel Z raw 평균.
+        let sumRaw = imuAccelZSamples.reduce(0.0) { $0 + Double($1) }
+        let avgRaw = sumRaw / Double(imuAccelZSamples.count)
+        // centered = raw - 512. 직립 idle 1g 시 약 +200~+300 또는 -200~-300 (mounting 따라).
+        let centeredMag = abs(avgRaw - 512.0)
+        imuAccelZMagnitudeAvg = centeredMag
 
-        // 분류:
-        // - 16-bit (1g = 16384) → idle 시 |accelZ| ~10000-25000 사이
-        // - 10-bit (1g = 512) → idle 시 |accelZ| ~100-1000 사이
-        // - 그 외 → 비정상.
         let newSuspicion: ImuScaleSuspicion
-        if avg >= 10_000 && avg <= 25_000 {
+        if avgRaw < 0 || avgRaw > 1023 {
+            // 10-bit ADC 범위 외 → 결함 / firmware 변형 의심.
+            newSuspicion = .outOfRange
+        } else if centeredMag >= 50 && centeredMag <= 500 {
+            // 1g gravity 감지됨 (±10-bit ADC chip/firmware 변형 허용, 관대한 범위).
+            // 구 임계 150-400 은 raw ~580 또는 ~950 케이스를 outOfRange 오분류.
             newSuspicion = .looksValid16Bit
-        } else if avg >= 100 && avg <= 1_000 {
+        } else if centeredMag < 50 {
+            // 중력 미감지 — 자유낙하 또는 sensor stuck.
             newSuspicion = .suspectedLegacy10Bit
         } else {
+            // |centered| > 500 — 10-bit 범위(0-1023)에서 극단치. chip 결함 의심.
             newSuspicion = .outOfRange
         }
         if newSuspicion != imuScaleSuspicion {
@@ -828,12 +862,25 @@ public final class ConnectionStore: ObservableObject {
         }
 
         // [1] CM dxl_power ON — E-stop 후 일관성 보장.
-        do {
-            try bus.setDxlPower(true)
-        } catch {
+        //
+        // 2026-05-17 사용자 보고 fix: 단일 시도 timeout 으로 recovery 실패.
+        // CM-740 의 dxl_power register 가 가끔 첫 write 응답 지연 → ForgeError.timeout.
+        // 3회 재시도 + 각 시도 사이 150ms 백오프 — robust.
+        var dxlErr: Error?
+        for attempt in 0..<3 {
+            do {
+                try bus.setDxlPower(true)
+                dxlErr = nil
+                break
+            } catch {
+                dxlErr = error
+                if attempt < 2 { try? await Task.sleep(nanoseconds: 150_000_000) }
+            }
+        }
+        if let err = dxlErr {
             await MainActor.run {
                 self.lastRecoveryOutcome = .failure
-                self.lastRecoveryResult = "모터 전원 ON 실패 — \(error.localizedDescription)"
+                self.lastRecoveryResult = "모터 전원 ON 실패 (3회 재시도) — \(err.localizedDescription)"
             }
             scheduleResultDismiss()
             return
@@ -865,6 +912,27 @@ public final class ConnectionStore: ObservableObject {
             return
         }
 
+        // [2.5] **2026-05-17 CRITICAL FIX**: P_GAIN 복원 (MX-28T default = 32).
+        //
+        // 사용자 보고 버그: emergencyStop 후 recovery 해도 "약한 토크 + 메뉴 동작
+        // 무반응". 원인: `Bus.emergencyStop()` → Rust `emergency_stop()` 가 torque OFF
+        // 와 동시에 **P_GAIN = 0** 으로 설정 (forge-core/control/mod.rs:214).
+        // 종전 recovery 는 torque 만 ON 하고 P_GAIN 복원 안 함 → 위치 제어 불능.
+        //
+        // 결과: 모터가 위치 명령 받아도 토크 못 만들음 → 자세 변경 무응답 → 모든
+        // 메뉴 (Walk/Pilot/MotionStudio) 의 setPosition 호출이 silently 무시되는
+        // 것처럼 보임. "약한 hold" 는 마찰 + 기어비 잔류만.
+        //
+        // Fix: 모든 관절 P_GAIN 을 default 32 로 ramp. 실패는 카운트만 (한 관절
+        // 실패해도 다른 관절은 정상 동작 — 부분 복구라도 사용자 가치).
+        var pGainFailures = 0
+        for j in JointID.allCases {
+            do { try bus.setPGain(j, value: 32) }
+            catch { pGainFailures += 1 }
+        }
+        // P_GAIN 정착 — 짧은 대기 (모터 내부 register write 후 효과 적용).
+        try? await Task.sleep(nanoseconds: 200_000_000)
+
         // [3] 내부 상태 리셋 — 사용자가 다시 동작을 보낼 수 있도록.
         await MainActor.run {
             self.isMovingPoseCancelled = false
@@ -885,19 +953,22 @@ public final class ConnectionStore: ObservableObject {
 
         await MainActor.run {
             self.lastSafetyEvent = nil
+            let pGainSuffix = pGainFailures > 0
+                ? " (P_GAIN 복원 \(pGainFailures)개 실패 — 해당 관절 응답 약할 수 있음)"
+                : ""
             if diag.reached {
-                self.lastRecoveryOutcome = .success
-                self.lastRecoveryResult = "복구 완료 — 기본 자세 + 토크 ON + 모든 메뉴 동작 가능"
+                self.lastRecoveryOutcome = pGainFailures > 0 ? .failure : .success
+                self.lastRecoveryResult = "복구 완료 — 기본 자세 + 토크 ON + 모든 메뉴 동작 가능\(pGainSuffix)"
             } else if diag.cancelledByUser {
                 self.lastRecoveryOutcome = .failure
                 self.lastRecoveryResult = "복구 취소됨 — 다시 시도하세요"
             } else if !diag.summary.isEmpty {
                 // 통신 실패 진단 표시 — 사용자가 USB / 전원 점검 가능.
                 self.lastRecoveryOutcome = .failure
-                self.lastRecoveryResult = "복구 실패 — \(diag.summary). USB / 전원 / 모터 ID 확인"
+                self.lastRecoveryResult = "복구 실패 — \(diag.summary). USB / 전원 / 모터 ID 확인\(pGainSuffix)"
             } else {
                 self.lastRecoveryOutcome = .failure
-                self.lastRecoveryResult = "복구 부분 완료 — 토크 ON 됐지만 일부 모터 응답 없음"
+                self.lastRecoveryResult = "복구 부분 완료 — 토크 ON 됐지만 일부 모터 응답 없음\(pGainSuffix)"
             }
         }
         scheduleResultDismiss()
@@ -1077,12 +1148,58 @@ public final class ConnectionStore: ObservableObject {
         pollTask = Task { [weak self] in
             await self?.runTelemetryLoop(periodNs: pollNs)
         }
+        // **v1.10 (2026-05-17 debugger 분석)**: IMU 전용 50ms 별도 Task.
+        // 종전: IMU read 가 runTelemetryLoop 의 joint/board read 와 같은 iteration
+        //       → bus contention + 200ms duty → WalkLab tick (50ms) 에서 89.8% duplicate.
+        // 신규: IMU 전용 50ms Task → WalkLab 과 1:1 sync. Bus 는 internal mutex 보호
+        //       (Dynamixel SDK 패턴) 가정 — packet collision 없음.
+        imuPollTask = Task { [weak self] in
+            await self?.runImuLoop(periodNs: 50_000_000)  // 50ms = 20Hz
+        }
     }
 
     public func stopTelemetry() {
         pollTask?.cancel()
         pollTask = nil
+        imuPollTask?.cancel()
+        imuPollTask = nil
         cadence = .off
+    }
+
+    /// v1.10 — IMU 전용 polling task. WalkLab 의 50ms tick 과 같은 rate 로 IMU update.
+    private var imuPollTask: Task<Void, Never>?
+
+    /// IMU 전용 polling loop. joint/board read 와 분리되어 bus contention 회피.
+    private func runImuLoop(periodNs: UInt64) async {
+        while !Task.isCancelled, let bus = self.bus {
+            let imuResult: Result<ImuRaw, Error> = await Task.detached(priority: .userInitiated) {
+                do { return .success(try bus.readImu()) }
+                catch { return .failure(error) }
+            }.value
+            switch imuResult {
+            case .success(let value):
+                self.imuFilter.update(value)
+                self.lastImuSuccessAt = Date()
+                self.imuConsecutiveFailures = 0
+                self.lastImuError = nil
+                // §4 wiring: handoff §4 의 imuSequence — Mac-side monotonic counter.
+                // **주의 (Codex review 2026-05-18)**: firmware sequence 아님. 같은 tick
+                // 안에서 값이 안 변하면 "새 IMU read 없음" 검출만 가능 (sensor-level
+                // duplicate 검출은 firmware 노출 후 별도 필요). UInt32 overflow ~49일.
+                self.imuSequenceCount &+= 1
+                self.diagnoseImuScale(value)
+                // lastTelemetry 의 imu 필드도 갱신 (UI 일관성).
+                if let snap = self.lastTelemetry {
+                    self.lastTelemetry = TelemetrySnapshot(board: snap.board, joints: snap.joints, imu: value)
+                }
+            case .failure(let error):
+                self.imuConsecutiveFailures &+= 1
+                // §4 wiring: busReadFailureCount 누적.
+                self.busReadFailureCount &+= 1
+                self.lastImuError = error.localizedDescription
+            }
+            try? await Task.sleep(nanoseconds: periodNs)
+        }
     }
 
     private static let lightSampleJoints: [JointID] =
@@ -1123,26 +1240,9 @@ public final class ConnectionStore: ObservableObject {
                 }
             }
 
-            // IMU 5Hz polling — background hop.
-            if self.bus != nil, let busRef = self.bus {
-                let imuResult: Result<ImuRaw, Error> = await Task.detached(priority: .userInitiated) {
-                    do { return .success(try busRef.readImu()) }
-                    catch { return .failure(error) }
-                }.value
-                switch imuResult {
-                case .success(let value):
-                    imu = value
-                    self.imuFilter.update(value)
-                    self.lastImuSuccessAt = Date()
-                    self.imuConsecutiveFailures = 0
-                    self.lastImuError = nil
-                    // 2026-05-17 IMU scale 자동 진단 — 매 sample 호출.
-                    self.diagnoseImuScale(value)
-                case .failure(let error):
-                    self.imuConsecutiveFailures &+= 1
-                    self.lastImuError = error.localizedDescription
-                }
-            }
+            // v1.10: IMU read 는 runImuLoop (50ms 전용 Task) 가 담당.
+            // 여기서는 lastTelemetry.imu 만 reuse (이전 update 결과).
+            // runImuLoop 가 자체적으로 lastTelemetry 의 imu 필드 갱신.
 
             // 카운터 임계 도달 시 self.bus가 nil이 되어 다음 iteration의 while 조건에서 종료.
             if self.bus == nil { return }

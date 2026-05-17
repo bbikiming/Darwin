@@ -99,19 +99,20 @@ public struct PilotImuRawDiagnosticsSheet: View {
                 Grid(alignment: .leading, horizontalSpacing: DFSpace.md, verticalSpacing: DFSpace.xs) {
                     GridRow {
                         Text("축").bold()
-                        Text("raw (i16)").bold()
+                        Text("raw (u16)").bold()
+                        Text("centered (-512)").bold()
                         Text("변환").bold()
                     }
                     .font(DFFont.caption)
                     .foregroundStyle(DFColor.textSecondary)
                     Divider()
 
-                    rawRow("Gyro X", raw: imu.gyroX, converted: String(format: "%+.1f °/s", imu.gyroXDps))
-                    rawRow("Gyro Y", raw: imu.gyroY, converted: String(format: "%+.1f °/s", imu.gyroYDps))
-                    rawRow("Gyro Z", raw: imu.gyroZ, converted: String(format: "%+.1f °/s", imu.gyroZDps))
-                    rawRow("Accel X", raw: imu.accelX, converted: String(format: "%+.3f g", Double(imu.accelX) * 2.0 / 32767.0))
-                    rawRow("Accel Y", raw: imu.accelY, converted: String(format: "%+.3f g", Double(imu.accelY) * 2.0 / 32767.0))
-                    rawRow("Accel Z", raw: imu.accelZ, converted: String(format: "%+.3f g", Double(imu.accelZ) * 2.0 / 32767.0))
+                    rawRow("Gyro X", raw: imu.gyroX, centered: imu.gyroXCentered, converted: String(format: "%+.1f °/s", imu.gyroXDps))
+                    rawRow("Gyro Y", raw: imu.gyroY, centered: imu.gyroYCentered, converted: String(format: "%+.1f °/s", imu.gyroYDps))
+                    rawRow("Gyro Z", raw: imu.gyroZ, centered: imu.gyroZCentered, converted: String(format: "%+.1f °/s", imu.gyroZDps))
+                    rawRow("Accel X", raw: imu.accelX, centered: imu.accelXCentered, converted: String(format: "%+.3f g", imu.accelXG))
+                    rawRow("Accel Y", raw: imu.accelY, centered: imu.accelYCentered, converted: String(format: "%+.3f g", imu.accelYG))
+                    rawRow("Accel Z", raw: imu.accelZ, centered: imu.accelZCentered, converted: String(format: "%+.3f g", imu.accelZG))
                     Divider()
                     GridRow {
                         Text("Roll (accel)").italic().foregroundStyle(DFColor.textSecondary)
@@ -139,10 +140,11 @@ public struct PilotImuRawDiagnosticsSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
 
-    private func rawRow(_ axis: String, raw: Int16, converted: String) -> some View {
+    private func rawRow(_ axis: String, raw: UInt16, centered: Double, converted: String) -> some View {
         GridRow {
             Text(axis).font(DFFont.bodyEmph)
             Text("\(raw)").font(DFFont.bodyEmph.monospaced()).foregroundStyle(DFColor.textSecondary)
+            Text(String(format: "%+.0f", centered)).font(DFFont.bodyEmph.monospaced()).foregroundStyle(DFColor.textSecondary)
             Text(converted).font(DFFont.bodyEmph.monospaced()).foregroundStyle(DFColor.accent)
         }
     }
@@ -243,13 +245,14 @@ public struct PilotImuRawDiagnosticsSheet: View {
                     .font(DFFont.bodyEmph)
             }
             Text("""
-                현재 Mac 측 변환: gyro_raw × 2000.0 / 32767 = °/s, accel_raw × 2.0 / 32767 = g.
-                MPU-6050 의 ±2000dps / ±2g full scale 가정.
+                v1.7 정정 (2026-05-17) — ROBOTIS-OP2 v1.6.0 firmware 와 일치하도록 10-bit ADC 가정으로 전환:
+                  · gyro/accel raw u16 (0..1023), center 512 (`MotionManager.cpp:73 m_FBGyroCenter=512`).
+                  · gyro °/s = (raw-512) × (2000/512) ≈ (raw-512) × 3.91. provisional.
+                  · accel g  = (raw-512) × (1/256). provisional.
+                  · 직립 시 Accel Z ≈ 768 (= 512 + 256) ≈ 1.0g.
 
-                ROBOTIS legacy (LinuxCM730 + MotionStatus) 는 raw word (~512 center) 로 사용 — 우리와 다를 가능성.
-
-                정지 측정 결과 accel Z 가 ~1.0g (raw ~16384) 이면 우리 변환 OK.
-                accel Z 가 비정상이면 ROBOTIS legacy 방식 (10-bit ADC) 일 가능성 — Rust cm.rs 변환 정정 필요.
+                **이전 v1.6 의 i16 + ±32767 가정이 false +45° tilt 의 원인**이었음. atan2 비율은 LSB scale 무관 →
+                centered 값만 맞으면 tilt 정확. dps/g 변환은 bench-calibration 으로 LSB 상수 보정 권장.
                 """)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(DFColor.textSecondary)
@@ -305,22 +308,24 @@ public struct PilotImuRawDiagnosticsSheet: View {
         let gx = samples.reduce(0.0) { $0 + $1.gyroXDps } / n
         let gy = samples.reduce(0.0) { $0 + $1.gyroYDps } / n
         let gz = samples.reduce(0.0) { $0 + $1.gyroZDps } / n
-        let azG = samples.reduce(0.0) { $0 + Double($1.accelZ) * 2.0 / 32767.0 } / n
+        let azG = samples.reduce(0.0) { $0 + $1.accelZG } / n
         let avgRoll = samples.reduce(0.0) { $0 + $1.rollDeg } / n
         let avgPitch = samples.reduce(0.0) { $0 + $1.pitchDeg } / n
 
+        // 정직성: v1.7 (2026-05-17) — 10-bit ADC center 512 가정 후 Accel Z 정상 범위 0.6 ~ 1.4g.
+        // 1g ≈ 256 LSB (provisional) → raw 768 ≈ 1.0g, raw 512 = 0g (자유낙하).
         let verdict: ScaleVerdict
         let advice: String?
         let absDelta = abs(azG - 1.0)
-        if absDelta < 0.15 {
+        if absDelta < 0.20 {
             verdict = .ok
-            advice = "Accel Z 가 ~1.0g 에 일치 — scale 변환 OK."
+            advice = "Accel Z 가 ~1.0g 에 일치 — 10-bit ADC scaling OK. ROBOTIS-OP2 firmware 와 일치."
         } else if absDelta < 0.5 {
             verdict = .suspicious
-            advice = "Accel Z 가 1.0g 와 \(String(format: "%.2f", absDelta))g 차이. 가능: (1) 로봇이 완전 수평 아님 (2) scale 약간 다름. 평평한 곳 재측정 권장."
+            advice = "Accel Z 가 1.0g 와 \(String(format: "%.2f", absDelta))g 차이. 가능: (1) 로봇 완전 수평 아님 (2) ACCEL_G_PER_LSB 값 보정 필요 (현 1/256). bench cal 권장."
         } else {
             verdict = .wrong
-            advice = "Accel Z = \(String(format: "%.2fg", azG)). 1.0g 와 큰 차이 — Codex 가 지적한 ROBOTIS legacy raw word 방식일 가능성. Rust cm.rs 의 변환식 정정 필요 (gyro × 2000/32767 → raw 그대로 또는 ÷ 512)."
+            advice = "Accel Z = \(String(format: "%.2fg", azG)). 1.0g 와 큰 차이 — chip variant 다를 가능성. Bus.swift `accelGPerLsb` 와 cm.rs `ACCEL_G_PER_LSB` 정정 필요."
         }
 
         calibration = CalibrationResult(

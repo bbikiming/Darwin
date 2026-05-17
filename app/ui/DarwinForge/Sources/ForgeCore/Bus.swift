@@ -92,28 +92,55 @@ public struct JointState: Sendable, Equatable {
     }
 }
 
-/// CM-730/CM-740 IMU raw + accel 기반 roll/pitch 도 — Sprint 18 Phase D3.
+/// CM-730/CM-740 IMU raw + accel 기반 roll/pitch 도 — Sprint 18 Phase D3 → v1.7 정정.
+///
+/// **v1.7 (2026-05-17) 정정 — ABI break**: gyro/accel raw 가 `Int16` 에서 `UInt16` 으로 변경.
+/// ROBOTIS-OP2 v1.6.0 `CM730::MakeWord` 가 unsigned u16 zero-extend, 그리고 10-bit ADC 의
+/// center 가 512 (`MotionManager.cpp:73`) 인 사실에 맞춤. 종전 i16 + ±32767 scaling 가정은
+/// 잘못이었고 직립 시 atan2(raw≈512, raw≈512) ≈ 45° false-tilt 의 원인이었음.
 ///
 /// Rust `CmController::read_imu` 의 결과. accelerometer 기반 정적 tilt 추정 — 빠른 동작 중엔
 /// drift 가능. 정밀 자세 추정은 walk::imu::ComplementaryFilter 필요.
 public struct ImuRaw: Sendable, Equatable {
-    public let gyroX: Int16
-    public let gyroY: Int16
-    public let gyroZ: Int16
-    public let accelX: Int16
-    public let accelY: Int16
-    public let accelZ: Int16
+    /// CM-730/740 IMU ADC center (10-bit). ROBOTIS-OP2 firmware 기준 512.
+    public static let adcCenter: Double = 512.0
+
+    /// L3G4200D 계열 ±2000dps / 10-bit ADC ±512 LSB → 1 LSB ≈ 3.91 °/s. provisional.
+    public static let gyroDpsPerLsb: Double = 2000.0 / 512.0
+
+    /// ADXL345 계열 ±2g / 10-bit ADC. 1g ≈ 256 LSB. provisional.
+    public static let accelGPerLsb: Double = 1.0 / 256.0
+
+    public let gyroX: UInt16
+    public let gyroY: UInt16
+    public let gyroZ: UInt16
+    public let accelX: UInt16
+    public let accelY: UInt16
+    public let accelZ: UInt16
     public let rollDeg: Double
     public let pitchDeg: Double
 
-    /// raw → °/s. ±2000 dps / 32767.
-    public var gyroXDps: Double { Double(gyroX) * 2000.0 / 32767.0 }
-    public var gyroYDps: Double { Double(gyroY) * 2000.0 / 32767.0 }
-    public var gyroZDps: Double { Double(gyroZ) * 2000.0 / 32767.0 }
+    /// raw - 512 (centered LSB). 안전 logic 은 이걸 우선 사용.
+    public var gyroXCentered: Double { Double(gyroX) - Self.adcCenter }
+    public var gyroYCentered: Double { Double(gyroY) - Self.adcCenter }
+    public var gyroZCentered: Double { Double(gyroZ) - Self.adcCenter }
+    public var accelXCentered: Double { Double(accelX) - Self.adcCenter }
+    public var accelYCentered: Double { Double(accelY) - Self.adcCenter }
+    public var accelZCentered: Double { Double(accelZ) - Self.adcCenter }
 
-    /// 테스트 / 시뮬레이션용 public init.
-    public init(gyroX: Int16, gyroY: Int16, gyroZ: Int16,
-                accelX: Int16, accelY: Int16, accelZ: Int16,
+    /// centered raw → °/s (provisional scale).
+    public var gyroXDps: Double { gyroXCentered * Self.gyroDpsPerLsb }
+    public var gyroYDps: Double { gyroYCentered * Self.gyroDpsPerLsb }
+    public var gyroZDps: Double { gyroZCentered * Self.gyroDpsPerLsb }
+
+    /// centered raw → g (provisional scale).
+    public var accelXG: Double { accelXCentered * Self.accelGPerLsb }
+    public var accelYG: Double { accelYCentered * Self.accelGPerLsb }
+    public var accelZG: Double { accelZCentered * Self.accelGPerLsb }
+
+    /// 테스트 / 시뮬레이션용 public init — UInt16 raw 10-bit ADC.
+    public init(gyroX: UInt16, gyroY: UInt16, gyroZ: UInt16,
+                accelX: UInt16, accelY: UInt16, accelZ: UInt16,
                 rollDeg: Double, pitchDeg: Double) {
         self.gyroX = gyroX
         self.gyroY = gyroY
@@ -172,6 +199,38 @@ public final class Bus: @unchecked Sendable {
     public let baud: UInt32
     public let timeoutMs: UInt32
 
+    /// **v1.11 CRITICAL (2026-05-17 debugger agent 발견)**: USB-TTL half-duplex bus 의
+    /// packet collision 차단. ConnectionStore 의 IMU loop / telemetry loop / WalkLabSession
+    /// 의 position write 가 모두 같은 Bus 인스턴스를 `Task.detached` 로 동시 접근 →
+    /// `bus.send()` + `bus.recv()` 의 transaction 이 interleave 되어 잘못된 status packet
+    /// 을 consume.
+    ///
+    /// 종전: `@unchecked Sendable` 만 선언, 실제 보호 없음 → 거짓 안전 약속.
+    /// 신규: **transactional public methods** 가 `locked { ... }` 안에서 실행 →
+    /// 한 transaction (send + recv) 이 atomic. 적용 대상:
+    ///   - `ping`, `scan`, `boardSnapshot`, `readImu`, `setDxlPower`, `setTorque`,
+    ///     `setPosition`, `setMovingSpeed`, `setPGain`, `readState`, `emergencyStop`
+    ///
+    /// **의도적으로 unlocked** (v1.11.1 2026-05-18 사용자 review 정정):
+    ///   - `motionPlaySlot`: 수초~수십초 long-running. 그 안에서 USB transaction 이
+    ///     반복적으로 일어나고 자체적으로 cancel 토큰 polling. lock 으로 감싸면
+    ///     motion 재생 중 IMU/telemetry read 가 완전 차단됨 → fall prevention 불가.
+    ///     Rust forge-core 가 자체 lock-free transaction 으로 안전 보장.
+    ///   - `motionPlayCancel`: 다른 thread 에서 호출 가능해야 cancel 작동 (lock 시 dead).
+    ///   - `isMotionPlaying`: read-only 상태 query, atomic int load.
+    ///
+    /// **부수효과**: transactional access 가 serialize 되므로 IMU read 와 position
+    /// write 가 queue 되어 latency 증가 가능. 그러나 packet collision 으로 인한
+    /// invalid data 보다 안전.
+    private let serialLock = NSRecursiveLock()
+
+    /// Helper — closure 안의 코드를 serialLock 안에서 실행.
+    private func locked<T>(_ block: () throws -> T) rethrows -> T {
+        serialLock.lock()
+        defer { serialLock.unlock() }
+        return try block()
+    }
+
     /// USB 직렬 포트 open + Bus 생성.
     public init(portPath: String, baud: UInt32 = 1_000_000, timeoutMs: UInt32 = 200) throws {
         var err: Int32 = FC_OK
@@ -217,71 +276,75 @@ public final class Bus: @unchecked Sendable {
         handle
     }
 
-    /// 단일 ID PING (응답 없으면 throw).
+    // v1.11: 모든 throws method 는 `locked { ... }` 안에서 실행 → packet collision 차단.
+
     public func ping(id: UInt8) throws {
-        try checkForgeReturn(fc_bus_ping(raw(), id))
+        try locked { try checkForgeReturn(fc_bus_ping(raw(), id)) }
     }
 
-    /// 범위 lo...hi 스캔 — 응답한 ID 목록.
     public func scan(lo: UInt8 = 1, hi: UInt8 = 20) throws -> [UInt8] {
-        var err: Int32 = FC_OK
-        guard let raw = fc_bus_scan(self.raw(), lo, hi, &err) else {
-            if err == FC_OK { return [] }
-            throw ForgeError.from(err) ?? .generic
+        try locked {
+            var err: Int32 = FC_OK
+            guard let raw = fc_bus_scan(self.raw(), lo, hi, &err) else {
+                if err == FC_OK { return [] }
+                throw ForgeError.from(err) ?? .generic
+            }
+            guard let s = consumeForgeString(raw), !s.isEmpty else { return [] }
+            return s.split(separator: "\n").compactMap { UInt8($0) }
         }
-        guard let s = consumeForgeString(raw), !s.isEmpty else { return [] }
-        return s.split(separator: "\n").compactMap { UInt8($0) }
     }
 
-    /// CM 보드 상태 read (ID 200).
     public func boardSnapshot() throws -> BoardSnapshot {
-        var ffi = fc_board_snapshot()
-        try checkForgeReturn(fc_bus_board_snapshot(raw(), &ffi))
-        return BoardSnapshot(ffi)
+        try locked {
+            var ffi = fc_board_snapshot()
+            try checkForgeReturn(fc_bus_board_snapshot(raw(), &ffi))
+            return BoardSnapshot(ffi)
+        }
     }
 
-    /// CM-730/740 IMU read — 한 번에 gyro X/Y/Z + accel X/Y/Z + roll/pitch 도.
-    /// Phase D3 (Sprint 18) — `fc_bus_read_imu` FFI 호출.
     public func readImu() throws -> ImuRaw {
-        var ffi = fc_imu_raw()
-        try checkForgeReturn(fc_bus_read_imu(raw(), &ffi))
-        return ImuRaw(ffi)
+        try locked {
+            var ffi = fc_imu_raw()
+            try checkForgeReturn(fc_bus_read_imu(raw(), &ffi))
+            return ImuRaw(ffi)
+        }
     }
 
-    /// CM의 Dynamixel 전원 게이트 set.
     public func setDxlPower(_ on: Bool) throws {
-        try checkForgeReturn(fc_bus_set_dxl_power(raw(), on ? 1 : 0))
+        try locked { try checkForgeReturn(fc_bus_set_dxl_power(raw(), on ? 1 : 0)) }
     }
 
-    /// 한 관절 토크 enable/disable.
     public func setTorque(_ joint: JointID, enable: Bool) throws {
-        try checkForgeReturn(fc_joint_set_torque(raw(), joint.rawValue, enable ? 1 : 0))
+        try locked { try checkForgeReturn(fc_joint_set_torque(raw(), joint.rawValue, enable ? 1 : 0)) }
     }
 
-    /// 한 관절 goal position. 안전 한계로 clamp 후 적용된 값 반환.
     @discardableResult
     public func setPosition(_ joint: JointID, raw position: UInt16) throws -> UInt16 {
-        var clamped: UInt16 = 0
-        try checkForgeReturn(fc_joint_set_position(self.raw(), joint.rawValue, position, &clamped))
-        return clamped
+        try locked {
+            var clamped: UInt16 = 0
+            try checkForgeReturn(fc_joint_set_position(self.raw(), joint.rawValue, position, &clamped))
+            return clamped
+        }
     }
 
-    /// 한 관절 moving_speed 설정 — Dynamixel MX-28T address 32-33.
-    /// 0 = 무제한 (default), 1-1023 = 단계별 (0.114 rpm per unit, 526 ≈ 60rpm = 1초/360°).
     public func setMovingSpeed(_ joint: JointID, speed: UInt16) throws {
-        try checkForgeReturn(fc_joint_set_moving_speed(self.raw(), joint.rawValue, speed))
+        try locked { try checkForgeReturn(fc_joint_set_moving_speed(self.raw(), joint.rawValue, speed)) }
     }
 
-    /// 한 관절 상태 read.
+    public func setPGain(_ joint: JointID, value: UInt8) throws {
+        try locked { try checkForgeReturn(fc_joint_set_p_gain(self.raw(), joint.rawValue, value)) }
+    }
+
     public func readState(_ joint: JointID) throws -> JointState {
-        var ffi = fc_joint_state()
-        try checkForgeReturn(fc_joint_read_state(raw(), joint.rawValue, &ffi))
-        return JointState(ffi)
+        try locked {
+            var ffi = fc_joint_state()
+            try checkForgeReturn(fc_joint_read_state(raw(), joint.rawValue, &ffi))
+            return JointState(ffi)
+        }
     }
 
-    /// 모든 관절 토크 OFF — 소프트 e-stop.
     public func emergencyStop() throws {
-        try checkForgeReturn(fc_emergency_stop(raw()))
+        try locked { try checkForgeReturn(fc_emergency_stop(raw())) }
     }
 
     // MARK: - Motion play (Sprint 15 라이브러리 노출 — 2026-05-16 v1.1 통합)

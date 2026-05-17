@@ -57,32 +57,23 @@ struct FallPreventionMonitor: View {
     @State private var pulseActive: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DFSpace.sm2) {
-            heroBanner
+        // **v1.10 (2026-05-17 사용자 요청) — macOS-native 디자인 업그레이드**:
+        // - 각 section 을 `dfSectionCard` modifier 로 통일 (Inspector 패턴, macOS Sequoia)
+        // - 외곽 컨테이너 제거 (parent monitoringSidebar 가 이미 material)
+        // - section 간 spacing 16pt (macOS HIG group margin)
+        VStack(alignment: .leading, spacing: 16) {
+            heroAndGyroRow
+                .dfSectionCard(title: nil)  // hero 는 헤더 없음 (status banner 자체가 hero)
             layerStatusGrid
+                .dfSectionCard(title: "6-Layer 안전 시스템", icon: "shield.lefthalf.filled")
             timeSeriesRow
+                .dfSectionCard(title: "최근 10초 시계열", icon: "waveform.path")
             correctorPanel
+                .dfSectionCard(title: "관절 보정 (8 joint)", icon: "figure.walk.motion")
             eventLogPanel
+                .dfSectionCard(title: "안전 이벤트", icon: "bell.badge")
         }
-        .padding(DFSpace.sm2)
-        // **2026-05-16**: Apple HIG Liquid Glass — `.regularMaterial` 사용.
-        // Reduce Transparency ON 시 자동으로 solid elev2 fallback.
-        .dfMaterial(.regularMaterial, fallback: DFColor.elev2)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.card)
-                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
-                        lineWidth: DFSize.borderHairline)
-        )
-        // **2026-05-16 검증**: ultrawide / fullscreen 시 dashboard 시각 sparseness
-        // 방지. 1400pt = NN/g Dashboard Design Patterns 권장 표준 폭 (시선 이동
-        // 최적). leading alignment — detail 좌상단부터. 작은 윈도우 (< 1400pt)
-        // 에선 영향 X (maxWidth 라 .infinity 처럼 동작).
         .frame(maxWidth: Self.dashboardMaxW, alignment: .leading)
-        // **2026-05-16 Phase B-1**: Dynamic Type cap — `xxxLarge` 까지 허용.
-        // Apple HIG: monitoring dashboard 같은 dense layout 은 큰 텍스트
-        // 모드에서 부서질 위험. `xxxLarge` 가 안전한 상한 (사용자 가독성 ↑ +
-        // layout 무결성). 그 이상 (`accessibility1`~`accessibility5`) 차단.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Fall Prevention 모니터링 대시보드")
@@ -92,7 +83,67 @@ struct FallPreventionMonitor: View {
     /// NN/g: dashboard 의 데이터 밀도 최적 폭 = 1200-1400pt.
     private static let dashboardMaxW: CGFloat = 1400
 
-    // MARK: - 1. Hero status banner
+    // MARK: - 1. Hero status banner + GyroMeter (적응형 layout)
+
+    /// **v1.7 (2026-05-17 사용자 요청)**: 폭 ≥ 720pt → 옆, 그 외 → 위/아래.
+    /// `ViewThatFits` 가 자동으로 fits 결정. heroBanner 와 GyroMeter 양쪽 다 lineLimit
+    /// 적용으로 좁은 폭에서도 글자 안 잘림.
+    private var heroAndGyroRow: some View {
+        ViewThatFits(in: .horizontal) {
+            // 1순위: 옆 배치 (폭 충분할 때)
+            HStack(alignment: .top, spacing: DFSpace.sm) {
+                heroBanner
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                gyroMeterBlock
+                    .fixedSize()
+            }
+            // 2순위: 위/아래 (좁은 폭)
+            VStack(alignment: .leading, spacing: DFSpace.sm) {
+                heroBanner
+                gyroMeterBlock
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+    }
+
+    /// 원형 g-meter + 보정 강도 slider + 자동 튜닝 카드 stack.
+    /// v1.9 (2026-05-17 사용자 요청): GyroMeter 하단에 보정 컨트롤 카드 위치.
+    /// **v1.11 (2026-05-17 사용자 재요청)**: maxWidth=360 캡 제거 — HSplitView drag
+    /// resize 가 콘텐츠까지 도달하도록. minWidth 280 로 GyroMeter 직경 (160) +
+    /// padding 보장.
+    private var gyroMeterBlock: some View {
+        let safeRoll = session.imuRollDeg.isFinite ? session.imuRollDeg : 0
+        let safePitch = session.imuPitchDeg.isFinite ? session.imuPitchDeg : 0
+        return VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            CircularGyroMeter(
+                rollDeg: safeRoll,
+                pitchDeg: safePitch,
+                dangerThreshold: 50.0,
+                sourceLabel: gyroSourceWithCorrection,
+                sourceColor: imuSourceColor,
+                diameter: 160
+            )
+            .frame(maxWidth: .infinity, alignment: .center)
+            CorrectorIntensityCard(session: session)
+            BalanceExperimentControls(session: session)   // v1.11: 4축 분리 패널
+            AutoTunerCard(tuner: session.autoTuner, session: session)
+        }
+        .padding(.horizontal, DFSpace.xs2)
+        .frame(minWidth: 280, maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 자이로 source + 보정 active 여부 표시 — 사용자가 "실시간 보정 작동 중" 확인.
+    /// 예: "실 IMU · 보정 Δ0.8°" (보정 ON) 또는 "실 IMU · 보정 OFF".
+    private var gyroSourceWithCorrection: String {
+        let src = session.imuSource.label
+        if session.enableBalanceCorrection {
+            if let delta = session.lastCorrections?.maxAbs, delta > 0.01 {
+                return String(format: "%@ · 보정 Δ%.1f°", src, delta)
+            }
+            return "\(src) · 보정 대기"
+        }
+        return "\(src) · 보정 OFF"
+    }
 
     /// **ISA-101 §6.3 패턴**: 회색 카드 배경 + 현재 상태색 만 강조.
     /// **NASA EICAS 패턴**: 단일 critical info 가 hero — 1초 안에 인식 가능.
@@ -116,55 +167,57 @@ struct FallPreventionMonitor: View {
                       ? "안전 상태 \(state.label) — 정상 보행"
                       : stateMessage(state))
             VStack(alignment: .leading, spacing: DFSpace.micro2) {
+                // v1.7: source pill 줄바꿈 방지 — lineLimit(1) + fixedSize horizontal.
                 HStack(spacing: DFSpace.xs2) {
                     Text("안전 상태")
                         .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     Spacer(minLength: DFSpace.xs)
-                    // 데이터 source 요약 — 사용자가 한 눈에 "실 robot vs sim 데이터" 식별.
-                    // **2026-05-16**: 재사용 가능 `DFSourcePill` 컴포넌트 사용.
                     DFSourcePill(label: session.imuSource.label,
                                  tint: imuSourceColor,
                                  leading: "IMU")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .layoutPriority(1)
                     DFSourcePill(label: session.motorTempSource.label,
                                  tint: motorTempSourceColor,
                                  leading: "모터")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .layoutPriority(1)
                 }
-                // 2026-05-17 사용자 보고 critical: IMU scale 자동 진단 — 위험 상태 표시.
-                // 10-bit ADC 의심 시 |IMU 값이 32배 작음| → UI 0.0° 표시되어도 실제는
-                // 위험 영역. 사용자가 즉시 인지하도록 빨간 chip + 상세 메시지.
                 imuScaleWarningChip
                 HStack(alignment: .firstTextBaseline, spacing: DFSpace.sm) {
                     Text(state.label)
                         .font(DFFont.heroState)
                         .foregroundStyle(color)
                         .lineLimit(1)
-                        .layoutPriority(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(2)
                     Spacer(minLength: DFSpace.xs)
                     Text(String(format: "%.1f°", tiltMax))
                         .font(DFFont.dataLarge)
                         .foregroundStyle(color)
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .layoutPriority(1)
                     Text("최대 기울기")
                         .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 if !stateMessage(state).isEmpty {
                     Text(stateMessage(state))
                         .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
-                        .lineLimit(2)
+                        .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            // **2026-05-16 a11y 정정 (Agent 2 발견)**: 이전엔 VoiceOver 가
-            // "안전 상태" + state.label + tilt 값 + "max|tilt|" 4 element 따로 읽음.
-            // .combine 으로 하나의 hero label 로 통합.
+            // **2026-05-16 a11y 정정**: VoiceOver 통합.
             .accessibilityElement(children: .combine)
             .accessibilityLabel("안전 상태 \(state.label), 최대 기울기 \(String(format: "%.1f도", tiltMax))")
         }
@@ -528,6 +581,8 @@ struct FallPreventionMonitor: View {
     /// **NN/g + medical monitor 패턴**: 8 관절 horizontal bar (center=0, deflect=delta).
     /// 부호 색 분리: + = 파랑 (info), - = 주황 (forge) — WCAG color-blind safe.
     private var correctorPanel: some View {
+        // v1.9 (2026-05-17): 보정 강도 slider + 자동 튜닝 패널은 gyroMeterBlock 으로
+        // 이동. 여기는 8 관절 delta + ramp progress 만 남김.
         VStack(alignment: .leading, spacing: DFSpace.xs) {
             HStack(spacing: DFSpace.xs2) {
                 Text("자세 보정 delta (8 관절)")
@@ -581,6 +636,188 @@ struct FallPreventionMonitor: View {
     }
 
     /// 가로 bar — center=0, max ±15° (BalanceCorrector.maxCorrectionDeg).
+    /// **v1.9 (2026-05-17 사용자 요청)**: 자동 튜닝 권고 + auto-apply toggle.
+    /// 종료된 session 분석 결과 기반으로 다음 cycle 의 보정 강도 자동 조정 권고.
+    @ViewBuilder
+    private var autoTunerPanel: some View {
+        let tuner = session.autoTuner
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "brain.head.profile")
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.info)
+                Text("자동 튜닝 (학습 기반)")
+                    .font(DFFont.sectionLabel)
+                    .foregroundStyle(DFColor.textSecondary)
+                Spacer()
+                Toggle("자동 적용", isOn: Binding(
+                    get: { tuner.autoApplyEnabled },
+                    set: { tuner.autoApplyEnabled = $0 }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                Text(tuner.autoApplyEnabled ? "ON" : "OFF")
+                    .font(DFFont.label)
+                    .foregroundStyle(tuner.autoApplyEnabled ? DFColor.success : DFColor.textSecondary)
+            }
+            if let rec = tuner.pendingRecommendation {
+                Text(rec.reason)
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.info)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: DFSpace.xs2) {
+                    Button("바로 적용") {
+                        session.correctorIntensityLevel = rec.level
+                        tuner.userOverride()  // 권고 reset.
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button("무시") {
+                        tuner.userOverride()
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .foregroundStyle(DFColor.textSecondary)
+                }
+            } else if tuner.recentSummaries.isEmpty {
+                Text("아직 분석 데이터 없음 — 보행 cycle 종료 후 권고 표시됨")
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.textSecondary)
+            } else {
+                Text("최근 \(tuner.recentSummaries.count)회 session — 현재 강도 적정 (변경 권고 없음)")
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.success)
+            }
+            if let latest = tuner.recentSummaries.first {
+                HStack(spacing: DFSpace.sm) {
+                    metric("평균 tilt", String(format: "%.1f°", max(latest.meanAbsRoll, latest.meanAbsPitch)))
+                    metric("진동", String(format: "%.1fHz", latest.oscillationScore))
+                    metric("효과", String(format: "%+.2f", latest.correctorEffectivenessScore))
+                    metric("샘플", "\(latest.sampleCount)")
+                }
+                .font(DFFont.monoLabel)
+            }
+        }
+        .padding(DFSpace.xs2)
+        .background(DFColor.info.opacity(DFOpacity.o10))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+    }
+
+    private func metric(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label).font(DFFont.micro).foregroundStyle(DFColor.textSecondary)
+            Text(value).font(DFFont.monoLabel).foregroundStyle(DFColor.info)
+        }
+    }
+
+    /// **v1.8 (2026-05-17 사용자 요청)**: 자이로 보정 강도 5단계 슬라이더.
+    /// 사용자가 직접 보정 개입 강도를 조절 — 꺼짐(0) ~ 최대(4).
+    /// Bus 미연결 / IMU stale 시 자동 비활성 표시.
+    @ViewBuilder
+    private var correctorIntensitySlider: some View {
+        VStack(alignment: .leading, spacing: DFSpace.micro2) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.accent)
+                Text("자이로 보정 강도")
+                    .font(DFFont.sectionLabel)
+                    .foregroundStyle(DFColor.textSecondary)
+                Spacer()
+                Text(WalkLabSession.intensityLabel(level: session.correctorIntensityLevel))
+                    .font(DFFont.monoLabel)
+                    .foregroundStyle(intensityColor)
+            }
+            HStack(spacing: DFSpace.xs2) {
+                ForEach(0..<5) { lvl in
+                    Button {
+                        session.correctorIntensityLevel = lvl
+                        // intensity 0 = enableBalanceCorrection off, 1+ = on.
+                        session.enableBalanceCorrection = (lvl > 0)
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text("\(lvl)")
+                                .font(DFFont.bodyEmph.monospaced())
+                                .foregroundStyle(intensityTextColor(for: lvl))
+                            Text(intensityShortLabel(for: lvl))
+                                .font(DFFont.micro)
+                                .foregroundStyle(DFColor.textSecondary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, DFSpace.xs2)
+                        .background(intensityBackground(for: lvl))
+                        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                                .stroke(lvl == session.correctorIntensityLevel
+                                        ? DFColor.accent
+                                        : DFColor.textSecondary.opacity(DFOpacity.o25),
+                                        lineWidth: lvl == session.correctorIntensityLevel ? 2 : 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("강도 \(lvl): \(WalkLabSession.intensityLabel(level: lvl))")
+                }
+            }
+        }
+        .padding(DFSpace.xs2)
+        .background(DFColor.accent.opacity(DFOpacity.o10))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+    }
+
+    private var intensityColor: Color {
+        switch session.correctorIntensityLevel {
+        case 0: return DFColor.textSecondary
+        case 1: return DFColor.info
+        case 2: return DFColor.success
+        case 3: return DFColor.warning
+        case 4: return DFColor.danger
+        default: return DFColor.textSecondary
+        }
+    }
+
+    private func intensityTextColor(for lvl: Int) -> Color {
+        if lvl == session.correctorIntensityLevel {
+            switch lvl {
+            case 0: return DFColor.textSecondary
+            case 1: return DFColor.info
+            case 2: return DFColor.success
+            case 3: return DFColor.warning
+            case 4: return DFColor.danger
+            default: return DFColor.textSecondary
+            }
+        }
+        return DFColor.textSecondary
+    }
+
+    private func intensityBackground(for lvl: Int) -> Color {
+        if lvl == session.correctorIntensityLevel {
+            switch lvl {
+            case 0: return DFColor.textSecondary.opacity(DFOpacity.o15)
+            case 1: return DFColor.info.opacity(DFOpacity.o15)
+            case 2: return DFColor.success.opacity(DFOpacity.o15)
+            case 3: return DFColor.warning.opacity(DFOpacity.o15)
+            case 4: return DFColor.danger.opacity(DFOpacity.o15)
+            default: return DFColor.textSecondary.opacity(DFOpacity.o10)
+            }
+        }
+        return Color.clear
+    }
+
+    private func intensityShortLabel(for lvl: Int) -> String {
+        switch lvl {
+        case 0: return "꺼짐"
+        case 1: return "약함"
+        case 2: return "표준"
+        case 3: return "강함"
+        case 4: return "최대"
+        default: return ""
+        }
+    }
+
     /// joint name 64pt 고정 + value 48pt 고정 = layout 안정. 가운데 bar 가 flex.
     private func jointDeltaRow(_ name: String, _ delta: Double?) -> some View {
         let value = delta ?? 0
@@ -826,10 +1063,9 @@ struct FallPreventionMonitor: View {
         }
     }
 
-    /// 2026-05-17 사용자 보고 critical: IMU scale 자동 진단 chip.
-    /// 종전: 사용자가 raw 값 보고 직접 ÷ 32 의문 가져야 함 (PilotImuRawDiagnosticsSheet:252).
-    /// 신규: 매 sample |accelZ| 측정 → 16-bit vs 10-bit 자동 판단 → 빨간 chip.
-    /// 안전 명시: 변환식 자체는 바꾸지 않음 (raw 변경 = 위험). UI 표시만으로 사용자 인지.
+    /// 2026-05-17 v1.7: IMU plausibility chip.
+    /// cm.rs/lib.rs 10-bit ADC + RL=X/FB=Y axis 정정 완료. 이 chip 은 plausibility 진단
+    /// (1g 중력 정상 감지 여부) 만 표시. accelZ |centered| 가 150-400 범위면 정상.
     @ViewBuilder
     private var imuScaleWarningChip: some View {
         let suspicion = session.imuScaleSuspicion
@@ -842,10 +1078,10 @@ struct FallPreventionMonitor: View {
                     .font(DFFont.label)
                     .foregroundStyle(DFColor.danger)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("IMU 값 신뢰도 — \(suspicion.rawValue)")
+                    Text("IMU plausibility — \(suspicion.rawValue)")
                         .font(DFFont.bodyEmph)
                         .foregroundStyle(DFColor.danger)
-                    Text("|accelZ| 평균 \(Int(session.imuAccelZMagnitude)) raw — 1g 기준 16-bit는 ~16384, 10-bit는 ~512. 변환식 (forge-core cm.rs) 정정 필요할 수 있음.")
+                    Text("accelZ |centered| 평균 \(Int(session.imuAccelZMagnitude)) (10-bit ADC). 정상 idle 시 ≈ 256 (≈1g). chip variant / mounting / 진동 확인.")
                         .font(DFFont.micro)
                         .foregroundStyle(DFColor.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -856,7 +1092,7 @@ struct FallPreventionMonitor: View {
             .background(DFColor.danger.opacity(DFOpacity.o12))
             .clipShape(RoundedRectangle(cornerRadius: DFRadius.tiny))
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("IMU 값 신뢰도 경고, \(suspicion.rawValue), accelZ 평균 \(Int(session.imuAccelZMagnitude)) raw")
+            .accessibilityLabel("IMU plausibility 경고, \(suspicion.rawValue), accelZ centered 평균 \(Int(session.imuAccelZMagnitude))")
         }
     }
 

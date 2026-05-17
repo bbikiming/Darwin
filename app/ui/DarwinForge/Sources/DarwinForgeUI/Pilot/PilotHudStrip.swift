@@ -157,13 +157,40 @@ public struct PilotHudStrip: View {
     private var imuBlock: some View {
         Group {
             if flags.imuTelemetry {
-                // Phase D3 (Sprint 18) — 실 IMU 값. fc_bus_read_imu 가 1Hz 폴링.
-                // Codex 권고 (잔여 2/4): stale 표시 + "정적 tilt" 명시.
-                metricCell(label: imuLabel,
-                           icon: imuIcon,
-                           tint: imuTint,
-                           value: imuValueText)
-                    .help(imuTooltip)
+                // v1.7 (2026-05-17 사용자 요청): 적응형 layout — 좁으면 위/아래, 넓으면 옆.
+                // CircularGyroMeter 는 store.lastTelemetry.imu (real raw) 또는 filter 값 직접 사용.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: DFSpace.sm) {
+                        metricCell(label: imuLabel, icon: imuIcon, tint: imuTint, value: imuValueText)
+                            .help(imuTooltip)
+                        if !store.isImuUnavailable {
+                            CircularGyroMeter(
+                                rollDeg: currentImuRoll,
+                                pitchDeg: currentImuPitch,
+                                dangerThreshold: 50.0,
+                                sourceLabel: gyroMeterSourceLabel,
+                                sourceColor: gyroMeterSourceColor,
+                                diameter: 110
+                            )
+                            .fixedSize()
+                        }
+                    }
+                    VStack(spacing: DFSpace.xs) {
+                        metricCell(label: imuLabel, icon: imuIcon, tint: imuTint, value: imuValueText)
+                            .help(imuTooltip)
+                        if !store.isImuUnavailable {
+                            CircularGyroMeter(
+                                rollDeg: currentImuRoll,
+                                pitchDeg: currentImuPitch,
+                                dangerThreshold: 50.0,
+                                sourceLabel: gyroMeterSourceLabel,
+                                sourceColor: gyroMeterSourceColor,
+                                diameter: 110
+                            )
+                            .fixedSize()
+                        }
+                    }
+                }
             } else {
                 metricCell(label: "IMU",
                            icon: "gyroscope",
@@ -224,6 +251,30 @@ public struct PilotHudStrip: View {
         if m >= 30 { return DFColor.danger }
         if m >= 15 { return DFColor.warning }
         return DFColor.infoText
+    }
+
+    // v1.7 (2026-05-17): CircularGyroMeter 용 헬퍼 — filter settling 했으면 filtered,
+    // 아니면 accel-only fallback.
+    private var currentImuRoll: Double {
+        if store.imuFilter.sampleCount >= 3 {
+            return store.imuFilter.rollDeg
+        }
+        return store.lastTelemetry?.imu?.rollDeg ?? 0
+    }
+    private var currentImuPitch: Double {
+        if store.imuFilter.sampleCount >= 3 {
+            return store.imuFilter.pitchDeg
+        }
+        return store.lastTelemetry?.imu?.pitchDeg ?? 0
+    }
+    private var gyroMeterSourceLabel: String {
+        if store.isImuStale { return "오래됨" }
+        if store.imuFilter.sampleCount >= 3 { return "실 IMU (CF)" }
+        return "실 IMU (정적)"
+    }
+    private var gyroMeterSourceColor: Color {
+        if store.isImuStale { return DFColor.warning }
+        return DFColor.success
     }
 
     /// IMU 툴팁 — 필터 상태 + 정적 추정의 한계 + 마지막 통신 시각.

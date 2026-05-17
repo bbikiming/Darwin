@@ -513,15 +513,19 @@ final class WalkMotionLibraryTests: XCTestCase {
     /// 이전 버그는 `WalkLabSession.tick` sim mode 가 모든 preset 에 `strideMm: 25` 하드코드
     /// → 어떤 preset 을 선택해도 모델 애니메이션 동일했음. defaultTuning 의 정량 차이가
     /// preset 별 시각화 차이의 근거.
+    ///
+    /// **v1.8 (2026-05-17) 정정**: 사용자 보고 "회전 동작 괴해짐" + "각 모션 제대로 안 됨".
+    /// turn: stride 8 + turnDeg 20° → foot 직진 + hip twist 만 (호 X).
+    /// 정정: stride 18 + turnDeg 35° → 진짜 호 그리기. fastWalk stride 45 → 38 (IK 안정 margin).
     func testWalkMotionDefaultTuningDiffersPerPreset() {
-        // 정량 — 각 preset 의 design intent.
+        // v1.8 design intent — turn 은 호 그리기 (stride+turn 동시), fast 는 IK 안전 margin.
         let expected: [(preset: WalkLabPreset, stride: Double, turn: Double, period: Double)] = [
             (.march,      0,  0,    650),
-            (.slowWalk,   15, 0,    700),
-            (.normalWalk, 25, 0,    600),
-            (.fastWalk,   32, 0,    500),
-            (.turnLeft,   0,  10,   650),
-            (.turnRight,  0,  -10,  650),
+            (.slowWalk,   12, 0,    800),  // ~15 mm/s
+            (.normalWalk, 28, 0,    600),  // ~47 mm/s
+            (.fastWalk,   38, 0,    450),  // ~85 mm/s (45→38 안정성)
+            (.turnLeft,   18, 25,   700),  // 호 그리기 (stride 18 + turn 25°, safety-gated)
+            (.turnRight,  18, -25,  700),
         ]
         for e in expected {
             let t = WalkMotionLibrary.defaultTuning(for: e.preset)

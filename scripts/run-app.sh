@@ -46,9 +46,9 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.7.0</string>
+    <string>1.11.2</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "dev")</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>
