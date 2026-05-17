@@ -929,4 +929,56 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertTrue(store.jointConsecutiveFailures.isEmpty,
             "신규 store — jointConsecutiveFailures 비어있어야 함")
     }
+
+    /// **WalkCycleResult.busDisconnected userMessage 명확성** — T3.5 chaos #1 fix.
+    /// 사용자 facing 메시지 — "연결 끊김" + 재연결 안내 포함 검증.
+    func testWalkCycleResultBusDisconnectedUserMessage() {
+        let result = WalkLabSession.WalkCycleResult(
+            reason: .busDisconnected,
+            stepsExecuted: 12,
+            speedWriteFailures: 0,
+            positionWriteFailures: 0,
+            lowerBodyPositionFails: [],
+            sampleError: nil
+        )
+        XCTAssertFalse(result.isSuccess,
+            "busDisconnected 는 실패")
+        XCTAssertTrue(result.userMessage.contains("연결 끊김"),
+            "사용자 메시지에 '연결 끊김' 포함 — 행동 가능 안내")
+        XCTAssertTrue(result.userMessage.contains("재연결"),
+            "사용자에게 다음 행동 안내 — '재연결 후 다시 시작'")
+        XCTAssertTrue(result.userMessage.contains("12 step"),
+            "stepsExecuted 표시 — 사용자가 보행 진행 정도 인지")
+    }
+
+    /// **WalkCycleResult.EndReason 모든 case Equatable + Sendable** — 회귀 가드.
+    /// 신규 case 추가 시 (예: 향후 'overheated') compile error 로 잡힘.
+    func testWalkCycleResultEndReasonExhaustive() {
+        let reasons: [WalkLabSession.WalkCycleResult.EndReason] = [
+            .completedMaxDuration,
+            .userCancelled,
+            .lowerBodyWriteFailure,
+            .bulkWriteFailure,
+            .busDisconnected,
+        ]
+        // 5 case 가 모두 distinct
+        for (i, r1) in reasons.enumerated() {
+            for (j, r2) in reasons.enumerated() where i != j {
+                XCTAssertNotEqual(r1, r2,
+                    "EndReason \(r1) 과 \(r2) 가 distinct 해야 함")
+            }
+        }
+    }
+
+    /// **PilotDpad keyboardEquivalent — 7 zone 매핑 정합** (T3.7 a11y CRITICAL).
+    /// 회귀 가드: 향후 zone 추가 시 keyboardEquivalent 매핑 누락 차단.
+    func testPilotDpadKeyboardEquivalents() {
+        XCTAssertEqual(DpadZone.up.keyboardEquivalent, KeyEquivalent("w"))
+        XCTAssertEqual(DpadZone.down.keyboardEquivalent, KeyEquivalent("s"))
+        XCTAssertEqual(DpadZone.left.keyboardEquivalent, KeyEquivalent("a"))
+        XCTAssertEqual(DpadZone.right.keyboardEquivalent, KeyEquivalent("d"))
+        XCTAssertEqual(DpadZone.rotateLeft.keyboardEquivalent, KeyEquivalent("q"))
+        XCTAssertEqual(DpadZone.rotateRight.keyboardEquivalent, KeyEquivalent("e"))
+        XCTAssertEqual(DpadZone.stop.keyboardEquivalent, .space)
+    }
 }
