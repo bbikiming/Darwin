@@ -669,7 +669,7 @@ public final class WalkLabSession: ObservableObject {
             do { try bus.setMovingSpeed(joint, speed: cycleSpeed) }
             catch {
                 speedFailures += 1
-                sampleError = "\(joint.name) 속도쓰기: \(error.localizedDescription)"
+                sampleError = "\(joint.name) 목표 속도 전송: \(error.localizedDescription)"
             }
         }
 
@@ -702,7 +702,7 @@ public final class WalkLabSession: ObservableObject {
                 do { _ = try bus.setPosition(joint, raw: rawVal) }
                 catch {
                     positionFailures += 1
-                    sampleError = "\(joint.name) 위치쓰기: \(error.localizedDescription)"
+                    sampleError = "\(joint.name) 목표 위치 전송: \(error.localizedDescription)"
                     if lowerBodyJoints.contains(joint) {
                         lowerBodyPositionFails.insert(joint)
                     }
@@ -833,7 +833,7 @@ public final class WalkLabSession: ObservableObject {
             do { try bus.setMovingSpeed(joint, speed: cycleSpeed) }
             catch {
                 speedFailures += 1
-                sampleError = "\(joint.name) 속도쓰기: \(error.localizedDescription)"
+                sampleError = "\(joint.name) 목표 속도 전송: \(error.localizedDescription)"
             }
         }
 
@@ -873,7 +873,7 @@ public final class WalkLabSession: ObservableObject {
                     do { _ = try bus.setPosition(joint, raw: rawVal) }
                     catch {
                         positionFailures += 1
-                        sampleError = "\(joint.name) 위치쓰기: \(error.localizedDescription)"
+                        sampleError = "\(joint.name) 목표 위치 전송: \(error.localizedDescription)"
                         if lowerBodyJoints.contains(joint) {
                             lowerBodyPositionFails.insert(joint)
                         }

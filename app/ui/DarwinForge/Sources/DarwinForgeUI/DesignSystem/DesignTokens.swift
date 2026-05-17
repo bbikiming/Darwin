@@ -52,10 +52,20 @@ public enum DFColor {
         light: "#FF3B30", dark: "#FF453A",
         highContrastLight: "#C7160C", highContrastDark: "#FF6961"
     )
-    /// 텔레메트리 / 정보 (KS 파랑). High contrast: 더 진한 파랑.
+    /// 텔레메트리 / 정보 (KS 파랑). icon / background tint 용도.
+    /// **주의**: text foregroundStyle 용도로는 `infoText` 사용 (WCAG AA 4.5:1).
+    /// light variant `#5AC8FA` 가 흰 배경 위 약 2.3:1 → small text 부적합.
     public static let info = Color(
         light: "#5AC8FA", dark: "#64D2FF",
         highContrastLight: "#0A75AB", highContrastDark: "#7DDBFF"
+    )
+
+    /// 2026-05-17 a11y audit fix (WCAG 1.4.3): `info` text variant.
+    /// `info` 보다 darker (light) / lighter (dark) — body/small text 대비 4.5:1+.
+    /// PilotHudStrip metricCell value text 등에서 사용.
+    public static let infoText = Color(
+        light: "#0A75AB", dark: "#7DDBFF",
+        highContrastLight: "#06547A", highContrastDark: "#A8E5FF"
     )
     /// 토크 / 모터 시각화 (보라).
     public static let torque = Color(

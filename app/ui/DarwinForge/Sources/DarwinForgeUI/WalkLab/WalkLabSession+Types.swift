@@ -169,7 +169,7 @@ extension WalkLabSession {
             case .lowerBodyWriteFailure:
                 let names = lowerBodyPositionFails.prefix(3).map { $0.name }.joined(separator: ", ")
                 let suffix = sampleError.map { " · 예: \($0)" } ?? ""
-                return "보행 중단 — 하체 위치쓰기 \(lowerBodyPositionFails.count)개 실패 (\(names)). 균형 위험\(suffix)"
+                return "보행 중단 — 하체 목표 위치 전송 \(lowerBodyPositionFails.count)개 실패 (\(names)). 균형 위험\(suffix)"
             case .bulkWriteFailure:
                 let suffix = sampleError.map { " · 예: \($0)" } ?? ""
                 return "보행 중단 — 통신 절반 이상 실패 (위치 \(positionWriteFailures)·속도 \(speedWriteFailures))\(suffix)"

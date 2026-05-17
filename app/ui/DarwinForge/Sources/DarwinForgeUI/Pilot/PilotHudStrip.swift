@@ -208,6 +208,8 @@ public struct PilotHudStrip: View {
     }
 
     /// roll/pitch 가 ±30° 초과면 danger, ±15° 초과면 warning. stale/unavailable 면 별도 색.
+    /// 2026-05-17 a11y audit fix: `DFColor.info` (#5AC8FA, 흰 배경 위 2.3:1) →
+    /// `DFColor.infoText` (#0A75AB, 4.6:1+) — metricCell value text 가 WCAG AA 통과.
     private var imuTint: Color {
         if store.isImuUnavailable { return DFColor.danger }
         if store.isImuStale { return DFColor.warning }
@@ -221,7 +223,7 @@ public struct PilotHudStrip: View {
         let m = max(abs(roll), abs(pitch))
         if m >= 30 { return DFColor.danger }
         if m >= 15 { return DFColor.warning }
-        return DFColor.info
+        return DFColor.infoText
     }
 
     /// IMU 툴팁 — 필터 상태 + 정적 추정의 한계 + 마지막 통신 시각.

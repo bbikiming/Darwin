@@ -476,7 +476,7 @@ public final class ConnectionStore: ObservableObject {
             case .writeFailed(let p, let s, let t, let sample):
                 let suffix = sample.map { " · 예: \($0)" } ?? ""
                 if p > 0 {
-                    return "하체 위치쓰기 \(p)개 실패 — 균형 위험. USB·전원·ID 확인 (관절 총 \(t), 속도쓰기 \(s)개)\(suffix)"
+                    return "하체 목표 위치 전송 \(p)개 실패 — 균형 위험. USB·전원·ID 확인 (관절 총 \(t), 목표 속도 전송 \(s)개)\(suffix)"
                 }
                 return "쓰기 절반 이상 실패 — 위치 \(p)개·속도 \(s)개 (관절 총 \(t))\(suffix)"
             case .criticalLoad(let j):             return "\(j) 부하 위험 — 자동 정지"
@@ -560,7 +560,7 @@ public final class ConnectionStore: ObservableObject {
                 catch {
                     speedFailureCount += 1
                     failedJointsUnique.insert(j)
-                    lastWriteError = "\(j.name) 속도쓰기: \(error.localizedDescription)"
+                    lastWriteError = "\(j.name) 목표 속도 전송: \(error.localizedDescription)"
                 }
             }
             for (j, raw) in step.positions {
@@ -571,7 +571,7 @@ public final class ConnectionStore: ObservableObject {
                     if Self.lowerBodyJoints.contains(j) {
                         lowerBodyPositionFails.insert(j)
                     }
-                    lastWriteError = "\(j.name) 위치쓰기: \(error.localizedDescription)"
+                    lastWriteError = "\(j.name) 목표 위치 전송: \(error.localizedDescription)"
                 }
             }
 
@@ -596,7 +596,7 @@ public final class ConnectionStore: ObservableObject {
 
         // **하체 position write 실패 1개라도 → writeFailed (균형 위험)**.
         if !lowerBodyPositionFails.isEmpty {
-            self.lastSafetyEvent = "🛑 하체 \(lowerBodyPositionFails.count)개 위치쓰기 실패 — 균형 위험"
+            self.lastSafetyEvent = "🛑 하체 \(lowerBodyPositionFails.count)개 목표 위치 전송 실패 — 균형 위험"
             return .writeFailed(
                 positionFailed: positionFailureCount,
                 speedFailed: speedFailureCount,
@@ -953,10 +953,10 @@ public final class ConnectionStore: ObservableObject {
         public var summary: String {
             var bits: [String] = []
             if speedWriteFailures > 0 {
-                bits.append("속도쓰기 실패 \(speedWriteFailures)/\(JointID.allCases.count)")
+                bits.append("목표 속도 전송 실패 \(speedWriteFailures)/\(JointID.allCases.count)")
             }
             if positionWriteFailures > 0 {
-                bits.append("위치쓰기 실패 \(positionWriteFailures)/\(JointID.allCases.count)")
+                bits.append("목표 위치 전송 실패 \(positionWriteFailures)/\(JointID.allCases.count)")
             }
             if cancelledByUser { bits.append("사용자 취소") }
             return bits.joined(separator: " · ")
