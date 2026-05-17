@@ -102,6 +102,62 @@ public final class ConnectionStore: ObservableObject {
     @Published public private(set) var jointConsecutiveFailures: [JointID: Int] = [:]
     /// 개별 모터 "응답 없음" 표시 임계 — 5회 연속 실패 시 UI 에 명시.
     private static let jointFailureDisplayThreshold = 5
+
+    // MARK: - IMU scale 자동 진단 (2026-05-17 사용자 보고 critical)
+
+    /// IMU raw 값 scale 진단 결과. 사용자 보고: `cm.rs` 변환식 `× 2000/32767` 이
+    /// CM-740 펌웨어 (10-bit ADC, raw ~512 center) 와 정합 안 되면 IMU 값이 **32배
+    /// 부정확**. UI 에 0.0° 표시되더라도 실제는 위험 영역 가능.
+    /// 자동 진단: idle robot 은 중력만 받아 |accelZ| ≈ 1g →
+    /// - 16-bit (32767 LSB / 2g): raw ≈ ±16384
+    /// - 10-bit (512 LSB / 2g): raw ≈ ±256
+    public enum ImuScaleSuspicion: String, Equatable, Sendable {
+        /// 진단 불가 — sample 부족 또는 robot 움직임 중.
+        case unknown
+        /// 16-bit 가정 정합 — accel Z |raw| 가 10000-25000 범위.
+        case looksValid16Bit = "정상 (16-bit ADC)"
+        /// 10-bit ADC 의심 — accel Z |raw| 가 100-1000 범위. **변환식 ÷32 오차 위험**.
+        case suspectedLegacy10Bit = "주의 — 10-bit ADC 의심 (값 32배 작음)"
+        /// 범위 밖 — 센서 결함 / IMU register 미지원 / 잘못된 mounting.
+        case outOfRange = "비정상 — 센서 응답 확인 필요"
+    }
+    @Published public private(set) var imuScaleSuspicion: ImuScaleSuspicion = .unknown
+    /// 마지막 N sample 의 |accelZ| 절대값 평균. 0 = 아직 수집 안 됨.
+    @Published public private(set) var imuAccelZMagnitudeAvg: Double = 0
+    private var imuAccelZSamples: [Int16] = []
+    private static let imuScaleSamplesRequired = 25  // 5Hz × 5초 = 안정 추정.
+
+    /// IMU sample 별 호출 — accel Z magnitude 기반 ADC 추정.
+    private func diagnoseImuScale(_ sample: ImuRaw) {
+        imuAccelZSamples.append(sample.accelZ)
+        if imuAccelZSamples.count > Self.imuScaleSamplesRequired {
+            imuAccelZSamples.removeFirst(imuAccelZSamples.count - Self.imuScaleSamplesRequired)
+        }
+        guard imuAccelZSamples.count >= Self.imuScaleSamplesRequired else {
+            // 아직 sample 부족 — unknown 유지.
+            return
+        }
+        // |accelZ| 평균 — robot 이 정지 상태면 중력만 받아 안정.
+        let sumAbs = imuAccelZSamples.reduce(0) { $0 + abs(Double($1)) }
+        let avg = sumAbs / Double(imuAccelZSamples.count)
+        imuAccelZMagnitudeAvg = avg
+
+        // 분류:
+        // - 16-bit (1g = 16384) → idle 시 |accelZ| ~10000-25000 사이
+        // - 10-bit (1g = 512) → idle 시 |accelZ| ~100-1000 사이
+        // - 그 외 → 비정상.
+        let newSuspicion: ImuScaleSuspicion
+        if avg >= 10_000 && avg <= 25_000 {
+            newSuspicion = .looksValid16Bit
+        } else if avg >= 100 && avg <= 1_000 {
+            newSuspicion = .suspectedLegacy10Bit
+        } else {
+            newSuspicion = .outOfRange
+        }
+        if newSuspicion != imuScaleSuspicion {
+            imuScaleSuspicion = newSuspicion
+        }
+    }
     /// 연결 직후 안정화 grace — 이 시점까지는 watchdog disable.
     /// 첫 boardSnapshot 직후 TCP 큐가 비기 전 read를 시도하면 false-positive 가 잦다.
     private var stabilityGraceUntil: Date?
@@ -353,6 +409,11 @@ public final class ConnectionStore: ObservableObject {
         lastTelemetry = nil
         voltageHistory.removeAll()
         avgTempHistory.removeAll()
+        // 2026-05-17 disconnect 시 IMU scale 진단 reset — 다음 연결에서 재진단.
+        imuAccelZSamples.removeAll()
+        imuAccelZMagnitudeAvg = 0
+        imuScaleSuspicion = .unknown
+        jointConsecutiveFailures.removeAll()
         connectedAt = nil
         lastSuccessAt = nil
         lastRoundTripMs = nil
@@ -662,6 +723,11 @@ public final class ConnectionStore: ObservableObject {
         lastTelemetry = nil
         voltageHistory.removeAll()
         avgTempHistory.removeAll()
+        // 2026-05-17 disconnect 시 IMU scale 진단 reset — 다음 연결에서 재진단.
+        imuAccelZSamples.removeAll()
+        imuAccelZMagnitudeAvg = 0
+        imuScaleSuspicion = .unknown
+        jointConsecutiveFailures.removeAll()
         status = .error(message)
         consecutiveBusFailures = 0
 
@@ -1070,6 +1136,8 @@ public final class ConnectionStore: ObservableObject {
                     self.lastImuSuccessAt = Date()
                     self.imuConsecutiveFailures = 0
                     self.lastImuError = nil
+                    // 2026-05-17 IMU scale 자동 진단 — 매 sample 호출.
+                    self.diagnoseImuScale(value)
                 case .failure(let error):
                     self.imuConsecutiveFailures &+= 1
                     self.lastImuError = error.localizedDescription

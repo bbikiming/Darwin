@@ -981,4 +981,43 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertEqual(DpadZone.rotateRight.keyboardEquivalent, KeyEquivalent("e"))
         XCTAssertEqual(DpadZone.stop.keyboardEquivalent, .space)
     }
+
+    // MARK: - 2026-05-17 사용자 보고 critical fix 회귀 가드
+
+    /// **Issue 1 — ImuScaleSuspicion enum 4 case + userMessage 명확성** (사용자 보고).
+    /// 10-bit ADC 의심 case 의 한국어 메시지에 "32배 작음" 포함 검증.
+    func testImuScaleSuspicionUserMessages() {
+        XCTAssertEqual(ConnectionStore.ImuScaleSuspicion.unknown.rawValue, "unknown",
+            "unknown rawValue identity 검증")
+        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.suspectedLegacy10Bit.rawValue.contains("10-bit"),
+            "10-bit 의심 메시지에 명확히 '10-bit' 포함 — 사용자가 즉시 인지")
+        XCTAssertTrue(ConnectionStore.ImuScaleSuspicion.suspectedLegacy10Bit.rawValue.contains("32배"),
+            "사용자 보고 critical: 32배 오차 가능성 명시")
+        XCTAssertEqual(ConnectionStore.ImuScaleSuspicion.looksValid16Bit.rawValue, "정상 (16-bit ADC)")
+        XCTAssertEqual(ConnectionStore.ImuScaleSuspicion.outOfRange.rawValue, "비정상 — 센서 응답 확인 필요")
+    }
+
+    /// **Issue 1 — 신규 store imuScaleSuspicion = .unknown** (sample 부족).
+    func testInitialImuScaleSuspicionUnknown() {
+        let store = ConnectionStore()
+        XCTAssertEqual(store.imuScaleSuspicion, .unknown,
+            "신규 store — IMU sample 0 이므로 unknown")
+        XCTAssertEqual(store.imuAccelZMagnitudeAvg, 0,
+            "신규 store — magnitude 평균 0")
+    }
+
+    /// **Issue 3 — WalkPreflightFailure.balanceCorrectorRequiredForCautionPreset
+    /// userMessage 명확성** (사용자 보고 critical).
+    /// fastWalk 같은 caution 등급 preset 진입 시 차단 메시지 검증.
+    func testBalanceCorrectorRequiredPreflightMessage() {
+        let f = WalkLabSession.WalkPreflightFailure(
+            cause: .balanceCorrectorRequiredForCautionPreset(presetLabel: "빠르게 걷기")
+        )
+        XCTAssertTrue(f.userMessage.contains("빠르게 걷기"),
+            "사용자 facing: preset 이름 포함")
+        XCTAssertTrue(f.userMessage.contains("자세 보정"),
+            "사용자 facing: 다음 행동 안내 ('자세 보정' 토글)")
+        XCTAssertTrue(f.userMessage.contains("낙상 위험"),
+            "사용자 facing: 위험 명시")
+    }
 }

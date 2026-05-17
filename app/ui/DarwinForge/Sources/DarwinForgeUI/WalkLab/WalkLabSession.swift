@@ -290,6 +290,15 @@ public final class WalkLabSession: ObservableObject {
     // MARK: - 실 로봇 연결 (optional)
     /// 환경에서 주입되는 연결 store. nil 이면 sim only.
     private weak var store: ConnectionStore?
+
+    /// 2026-05-17 사용자 보고 critical: IMU scale 진단 결과 noop passthrough.
+    /// FallPreventionMonitor 가 session 만 알기 때문에 session 통해 expose.
+    public var imuScaleSuspicion: ConnectionStore.ImuScaleSuspicion {
+        store?.imuScaleSuspicion ?? .unknown
+    }
+    public var imuAccelZMagnitude: Double {
+        store?.imuAccelZMagnitudeAvg ?? 0
+    }
     /// 마지막 송출 상태 — UI 토스트용.
     @Published public private(set) var lastRobotEvent: String?
     /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
@@ -354,6 +363,10 @@ public final class WalkLabSession: ObservableObject {
             case dxlPowerFailed(String)
             case lowerBodyTorqueFailed([JointID])
             case bulkTorqueFailed(failedCount: Int, total: Int)
+            /// 2026-05-17 사용자 보고 critical fix: caution 등급 preset (fastWalk/turn*)
+            /// 은 정적 plan + IMU balance 미활성 시 실 robot 낙상 위험. balanceCorrection
+            /// 활성화 요구.
+            case balanceCorrectorRequiredForCautionPreset(presetLabel: String)
         }
         public let cause: Cause
         public var userMessage: String {
@@ -363,12 +376,14 @@ public final class WalkLabSession: ObservableObject {
             case .cradleNotConfirmed:
                 return "⚠️ cradle 미확인 — 정비 스탠드 거치 후 다시 시도"
             case .dxlPowerFailed(let e):
-                return "🛑 Dynamixel 전원 ON 실패 — \(e)"
+                return "🛑 모터 전원 ON 실패 — \(e)"
             case .lowerBodyTorqueFailed(let joints):
                 let names = joints.prefix(3).map { $0.name }.joined(separator: ", ")
                 return "🛑 보행 시작 차단 — 하체 토크 \(joints.count)개 실패 (\(names)). USB·전원·ID 확인"
             case .bulkTorqueFailed(let f, let t):
                 return "🛑 보행 시작 차단 — 상체 토크 \(f)/\(t) 실패. 통신 점검"
+            case .balanceCorrectorRequiredForCautionPreset(let label):
+                return "🛑 '\(label)' 시작 차단 — '자세 보정' 토글을 먼저 켜주세요 (IMU 기반 균형 보정 없이 실행 시 낙상 위험)"
             }
         }
     }
@@ -639,6 +654,17 @@ public final class WalkLabSession: ObservableObject {
             let f = WalkPreflightFailure(cause: .cradleNotConfirmed)
             lastPreflightFailure = f
             lastRobotEvent = f.userMessage + " (\(preset.label))"
+            return
+        }
+
+        // 2026-05-17 사용자 보고 critical fix: caution 등급 (fastWalk/turnLeft/turnRight)
+        // 은 정적 plan + IMU balance 미활성 시 실 robot 낙상 위험. WalkStabilityPredictor
+        // 는 사전 휴리스틱일 뿐 실시간 IMU 기반 자세 보정 없음. balanceCorrection 자동
+        // OFF 이면 사용자가 명시 ON 후 재시작 요구.
+        if preset.safety == .caution, !enableBalanceCorrection {
+            let f = WalkPreflightFailure(cause: .balanceCorrectorRequiredForCautionPreset(presetLabel: preset.label))
+            lastPreflightFailure = f
+            lastRobotEvent = f.userMessage
             return
         }
 
@@ -1419,6 +1445,18 @@ public final class WalkLabSession: ObservableObject {
     ///
     /// **Phase D 정정 (Agent 4 P1)**: normal/caution 복귀 시 engine 명령 복원 —
     /// 이전엔 warning 의 0.7× scale 이 영구 잔존.
+    ///
+    /// 2026-05-17 사용자 보고 critical fix: 종전 Warning 모드 70% 감속 은 sim
+    /// engine 의 x_amplitude 만 적용. 실 motor 송출 plan (walkCycleTask) 은 미리
+    /// 합성되어 stride/sideMm/turnDeg 모두 원래 값 그대로 — UI 는 "70% 감속" 표시
+    /// 되지만 실 robot 은 변화 없음 → **사용자 신뢰 손상 + 안전 critical**.
+    ///
+    /// 안전한 새 동작 (Warning 진입 시):
+    ///   - sim engine 70% 감속 (기존)
+    ///   - 실 robot walkCycle 즉시 정지 (cancelWalkCycle) + walkReady 복귀
+    ///   - lastRobotEvent 로 사용자에게 명확 안내: "기울기 22°+ — 감속 정지"
+    ///   - 사용자가 직접 stride 줄여서 재시작 (자동 재시작 안 함 = 안전)
+    /// 즉시 동적 plan 재합성은 위험 (motor 명령 mid-step 갈아치기 → jerk + 낙상 가능).
     private func applyBalanceMitigation() {
         let cmd = effectiveCommand
         switch balanceState {
@@ -1427,18 +1465,27 @@ public final class WalkLabSession: ObservableObject {
             engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
         case .warning:
             // 70% 자동 감속 — sim engine 의 x_amplitude 만 줄임.
-            // (실 motor 송출의 plan 은 미리 합성됨 — 동적 stride 변경은 추후 Sprint.
-            //  대신 `transformPose` 의 corrector 가 매 step pose 보정.)
             engine.setCommand(
                 x: cmd.x * BalanceState.warning.speedScale,
                 y: cmd.y,
                 a: cmd.a,
                 enabled: cmd.enabled
             )
+            // 2026-05-17 사용자 보고 fix: 실 robot 보행 중이면 즉시 정지.
+            // 종전 UI "70% 감속" 표시는 sim 만 — 실 robot 은 미적용으로 거짓 표시였음.
+            // 안전 측에서 보수적: 실 robot 은 일시 정지 + 사용자가 stride 조정 후 재시작.
+            if isRobotWalking, store?.bus != nil {
+                lastRobotEvent = "⚠️ 기울기 22°+ — 실 robot 보행 정지. 슬라이더를 줄이고 다시 시작해 주세요"
+                cancelWalkCycle(eventLabel: "Warning state 자동 정지")
+            }
         case .danger:
             // **Phase C**: sim engine 정지 + `transformPose` 가 lastSafePose 반환.
             // 둘 다 실 motor 의 자세 동결 효과.
             engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
+            if isRobotWalking, store?.bus != nil {
+                lastRobotEvent = "🛑 기울기 28°+ — 자세 동결 (낙상 직전)"
+                cancelWalkCycle(eventLabel: "Danger state 자세 동결")
+            }
         case .emergency:
             // 즉시 L3 게이트 (별도 처리).
             break

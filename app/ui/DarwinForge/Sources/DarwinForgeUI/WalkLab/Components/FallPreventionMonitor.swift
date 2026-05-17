@@ -133,6 +133,10 @@ struct FallPreventionMonitor: View {
                                  leading: "모터")
                         .layoutPriority(1)
                 }
+                // 2026-05-17 사용자 보고 critical: IMU scale 자동 진단 — 위험 상태 표시.
+                // 10-bit ADC 의심 시 |IMU 값이 32배 작음| → UI 0.0° 표시되어도 실제는
+                // 위험 영역. 사용자가 즉시 인지하도록 빨간 chip + 상세 메시지.
+                imuScaleWarningChip
                 HStack(alignment: .firstTextBaseline, spacing: DFSpace.sm) {
                     Text(state.label)
                         .font(DFFont.heroState)
@@ -819,6 +823,40 @@ struct FallPreventionMonitor: View {
         case .sim:   return DFColor.textSecondary
         case .real:  return DFColor.success
         case .stale: return DFColor.warning
+        }
+    }
+
+    /// 2026-05-17 사용자 보고 critical: IMU scale 자동 진단 chip.
+    /// 종전: 사용자가 raw 값 보고 직접 ÷ 32 의문 가져야 함 (PilotImuRawDiagnosticsSheet:252).
+    /// 신규: 매 sample |accelZ| 측정 → 16-bit vs 10-bit 자동 판단 → 빨간 chip.
+    /// 안전 명시: 변환식 자체는 바꾸지 않음 (raw 변경 = 위험). UI 표시만으로 사용자 인지.
+    @ViewBuilder
+    private var imuScaleWarningChip: some View {
+        let suspicion = session.imuScaleSuspicion
+        // sim / unknown — 표시 안 함 (false positive 차단).
+        if session.imuSource == .real,
+           suspicion != .unknown,
+           suspicion != .looksValid16Bit {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.danger)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("IMU 값 신뢰도 — \(suspicion.rawValue)")
+                        .font(DFFont.bodyEmph)
+                        .foregroundStyle(DFColor.danger)
+                    Text("|accelZ| 평균 \(Int(session.imuAccelZMagnitude)) raw — 1g 기준 16-bit는 ~16384, 10-bit는 ~512. 변환식 (forge-core cm.rs) 정정 필요할 수 있음.")
+                        .font(DFFont.micro)
+                        .foregroundStyle(DFColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(DFSpace.xs2)
+            .background(DFColor.danger.opacity(DFOpacity.o12))
+            .clipShape(RoundedRectangle(cornerRadius: DFRadius.tiny))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("IMU 값 신뢰도 경고, \(suspicion.rawValue), accelZ 평균 \(Int(session.imuAccelZMagnitude)) raw")
         }
     }
 
