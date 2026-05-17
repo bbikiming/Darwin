@@ -945,10 +945,10 @@ pub unsafe extern "C" fn fc_motion_play_slot(
     }
     safe_call(|| {
         use forge_core::control::ExecuteOptions;
-        use forge_core::motion::player::MotionPlayer;
         use forge_core::motion::bin4096::read_bin4096_file;
-        use forge_core::synth::library::decode_raw_page;
+        use forge_core::motion::player::MotionPlayer;
         use forge_core::motion::SafetyClass;
+        use forge_core::synth::library::decode_raw_page;
         use std::path::PathBuf;
         use std::sync::atomic::Ordering;
 
@@ -983,7 +983,11 @@ pub unsafe extern "C" fn fc_motion_play_slot(
             .unwrap_or(SafetyClass::Safe);
 
         // chain 로드
-        let depth = if max_chain_depth == 0 { 10 } else { max_chain_depth };
+        let depth = if max_chain_depth == 0 {
+            10
+        } else {
+            max_chain_depth
+        };
         let do_chain = follow_chain != 0;
         let mut pages = Vec::new();
         let mut visited = std::collections::HashSet::new();
@@ -1018,7 +1022,12 @@ pub unsafe extern "C" fn fc_motion_play_slot(
 
         if dry_run != 0 {
             for p in &pages {
-                println!("[dry-run] page {} '{}' {} step(s)", p.id, p.name, p.steps.len());
+                println!(
+                    "[dry-run] page {} '{}' {} step(s)",
+                    p.id,
+                    p.name,
+                    p.steps.len()
+                );
             }
             return FC_OK;
         }
@@ -1083,7 +1092,11 @@ pub unsafe extern "C" fn fc_motion_play_is_running(handle: *mut FcBus) -> c_int 
     safe_call(|| {
         use std::sync::atomic::Ordering;
         let bus = &*handle;
-        if bus.motion_playing.load(Ordering::SeqCst) { 1 } else { 0 }
+        if bus.motion_playing.load(Ordering::SeqCst) {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -1139,7 +1152,10 @@ mod tests {
     #[test]
     fn motion_play_null_handle_returns_invalid() {
         unsafe {
-            assert_eq!(fc_motion_play_slot(ptr::null_mut(), 1, ptr::null(), 1, 0, 0, 0, 0), FC_ERR_INVALID);
+            assert_eq!(
+                fc_motion_play_slot(ptr::null_mut(), 1, ptr::null(), 1, 0, 0, 0, 0),
+                FC_ERR_INVALID
+            );
             assert_eq!(fc_motion_play_cancel(ptr::null_mut()), FC_ERR_INVALID);
             assert_eq!(fc_motion_play_is_running(ptr::null_mut()), FC_ERR_INVALID);
         }
@@ -1185,7 +1201,10 @@ mod tests {
                 1,
                 path.as_ptr(),
                 1, // dry_run
-                0, 0, 0, 0,
+                0,
+                0,
+                0,
+                0,
             );
             assert!(result < 0, "expected error for missing bin, got {result}");
         }

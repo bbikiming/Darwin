@@ -85,10 +85,7 @@ impl MotionPlayer {
                     if !targets.is_empty() {
                         jc.set_positions_many(&targets)?;
                     }
-                    interruptible_sleep(
-                        Duration::from_millis(step.play_ms() as u64),
-                        &self.cancel,
-                    );
+                    interruptible_sleep(Duration::from_millis(step.play_ms() as u64), &self.cancel);
                     if self.cancel.load(Ordering::Relaxed) {
                         return Ok(());
                     }

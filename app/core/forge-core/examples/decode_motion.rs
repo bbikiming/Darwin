@@ -155,11 +155,18 @@ fn rust_array_u16(arr: &[u16]) -> String {
                 .join(", ")
         })
         .collect();
-    format!("[\n            {},\n        ]", chunks.join(",\n            "))
+    format!(
+        "[\n            {},\n        ]",
+        chunks.join(",\n            ")
+    )
 }
 
 fn emit_rust(p: &DecodedPage, safety: &str) -> String {
-    let name_safe: String = p.name.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
+    let name_safe: String = p
+        .name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
     let name_lower = name_safe.to_lowercase();
     let mut out = String::new();
     out.push_str(&format!(
@@ -173,7 +180,10 @@ fn emit_rust(p: &DecodedPage, safety: &str) -> String {
     out.push_str("    MotionPage {\n");
     out.push_str(&format!("        id: {},\n", p.id));
     out.push_str(&format!("        name: \"{}\".to_string(),\n", p.name));
-    out.push_str(&format!("        {}\n", indent(&rust_array_u8("compliance", &p.compliance), "        ")));
+    out.push_str(&format!(
+        "        {}\n",
+        indent(&rust_array_u8("compliance", &p.compliance), "        ")
+    ));
     out.push_str(&format!("        next_page: {},\n", p.next_page));
     out.push_str(&format!("        exit_page: {},\n", p.exit_page));
     out.push_str(&format!("        repeat: {},\n", p.repeat));
@@ -200,7 +210,13 @@ fn emit_rust(p: &DecodedPage, safety: &str) -> String {
 fn indent(s: &str, prefix: &str) -> String {
     s.lines()
         .enumerate()
-        .map(|(i, l)| if i == 0 { l.to_string() } else { format!("{}{}", prefix, l) })
+        .map(|(i, l)| {
+            if i == 0 {
+                l.to_string()
+            } else {
+                format!("{}{}", prefix, l)
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -220,7 +236,9 @@ fn main() {
     }
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() {
-        eprintln!("usage: cargo run -p forge-core --example decode_motion -- <page_id> [<page_id> ...]");
+        eprintln!(
+            "usage: cargo run -p forge-core --example decode_motion -- <page_id> [<page_id> ...]"
+        );
         process::exit(2);
     }
     for arg in args {

@@ -23,9 +23,7 @@ const FLAG_TORQUE_OFF: u16 = 0x2000;
 const SKIP_MARKER: u16 = 32767;
 
 /// OFFICIAL_CATALOG ids (gui_motion.yaml).
-const CATALOG_IDS: &[u8] = &[
-    1, 2, 3, 4, 9, 10, 11, 12, 13, 15, 17, 23, 24, 27, 38, 54,
-];
+const CATALOG_IDS: &[u8] = &[1, 2, 3, 4, 9, 10, 11, 12, 13, 15, 17, 23, 24, 27, 38, 54];
 
 #[derive(Debug, Default, Clone)]
 struct PageVelocityStats {
@@ -120,8 +118,7 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 }
 
 fn main() {
-    let bin_path =
-        "research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin";
+    let bin_path = "research/robotis-official/ROBOTIS-OP2/op2_manager/config/motion_4096.bin";
     let bytes = fs::read(bin_path).expect("read motion_4096.bin");
     let pages = parse_bin4096(&bytes).expect("parse");
 
@@ -222,7 +219,12 @@ fn main() {
     fs::write(&path, &out).expect("write");
 
     eprintln!("Wrote {}", path.display());
-    eprintln!("Overall: p50={:.2} p90={:.2} p95={:.2} p99={:.2} max={:.2} raw/ms",
-        p50, p90, p95, p99, max);
-    eprintln!("Recommend WARN={:.2}, MAX={:.2}", recommended_warn, recommended_fail);
+    eprintln!(
+        "Overall: p50={:.2} p90={:.2} p95={:.2} p99={:.2} max={:.2} raw/ms",
+        p50, p90, p95, p99, max
+    );
+    eprintln!(
+        "Recommend WARN={:.2}, MAX={:.2}",
+        recommended_warn, recommended_fail
+    );
 }

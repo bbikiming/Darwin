@@ -152,10 +152,7 @@ mod tests {
         for (step_idx, step) in p.steps.iter().enumerate() {
             for slot in 1..=20usize {
                 let raw = step.positions[slot];
-                if raw == SKIP_MARKER
-                    || (raw & FLAG_INVALID) != 0
-                    || (raw & FLAG_TORQUE_OFF) != 0
-                {
+                if raw == SKIP_MARKER || (raw & FLAG_INVALID) != 0 || (raw & FLAG_TORQUE_OFF) != 0 {
                     continue;
                 }
                 let Some(joint) = JointId::from_byte(slot as u8) else {
@@ -180,9 +177,7 @@ mod tests {
         }
         // 실측 worst margin = 53 raw (~4.66°) at HeadTilt step 3 (kick 중 공을 보려
         // 머리 40.3° 아래로 향함, 한계 ±45°). 4° 이상이면 안전 마진 확보.
-        eprintln!(
-            "page 12 worst margin: {worst_margin} raw on {worst_joint:?}"
-        );
+        eprintln!("page 12 worst margin: {worst_margin} raw on {worst_joint:?}");
         assert!(
             worst_margin >= 45,
             "page 12 worst margin {worst_margin} raw is below 4° safety margin"
