@@ -175,7 +175,29 @@ public struct RobotScene3D: NSViewRepresentable {
 
             traceNode = SCNNode()
             scene.rootNode.addChildNode(traceNode)
+
+            // 2026-05-17 perf audit CRITICAL fix: SCNNode pool 신규.
+            // 종전: applyFootTrace 매 50ms 마다 200 SCNNode + SCNSphere + SCNMaterial
+            //       alloc → ~600 object/tick × ARC churn = GC pressure 심각.
+            // 신규: pool 200 개 1회 alloc, position + opacity 만 갱신, isHidden 으로
+            //       활성 개수 조절.
+            traceDotPool = (0..<Self.traceDotPoolSize).map { _ in
+                let dot = SCNSphere(radius: 0.011)
+                let m = SCNMaterial()
+                m.diffuse.contents = NSColor.systemOrange
+                m.emission.contents = NSColor.orange
+                m.lightingModel = .constant
+                dot.firstMaterial = m
+                let n = SCNNode(geometry: dot)
+                n.isHidden = true   // 초기 — trace 가 없으면 모두 숨김
+                traceNode.addChildNode(n)
+                return n
+            }
         }
+
+        /// 2026-05-17 perf audit: footTrail max 200 (WalkLabSession.swift:1108) 정합.
+        private static let traceDotPoolSize = 200
+        private var traceDotPool: [SCNNode] = []
 
         // MARK: bindings
 
@@ -189,23 +211,43 @@ public struct RobotScene3D: NSViewRepresentable {
             primitiveRig?.highlight(joint)
         }
 
+        /// 2026-05-17 perf audit fix: pool 재사용 — alloc 0.
+        /// 종전 매 50ms 600+ object alloc/dealloc → 0 alloc, position/opacity 만 update.
         func applyFootTrace(_ trace: [SIMD3<Double>]) {
-            traceNode.childNodes.forEach { $0.removeFromParentNode() }
-            guard trace.count > 1 else { return }
-            for (idx, p) in trace.enumerated() {
-                let alpha = CGFloat(idx) / CGFloat(max(trace.count - 1, 1))
-                let dot = SCNSphere(radius: 0.011)
-                let m = SCNMaterial()
-                m.diffuse.contents = NSColor.systemOrange
-                    .withAlphaComponent(0.25 + alpha * 0.65)
-                m.emission.contents = NSColor.orange.withAlphaComponent(alpha * 0.55)
-                m.lightingModel = .constant
-                dot.firstMaterial = m
-                let n = SCNNode(geometry: dot)
-                n.position = SCNVector3(-CGFloat(p.y),
-                                        CGFloat(p.z) * 0.5 + 0.001,
-                                        -CGFloat(p.x))
-                traceNode.addChildNode(n)
+            let activeCount = min(trace.count, traceDotPool.count)
+
+            // trace.count < 2 (점만 있음) — 전부 숨김.
+            guard trace.count > 1 else {
+                for node in traceDotPool where !node.isHidden {
+                    node.isHidden = true
+                }
+                return
+            }
+
+            // 활성 노드 — position + opacity update.
+            for idx in 0..<activeCount {
+                let p = trace[idx]
+                let alpha = CGFloat(idx) / CGFloat(max(activeCount - 1, 1))
+                let node = traceDotPool[idx]
+                node.position = SCNVector3(-CGFloat(p.y),
+                                           CGFloat(p.z) * 0.5 + 0.001,
+                                           -CGFloat(p.x))
+                // material 은 1회 alloc된 sphere 의 first material — opacity 만 갱신.
+                if let mat = node.geometry?.firstMaterial {
+                    mat.diffuse.contents = NSColor.systemOrange
+                        .withAlphaComponent(0.25 + alpha * 0.65)
+                    mat.emission.contents = NSColor.orange
+                        .withAlphaComponent(alpha * 0.55)
+                }
+                if node.isHidden { node.isHidden = false }
+            }
+
+            // 비활성 노드 — 숨김 (alloc 없이 visibility 토글만).
+            if activeCount < traceDotPool.count {
+                for idx in activeCount..<traceDotPool.count {
+                    let node = traceDotPool[idx]
+                    if !node.isHidden { node.isHidden = true }
+                }
             }
         }
 
