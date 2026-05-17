@@ -177,6 +177,11 @@ public struct PilotActionBar: View {
         .disabled(!isEnabled)
         .help(tooltip(meta))
         .keyboardShortcut(KeyEquivalent(Character("\(keyIndex)")), modifiers: [])
+        // 2026-05-17 a11y: VoiceOver — 한국어 이름 + 안전 등급 + 단축키.
+        // 종전엔 라벨 VStack 안 텍스트 3개 (이름/duration/등급) 가 한 줄로 합쳐져
+        // 읽혔음 → 사용자 인지 어려움.
+        .accessibilityLabel(meta.displayNameKo)
+        .accessibilityHint("\(meta.safetyClass.koreanLabel), \(meta.durationMs/1000)초, 단축키 \(keyIndex)")
     }
 
     private func safetyColor(_ s: SafetyClass) -> Color {

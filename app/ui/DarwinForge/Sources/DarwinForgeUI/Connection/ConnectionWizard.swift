@@ -345,7 +345,7 @@ public struct ConnectionWizardView: View {
                     .foregroundStyle(DFColor.forge)
             }
             VStack(alignment: .leading, spacing: DFSpace.xs) {
-                Text("한 번 클릭으로 연결")
+                Text("자동 연결")
                     .font(DFFont.title)
                 Text("Mac이 USB·이더넷·LAN·mDNS를 동시에 검색해 가장 빠른 경로로 자동 연결합니다.")
                     .font(DFFont.caption)

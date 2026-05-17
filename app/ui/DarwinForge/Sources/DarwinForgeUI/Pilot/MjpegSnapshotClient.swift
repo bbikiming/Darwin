@@ -134,7 +134,7 @@ public enum CameraFailureReason: Equatable, Sendable {
         case .httpStatus(let c): return "HTTP \(c)"
         case .decodeFailed:      return "디코딩 실패"
         case .invalidURL:        return "URL 오류"
-        case .other:             return "오류"
+        case .other:             return "연결 끊김"
         }
     }
 

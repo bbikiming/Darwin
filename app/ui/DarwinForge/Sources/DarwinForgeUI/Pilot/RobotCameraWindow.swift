@@ -320,7 +320,7 @@ public struct RobotCameraWindow: View {
         case .idle:        return "대기"
         case .connecting:  return "연결 중"
         case .live:        return "수신 중 (LIVE)"
-        case .failed:      return "오류"
+        case .failed:      return "영상 받기 실패"
         }
     }
 

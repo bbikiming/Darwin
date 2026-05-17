@@ -201,7 +201,7 @@ public struct PoseInspector: View {
                         .font(.system(size: DFFontSize.s9))
                         .foregroundStyle(DFColor.warning)
                 } else {
-                    Text("raw \(raw)")
+                    Text("원시값 \(raw)")
                         .font(.system(size: DFFontSize.s9, design: .monospaced))
                         .foregroundStyle(DFColor.textSecondary)
                 }

@@ -126,10 +126,10 @@ public struct AdvancedSlidersPanel: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
             .padding(.top, DFSpace.xs)
-            .help("Smart clamp 무시. critical 점수일 때는 여전히 시작 차단됨.")
+            .help("안전 한도 무시 — 위험 점수일 때는 여전히 시작 차단됨.")
 
             if session.forceOverrideSafety {
-                Text("⚠️ Smart clamp 가 해제됨. 점수가 critical (≥ 80) 이면 시작은 여전히 차단됩니다.")
+                Text("⚠️ 안전 한도 해제 중 — 위험 점수 (≥ 80) 면 시작은 여전히 차단됩니다.")
                     .font(.system(size: DFFontSize.s10))
                     .foregroundStyle(DFColor.danger)
                     .padding(.horizontal, DFSpace.xs)

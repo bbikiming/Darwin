@@ -215,8 +215,9 @@ public struct RootView: View {
     // MARK: - Quick connect CTA
 
     /// 우측 상단의 명확한 CTA — 클릭 한 번으로 이더넷 직결 192.168.123.1:5530 연결.
+    /// 2026-05-17 UX 통일: "빠른 연결" / "한 번 클릭으로 연결" 혼용 → "자동 연결" 통일.
     /// 상태별 시각 강조:
-    ///   - 미연결: forge 색 ⚡ "빠른 연결" — 메인 CTA
+    ///   - 미연결: forge 색 ⚡ "자동 연결" — 메인 CTA
     ///   - 연결중: 회전 indicator
     ///   - 연결됨: success 색 ✓ "연결 해제"
     ///   - 에러:   danger 색 ↻ 에러 메시지 표시 + 클릭 시 재시도
@@ -224,7 +225,7 @@ public struct RootView: View {
     private var quickConnectCTA: some View {
         switch store.status {
         case .disconnected:
-            quickConnectButton(label: "빠른 연결", icon: "bolt.fill", tint: DFColor.forge)
+            quickConnectButton(label: "자동 연결", icon: "bolt.fill", tint: DFColor.forge)
 
         case .error(let msg):
             Button {

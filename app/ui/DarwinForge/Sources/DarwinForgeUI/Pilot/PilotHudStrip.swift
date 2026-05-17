@@ -170,10 +170,10 @@ public struct PilotHudStrip: View {
                            tint: PilotColor.comingSoon,
                            value: "OFF")
                     .comingSoon(
-                        "v1.5+",
+                        "준비 중",
                         title: "IMU 텔레메트리 (roll / pitch)",
-                        why: "사용자가 feature picker 에서 'IMU + 자동복구' 활성화 필요",
-                        when: "Sprint 18",
+                        why: "feature picker 에서 'IMU + 자동복구' 활성화 필요",
+                        when: "다음 업데이트",
                         alternative: "지금: 전압·온도·세션 모니터링"
                     )
             }
@@ -266,12 +266,12 @@ public struct PilotHudStrip: View {
                 metricCell(label: "자동복구",
                            icon: "shield.slash.fill",
                            tint: PilotColor.comingSoon,
-                           value: "v1.1")
+                           value: "준비 중")
                     .comingSoon(
-                        "v1.1",
+                        "준비 중",
                         title: "자동 낙상 복구 (page 10/11)",
-                        why: "IMU read + FallRecoveryCoordinator 가 v1.1 에 추가",
-                        when: "Sprint 16",
+                        why: "IMU read + FallRecoveryCoordinator 가 다음 업데이트에 들어와요",
+                        when: "다음 업데이트",
                         alternative: "지금: ⌘⇧. E-stop 으로 모터 토크 OFF"
                     )
             }

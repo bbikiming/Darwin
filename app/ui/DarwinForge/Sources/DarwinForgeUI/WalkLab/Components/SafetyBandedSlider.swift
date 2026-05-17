@@ -133,7 +133,59 @@ public struct SafetyBandedSlider: View {
                 .frame(height: thumbSize)
             }
             .frame(height: 16)
+            // 2026-05-17 a11y: 키보드 사용자 — 화살표 키로 값 조정.
+            // 종전엔 DragGesture 만 — 운동/시각 장애 사용자가 슬라이더 사용 불가.
+            // ←/→ = ±1% (정밀), ⇧+←/→ = ±5% (큰 단계).
+            .focusable()
+            .onKeyPress(.leftArrow) {
+                stepValue(byPercent: -0.01)
+                return .handled
+            }
+            .onKeyPress(.rightArrow) {
+                stepValue(byPercent: +0.01)
+                return .handled
+            }
+            .onKeyPress(keys: [.leftArrow], phases: .down) { press in
+                if press.modifiers.contains(.shift) {
+                    stepValue(byPercent: -0.05)
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress(keys: [.rightArrow], phases: .down) { press in
+                if press.modifiers.contains(.shift) {
+                    stepValue(byPercent: +0.05)
+                    return .handled
+                }
+                return .ignored
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityValue("\(unitLabel(value)), \(currentZoneAccessibilityLabel)")
+            .accessibilityHint("화살표 키로 조정, 쉬프트 누르고 5% 단위")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: stepValue(byPercent: +0.05)
+                case .decrement: stepValue(byPercent: -0.05)
+                @unknown default: break
+                }
+            }
         }
+    }
+
+    /// 2026-05-17 a11y: 키보드 / VoiceOver 로 값 조정 helper.
+    /// percent: 0..1 of range, signed.
+    private func stepValue(byPercent percent: Double) {
+        let span = range.upperBound - range.lowerBound
+        let delta = span * percent
+        value = clampWithCap(value + delta)
+    }
+
+    /// 현재 zone (안전/주의/위험) VoiceOver 라벨 — 색 dependency 제거 (WCAG 1.4.1).
+    private var currentZoneAccessibilityLabel: String {
+        if bands.safeRange.contains(value) { return "안전" }
+        if bands.cautionRange.contains(value) { return "주의" }
+        return "위험"
     }
 
     // MARK: - Drag
