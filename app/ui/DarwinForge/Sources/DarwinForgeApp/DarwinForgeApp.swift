@@ -112,6 +112,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.titleVisibility = .hidden
         w.collectionBehavior.formUnion([.fullScreenPrimary, .fullScreenAllowsTiling])
         w.styleMask.formUnion([.resizable])
+        // 2026-05-17 사용자 요청: zoom (+ 버튼) 한 번 클릭 = fullscreen 진입.
+        // 종전: macOS 표준 동작 → click = visibleFrame maximize / hover = sub-menu
+        //       에서 "전체 화면" 별도 선택. 두 번 액션 필요.
+        // 신규: click action 자체를 toggleFullScreen 으로 redirect. hover sub-menu
+        //       (전체 화면 / 화면 왼쪽 / 화면 오른쪽) 는 macOS 표준이라 그대로 유지.
+        Self.installFullScreenZoomAction(on: w)
+    }
+
+    /// 2026-05-17: zoom 버튼 (+) 의 target/action 을 toggleFullScreen 으로 교체.
+    /// SwiftUI WindowGroup 의 internal delegate 우회 — NSButton action 직접 set 은
+    /// SwiftUI 의 window 관리와 충돌 없음 (Apple HIG 표준 NSWindow API).
+    private static func installFullScreenZoomAction(on w: NSWindow) {
+        guard let zoomButton = w.standardWindowButton(.zoomButton) else { return }
+        // 중복 install 차단 — action 이 이미 우리 selector 면 skip.
+        let selector = #selector(AppDelegate.handleZoomButtonClick(_:))
+        if zoomButton.action == selector { return }
+        zoomButton.target = NSApp.delegate as? AppDelegate
+        zoomButton.action = selector
+    }
+
+    /// zoom 버튼 클릭 핸들러 — fullscreen toggle.
+    /// 이미 fullscreen 이면 종료, 일반 모드면 진입.
+    @objc func handleZoomButtonClick(_ sender: NSButton) {
+        // sender.window 가 nil 가능 (theoretical) — fallback 으로 keyWindow.
+        let target = sender.window ?? NSApp.keyWindow
+        target?.toggleFullScreen(nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
