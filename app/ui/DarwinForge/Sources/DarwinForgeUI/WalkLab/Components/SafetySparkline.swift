@@ -47,7 +47,14 @@ struct SafetySparkline: View {
     let title: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DFSpace.micro2) {
+        // 2026-05-17 시스템 경계 가드: caller 가 NaN/Inf range 보내도 차트 무너지지 않게.
+        // ZStack/.offset y 좌표 = NaN 시 SwiftUI 런타임 경고 발생.
+        let ySpan = valueRange.upperBound - valueRange.lowerBound
+        let isValueRangeValid = valueRange.lowerBound.isFinite
+            && valueRange.upperBound.isFinite
+            && ySpan > 0 && ySpan.isFinite
+        let hasData = samples.count >= 2
+        return VStack(alignment: .leading, spacing: DFSpace.micro2) {
             HStack(spacing: DFSpace.xs) {
                 Text(title)
                     .font(DFFont.sectionLabel)
@@ -55,77 +62,101 @@ struct SafetySparkline: View {
                 // **2026-05-16 시인성**: 트렌드 화살표 — 최근 3 sample slope.
                 trendArrow
                 Spacer()
-                if let l = currentValueLabel {
+                // 2026-05-17 a11y/empty: 데이터 수신 전까지 currentValueLabel 숨김.
+                // sample 0~1 시 stale value 노출 방지 — 종전엔 empty overlay 만 차트
+                // 가렸지만 header 의 +0.0° 가 그대로 노출.
+                if hasData, let l = currentValueLabel {
                     Text(l)
                         .font(DFFont.dataSmall)
                         .foregroundStyle(lineColor)
                         .lineLimit(1)
                 }
             }
-            GeometryReader { geo in
-                ZStack(alignment: .trailing) {
-                    Canvas { ctx, size in
-                        drawChart(ctx: ctx, size: size)
-                    }
-                    .background(DFColor.textSecondary.opacity(DFOpacity.o06).opacity(0.7))
-                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.statusTile))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DFRadius.statusTile)
-                            .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
-                                    lineWidth: DFSize.borderHairline)
-                    )
-                    .frame(width: geo.size.width, height: geo.size.height)
+            // 2026-05-17 구조 재설계: chart canvas + axis column 분리 HStack.
+            // 종전 ZStack(.trailing) + thresholdLabels.offset(x: -2pt) 이 차트
+            // 캔버스 안쪽에 라벨 박혀 데이터 라인과 겹쳤음 (사용자 보고 결함).
+            HStack(spacing: DFSpace.micro2) {
+                GeometryReader { geo in
+                    ZStack {
+                        Canvas { ctx, size in
+                            drawChart(ctx: ctx, size: size)
+                        }
+                        .background(DFColor.textSecondary.opacity(DFOpacity.o06).opacity(0.7))
+                        .clipShape(RoundedRectangle(cornerRadius: DFRadius.statusTile))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DFRadius.statusTile)
+                                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle),
+                                        lineWidth: DFSize.borderHairline)
+                        )
+                        .frame(width: geo.size.width, height: geo.size.height)
 
-                    // **2026-05-16 시인성**: 임계 값 라벨 (우측 끝).
-                    // NASA PFD 패턴 — pilot 가 정확한 threshold 값 즉시 인지.
-                    thresholdLabels(height: geo.size.height)
-
-                    // **2026-05-16 시인성**: empty state — 데이터 미수신 시.
-                    if samples.count < 2 {
-                        emptyStateOverlay
+                        if !hasData {
+                            emptyStateOverlay
+                        }
                     }
                 }
+                // y 축 라벨 컬럼 — 차트와 동일 높이 자동 매칭 (HStack vertical fill).
+                GeometryReader { geo in
+                    axisColumn(height: geo.size.height, isValid: isValueRangeValid)
+                }
+                .frame(width: Self.axisColumnW)
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title) 시계열 — 현재 \(currentValueLabel ?? "값 없음")\(trendAccessibilityLabel)")
+        .accessibilityLabel(combinedAccessibilityLabel)
     }
 
     // MARK: - 시인성 helpers (2026-05-16)
 
     /// 최근 3 sample 의 slope 기반 트렌드 — ↑ / → / ↓ Image.
     /// Apple Health 패턴 — 트렌드 즉시 인지.
+    /// 2026-05-17 layout fix: .unknown 시 EmptyView 가 Spacer 폭을 흔들어 header
+    /// 가 sample 수신 초기 (0→3개) 에 깜빡임. invisible placeholder 로 고정 폭 유지.
     @ViewBuilder
     private var trendArrow: some View {
-        let trend = computeTrend()
-        switch trend {
-        case .rising:
-            Image(systemName: "arrow.up.right")
-                .font(DFFont.micro)
-                .foregroundStyle(DFColor.severe)
-                .accessibilityHidden(true)
-        case .falling:
-            Image(systemName: "arrow.down.right")
-                .font(DFFont.micro)
-                .foregroundStyle(DFColor.success)
-                .accessibilityHidden(true)
-        case .flat:
-            Image(systemName: "arrow.right")
-                .font(DFFont.micro)
-                .foregroundStyle(DFColor.textSecondary)
-                .accessibilityHidden(true)
-        case .unknown:
-            EmptyView()
+        Group {
+            switch computeTrend() {
+            case .rising:
+                Image(systemName: "arrow.up.right")
+                    .foregroundStyle(DFColor.severe)
+            case .falling:
+                Image(systemName: "arrow.down.right")
+                    .foregroundStyle(DFColor.success)
+            case .flat:
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(DFColor.textSecondary)
+            case .unknown:
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(.clear)
+            }
         }
+        .font(DFFont.micro)
+        .accessibilityHidden(true)
     }
 
-    private var trendAccessibilityLabel: String {
-        switch computeTrend() {
-        case .rising: return ", 트렌드 상승"
-        case .falling: return ", 트렌드 하강"
-        case .flat: return ", 트렌드 평탄"
-        case .unknown: return ""
+    /// 2026-05-17 a11y: VoiceOver 통합 라벨 — 종전엔 `currentValueLabel` + 트렌드만,
+    /// 임계값 자체 (15/22/30°) 가 빠져 시각 외 사용자는 "위험 구간 여부" 판단 불가.
+    /// 안전 모니터링 컨텍스트에서 critical — WCAG 1.3.1 / 1.4.1 정합.
+    private var combinedAccessibilityLabel: String {
+        var parts: [String] = ["\(title) 시계열"]
+        if samples.count >= 2, let l = currentValueLabel {
+            parts.append("현재 \(l)")
+        } else {
+            parts.append("데이터 수집 중")
         }
+        if !thresholds.isEmpty {
+            let summary = thresholds
+                .map { String(format: "%.0f", $0.value) }
+                .joined(separator: ", ")
+            parts.append("임계값 \(summary)")
+        }
+        switch computeTrend() {
+        case .rising: parts.append("트렌드 상승")
+        case .falling: parts.append("트렌드 하강")
+        case .flat: parts.append("트렌드 평탄")
+        case .unknown: break
+        }
+        return parts.joined(separator: ", ")
     }
 
     private enum Trend { case rising, falling, flat, unknown }
@@ -143,57 +174,60 @@ struct SafetySparkline: View {
         return delta > 0 ? .rising : .falling
     }
 
-    /// 임계 값 라벨 — 차트 우측 가장자리. 사용자가 정확한 threshold 인지.
+    /// 2026-05-17 구조: y 축 라벨 컬럼 — 차트 우측 분리 lane.
+    /// ZStack(.topLeading) + .offset(y:) 으로 정확한 y 좌표 정렬.
+    /// 종전 thresholdLabels 의 `.offset(x: -chartPad)` 차트 안쪽 cheat 제거.
     @ViewBuilder
-    private func thresholdLabels(height: CGFloat) -> some View {
-        let ySpan = valueRange.upperBound - valueRange.lowerBound
-        if ySpan > 0 {
-            ZStack(alignment: .topTrailing) {
+    private func axisColumn(height: CGFloat, isValid: Bool) -> some View {
+        ZStack(alignment: .topLeading) {
+            if isValid {
                 ForEach(Array(thresholds.enumerated()), id: \.offset) { _, thr in
-                    thresholdLabelPair(threshold: thr,
-                                       height: height,
-                                       yMin: valueRange.lowerBound,
-                                       yMax: valueRange.upperBound)
+                    axisLabelPair(threshold: thr, height: height,
+                                  yMin: valueRange.lowerBound,
+                                  yMax: valueRange.upperBound)
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityHidden(true)
     }
 
     @ViewBuilder
-    private func thresholdLabelPair(threshold thr: Threshold,
-                                    height: CGFloat,
-                                    yMin: Double, yMax: Double) -> some View {
+    private func axisLabelPair(threshold thr: Threshold,
+                               height: CGFloat,
+                               yMin: Double, yMax: Double) -> some View {
         let ySpan = yMax - yMin
-        // 양수 영역.
-        if thr.value <= yMax, thr.value >= yMin {
+        // 양수 라벨.
+        if thr.value <= yMax, thr.value >= yMin, ySpan > 0 {
             let y = CGFloat((yMax - thr.value) / ySpan) * height
-            thresholdLabelText(thr.value, color: thr.color)
-                .offset(x: -Self.chartPad, y: y - Self.thresholdLabelVCenter)
+            axisLabel(thr.value, color: thr.color)
+                .offset(y: y - Self.axisLabelVCenter)
         }
-        // 음수 영역 (대칭).
-        if yMin < 0, thr.value > 0, -thr.value >= yMin {
+        // 음수 대칭 라벨.
+        if yMin < 0, thr.value > 0, -thr.value >= yMin, ySpan > 0 {
             let y = CGFloat((yMax - (-thr.value)) / ySpan) * height
-            thresholdLabelText(-thr.value, color: thr.color)
-                .offset(x: -Self.chartPad, y: y - Self.thresholdLabelVCenter)
+            axisLabel(-thr.value, color: thr.color)
+                .offset(y: y - Self.axisLabelVCenter)
         }
     }
 
-    /// Threshold label vertical center offset — label height (7pt font + 2pt
-    /// vertical padding = ~11pt) 의 절반. line y 좌표 가 label 중앙에 오도록
-    /// 위로 이동. 7pt + 2pt × 2 / 2 ≈ 5.5 → 6 (반올림, 시각 적정).
-    private static let thresholdLabelVCenter: CGFloat = 6
-
+    /// 2026-05-17 시인성 fix: 7pt × opacity(0.6) Capsule → 9pt × full opacity.
+    /// WCAG 2.2 AA 4.5:1 대비 확보 + safety-critical 정보 가독성.
     @ViewBuilder
-    private func thresholdLabelText(_ value: Double, color: Color) -> some View {
+    private func axisLabel(_ value: Double, color: Color) -> some View {
         Text(value >= 0 ? String(format: "%+.0f", value) : String(format: "%.0f", value))
-            .font(DFFont.microThreshold)
-            .foregroundStyle(color.opacity(DFOpacity.dim))
-            .padding(.horizontal, DFSpace.micro2)
-            .background(
-                Capsule().fill(DFColor.canvas.opacity(DFOpacity.o85))
-            )
+            .font(DFFont.micro)
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .accessibilityHidden(true)
     }
+
+    /// Axis 라벨 컬럼 폭 — `+30` 9pt monospaced (~22pt 폭) + 좌우 여유 8pt.
+    /// 3자리 (`+100` / `-100`) 도 `lineLimit(1)` + `fixedSize` 로 안전.
+    private static let axisColumnW: CGFloat = 30
+    /// Axis 라벨 vertical center offset — 9pt 폰트 lineHeight (~11pt) 절반.
+    private static let axisLabelVCenter: CGFloat = 5
 
     /// Empty state — sample 미충분 시 안내.
     /// NN/g *Empty States* 가이드 — "no data" 상태도 명시.
