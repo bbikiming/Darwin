@@ -239,14 +239,31 @@ public struct MotionStudioView: View {
 
             Divider().padding(.vertical, DFSpace.xs)
 
+            // 2026-05-17 카테고리 그룹핑 — Section 으로 묶음 (사용자 가독성).
+            // MotionStudioCategory.categorize(_:) 가 id/name 기반 자동 분류.
+            let grouped = groupedPagesByCategory()
             List(selection: Binding(
                 get: { selectedPageIdx },
                 set: { if let v = $0 { selectedPageIdx = v; selectedStep = 0; applySelectedStepToPose() } }
             )) {
-                ForEach(Array(motion.pages.enumerated()), id: \.offset) { idx, page in
-                    pageListRow(idx: idx, page: page)
-                        .tag(idx)
-                        .contextMenu { pageContextMenu(at: idx) }
+                ForEach(grouped, id: \.category) { group in
+                    Section {
+                        ForEach(group.entries, id: \.idx) { entry in
+                            if entry.idx < motion.pages.count {
+                                pageListRow(idx: entry.idx, page: motion.pages[entry.idx])
+                                    .tag(entry.idx)
+                                    .contextMenu { pageContextMenu(at: entry.idx) }
+                            }
+                        }
+                    } header: {
+                        HStack(spacing: DFSpace.xs) {
+                            Image(systemName: group.category.icon)
+                                .foregroundStyle(DFColor.accent)
+                            Text("\(group.category.label) (\(group.entries.count))")
+                                .font(DFFont.caption)
+                                .foregroundStyle(DFColor.textSecondary)
+                        }
+                    }
                 }
             }
             .listStyle(.sidebar)
@@ -280,6 +297,38 @@ public struct MotionStudioView: View {
                 Text("이 동작을 삭제합니다.")
             }
         }
+    }
+
+    /// 2026-05-17 카테고리 그룹핑 — 페이지를 카테고리별로 묶고 정렬 순서 적용.
+    /// `MotionStudioCategory.sortOrder` 로 카테고리 자체 순서 결정 (기본 → 공식 → ...).
+    /// 각 카테고리 안에서는 원래 idx 순서 유지 (사용자 입력/페이지 ID 순서 보존).
+    private struct CategoryGroup: Hashable {
+        let category: MotionStudioCategory
+        let entries: [Entry]
+        struct Entry: Hashable, Identifiable {
+            let idx: Int
+            let pageId: UInt8
+            let pageName: String
+            // page 자체는 Hashable 가능 — id+name 으로 충분 (정렬 / list 진단용).
+            var id: Int { idx }
+            // List 가 row 렌더링 시 실제 MotionPage 가 필요한 경우 ForEach 안에서
+            // motion.pages[idx] 로 다시 가져옴.
+        }
+        func hash(into hasher: inout Hasher) { hasher.combine(category) }
+        static func == (a: CategoryGroup, b: CategoryGroup) -> Bool {
+            a.category == b.category && a.entries.count == b.entries.count
+        }
+    }
+
+    private func groupedPagesByCategory() -> [CategoryGroup] {
+        var buckets: [MotionStudioCategory: [CategoryGroup.Entry]] = [:]
+        for (idx, page) in motion.pages.enumerated() {
+            let cat = MotionStudioCategory.categorize(page)
+            buckets[cat, default: []].append(.init(idx: idx, pageId: page.id, pageName: page.name))
+        }
+        return buckets
+            .map { CategoryGroup(category: $0.key, entries: $0.value) }
+            .sorted { $0.category.sortOrder < $1.category.sortOrder }
     }
 
     /// 페이지 list row — 호버 시 우측에 ⋯ 메뉴 버튼 노출.
@@ -1319,9 +1368,16 @@ extension MotionStudioView {
         // 실 ROBOTIS raw 송출은 `forge motion play --slot N --bin <path>` 사용.
         let officialCatalog = OfficialCatalogReference.allPages(startId: 1)
 
+        // 2026-05-17 신규 mixamo 스타일 33개 — ID 150-182 (UInt8 안전 범위).
+        // 기존: official 1-54, walkProgression 110-115, ergonomic 120-125,
+        //       greeting 130-134, social 140-143, basic 200-204, library 220-244.
+        // 150-182 충돌 없음. 250+ 시작 시 UInt8 overflow trap.
+        let mixamoExtras = mixamoStyleStarterPages(startId: 150)
+
         return [idle, tPose, bow, wave, sit] + extras
              + officialCatalog
              + walkTest + ergonomic + greetings + social
+             + mixamoExtras
     }
 
     /// `walkReady` 의 현재 raw 값에서 각 관절에 delta(°) 를 더한 새 pose.
@@ -1435,6 +1491,99 @@ extension MotionStudioView {
         pages.append(single(id, "요가 — 전사 자세", "warrior_pose", playMs: 1500, pauseMs: 2000)); id += 1
         // 요가 — 산 자세
         pages.append(single(id, "요가 — 산 자세", "mountain_pose", playMs: 1200, pauseMs: 1500)); id += 1
+
+        // 2026-05-17 신규 mixamo 스타일 motion 33개 추가 시도 — 후속 commit 에서
+        // 진단 후 별도 추가 예정. 본 commit 은 카테고리 그룹핑 UI 만.
+
+        return pages
+    }
+
+    /// 2026-05-17 신규: mixamo 스타일 motion 30+ 추가.
+    /// libraryStarterPages 와 별도 helper — 진단 용이성 (격리 가능).
+    /// 같은 single/oscillate 헬퍼 사용 (guard let nil-safe).
+    fileprivate static func mixamoStyleStarterPages(startId: UInt8) -> [MotionPage] {
+        func single(_ id: UInt8, _ name: String, _ poseId: String,
+                    playMs: Int = 800, pauseMs: Int = 200) -> MotionPage {
+            guard let p = PoseLibrary.get(poseId) else {
+                // ID 가 PoseLibrary 에 없으면 walk_ready hold 로 fallback — 안전.
+                return MotionPage(id: id, name: name, steps: [
+                    .from(pose: .walkReady, playMs: 500, pauseMs: 200)
+                ])
+            }
+            return MotionPage(id: id, name: name, steps: [
+                .from(pose: .walkReady, playMs: 300, pauseMs: 0),
+                .from(pose: p.pose, playMs: playMs, pauseMs: pauseMs),
+                .from(pose: .walkReady, playMs: 500, pauseMs: 200)
+            ])
+        }
+        func oscillate(_ id: UInt8, _ name: String,
+                       _ a: String, _ b: String, times: Int = 3,
+                       stepMs: Int = 250) -> MotionPage {
+            guard let pa = PoseLibrary.get(a), let pb = PoseLibrary.get(b) else {
+                return MotionPage(id: id, name: name, steps: [
+                    .from(pose: .walkReady, playMs: 500, pauseMs: 200)
+                ])
+            }
+            var steps: [MotionStep] = [
+                .from(pose: .walkReady, playMs: 200, pauseMs: 0),
+                .from(pose: pa.pose, playMs: 400, pauseMs: 0)
+            ]
+            for _ in 0..<times {
+                steps.append(.from(pose: pb.pose, playMs: stepMs, pauseMs: 0))
+                steps.append(.from(pose: pa.pose, playMs: stepMs, pauseMs: 0))
+            }
+            steps.append(.from(pose: .walkReady, playMs: 500, pauseMs: 200))
+            return MotionPage(id: id, name: name, steps: steps)
+        }
+
+        var pages: [MotionPage] = []
+        var id = startId
+
+        // === 인사 변형 (5) ===
+        pages.append(single(id, "정중한 인사 (느리게)", "bow_60", playMs: 1500, pauseMs: 800)); id += 1
+        pages.append(single(id, "가벼운 인사 (목례)", "nod_target", playMs: 500, pauseMs: 300)); id += 1
+        pages.append(single(id, "양손 흔들기", "hands_up", playMs: 600, pauseMs: 200)); id += 1
+        pages.append(oscillate(id, "인사 + 박수 환영", "bow_60", "clap_apart", times: 2, stepMs: 400)); id += 1
+        pages.append(oscillate(id, "양쪽 손 흔들기 콤보", "wave_left", "wave_right", times: 4, stepMs: 350)); id += 1
+
+        // === 격투 변형 (6) ===
+        pages.append(oscillate(id, "잽 — 빠른 펀치 (4회)", "punch_left", "punch_right", times: 4, stepMs: 200)); id += 1
+        pages.append(oscillate(id, "원투 콤보 + 가드", "punch_right", "fighting_stance", times: 3, stepMs: 300)); id += 1
+        pages.append(oscillate(id, "발차기 좌우 콤보", "kick_forward_right", "kick_forward_left", times: 2, stepMs: 500)); id += 1
+        pages.append(single(id, "백 킥 (오른발)", "kick_back_right", playMs: 600, pauseMs: 300)); id += 1
+        pages.append(single(id, "복싱 가드 hold", "fighting_stance", playMs: 800, pauseMs: 1000)); id += 1
+        pages.append(oscillate(id, "방어 자세 (낮은 가드)", "squat_down", "fighting_stance", times: 2, stepMs: 400)); id += 1
+
+        // === 댄스 변형 (5) ===
+        pages.append(oscillate(id, "강남 스타일 (말춤 8회)", "gangnam_horse", "walk_ready", times: 8, stepMs: 280)); id += 1
+        pages.append(oscillate(id, "로봇 댄스 (긴 버전)", "robot_dance_a", "robot_dance_b", times: 6, stepMs: 350)); id += 1
+        pages.append(oscillate(id, "댄스 피니시 시퀀스", "dance_a", "hands_up", times: 3, stepMs: 350)); id += 1
+        pages.append(oscillate(id, "박수 + 가리키기 댄스", "clap_apart", "point_forward", times: 3, stepMs: 300)); id += 1
+        pages.append(oscillate(id, "좌우 스텝 댄스", "wave_left", "wave_right", times: 6, stepMs: 250)); id += 1
+
+        // === 감정 / 표현 (6) ===
+        pages.append(single(id, "환호 + 만세 콤보", "hands_up", playMs: 600, pauseMs: 800)); id += 1
+        pages.append(single(id, "놀람 표현", "surprise", playMs: 500, pauseMs: 400)); id += 1
+        pages.append(single(id, "부끄러움 표현", "shy", playMs: 800, pauseMs: 600)); id += 1
+        pages.append(oscillate(id, "생각 → 유레카 표현", "think", "hands_up", times: 2, stepMs: 500)); id += 1
+        pages.append(oscillate(id, "좌절 시퀀스 (slow)", "despair", "look_down", times: 2, stepMs: 800)); id += 1
+        pages.append(oscillate(id, "둘러보기 (orientation)", "look_left", "look_right", times: 3, stepMs: 500)); id += 1
+
+        // === 운동 / 일상 (8) ===
+        pages.append(oscillate(id, "스쿼트 (5회)", "squat_up", "squat_down", times: 5, stepMs: 600)); id += 1
+        pages.append(single(id, "양팔 위로 스트레칭 hold", "hands_up", playMs: 1000, pauseMs: 1500)); id += 1
+        pages.append(single(id, "양팔 옆으로 스트레칭", "stretch_arms", playMs: 1200, pauseMs: 1500)); id += 1
+        pages.append(single(id, "의자에 앉기 → 일어서기", "sit_chair", playMs: 1200, pauseMs: 1000)); id += 1
+        pages.append(single(id, "런지 (오른쪽)", "lunge_right", playMs: 800, pauseMs: 800)); id += 1
+        pages.append(oscillate(id, "방향 가리키기 시퀀스", "point_left", "point_right", times: 2, stepMs: 500)); id += 1
+        pages.append(oscillate(id, "응원 (박수 + 환호)", "clap_apart", "cheer", times: 2, stepMs: 400)); id += 1
+        pages.append(oscillate(id, "감사 인사 (합장 + 절)", "pray", "bow_60", times: 2, stepMs: 600)); id += 1
+
+        // === 요가 / 밸런스 hold (3) ===
+        // 2026-05-17 fix: pauseMs ≤ 2000 (MotionStep.play_time UInt8 = 255 × 8ms = 2040ms 한도).
+        pages.append(single(id, "요가 — 나무 자세 hold", "tree_pose", playMs: 1500, pauseMs: 2000)); id += 1
+        pages.append(single(id, "요가 — 전사 자세 hold", "warrior_pose", playMs: 1500, pauseMs: 2000)); id += 1
+        pages.append(single(id, "요가 — 산 자세 hold", "mountain_pose", playMs: 1200, pauseMs: 2000)); id += 1
 
         return pages
     }
