@@ -402,6 +402,16 @@ public final class WalkLabSession: ObservableObject {
         self.engine = WalkEngine()
     }
 
+    /// 2026-05-17 concurrency review (agent #1 CRITICAL): Timer / Task 누수 차단.
+    /// stop() 호출 안 한 채 session deallocation 시 RunLoop 가 simTimer 를 strong
+    /// retain → tick block 의 Task 가 영구 스케줄링. walkCycleTask / walkTuningRestartTask
+    /// 도 동일. View 전환 / @StateObject reinit 시 발생 가능.
+    deinit {
+        simTimer?.invalidate()
+        walkCycleTask?.cancel()
+        walkTuningRestartTask?.cancel()
+    }
+
     /// 현재 효과적인 command — advanced 모드면 custom, 아니면 preset.
     public var effectiveCommand: (x: Double, y: Double, a: Double, enabled: Bool) {
         if advanced {

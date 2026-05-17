@@ -3,6 +3,12 @@ import SwiftUI
 /// 반원 게이지 — 단일 축 (Roll 또는 Pitch). 음수 = 좌측, 양수 = 우측.
 ///
 /// 임계값: |°| < 15 녹색 / < 25 노랑 / < 30 주황 / ≥ 30 빨강 (자동 emergency).
+///
+/// 2026-05-17 a11y audit HIGH fix (WCAG 1.4.3 + 4.1.2):
+///   - 시스템 색 (.yellow / .orange / .red) → 디자인 토큰 (DFColor.warning/.severe/.danger)
+///     로 교체. 토큰은 highContrastLight/Dark variant 보장 → 4.5:1 대비 확보.
+///   - `accessibilityElement(.combine)` + accessibilityLabel/Value 추가 — VoiceOver
+///     사용자가 "Roll 기울기 -3도, 안전" 식 한 번에 인지.
 struct IMUGauge: View {
     let axis: String           // "Roll" / "Pitch"
     let degrees: Double
@@ -51,13 +57,24 @@ struct IMUGauge: View {
         .padding(8)
         .background(Color(NSColor.controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(axis) 기울기 \(Int(degrees.rounded()))도, \(safetyLevelLabel)")
     }
 
     private var currentColor: Color {
         let abs = Swift.abs(degrees)
-        if abs >= dangerThreshold       { return .red }
-        if abs >= dangerThreshold * 0.85 { return .orange }
-        if abs >= dangerThreshold * 0.5  { return .yellow }
-        return .green
+        if abs >= dangerThreshold        { return DFColor.danger }
+        if abs >= dangerThreshold * 0.85 { return DFColor.severe }
+        if abs >= dangerThreshold * 0.5  { return DFColor.warning }
+        return DFColor.success
+    }
+
+    /// VoiceOver 안전 상태 라벨 — 색 dependency 제거 (WCAG 1.4.1).
+    private var safetyLevelLabel: String {
+        let abs = Swift.abs(degrees)
+        if abs >= dangerThreshold        { return "위험 — 자동 정지 임계 도달" }
+        if abs >= dangerThreshold * 0.85 { return "심각" }
+        if abs >= dangerThreshold * 0.5  { return "주의" }
+        return "안전"
     }
 }

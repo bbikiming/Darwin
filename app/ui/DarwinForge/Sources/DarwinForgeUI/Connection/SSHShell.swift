@@ -58,10 +58,14 @@ public enum SSHShell {
                 let started = Date()
                 let task = Process()
                 task.launchPath = "/usr/bin/ssh"
+                // 2026-05-17 security audit HIGH fix (CVSS ~7.4): MITM 차단.
+                // 종전: `StrictHostKeyChecking=no` + `UserKnownHostsFile=/dev/null` →
+                //       LAN 공격자가 robot 으로 위장해도 사용자가 인지 못 함.
+                // 신규: `accept-new` → 첫 연결 시 자동 등록, 이후 host key 변경 시 거부 (TOFU).
+                //       known_hosts 는 사용자 홈 디렉터리 default 사용 → 영속 검증.
                 task.arguments = [
                     "-o", "BatchMode=yes",
-                    "-o", "StrictHostKeyChecking=no",
-                    "-o", "UserKnownHostsFile=/dev/null",
+                    "-o", "StrictHostKeyChecking=accept-new",
                     "-o", "LogLevel=ERROR",
                     "-o", "ConnectTimeout=\(Int(min(timeoutSeconds, 10)))",
                     "\(user)@\(host)",

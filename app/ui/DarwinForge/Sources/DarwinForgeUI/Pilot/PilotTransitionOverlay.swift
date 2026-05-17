@@ -256,15 +256,19 @@ public struct PilotTransitionOverlay: View {
 }
 
 /// 사용자가 로봇 후면 버튼을 눌러야 하는 단계에 표시되는 작은 펄스 — UX 의도 명확화.
+///
+/// 2026-05-17 a11y audit CRITICAL fix (WCAG 2.3.3 vestibular + 2.3.1 광과민성):
+/// Reduce Motion ON 시 펄스 정지. 정적 빨간 점만 유지 (의미 보존).
 private struct UserActionPulse: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulsing = false
     var body: some View {
         HStack(spacing: 4) {
             Circle()
                 .fill(DFColor.warning)
                 .frame(width: 8, height: 8)
-                .scaleEffect(pulsing ? 1.4 : 0.9)
-                .opacity(pulsing ? 0.6 : 1.0)
+                .scaleEffect(reduceMotion ? 1.0 : (pulsing ? 1.4 : 0.9))
+                .opacity(reduceMotion ? 1.0 : (pulsing ? 0.6 : 1.0))
             Text("로봇 만지기")
                 .font(.system(size: DFFontSize.s9, weight: .bold))
                 .foregroundStyle(DFColor.warning)
@@ -273,6 +277,7 @@ private struct UserActionPulse: View {
         .padding(.vertical, 2)
         .background(Capsule().fill(DFColor.warning.opacity(DFOpacity.o15)))
         .onAppear {
+            guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
                 pulsing = true
             }

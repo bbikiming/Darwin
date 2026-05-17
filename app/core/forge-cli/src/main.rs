@@ -221,10 +221,14 @@ enum Command {
     },
 
     /// USB ↔ TCP 양방향 브리지 데몬.
+    ///
+    /// 2026-05-17 security audit (CVSS ~9.0) — default bind 를 `0.0.0.0` → `127.0.0.1` 변경.
+    /// 종전엔 robot Wi-Fi 같은 네트워크 누구나 모터 조작 가능 (물리적 부상 위험).
+    /// 외부 노출이 필요하면 사용자가 명시적으로 `--bind 0.0.0.0:5530` 지정해야 함.
     Serve {
         #[arg(short, long)]
         port: String,
-        #[arg(short, long, default_value = "0.0.0.0:5530")]
+        #[arg(short, long, default_value = "127.0.0.1:5530")]
         bind: String,
         #[arg(long, default_value_t = 1_000_000)]
         baud: u32,
@@ -234,6 +238,9 @@ enum Command {
         max_connections: u32,
         /// 같은 네트워크에 mDNS / Bonjour로 자동 광고 (`_forge._tcp`).
         /// 인자는 service 이름 (예: "OP2-A1"). 클라이언트 측 자동 검색 가능.
+        ///
+        /// 주의: `--bind 127.0.0.1` (기본) 과 `--advertise` 동시 사용 시 외부에서
+        /// 발견되지만 연결 불가 — 외부 노출 의도면 `--bind 0.0.0.0:5530` 명시.
         #[arg(long)]
         advertise: Option<String>,
     },

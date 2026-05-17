@@ -9,6 +9,9 @@ public struct PilotHudStrip: View {
     @ObservedObject var store: ConnectionStore
     @ObservedObject var channel: TeleopChannel
     @ObservedObject var gate: PilotSafetyGate
+    // 2026-05-17 a11y audit CRITICAL (WCAG 2.3.1): flashRed 깜박임이
+    // 광과민성 발작 유발 가능. Reduce Motion ON 시 정적 빨간 outline 만.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let flags: PilotFeatureFlags
 
     @State private var sessionStart: Date = Date()
@@ -42,7 +45,8 @@ public struct PilotHudStrip: View {
             .overlay(
                 RoundedRectangle(cornerRadius: DFRadius.sm)
                     .stroke(gate.flashRed ? DFColor.danger : Color.clear, lineWidth: 2)
-                    .animation(PilotAnim.flashRed, value: gate.flashRed)
+                    // Reduce Motion ON 시 깜박임 무효화 — 색만으로 위험 인지.
+                    .animation(reduceMotion ? nil : PilotAnim.flashRed, value: gate.flashRed)
             )
         }
     }

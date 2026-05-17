@@ -857,6 +857,9 @@ pub unsafe extern "C" fn fc_walk_free(h: *mut FcWalk) {
 }
 
 /// 명령 설정.
+///
+/// 2026-05-17 FFI audit HIGH fix: safe_call 래핑 — `WalkCommand` 구조체 init 에서
+/// 향후 invariant assert 시 panic 가능. C ABI 경계 unwind 시 UB.
 #[no_mangle]
 pub unsafe extern "C" fn fc_walk_set_command(
     h: *mut FcWalk,
@@ -868,26 +871,36 @@ pub unsafe extern "C" fn fc_walk_set_command(
     if h.is_null() {
         return FC_ERR_INVALID;
     }
-    (*h).engine.command = WalkCommand {
-        x_amplitude: x,
-        y_amplitude: y,
-        a_amplitude: a,
-        enabled: enable != 0,
-    };
-    FC_OK
+    safe_call(|| {
+        (*h).engine.command = WalkCommand {
+            x_amplitude: x,
+            y_amplitude: y,
+            a_amplitude: a,
+            enabled: enable != 0,
+        };
+        FC_OK
+    })
 }
 
 /// 보행 주기 (ms) 갱신. 200..=1500 범위로 clamp.
+///
+/// 2026-05-17 FFI audit HIGH fix: safe_call 래핑 — `set_period_ms(NaN)` 같은
+/// 비정상 입력에서 향후 assert/expect 시 panic 가능.
 #[no_mangle]
 pub unsafe extern "C" fn fc_walk_set_period_ms(h: *mut FcWalk, period_ms: f64) -> c_int {
     if h.is_null() {
         return FC_ERR_INVALID;
     }
-    (*h).engine.set_period_ms(period_ms);
-    FC_OK
+    safe_call(|| {
+        (*h).engine.set_period_ms(period_ms);
+        FC_OK
+    })
 }
 
 /// dt_ms 만큼 진행 후 발 궤적 sample.
+///
+/// 2026-05-17 FFI audit HIGH fix: safe_call 래핑 — `WalkEngine::tick` 내부
+/// trapezoid / sin 계산에서 향후 invariant 위반 시 panic 가능. C 경계 unwind = UB.
 #[no_mangle]
 pub unsafe extern "C" fn fc_walk_tick(
     h: *mut FcWalk,
@@ -897,23 +910,25 @@ pub unsafe extern "C" fn fc_walk_tick(
     if h.is_null() || out.is_null() {
         return FC_ERR_INVALID;
     }
-    let e = &mut (*h).engine;
-    e.tick(Duration::from_millis(dt_ms as u64));
-    let f = e.foot_targets();
-    let phase = match e.phase() {
-        forge_core::walk::WalkPhase::Phase0 => 0,
-        forge_core::walk::WalkPhase::Phase1 => 1,
-        forge_core::walk::WalkPhase::Phase2 => 2,
-        forge_core::walk::WalkPhase::Phase3 => 3,
-    };
-    *out = FfiFootTargets {
-        elapsed_ms: e.elapsed_ms,
-        phase,
-        feet: [
-            f.left[0], f.left[1], f.left[2], f.right[0], f.right[1], f.right[2],
-        ],
-    };
-    FC_OK
+    safe_call(|| {
+        let e = &mut (*h).engine;
+        e.tick(Duration::from_millis(dt_ms as u64));
+        let f = e.foot_targets();
+        let phase = match e.phase() {
+            forge_core::walk::WalkPhase::Phase0 => 0,
+            forge_core::walk::WalkPhase::Phase1 => 1,
+            forge_core::walk::WalkPhase::Phase2 => 2,
+            forge_core::walk::WalkPhase::Phase3 => 3,
+        };
+        *out = FfiFootTargets {
+            elapsed_ms: e.elapsed_ms,
+            phase,
+            feet: [
+                f.left[0], f.left[1], f.left[2], f.right[0], f.right[1], f.right[2],
+            ],
+        };
+        FC_OK
+    })
 }
 
 // ============================================================================
@@ -986,11 +1001,20 @@ pub unsafe extern "C" fn fc_vision_detect_ball(
     if pixels.is_null() || out.is_null() {
         return FC_ERR_INVALID;
     }
-    if (width * height * 4) > pixel_count {
+    // 2026-05-17 FFI audit HIGH fix: width * height * 4 overflow 검증 (arch critic + rust-systems
+    // 양쪽 발견). 종전엔 u32 multiply silent wrap → 4K (4096×4096×4 = 67M) 이상에서
+    // false-positive pass → from_raw_parts 가 잘못된 size 로 slice 생성 = UB.
+    let expected = match width.checked_mul(height).and_then(|n| n.checked_mul(4)) {
+        Some(n) => n,
+        None => return FC_ERR_INVALID,
+    };
+    if expected > pixel_count {
         return FC_ERR_INVALID;
     }
     safe_call(|| {
-        let slice = std::slice::from_raw_parts(pixels, pixel_count as usize);
+        // expected size 사용 — pixel_count 가 더 크면 그만큼 무시 (이전엔 pixel_count
+        // 전체를 slice → from_raw_parts 가 buffer 끝 넘어서 read 가능).
+        let slice = std::slice::from_raw_parts(pixels, expected as usize);
         let mut frame = Frame::solid(width, height, Pixel::default());
         for y in 0..height {
             for x in 0..width {

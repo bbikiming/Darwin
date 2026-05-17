@@ -120,6 +120,14 @@ public final class ConnectionStore: ObservableObject {
         }
     }
 
+    /// 2026-05-17 concurrency review (agent #1 CRITICAL): pollTask / reconnectTask
+    /// 누수 차단. stopTelemetry() / disconnect() 미호출 채 store 가 dealloc 되면
+    /// telemetry polling 또는 재연결 백오프 Task 가 영구 실행 → bus handle leak.
+    deinit {
+        pollTask?.cancel()
+        reconnectTask?.cancel()
+    }
+
     /// 마지막 성공 endpoint 영구 저장 — 다음 앱 실행 시 자동 재연결의 후보.
     private func persistLastEndpoint() {
         if let ep = lastSuccessfulEndpoint,
