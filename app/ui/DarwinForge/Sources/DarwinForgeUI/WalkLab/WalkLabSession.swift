@@ -106,6 +106,15 @@ public final class WalkLabSession: ObservableObject {
     /// (1) raw gait 자체가 mean pitch -13° 앞기울 bias 보임, (2) P-control 적용 시에도
     /// pitch -25°~+18° 흔들림. corrector 보정이 안정 기여하는지 보다 raw gait 진단이
     /// 먼저 필요. default OFF → 사용자가 명시 ON 후 검증.
+    ///
+    /// **v1.11.8 (2026-05-18) — relationship with algorithmMode.off**:
+    /// 두 토글은 의도가 다르지만 결과적으로 같은 identity 출력 (Codex/Agent 지적).
+    /// - `enableBalanceCorrection` (이것): v1.7 legacy **master switch** — 보정 전체 활성/비활성
+    /// - `algorithmMode == .off`: v1.11 axis **세부 mode** — algorithm 자체를 .off 선택
+    /// applyBalanceCorrectionIfEnabled 의 guard 순서: algorithmMode .off → enableBalanceCorrection
+    /// → 둘 다 identity 반환. **master 가 OFF 면 mode 무관하게 비활성**. UI 가 두 토글
+    /// 모두 노출 — 사용자는 master (이 토글) 만 사용 권장. expert disclosure 의 algorithmMode
+    /// 는 master ON 상태에서 algorithm 선택 (off 포함) 용도.
     @Published public var enableBalanceCorrection: Bool = false {
         didSet {
             if enableBalanceCorrection != oldValue {
@@ -890,6 +899,16 @@ public final class WalkLabSession: ObservableObject {
     ///
     /// 이전 task 가 있으면 cancel + 완료 대기 후 새 cycle 시작 — preset 전환 race 방지.
     private func startWalkCycle(_ preset: WalkLabPreset) {
+        // **v1.11.8 (2026-05-18) — HIGH-3 fix**: 보행 중 다중 진입 차단.
+        // 종전: 사용자가 보행 활성 상태에서 다른 preset 클릭 또는 walkingEngine 토글 시
+        // 새 cycle 이 진행 중 cycle 위에 겹쳐 호출됐다 (walkCycleTask cancel 이 async
+        // 라 immediate 효과 X). 같은 cycle 안에 호출하면 lifecycle inconsistent.
+        // 명시 차단으로 사용자가 stop() 후 재시작 강제 — race condition 차단.
+        if walkCycleTask != nil || onboardWalkingActive {
+            lastRobotEvent = "⚠️ 보행 진행 중 — 정지(■) 후 다시 시도하세요 (\(preset.label))"
+            return
+        }
+
         guard let store = store, let bus = store.bus else {
             // v1.8: 사용자 보고 "모션 시각만 움직이고 실 robot 안 움직임" — 명확한 toast
             // 강화. sim 시각 미리보기는 유지 (모델 미리보기 용도). lastRobotEvent 가
@@ -1212,12 +1231,17 @@ public final class WalkLabSession: ObservableObject {
     /// **v1.11.5 (2026-05-18)** — 보행 엔진 선택 axis.
     /// `.macSparseKeyframe` (default) = 기존 6 phase 합성 + setPosition 순차.
     /// `.robotisOnboard` = robot-side `Walking::GetInstance()` 사용 (안정 보행, patch 필요).
-    /// 변경 시 `walkingEngineDidChange` 가 호출 (engine bootstrap / shutdown).
     @Published public var walkingEngine: WalkingEngine = .macSparseKeyframe {
         didSet {
             guard walkingEngine != oldValue else { return }
+            // **v1.11.8 (2026-05-18) — HIGH-2 fix**: 엔진 전환 시 onboardWalkingActive
+            // 도 reset. 종전엔 사용자가 `.robotisOnboard` 활성 후 `.macSparseKeyframe`
+            // 로 전환해도 onboardWalkingActive=true 유지 → UI stale 표시.
+            if walkingEngine != .robotisOnboard, onboardWalkingActive {
+                onboardWalkingActive = false
+            }
             logSafetyEvent(
-                kind: .correctorOff,  // engine 전환은 보정과 무관하지만 event log 용도 재사용.
+                kind: .correctorOff,
                 message: "보행 엔진: \(oldValue.shortLabel) → \(walkingEngine.shortLabel)"
             )
         }

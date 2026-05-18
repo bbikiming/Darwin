@@ -30,11 +30,30 @@ struct WalkLabOnboardBridge: View {
         // 값으로 축소. 종전 session.objectWillChange 전체 → IMU/safetyTimeline/
         // fallPrediction 같은 published 가 50ms tick 마다 변경 → debounce 계속 reset
         // 되어 실 송신 못 함. 8 개 specific @Published 만 watch.
+        //
+        // **v1.11.8 (2026-05-18, HIGH-3/5 fix)**:
+        // - walkingEngine / onboardWalkingActive / autoOnboardBrokering 전환 시
+        //   lastSentLine reset (stale dedup 방지)
+        // - remoteShell.host onChange 도 trigger (host 설정 후 자동 송출)
         Color.clear
             .frame(width: 0, height: 0)
             .onChange(of: session.current)                  { _, _ in scheduleDebouncedSend() }
-            .onChange(of: session.walkingEngine)            { _, _ in scheduleDebouncedSend() }
-            .onChange(of: session.autoOnboardBrokering)     { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.walkingEngine) { _, _ in
+                lastSentLine = nil   // engine 전환 → dedup reset
+                scheduleDebouncedSend()
+            }
+            .onChange(of: session.autoOnboardBrokering) { _, _ in
+                lastSentLine = nil   // brokering toggle → resend 보장
+                scheduleDebouncedSend()
+            }
+            .onChange(of: session.onboardWalkingActive) { _, _ in
+                lastSentLine = nil   // start/stop edge → resend 보장
+                scheduleDebouncedSend()
+            }
+            .onChange(of: remoteShell.host) { _, _ in
+                lastSentLine = nil   // host 변경 → send (config 변경 후 첫 송출)
+                scheduleDebouncedSend()
+            }
             .onChange(of: session.strideMm)                 { _, _ in scheduleDebouncedSend() }
             .onChange(of: session.sideMm)                   { _, _ in scheduleDebouncedSend() }
             .onChange(of: session.turnDeg)                  { _, _ in scheduleDebouncedSend() }
