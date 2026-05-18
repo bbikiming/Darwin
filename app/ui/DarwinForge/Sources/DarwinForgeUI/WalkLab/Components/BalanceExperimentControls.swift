@@ -30,7 +30,23 @@ public struct BalanceExperimentControls: View {
     ///
     /// fix: 모든 진입점이 본 helper 거치게 통일. 새 config 가 isRiskyToApply 면
     /// 무조건 sheet (이전 config 가 risky 였든 안 했든 — 매 변경마다 의도 재확인).
+    ///
+    /// **v1.11.3 (2026-05-18)** — `.blocked` 케이스는 confirmation sheet 도 띄우지 않고
+    /// 바로 `applyToRobot=false` 로 강등. 이유: blocked = 실 데이터로 입증된 위험 조합
+    /// 이므로 "사용자가 확인하면 적용" 패턴 자체가 부적절. session.didSet / startWalkCycle
+    /// 진입 가드가 이중 안전망이지만 UI 단에서도 명시 거부하여 사용자 의도 오해 차단.
     private func requestConfigChange(_ newConfig: BalanceExperimentConfig) {
+        if case .blocked = newConfig.safetyVerdict {
+            // 사용자 의도 (algorithm/sign/gain 변경) 는 보존하되 applyToRobot 만 강제 OFF.
+            let downgraded = BalanceExperimentConfig(
+                algorithmMode: newConfig.algorithmMode,
+                signConvention: newConfig.signConvention,
+                gainProfile: newConfig.gainProfile,
+                applyToRobot: false
+            )
+            session.balanceExperimentConfig = downgraded
+            return
+        }
         if newConfig.isRiskyToApply {
             pendingRiskyApply = newConfig
         } else {

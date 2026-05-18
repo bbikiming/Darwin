@@ -59,6 +59,32 @@ public enum BalanceSignConvention: String, CaseIterable, Codable, Sendable, Iden
     }
 }
 
+/// **v1.11.3 (2026-05-18) — P1.1 부호 정규화 축**.
+///
+/// 코드 컨벤션 (BalanceCorrector 의 `pitchErrDeg` 양수=앞기울) 과 실 robot IMU 부호 일치
+/// 여부에 따라 입력 단계에서 정규화. 기존 동작 보존을 위해 default = `.imuRaw`.
+///
+/// **GPT 검증 (2026-05-18)**: 부호 전체 뒤집기 전에 정적 캘리브레이션 → 결과 기반 토글.
+/// `imuFilter.pitchDeg` 자체는 건드리지 않고 corrections 입력에서 명시적 정규화.
+/// → blast radius 최소 (UI 게이지 / fall predictor / safety state 등 IMU 소비자 영향 X).
+public enum BalancePitchInputConvention: String, CaseIterable, Codable, Sendable, Identifiable {
+    /// **Default** — `corrections(pitchErrDeg: imuPitchDeg)` 그대로 전달 (현재 동작).
+    /// 코드 컨벤션 가정: 양수 = 앞기울.
+    case imuRaw
+    /// **Opt-in** — `corrections(pitchErrDeg: -imuPitchDeg)`. 실 robot 에서 앞기울 = 음수
+    /// 일 때 정규화. P1.0 정적 캘리브레이션으로 확인 후 사용.
+    case negateForwardIsNegative
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .imuRaw:                  return "원본 (양수=앞기울 가정)"
+        case .negateForwardIsNegative: return "정규화 (음수=앞기울 보정)"
+        }
+    }
+}
+
 /// Gain profile 축.
 public enum BalanceGainProfile: String, CaseIterable, Codable, Sendable, Identifiable {
     /// ROBOTIS Walking.cpp oracle gain (hipR 0.5, knee 0.3, ankP 0.9, ankR 1.0).
@@ -87,17 +113,40 @@ public struct BalanceExperimentConfig: Codable, Equatable, Sendable {
     /// true 면 corrections 가 실 robot pose 에 적용. false 면 observe-only 등가.
     /// 사용자가 명시 토글 — alternateDiagnostic 일 때 자동 false.
     public var applyToRobot: Bool
+    /// **v1.11.3 (2026-05-18)** — corrections 입력 부호 정규화 (P1.1, opt-in).
+    /// Default `.imuRaw` = 현재 동작 (코드 컨벤션 가정 그대로). 사용자가 P1.0 정적
+    /// 캘리브레이션 결과 보고 `.negateForwardIsNegative` 로 전환 가능.
+    public var pitchInputConvention: BalancePitchInputConvention
 
     public init(
         algorithmMode: BalanceAlgorithmMode = .robotisPControl,
         signConvention: BalanceSignConvention = .robotisWalkingCpp,
         gainProfile: BalanceGainProfile = .robotisOriginal,
-        applyToRobot: Bool = true
+        applyToRobot: Bool = true,
+        pitchInputConvention: BalancePitchInputConvention = .imuRaw
     ) {
         self.algorithmMode = algorithmMode
         self.signConvention = signConvention
         self.gainProfile = gainProfile
         self.applyToRobot = applyToRobot
+        self.pitchInputConvention = pitchInputConvention
+    }
+
+    // MARK: - Codable backward compat
+    //
+    // v1.11.3 신규 필드 `pitchInputConvention` 은 기존 JSON / persisted state 디코드
+    // 시 default = `.imuRaw` 적용. 명시적 init(from:) 으로 옵션 처리.
+    private enum CodingKeys: String, CodingKey {
+        case algorithmMode, signConvention, gainProfile, applyToRobot, pitchInputConvention
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.algorithmMode = try c.decode(BalanceAlgorithmMode.self, forKey: .algorithmMode)
+        self.signConvention = try c.decode(BalanceSignConvention.self, forKey: .signConvention)
+        self.gainProfile = try c.decode(BalanceGainProfile.self, forKey: .gainProfile)
+        self.applyToRobot = try c.decode(Bool.self, forKey: .applyToRobot)
+        self.pitchInputConvention = try c.decodeIfPresent(BalancePitchInputConvention.self, forKey: .pitchInputConvention) ?? .imuRaw
     }
 
     /// **Default — 사용자 robot 의 baseline. ROBOTIS 검증된 기준.**
@@ -111,12 +160,18 @@ public struct BalanceExperimentConfig: Codable, Equatable, Sendable {
         applyToRobot: false
     )
 
-    /// **v1.10 실험 — 실 robot 적용. cradle 확인 + 명시 토글 필요.**
+    /// **v1.11.3 (2026-05-18) — 실 fall 데이터 입증 후 observe-only 로 강등**.
+    ///
+    /// 종전 (`applyToRobot=true`) 은 2026-05-18 실 robot 세션에서 mean pitch -25~-31°,
+    /// peak -38°, 1.4~2.6s 내 fall 확인 → 사용자 안전을 위해 preset 자체를 observe-only
+    /// 로 강제. struct 는 backward-compat 유지하되 동작은 v110Observe 와 동일.
+    /// 실 적용을 다시 시도하려면 (1) 부호 컨벤션 재검증 + (2) gain 재튜닝 + (3) Mac 실
+    /// robot 회귀 protocol 통과 후 별도 PR 로 부활.
     public static let v110Apply = BalanceExperimentConfig(
         algorithmMode: .hybridBA,
         signConvention: .robotisWalkingCpp,
         gainProfile: .v110Experimental,
-        applyToRobot: true
+        applyToRobot: false  // 실 fall 데이터 입증으로 강등 — observe-only 동작
     )
 
     // MARK: - Safety validation
@@ -137,13 +192,18 @@ public struct BalanceExperimentConfig: Codable, Equatable, Sendable {
         if algorithmMode == .observeOnly {
             return .safe
         }
-        // 3. hybridBA + 실 적용 — cradle confirmed 필수 + caution.
+        // **v1.11.3 (2026-05-18) — 실 데이터 입증 격상: caution → blocked**.
+        // 2026-05-18 실 robot 세션 (10:30:42, 10:30:49, 10:31:04) 에서 hybridBA +
+        // v110Experimental + applyToRobot 조합이 mean pitch -25~-31°, peak -38°,
+        // 1.4~2.6s 내 fall 시도 확인. caution 등급으로는 사용자 보호 불충분 — blocked
+        // 격상하여 실 적용 자체를 차단. observe-only 는 그대로 허용 (데이터 수집).
+        // 3. hybridBA + 실 적용 — 실 fall 데이터 입증 차단.
         if algorithmMode == .hybridBA && applyToRobot {
-            return .caution("Hybrid B+A 는 실 robot 미검증 — cradle 확인 + 천천히 시작")
+            return .blocked("Hybrid B+A 실 적용 차단 — 2026-05-18 실 데이터: mean pitch -25~-31°, peak -38°, 1.4-2.6s 내 fall. observe-only 로 전환하세요.")
         }
-        // 4. v110Experimental gain + 실 적용 — caution.
+        // 4. v110Experimental gain + 실 적용 — 실 fall 데이터 입증 차단.
         if gainProfile == .v110Experimental && applyToRobot {
-            return .caution("v1.10 gain 은 시뮬 권장이지만 실 검증 전 — 모니터링 필수")
+            return .blocked("v1.10 gain 실 적용 차단 — 2026-05-18 실 데이터 fall 확인. observe-only 또는 robotisOriginal gain 으로 전환하세요.")
         }
         return .safe
     }

@@ -857,6 +857,25 @@ public final class WalkLabSession: ObservableObject {
             return
         }
 
+        // **v1.11.3 (2026-05-18) — 보행 시작 진입 가드**: safetyVerdict 가 .blocked 면
+        // applyToRobot 강등 후 진행. 의도: didSet 는 config 변경 시점에만 작동 → 보행
+        // 시작 시점에 다시 한 번 확인. 사용자가 didSet 우회 경로 (test fixture, 직렬화
+        // 복원 등) 로 위험 config 가 살아남는 케이스 차단. 보행 자체는 진행 (사용자
+        // 의도 보존) — 단지 robot 송출 차단.
+        if case .blocked(let reason) = balanceExperimentConfig.safetyVerdict,
+           balanceExperimentConfig.applyToRobot {
+            logSafetyEvent(
+                kind: .correctorOff,
+                message: "보행 시작 시 안전 차단: \(reason)"
+            )
+            balanceExperimentConfig = BalanceExperimentConfig(
+                algorithmMode: balanceExperimentConfig.algorithmMode,
+                signConvention: balanceExperimentConfig.signConvention,
+                gainProfile: balanceExperimentConfig.gainProfile,
+                applyToRobot: false
+            )
+        }
+
         // 2026-05-17 사용자 보고 critical fix: caution 등급 (fastWalk/turnLeft/turnRight)
         // 은 정적 plan + IMU balance 미활성 시 실 robot 낙상 위험. WalkStabilityPredictor
         // 는 사전 휴리스틱일 뿐 실시간 IMU 기반 자세 보정 없음. balanceCorrection 자동
@@ -1850,6 +1869,19 @@ public final class WalkLabSession: ObservableObject {
 
         let config = balanceExperimentConfig
 
+        // **v1.11.3 (2026-05-18) — P1.1 부호 정규화 (opt-in)**.
+        // GPT 검증 (2026-05-18) 권고: `imuFilter.pitchDeg` 자체는 건드리지 않고 corrector
+        // 입력에서 명시적 정규화 → blast radius 최소 (UI 게이지·fall predictor·safety
+        // state 등 IMU 소비자 영향 X). default `.imuRaw` 이면 변경 없음.
+        let normalizedImuPitchDeg: Double = {
+            switch config.pitchInputConvention {
+            case .imuRaw: return imuPitchDeg
+            case .negateForwardIsNegative: return -imuPitchDeg
+            }
+        }()
+        // roll 정규화는 P1.0 측정 후 도입 (현재는 raw 유지 — 데이터상 roll 부호는 정상 분포).
+        let normalizedImuRollDeg = imuRollDeg
+
         // Mode .off → identity (corrections 비움, log 도 0).
         if config.algorithmMode == .off {
             lastCorrections = nil
@@ -1896,9 +1928,10 @@ public final class WalkLabSession: ObservableObject {
                 elapsedMs = 0
             }
 
+            // **v1.11.3 P1.1**: normalizedImuPitchDeg 사용 (default `.imuRaw` 면 imuPitchDeg 그대로).
             let result = balanceCorrector.hybridCorrections(
-                imuRollDeg: imuRollDeg,
-                imuPitchDeg: imuPitchDeg,
+                imuRollDeg: normalizedImuRollDeg,
+                imuPitchDeg: normalizedImuPitchDeg,
                 elapsedMs: elapsedMs,
                 periodMs: periodMs,
                 state: &hybridBalanceState,
@@ -1938,8 +1971,9 @@ public final class WalkLabSession: ObservableObject {
         let isWalkingActive = (current != .idle)
         let deadband: Double = isWalkingActive ? 2.5 : 1.0
         let alpha = 0.5
-        correctorFilteredRoll = alpha * imuRollDeg + (1 - alpha) * correctorFilteredRoll
-        correctorFilteredPitch = alpha * imuPitchDeg + (1 - alpha) * correctorFilteredPitch
+        // **v1.11.3 P1.1**: normalized 입력 (default `.imuRaw` 면 imuRollDeg/imuPitchDeg 그대로).
+        correctorFilteredRoll = alpha * normalizedImuRollDeg + (1 - alpha) * correctorFilteredRoll
+        correctorFilteredPitch = alpha * normalizedImuPitchDeg + (1 - alpha) * correctorFilteredPitch
         let effRoll = abs(correctorFilteredRoll) > deadband
             ? correctorFilteredRoll - copysign(deadband, correctorFilteredRoll)
             : 0.0
@@ -2535,6 +2569,81 @@ public final class WalkLabSession: ObservableObject {
                 maxMotorTemp = motorAmbientTemp
             }
         }
+    }
+
+    // MARK: - v1.11.3 (2026-05-18) — P1.0 정적 IMU 캘리브레이션
+
+    /// 5축 캡처 보관소 — 앱 세션 중에만 유지. Disk 저장은 별도 helper.
+    @Published public private(set) var calibrationCaptures: [StaticTiltCalibration.Capture] = []
+
+    /// 단일 자세의 IMU 캡처. 사용자가 robot 을 손으로 자세 잡고 호출.
+    /// **주의**: 보행 중 (`walkCycleTask != nil`) 호출 시 보행 데이터와 간섭 가능 — 거부.
+    /// - Parameters:
+    ///   - axis: 캡처 자세 (직립 / 앞·뒤·오·왼 30°)
+    ///   - durationSec: 캡처 시간 (기본 5초)
+    ///   - sampleIntervalMs: sample 간격 (기본 50ms = 20Hz)
+    /// - Returns: 캡처 결과 (samples + summary). nil 이면 보행 중 거부.
+    @discardableResult
+    public func runStaticTiltCalibration(
+        axis: StaticTiltCalibration.Axis,
+        durationSec: Double = 5.0,
+        sampleIntervalMs: Double = 50.0
+    ) async -> StaticTiltCalibration.Capture? {
+        guard walkCycleTask == nil else {
+            lastRobotEvent = "캘리브레이션 거부: 보행 중에는 자세 캡처 불가 (정지 후 재시도)"
+            return nil
+        }
+        let startDate = Date()
+        let iso = ISO8601DateFormatter().string(from: startDate)
+        let imuSrcLabel: String = {
+            switch imuSource {
+            case .real: return "real"
+            case .sim:  return "sim"
+            case .stale:return "stale"
+            }
+        }()
+
+        var samples: [StaticTiltCalibration.Sample] = []
+        let durationMs = max(100.0, durationSec * 1000.0)
+        let intervalMs = max(10.0, sampleIntervalMs)
+        let nanosPerSample = UInt64(intervalMs * 1_000_000)
+        var elapsedMs: Double = 0
+
+        while elapsedMs <= durationMs {
+            // tick() 가 imuRollDeg / imuPitchDeg 를 갱신 — 그 값 직접 read.
+            samples.append(StaticTiltCalibration.Sample(
+                rollDeg: imuRollDeg,
+                pitchDeg: imuPitchDeg,
+                tMs: elapsedMs
+            ))
+            try? await Task.sleep(nanoseconds: nanosPerSample)
+            elapsedMs += intervalMs
+            // Task cancellation 존중.
+            if Task.isCancelled { break }
+        }
+
+        let capture = StaticTiltCalibration.Capture(
+            axis: axis,
+            startTimeIso: iso,
+            durationSec: Date().timeIntervalSince(startDate),
+            samples: samples,
+            imuSource: imuSrcLabel
+        )
+        // 같은 axis 의 이전 캡처는 교체 (가장 최근만 보관) — 진단 시 by-axis grouping 의 .last 사용.
+        calibrationCaptures.removeAll { $0.axis == axis }
+        calibrationCaptures.append(capture)
+        lastRobotEvent = "✅ 캘리브레이션 [\(axis.label)] 캡처 완료 — \(samples.count) samples, meanPitch=\(String(format: "%.1f", capture.summary.meanPitch))°, meanRoll=\(String(format: "%.1f", capture.summary.meanRoll))°"
+        return capture
+    }
+
+    /// 현재까지 캡처된 5축 데이터로 부호 컨벤션 진단.
+    public func currentCalibrationDiagnosis() -> StaticTiltCalibration.Diagnosis {
+        StaticTiltCalibration.diagnose(captures: calibrationCaptures)
+    }
+
+    /// 모든 캘리브레이션 캡처 초기화.
+    public func resetCalibrationCaptures() {
+        calibrationCaptures = []
     }
 }
 
