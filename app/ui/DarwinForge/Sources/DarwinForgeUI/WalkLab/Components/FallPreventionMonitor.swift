@@ -126,6 +126,9 @@ struct FallPreventionMonitor: View {
             .frame(maxWidth: .infinity, alignment: .center)
             CorrectorIntensityCard(session: session)
             BalanceExperimentControls(session: session)   // v1.11: 4축 분리 패널
+            // **v1.11.4 (2026-05-18)** — 정적 IMU 캘리브레이션 (5축 손 캡처 + 부호 진단).
+            // 부호 컨벤션 검증 후 BalanceExperimentControls 의 pitchInputConvention 토글로 적용.
+            StaticTiltCalibrationPanel(session: session)
             AutoTunerCard(tuner: session.autoTuner, session: session)
         }
         .padding(.horizontal, DFSpace.xs2)

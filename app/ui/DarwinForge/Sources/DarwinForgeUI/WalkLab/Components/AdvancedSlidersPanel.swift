@@ -111,6 +111,21 @@ public struct AdvancedSlidersPanel: View {
                 unitLabel: { String(format: "%.2f", $0) }
             )
 
+            // **v1.11.4 (2026-05-18) — Hip pitch trim slider**.
+            // 종전 13.0° 하드코딩 → 사용자가 cradle 캘리브레이션 중 0/5/13° 비교 가능.
+            // 2026-05-18 실 robot 데이터: hipPitchOffset=13° 일 때 mean pitch -13° 앞기울.
+            // 0° 로 낮추면 robot 본체 pitch bias 감소 (실험적, 보행 안정성 영향 검증 필요).
+            SafetyBandedSlider(
+                value: $session.hipPitchOffsetTrimDeg,
+                range: 0...20,
+                // sweet-spot: 0..15° = safe (ROBOTIS 원본 13°), 15..20° = caution.
+                bands: .sweetSpot(safeMin: 0, safeMax: 15, cautionMin: 0, cautionMax: 20),
+                cap: nil,
+                ticks: [0, 5, 10, 13, 15, 20],
+                label: "Hip pitch trim (앞기울 bias 감소)",
+                unitLabel: { String(format: "%.1f°", $0) }
+            )
+
             // 안전 한도 해제 — 사용자가 cap 무시.
             Toggle(isOn: $session.forceOverrideSafety) {
                 Label {

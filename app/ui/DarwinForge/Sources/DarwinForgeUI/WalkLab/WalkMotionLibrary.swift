@@ -33,6 +33,11 @@ public enum WalkMotionLibrary {
         public var periodMs: Double
         public var footHeightMm: Double
         public var balanceGain: Double
+        /// **v1.11.4 (2026-05-18)** — Hip pitch trim (°). ROBOTIS Walking.cpp 의
+        /// `HIP_PITCH_OFFSET = 13.0` 하드코딩이 모든 보행의 mean pitch bias 의 주요
+        /// 원인. 2026-05-18 실 robot 로그: hipPitchOffset=13° 이면 mean pitch -13°
+        /// 앞기울 자세로 보행 시작. 사용자가 0/5/13° 비교 가능하게 노출 (default 13).
+        public var hipPitchOffsetDeg: Double
 
         public init(
             strideMm: Double,
@@ -40,7 +45,8 @@ public enum WalkMotionLibrary {
             turnDeg: Double,
             periodMs: Double,
             footHeightMm: Double,
-            balanceGain: Double
+            balanceGain: Double,
+            hipPitchOffsetDeg: Double = 13.0
         ) {
             self.strideMm = strideMm
             self.sideMm = sideMm
@@ -48,6 +54,7 @@ public enum WalkMotionLibrary {
             self.periodMs = periodMs
             self.footHeightMm = footHeightMm
             self.balanceGain = balanceGain
+            self.hipPitchOffsetDeg = hipPitchOffsetDeg
         }
     }
 
@@ -157,7 +164,10 @@ public enum WalkMotionLibrary {
             turnDeg: base.turnDeg.clamped(to: -45...45),
             periodMs: base.periodMs.clamped(to: 350...1000),
             footHeightMm: base.footHeightMm.clamped(to: 15...80),
-            balanceGain: base.balanceGain.clamped(to: 0...5)
+            balanceGain: base.balanceGain.clamped(to: 0...5),
+            // **v1.11.4 (2026-05-18) fix**: custom 의 hipPitchOffsetDeg 전달. 종전엔
+            // 누락되어 모든 custom tuning 의 trim 이 default 13.0 으로 reset 되는 버그.
+            hipPitchOffsetDeg: base.hipPitchOffsetDeg.clamped(to: 0...20)
         )
     }
 
@@ -326,7 +336,8 @@ public enum WalkMotionLibrary {
             rollOffset = 0
             pitchOffset = 0
             yawOffset = 0
-            hipPitchOffset = 13.0
+            // **v1.11.4 (2026-05-18)** — tuning.hipPitchOffsetDeg 노출. 종전 13.0 하드코딩.
+            hipPitchOffset = tuning.hipPitchOffsetDeg.clamped(to: 0...20)
             pelvisOffsetValue = 3.0 * rawPerDegree
             pelvisSwingValue = pelvisOffsetValue * 0.35
             armSwingGain = 1.5
