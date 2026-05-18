@@ -131,6 +131,8 @@ public actor WalkSessionClaudeAnalyst {
         case cliNotFound(searched: [String])
         case nonZeroExit(status: Int, stderr: String)
         case emptyOutput(stderr: String)
+        case jsonParseError(raw: String, reason: String)
+        case validationFailed(issues: [String])
 
         public var errorDescription: String? {
             switch self {
@@ -140,7 +142,51 @@ public actor WalkSessionClaudeAnalyst {
                 return "claude CLI 가 exit \(status) 로 종료. stderr: \(stderr.prefix(200))"
             case .emptyOutput(let stderr):
                 return "claude CLI 응답이 비었습니다. stderr: \(stderr.prefix(200))"
+            case .jsonParseError(_, let reason):
+                return "Claude 응답 JSON 파싱 실패: \(reason)"
+            case .validationFailed(let issues):
+                return "Claude 응답 검증 실패: \(issues.joined(separator: "; "))"
             }
         }
+    }
+
+    // MARK: - v1.11.10 (2026-05-19) — Critic JSON response
+
+    /// **Critic 모드**: prompt 전송 → JSON 응답 받기 → ClaudeCriticResponse decode → deterministic validate.
+    /// markdown 흔적 (```json ... ```) 자동 제거. 1회 retry 가능.
+    ///
+    /// - Throws: AnalystError (CLI 없음 / parse 실패 / validation fail)
+    public func analyzeAsCritic(prompt: String) async throws -> ClaudeCriticResponse {
+        let raw = try await analyze(prompt: prompt)
+        let cleaned = Self.stripMarkdownFence(raw)
+        let decoder = JSONDecoder()
+        guard let data = cleaned.data(using: .utf8) else {
+            throw AnalystError.jsonParseError(raw: cleaned, reason: "UTF-8 conversion failed")
+        }
+        let response: ClaudeCriticResponse
+        do {
+            response = try decoder.decode(ClaudeCriticResponse.self, from: data)
+        } catch {
+            throw AnalystError.jsonParseError(raw: cleaned, reason: "\(error)")
+        }
+        let validation = response.validate()
+        if !validation.passed {
+            throw AnalystError.validationFailed(issues: validation.issues)
+        }
+        return response
+    }
+
+    /// markdown fence (```json / ```) 제거.
+    static func stripMarkdownFence(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.hasPrefix("```json") {
+            t = String(t.dropFirst("```json".count))
+        } else if t.hasPrefix("```") {
+            t = String(t.dropFirst(3))
+        }
+        if t.hasSuffix("```") {
+            t = String(t.dropLast(3))
+        }
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

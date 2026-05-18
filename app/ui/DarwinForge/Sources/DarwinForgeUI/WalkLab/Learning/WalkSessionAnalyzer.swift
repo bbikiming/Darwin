@@ -24,12 +24,14 @@ public enum WalkSessionAnalyzer {
     public static let correlationNegativeThreshold: Double = -0.3  // 명백한 fall 가속.
     public static let minSampleCountForRecommendation: Int = 60   // 3초 @ 20Hz.
 
-    /// 한 session 의 sample 배열 → summary.
+    /// **v1.11.10 (2026-05-19)** — header 받아서 V2 metric 모두 산출.
+    /// header 없으면 backward-compat path (V1).
     public static func analyze(_ samples: [WalkSessionSample],
                                 preset: String,
                                 startTime: Date,
                                 durationSec: Double,
-                                intensityLevelUsed: Int) -> WalkSessionSummary {
+                                intensityLevelUsed: Int,
+                                header: WalkSessionHeader? = nil) -> WalkSessionSummary {
         guard !samples.isEmpty else {
             return emptySummary(preset: preset,
                                 startTime: startTime,
@@ -72,6 +74,25 @@ public enum WalkSessionAnalyzer {
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
+        // **v1.11.10**: V2 metric 산출.
+        // header 없으면 quality / sagittal / candidateApplied 모두 nil (legacy compat).
+        let quality: DataQualityReport? = header.map { h in
+            DataQualityReport.compute(samples: samples, header: h, durationSec: durationSec)
+        }
+        let sagittal = SagittalMetric.compute(samples: samples, durationSec: durationSec)
+        let candidateApplied = CandidateAppliedSplit.compute(samples: samples)
+
+        // **v1.11.10**: quality.fail 이면 권고 confidence 강제 0 (재수집 안내).
+        var finalReason = reason
+        var finalConfidence = confidence
+        if let q = quality, q.verdict == .fail {
+            finalReason = "데이터 품질 fail — 재수집 권고. 이유: \(q.reasons.prefix(2).joined(separator: ", "))"
+            finalConfidence = 0
+        } else if let q = quality, q.verdict == .weak {
+            // weak 면 confidence cap.
+            finalConfidence = min(confidence, 0.5)
+        }
+
         return WalkSessionSummary(
             id: isoFormatter.string(from: startTime).replacingOccurrences(of: ":", with: "-"),
             preset: preset,
@@ -88,8 +109,11 @@ public enum WalkSessionAnalyzer {
             oscillationScore: oscillationScore,
             correctorEffectivenessScore: effectiveness,
             recommendedIntensityLevel: recommended,
-            recommendationReason: reason,
-            confidence: confidence
+            recommendationReason: finalReason,
+            confidence: finalConfidence,
+            dataQuality: quality,
+            sagittal: sagittal,
+            candidateApplied: candidateApplied
         )
     }
 
