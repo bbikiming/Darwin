@@ -293,6 +293,115 @@ public enum RobotSetupCommand {
     /// 볼 트래킹 종료 = demoStop 의 alias. UI 명령 의도 명확화를 위해 별도 const.
     public static let ballTrackerStop: String = demoStop
 
+    // MARK: - v1.11.5 (2026-05-18) — WalkLab ROBOTIS Onboard mode
+
+    /// **WalkLab Onboard mode 시작 명령** — robot 측 demo-pilot 실행 + WalkLab brokerage 모드.
+    ///
+    /// 흐름:
+    ///   1. 기존 demo / forge-bridge 종료
+    ///   2. `demo-pilot` (patched binary) 탐색 — 없으면 fallback `demo`
+    ///   3. `/tmp/df-pilot-mode` 에 `"walklab"` 작성 (robot-side patch 가 read)
+    ///   4. `/tmp/df-walklab-cmd` 빈 파일 생성 (Mac 측 x/y/a brokering write 경로)
+    ///   5. `nohup` 으로 binary 시작
+    ///
+    /// **robot-side patch 필요** (이번 PR 범위 밖):
+    /// - `df-pilot-mode == "walklab"` 분기 추가
+    /// - `/tmp/df-walklab-cmd` 5Hz polling → `Walking::GetInstance()->X/Y/A_MOVE_AMPLITUDE` set
+    /// - polling 식: `sscanf(line, "%d %f %f %f %f %f", &en, &x, &y, &a, &p, &f)`
+    /// - 미patch 시: `demo-pilot` 가 default SOCCER 모드로 시작 → ball tracker 동작
+    public static let walkLabRobotisStart: String = #"""
+    set +e
+    echo "▶ forge-bridge 종료 (USB bus 해제)"
+    sudo killall socat 2>/dev/null
+    sleep 0.3
+
+    echo "▶ ROBOTIS demo binary 탐색 (patched 우선)"
+    BIN=""
+    PATCHED=0
+    for d in "$HOME/Framework/Linux/project/demo/demo-pilot" \
+             "$HOME/darwin/Linux/project/demo/demo-pilot" \
+             "/darwin/Linux/project/demo/demo-pilot" \
+             "/robotis/Linux/project/demo/demo-pilot"; do
+      if [ -x "$d" ]; then BIN="$d"; PATCHED=1; break; fi
+    done
+    if [ -z "$BIN" ]; then
+      for d in "$HOME/Framework/Linux/project/demo/demo" \
+               "$HOME/darwin/Linux/project/demo/demo" \
+               "/darwin/Linux/project/demo/demo" \
+               "/robotis/Linux/project/demo/demo"; do
+        if [ -x "$d" ]; then BIN="$d"; break; fi
+      done
+    fi
+    if [ -z "$BIN" ]; then
+      echo "demo / demo-pilot binary not found"
+      exit 1
+    fi
+
+    if [ "$PATCHED" = "1" ]; then
+      echo "   patched binary 사용: $BIN"
+      echo "walklab" > /tmp/df-pilot-mode
+      # 빈 명령 파일 생성 — Mac 측이 x/y/a brokering write.
+      : > /tmp/df-walklab-cmd
+      chmod 0666 /tmp/df-walklab-cmd 2>/dev/null
+      echo "▶ /tmp/df-walklab-cmd 생성 — Mac 측 brokering 준비 완료"
+      echo "▶ /tmp/df-pilot-mode = walklab"
+    else
+      echo "   ⚠️  원본 demo 사용 (patched binary 미설치): $BIN"
+      echo "   → WalkLab brokerage 미지원 — SOCCER 기본 모드로 시작됩니다"
+      echo "   robot-side patch 적용 후 재시도 권장"
+      rm -f /tmp/df-pilot-mode 2>/dev/null
+    fi
+
+    echo "▶ 이전 데모 종료"
+    sudo killall demo demo-pilot walk_demo action_editor 2>/dev/null
+    sleep 0.3
+
+    echo "▶ demo 시작 → $BIN"
+    cd "$(dirname "$BIN")" || exit 1
+    sudo nohup "$BIN" >/tmp/df-demo.log 2>&1 &
+    sleep 1
+
+    PROC=$(pgrep -x "$(basename "$BIN")" 2>/dev/null)
+    if [ -n "$PROC" ]; then
+      echo "✅ demo 실행 중 (pid $PROC)"
+      if [ "$PATCHED" = "1" ]; then
+        echo "   WalkLab brokerage 활성 — Mac 측에서 x/y/a 명령 송출"
+      else
+        echo "   ⚠️  patched binary 없음 — SOCCER 기본 모드 동작"
+      fi
+      tail -10 /tmp/df-demo.log 2>/dev/null
+    else
+      echo "✗ demo 시작 실패"
+      tail -30 /tmp/df-demo.log 2>/dev/null
+      exit 1
+    fi
+    """#
+
+    /// **WalkLab Onboard mode 종료 명령** — demo-pilot 정지 + 명령 파일 정리.
+    public static let walkLabRobotisStop: String = #"""
+    set +e
+    echo "▶ WalkLab onboard 모드 종료"
+    sudo killall demo demo-pilot 2>/dev/null
+    rm -f /tmp/df-pilot-mode /tmp/df-walklab-cmd 2>/dev/null
+    echo "✅ 명령 파일 정리 + 데모 정지"
+    """#
+
+    /// **x/y/a brokering 명령 송출** — Mac → robot `/tmp/df-walklab-cmd` write.
+    ///
+    /// shell-quote 안전 (template — caller 가 line 변수 escaping 책임).
+    /// 예시 usage (Swift side):
+    /// ```swift
+    /// let line = WalkingEngineCommand(enabled: true, xMm: 28, ...).serializedLine
+    /// let cmd = RobotSetupCommand.walkLabRobotisSendCommand(line: line)
+    /// try await ssh.execute(cmd)
+    /// ```
+    public static func walkLabRobotisSendCommand(line: String) -> String {
+        // line 은 `enabled x_mm y_mm a_deg period_ms foot_mm` — space-separated, 숫자만.
+        // 안전성: WalkingEngineCommand.serializedLine 이 %d %.2f 같은 format 만 출력 →
+        // shell metacharacters 위험 없음. 추가 guard 로 single-quote 사용.
+        return "printf '%s\\n' '\(line)' > /tmp/df-walklab-cmd"
+    }
+
     /// 현재 demo 활성 상태 — 사용자에게 어떤 모드인지 알려줌.
     ///
     /// **출력 contract** (Mac 앱이 파싱):

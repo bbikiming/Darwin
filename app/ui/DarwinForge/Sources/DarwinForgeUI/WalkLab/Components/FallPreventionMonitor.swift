@@ -125,6 +125,11 @@ struct FallPreventionMonitor: View {
             )
             .frame(maxWidth: .infinity, alignment: .center)
             CorrectorIntensityCard(session: session)
+            // **v1.11.5 (2026-05-18)** — 보행 엔진 선택 (Mac sparse vs ROBOTIS onboard).
+            // FallPreventionMonitor 가 EnvironmentObject 로 RemoteShell 직접 access 어려움 →
+            // onStartOnboard/onStopOnboard nil 전달, 부모 view 가 inject 옵션. 현재는
+            // robot-side patch 부재 안내 + axis 토글만.
+            WalkingEnginePicker(session: session)
             BalanceExperimentControls(session: session)   // v1.11: 4축 분리 패널
             // **v1.11.4 (2026-05-18)** — 정적 IMU 캘리브레이션 (5축 손 캡처 + 부호 진단).
             // 부호 컨벤션 검증 후 BalanceExperimentControls 의 pitchInputConvention 토글로 적용.
