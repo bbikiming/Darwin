@@ -37,12 +37,15 @@ public struct BalanceExperimentControls: View {
     /// 진입 가드가 이중 안전망이지만 UI 단에서도 명시 거부하여 사용자 의도 오해 차단.
     private func requestConfigChange(_ newConfig: BalanceExperimentConfig) {
         if case .blocked = newConfig.safetyVerdict {
-            // 사용자 의도 (algorithm/sign/gain 변경) 는 보존하되 applyToRobot 만 강제 OFF.
+            // 사용자 의도 (algorithm/sign/gain/pitchInputConvention 변경) 는 보존하되
+            // applyToRobot 만 강제 OFF. **v1.11.4 (2026-05-18) fix**: pitchInputConvention
+            // 보존 필수 — 종전엔 누락되어 default `.imuRaw` 로 reset 되었음.
             let downgraded = BalanceExperimentConfig(
                 algorithmMode: newConfig.algorithmMode,
                 signConvention: newConfig.signConvention,
                 gainProfile: newConfig.gainProfile,
-                applyToRobot: false
+                applyToRobot: false,
+                pitchInputConvention: newConfig.pitchInputConvention
             )
             session.balanceExperimentConfig = downgraded
             return
@@ -71,11 +74,13 @@ public struct BalanceExperimentControls: View {
                         selection: Binding(
                             get: { session.balanceExperimentConfig.algorithmMode },
                             set: { newMode in
+                                // **v1.11.4 fix**: pitchInputConvention 보존 (종전 누락).
                                 requestConfigChange(BalanceExperimentConfig(
                                     algorithmMode: newMode,
                                     signConvention: session.balanceExperimentConfig.signConvention,
                                     gainProfile: session.balanceExperimentConfig.gainProfile,
-                                    applyToRobot: session.balanceExperimentConfig.applyToRobot
+                                    applyToRobot: session.balanceExperimentConfig.applyToRobot,
+                                    pitchInputConvention: session.balanceExperimentConfig.pitchInputConvention
                                 ))
                             }
                         )
@@ -91,7 +96,28 @@ public struct BalanceExperimentControls: View {
                                     algorithmMode: session.balanceExperimentConfig.algorithmMode,
                                     signConvention: newSign,
                                     gainProfile: session.balanceExperimentConfig.gainProfile,
-                                    applyToRobot: session.balanceExperimentConfig.applyToRobot
+                                    applyToRobot: session.balanceExperimentConfig.applyToRobot,
+                                    pitchInputConvention: session.balanceExperimentConfig.pitchInputConvention
+                                ))
+                            }
+                        )
+                    )
+
+                    // **v1.11.4 (2026-05-18) — 신규 axis**: Pitch 부호 정규화 (P1.1 인프라).
+                    // 실 robot 에서 앞기울 = imuPitch 음수 인 케이스 (2026-05-18 데이터로 입증)
+                    // 에서 사용자가 `.negateForwardIsNegative` 로 정규화 가능.
+                    axisControl(
+                        title: "Pitch 입력",
+                        icon: "arrow.up.and.down.righttriangle.up.righttriangle.down",
+                        selection: Binding(
+                            get: { session.balanceExperimentConfig.pitchInputConvention },
+                            set: { newConv in
+                                requestConfigChange(BalanceExperimentConfig(
+                                    algorithmMode: session.balanceExperimentConfig.algorithmMode,
+                                    signConvention: session.balanceExperimentConfig.signConvention,
+                                    gainProfile: session.balanceExperimentConfig.gainProfile,
+                                    applyToRobot: session.balanceExperimentConfig.applyToRobot,
+                                    pitchInputConvention: newConv
                                 ))
                             }
                         )
@@ -107,7 +133,8 @@ public struct BalanceExperimentControls: View {
                                     algorithmMode: session.balanceExperimentConfig.algorithmMode,
                                     signConvention: session.balanceExperimentConfig.signConvention,
                                     gainProfile: newGain,
-                                    applyToRobot: session.balanceExperimentConfig.applyToRobot
+                                    applyToRobot: session.balanceExperimentConfig.applyToRobot,
+                                    pitchInputConvention: session.balanceExperimentConfig.pitchInputConvention
                                 ))
                             }
                         )
@@ -120,7 +147,8 @@ public struct BalanceExperimentControls: View {
                                 algorithmMode: session.balanceExperimentConfig.algorithmMode,
                                 signConvention: session.balanceExperimentConfig.signConvention,
                                 gainProfile: session.balanceExperimentConfig.gainProfile,
-                                applyToRobot: newApply
+                                applyToRobot: newApply,
+                                pitchInputConvention: session.balanceExperimentConfig.pitchInputConvention
                             ))
                         }
                     )) {
@@ -450,6 +478,7 @@ public struct BalanceExperimentControls: View {
         if let m = mode as? BalanceAlgorithmMode { return m.label }
         if let m = mode as? BalanceSignConvention { return m.label }
         if let m = mode as? BalanceGainProfile { return m.label }
+        if let m = mode as? BalancePitchInputConvention { return m.label }
         return mode.rawValue
     }
 

@@ -282,6 +282,9 @@ final class WalkLabV111BalanceTests: XCTestCase {
     /// algorithmMode=.observeOnly → corrections 계산하지만 pose 적용 X.
     func testObserveOnlyComputesButDoesNotApply() {
         let s = WalkLabSession()
+        // **v1.11.4 (2026-05-18)**: enableBalanceCorrection default OFF 로 전환됨 →
+        // observeOnly 동작 검증을 위해 명시 ON.
+        s.enableBalanceCorrection = true
         // observeOnly 면 corrections 계산하되 pose 미변경.
         // applyToRobot 는 무시 (observeOnly 가 우선).
         s.balanceExperimentConfig = BalanceExperimentConfig(

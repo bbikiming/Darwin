@@ -398,16 +398,16 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "v1.11: ankleRoll gain 1.0 → ±3.0° 가 max")
     }
 
-    /// **v1.7 (2026-05-17): WalkLabSession enableBalanceCorrection default ON**.
-    /// 사용자 보고 "목각인형처럼 뻣뻣" — cm.rs/lib.rs IMU 정정 후 active balance 자동 활성.
-    /// ROBOTIS-OP Walking.cpp 의 BALANCE_HIP_ROLL_GAIN=0.5 등 자동 적용.
-    func testBalanceCorrectionDefaultOn() {
+    /// **v1.11.4 (2026-05-18) — default OFF**: 2026-05-18 실 robot 데이터에서 raw
+    /// gait 자체에 mean pitch -13° 앞기울 bias 발견 → corrector 적용 여부보다 raw gait
+    /// 진단이 먼저. default OFF 로 전환, 사용자가 명시 ON 후 검증.
+    /// 종전 (v1.7~v1.11.3): default ON.
+    func testBalanceCorrectionDefaultOff() {
         let session = WalkLabSession()
-        XCTAssertTrue(session.enableBalanceCorrection,
-            "v1.7 default ON — IMU active balance 자동 적용")
-        // didSet 으로 toggle 이벤트 발생 (true → true: 이벤트 없음).
-        XCTAssertNotNil(session.rampProgress,
-            "default ON 이면 ramp 시작 시점 기록됨")
+        XCTAssertFalse(session.enableBalanceCorrection,
+            "v1.11.4 default OFF — raw gait 진단 우선, 사용자 명시 ON 필요")
+        XCTAssertNil(session.rampProgress,
+            "default OFF 면 ramp 시작 시점 없음")
     }
 
     /// **applyBalanceCorrectionIfEnabled — disabled 시 identity.**
@@ -702,21 +702,21 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "기본 펼침 OFF — progressive disclosure (NN/g)")
     }
 
-    /// **Corrector 토글 — 이벤트 로그 발행** (v1.7 default ON 기준).
-    /// ON→OFF / OFF→ON 각각 이벤트 1건씩.
+    /// **Corrector 토글 — 이벤트 로그 발행** (v1.11.4 default OFF 기준).
+    /// OFF→ON / ON→OFF 각각 이벤트 1건씩.
     func testCorrectorToggleLogsEvents() {
         let session = WalkLabSession()
-        // v1.7 default ON → 먼저 OFF 로 전환.
+        // v1.11.4 default OFF → OFF→ON 부터 검증.
         let initialCount = session.safetyEvents.count
-        session.enableBalanceCorrection = false
-        XCTAssertEqual(session.safetyEvents.count, initialCount + 1,
-            "ON→OFF 시 이벤트 1건 발행")
-        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff,
-            "마지막 이벤트가 correctorOff 이어야 함")
         session.enableBalanceCorrection = true
+        XCTAssertEqual(session.safetyEvents.count, initialCount + 1,
+            "OFF→ON 시 이벤트 1건 발행")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOn,
+            "마지막 이벤트가 correctorOn 이어야 함")
+        session.enableBalanceCorrection = false
         XCTAssertEqual(session.safetyEvents.count, initialCount + 2,
-            "OFF→ON 시 추가 이벤트 1건")
-        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOn)
+            "ON→OFF 시 추가 이벤트 1건")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff)
     }
 
     /// **clearSafetyEvents — 이벤트 비움**.
@@ -745,24 +745,22 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff)
     }
 
-    /// **rampProgress** — v1.7 default ON 이라 새 session 은 progress != nil.
-    /// 토글 OFF 시 nil, 재 ON 직후 ≈ 0.
+    /// **rampProgress** — v1.11.4 default OFF 이라 새 session 은 progress == nil.
+    /// ON 토글 시 non-nil + ≈ 0, OFF 후 nil.
     func testRampProgressMatchesToggleState() {
         let session = WalkLabSession()
-        // v1.7: default ON → rampProgress 는 non-nil 시작.
-        XCTAssertNotNil(session.rampProgress, "v1.7 default ON — rampProgress 존재")
-        session.enableBalanceCorrection = false
-        XCTAssertNil(session.rampProgress, "OFF 후 nil")
+        // v1.11.4: default OFF → rampProgress nil 시작.
+        XCTAssertNil(session.rampProgress, "v1.11.4 default OFF — rampProgress nil")
         session.enableBalanceCorrection = true
         if let p = session.rampProgress {
             XCTAssertLessThan(p, 0.5,
-                "재 ON 직후 progress 가 너무 큼 — \(p)")
+                "ON 직후 progress 가 너무 큼 — \(p)")
             XCTAssertGreaterThanOrEqual(p, 0)
         } else {
-            XCTFail("재 ON 시 rampProgress 가 nil")
+            XCTFail("ON 시 rampProgress 가 nil")
         }
         session.enableBalanceCorrection = false
-        XCTAssertNil(session.rampProgress, "다시 OFF 후 nil")
+        XCTAssertNil(session.rampProgress, "OFF 후 nil")
     }
 
     /// **SafetySample 필드 정합** — 모든 필드가 Equatable.

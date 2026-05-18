@@ -101,7 +101,12 @@ public final class WalkLabSession: ObservableObject {
     /// **Phase D 정정 (Agent 2 B-3)**: didSet 으로 toggle OFF → ON 재전환 시 ramp
     /// 재시작 보장. 이전엔 OFF 시 `correctionEnabledAt` 잔존 → 다음 ON 즉시 100%
     /// 적용 (ramp 우회).
-    @Published public var enableBalanceCorrection: Bool = true {
+    ///
+    /// **v1.11.4 (2026-05-18) — 안전 default OFF**: 2026-05-18 실 robot 데이터에서
+    /// (1) raw gait 자체가 mean pitch -13° 앞기울 bias 보임, (2) P-control 적용 시에도
+    /// pitch -25°~+18° 흔들림. corrector 보정이 안정 기여하는지 보다 raw gait 진단이
+    /// 먼저 필요. default OFF → 사용자가 명시 ON 후 검증.
+    @Published public var enableBalanceCorrection: Bool = false {
         didSet {
             if enableBalanceCorrection != oldValue {
                 // 토글 전환 — ramp 재시작 (ON → 0초부터 / OFF → nil).
@@ -1060,16 +1065,28 @@ public final class WalkLabSession: ObservableObject {
     }
 
     private func currentWalkTuning() -> WalkMotionLibrary.AdvancedTuning? {
-        guard advanced else { return nil }
+        // **v1.11.4 (2026-05-18)** — hipPitchOffsetTrimDeg 가 default (13°) 와 다르면
+        // advanced=false 여도 trim 만은 적용. 사용자가 cradle 캘리브레이션 중 13/5/0°
+        // 비교를 advanced disclosure 펴지 않고도 가능하게.
+        let trimDefault = 13.0
+        if !advanced && abs(hipPitchOffsetTrimDeg - trimDefault) < 0.01 {
+            return nil
+        }
         return WalkMotionLibrary.AdvancedTuning(
-            strideMm: strideMm,
-            sideMm: sideMm,
-            turnDeg: turnDeg,
-            periodMs: customPeriodMs,
-            footHeightMm: footHeightMm,
-            balanceGain: balanceGain
+            strideMm: advanced ? strideMm : WalkMotionLibrary.defaultTuning(for: current).strideMm,
+            sideMm: advanced ? sideMm : WalkMotionLibrary.defaultTuning(for: current).sideMm,
+            turnDeg: advanced ? turnDeg : WalkMotionLibrary.defaultTuning(for: current).turnDeg,
+            periodMs: advanced ? customPeriodMs : WalkMotionLibrary.defaultTuning(for: current).periodMs,
+            footHeightMm: advanced ? footHeightMm : WalkMotionLibrary.defaultTuning(for: current).footHeightMm,
+            balanceGain: advanced ? balanceGain : WalkMotionLibrary.defaultTuning(for: current).balanceGain,
+            hipPitchOffsetDeg: hipPitchOffsetTrimDeg
         )
     }
+
+    /// **v1.11.4 (2026-05-18)** — hipPitchOffset trim slider 값 (UI 노출).
+    /// 0~20°, default 13° (ROBOTIS Walking.cpp 원본).
+    /// 사용자가 cradle 캘리브레이션 중 0/5/13° 비교해서 mean pitch bias 측정 가능.
+    @Published public var hipPitchOffsetTrimDeg: Double = 13.0
 
     /// Preflight: dxl_power ON + 모든 토크 ON. 하체 실패 / 상체 4개+ 실패 시 차단.
     /// Codex P0 권고: WalkLab cycle 이 torque OFF 상태에서 시작해도 silent 했던 버그 차단.
