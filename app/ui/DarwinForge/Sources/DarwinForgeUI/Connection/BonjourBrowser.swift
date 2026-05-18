@@ -29,13 +29,13 @@ public final class BonjourBrowser: ObservableObject {
         params.includePeerToPeer = true
 
         let b = NWBrowser(for: descriptor, using: params)
-        b.browseResultsChangedHandler = { [weak self] results, _ in
-            Task { @MainActor in
+        b.browseResultsChangedHandler = { results, _ in
+            Task { @MainActor [weak self] in
                 self?.refresh(from: results)
             }
         }
-        b.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
+        b.stateUpdateHandler = { state in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 switch state {
                 case .ready, .setup:

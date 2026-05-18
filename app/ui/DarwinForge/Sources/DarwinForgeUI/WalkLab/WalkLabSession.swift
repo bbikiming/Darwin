@@ -134,8 +134,8 @@ public final class WalkLabSession: ObservableObject {
         startTime = Date()
 
         simTimer?.invalidate()
-        simTimer = Timer.scheduledTimer(withTimeInterval: tickDtSec, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        simTimer = Timer.scheduledTimer(withTimeInterval: tickDtSec, repeats: true) { _ in
+            Task { @MainActor [weak self] in
                 self?.tick()
             }
         }

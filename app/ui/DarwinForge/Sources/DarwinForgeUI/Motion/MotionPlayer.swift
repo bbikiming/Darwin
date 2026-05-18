@@ -46,8 +46,8 @@ public final class MotionPlayer: ObservableObject {
         mode = .playing
         lastTickTime = .now
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
+            Task { @MainActor [weak self] in self?.tick() }
         }
     }
 
