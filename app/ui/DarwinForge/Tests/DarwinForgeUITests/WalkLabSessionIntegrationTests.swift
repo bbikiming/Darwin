@@ -166,11 +166,13 @@ final class WalkLabSessionIntegrationTests: XCTestCase {
 
     /// **WalkLabSession 의 monitoringExpanded 초기 false (UserDefaults clean)**.
     func testMonitoringExpandedInitialState() {
+        // **v1.11.6 (2026-05-18)**: default true 로 변경 (UX 개선).
         let key = "df.walklab.monitoringExpanded"
         UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
         let session = WalkLabSession()
-        XCTAssertFalse(session.monitoringExpanded,
-            "UserDefaults 미설정 — default false")
+        XCTAssertTrue(session.monitoringExpanded,
+            "UserDefaults 미설정 — default true (v1.11.6 UX fix)")
     }
 
     /// **strideMm/sideMm/turnDeg/balanceGain 기본값 정합** (advanced 모드 default).

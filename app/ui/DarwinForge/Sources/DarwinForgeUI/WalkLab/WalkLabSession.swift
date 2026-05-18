@@ -169,7 +169,11 @@ public final class WalkLabSession: ObservableObject {
                 balanceCorrector = Self.makeCorrector(
                     level: correctorIntensityLevel,
                     gainProfile: balanceExperimentConfig.gainProfile,
-                    forceHybrid: forceHybrid
+                    forceHybrid: forceHybrid,
+                    customHipRollGain: customHipRollGain,
+                    customKneeGain: customKneeGain,
+                    customAnklePitchGain: customAnklePitchGain,
+                    customAnkleRollGain: customAnkleRollGain
                 )
             }
             // 안전 차단 — alternateDiagnostic + 실 적용 조합은 자동으로 applyToRobot=false.
@@ -278,7 +282,11 @@ public final class WalkLabSession: ObservableObject {
                 balanceCorrector = Self.makeCorrector(
                     level: clamped,
                     gainProfile: balanceExperimentConfig.gainProfile,
-                    forceHybrid: forceHybrid
+                    forceHybrid: forceHybrid,
+                    customHipRollGain: customHipRollGain,
+                    customKneeGain: customKneeGain,
+                    customAnklePitchGain: customAnklePitchGain,
+                    customAnkleRollGain: customAnkleRollGain
                 )
                 logSafetyEvent(
                     kind: .correctorOn,
@@ -333,18 +341,31 @@ public final class WalkLabSession: ObservableObject {
     public static func makeCorrector(
         level: Int,
         gainProfile: BalanceGainProfile = .robotisOriginal,
-        forceHybrid: Bool? = nil
+        forceHybrid: Bool? = nil,
+        // **v1.11.6 (2026-05-18)**: `.custom` profile 의 사용자 지정 gain. gainProfile=.custom
+        // 일 때만 적용. nil 이면 robotisOriginal fallback (legacy backward-compat).
+        customHipRollGain: Double? = nil,
+        customKneeGain: Double? = nil,
+        customAnklePitchGain: Double? = nil,
+        customAnkleRollGain: Double? = nil
     ) -> BalanceCorrector {
         let mult = intensityMultiplier(level: level)
         let base = BalanceCorrector.forGainProfile(gainProfile)
         let useHybrid = forceHybrid ?? base.enableHybrid
+
+        // v1.11.6: .custom 일 때 사용자 지정 gain 적용. 그 외 profile 은 base 값 그대로.
+        let hipRoll = (gainProfile == .custom ? customHipRollGain : nil) ?? base.hipRollGain
+        let knee = (gainProfile == .custom ? customKneeGain : nil) ?? base.kneeGain
+        let anklePitch = (gainProfile == .custom ? customAnklePitchGain : nil) ?? base.anklePitchGain
+        let ankleRoll = (gainProfile == .custom ? customAnkleRollGain : nil) ?? base.ankleRollGain
+
         return BalanceCorrector(
             intensity: mult,
             maxCorrectionDeg: base.maxCorrectionDeg,
-            hipRollGain: base.hipRollGain,
-            kneeGain: base.kneeGain,
-            anklePitchGain: base.anklePitchGain,
-            ankleRollGain: base.ankleRollGain,
+            hipRollGain: hipRoll,
+            kneeGain: knee,
+            anklePitchGain: anklePitch,
+            ankleRollGain: ankleRoll,
             internalGain: base.internalGain,
             enableHybrid: useHybrid,
             slowDriftTauSec: base.slowDriftTauSec,
@@ -374,9 +395,21 @@ public final class WalkLabSession: ObservableObject {
     @Published public private(set) var safetyEvents: [SafetyEvent] = []
     /// 모니터링 대시보드 펼침 상태 — UI 토글. 앱 재시작 후에도 유지 (UserDefaults).
     /// 키: `df.walklab.monitoringExpanded`. UI 가 @AppStorage 로 binding 추천.
-    @Published public var monitoringExpanded: Bool = UserDefaults.standard.bool(
-        forKey: "df.walklab.monitoringExpanded"
-    ) {
+    ///
+    /// **v1.11.6 (2026-05-18) — default true 로 변경**:
+    /// 종전 default false (Bool 미설정 시) → 첫 사용자가 chevron 클릭해서 펼쳐야
+    /// FallPreventionMonitor + WalkingEnginePicker + BalanceExperimentControls +
+    /// StaticTiltCalibrationPanel 모두 보임. UX 누락.
+    /// 이제 UserDefaults 미설정 시 true 로 초기화. 사용자가 명시 OFF 후엔 OFF 유지.
+    @Published public var monitoringExpanded: Bool = {
+        let key = "df.walklab.monitoringExpanded"
+        if UserDefaults.standard.object(forKey: key) == nil {
+            // 첫 실행 — default true (모든 패널 노출).
+            UserDefaults.standard.set(true, forKey: key)
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: key)
+    }() {
         didSet {
             UserDefaults.standard.set(monitoringExpanded,
                                       forKey: "df.walklab.monitoringExpanded")
@@ -1106,6 +1139,50 @@ public final class WalkLabSession: ObservableObject {
     /// 0~20°, default 13° (ROBOTIS Walking.cpp 원본).
     /// 사용자가 cradle 캘리브레이션 중 0/5/13° 비교해서 mean pitch bias 측정 가능.
     @Published public var hipPitchOffsetTrimDeg: Double = 13.0
+
+    /// **v1.11.6 (2026-05-18)** — `.robotisOnboard` 모드의 자동 brokering 토글.
+    /// true 면 preset / tuning 변경 시 `WalkLabOnboardBridge` 가 300ms debounce 후
+    /// 자동으로 RemoteShell.send 호출. default OFF — 안전상 사용자가 명시 ON.
+    @Published public var autoOnboardBrokering: Bool = false
+
+    /// **v1.11.6 (2026-05-18)** — `.custom` gainProfile 의 사용자 지정 gain 값.
+    /// gainProfile == .custom 일 때만 makeCorrector 가 이 값들을 적용.
+    /// 종전 (v1.11.5.2 이하) `.custom` 은 robotisOriginal fallback — UI 라벨과 동작 불일치.
+    /// default: robotisOriginal 값 (사용자가 명시 변경해야 effect).
+    @Published public var customHipRollGain: Double = 0.5 {
+        didSet { rebuildCorrectorIfCustomChanged() }
+    }
+    @Published public var customKneeGain: Double = 0.3 {
+        didSet { rebuildCorrectorIfCustomChanged() }
+    }
+    @Published public var customAnklePitchGain: Double = 0.9 {
+        didSet { rebuildCorrectorIfCustomChanged() }
+    }
+    @Published public var customAnkleRollGain: Double = 1.0 {
+        didSet { rebuildCorrectorIfCustomChanged() }
+    }
+
+    /// custom gain 변경 시 corrector 재생성 (gainProfile == .custom 일 때만).
+    private func rebuildCorrectorIfCustomChanged() {
+        guard balanceExperimentConfig.gainProfile == .custom else { return }
+        let forceHybrid: Bool? = {
+            switch balanceExperimentConfig.algorithmMode {
+            case .hybridBA:        return true
+            case .robotisPControl: return false
+            case .off:             return false
+            case .observeOnly:     return nil
+            }
+        }()
+        balanceCorrector = Self.makeCorrector(
+            level: correctorIntensityLevel,
+            gainProfile: .custom,
+            forceHybrid: forceHybrid,
+            customHipRollGain: customHipRollGain,
+            customKneeGain: customKneeGain,
+            customAnklePitchGain: customAnklePitchGain,
+            customAnkleRollGain: customAnkleRollGain
+        )
+    }
 
     /// **v1.11.5 (2026-05-18)** — 보행 엔진 선택 axis.
     /// `.macSparseKeyframe` (default) = 기존 6 phase 합성 + setPosition 순차.

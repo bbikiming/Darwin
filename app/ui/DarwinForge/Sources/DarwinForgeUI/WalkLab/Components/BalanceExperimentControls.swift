@@ -170,6 +170,13 @@ public struct BalanceExperimentControls: View {
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .disabled(safetyDisablesApply)
+
+                    // **v1.11.6 (2026-05-18)** — .custom gainProfile 선택 시만 노출.
+                    // 4개 gain slider — 사용자가 직접 hipRoll/knee/anklePitch/ankleRoll 조절.
+                    // 종전 .custom 은 robotisOriginal fallback 뿐 — UI 라벨과 실 동작 불일치.
+                    if session.balanceExperimentConfig.gainProfile == .custom {
+                        customGainSliders
+                    }
                 }
                 .padding(.top, DFSpace.xs2)
             } label: {
@@ -448,6 +455,42 @@ public struct BalanceExperimentControls: View {
     }
 
     // MARK: - Axis control helper
+
+    /// **v1.11.6 (2026-05-18)** — .custom gainProfile 의 4 gain slider.
+    @ViewBuilder
+    private var customGainSliders: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.warning)
+                Text(".custom gain (4축 사용자 지정)")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+            customGainSlider("hipRoll", value: $session.customHipRollGain, range: 0...2)
+            customGainSlider("knee", value: $session.customKneeGain, range: 0...2)
+            customGainSlider("anklePitch", value: $session.customAnklePitchGain, range: 0...2)
+            customGainSlider("ankleRoll", value: $session.customAnkleRollGain, range: 0...2)
+        }
+        .padding(.top, DFSpace.xs2)
+    }
+
+    @ViewBuilder
+    private func customGainSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        HStack(spacing: DFSpace.xs2) {
+            Text(label)
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .frame(width: 70, alignment: .leading)
+            Slider(value: value, in: range)
+                .controlSize(.mini)
+            Text(String(format: "%.2f", value.wrappedValue))
+                .font(DFFont.monoLabel)
+                .foregroundStyle(DFColor.textSecondary)
+                .frame(width: 40, alignment: .trailing)
+        }
+    }
 
     private func axisControl<Mode: CaseIterable & Hashable & RawRepresentable & Identifiable>(
         title: String,
