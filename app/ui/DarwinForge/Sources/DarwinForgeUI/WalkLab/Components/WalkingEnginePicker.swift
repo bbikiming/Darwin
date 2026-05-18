@@ -17,15 +17,21 @@ public struct WalkingEnginePicker: View {
     /// RemoteShell 명령 전송 callback — 부모 view 가 inject. nil 이면 버튼 disabled.
     public var onStartOnboard: (() -> Void)? = nil
     public var onStopOnboard: (() -> Void)? = nil
+    /// **v1.11.5.1 (2026-05-18)** — 현재 preset/tuning 의 x/y/a 명령 brokering callback.
+    /// 부모 view 가 `WalkLabSession.currentWalkingEngineCommand(enabled:)` 결과를
+    /// `RemoteShell.send(RobotSetupCommand.walkLabRobotisSendCommand(line:))` 로 전달.
+    public var onSendCommand: ((WalkingEngineCommand) -> Void)? = nil
 
     public init(
         session: WalkLabSession,
         onStartOnboard: (() -> Void)? = nil,
-        onStopOnboard: (() -> Void)? = nil
+        onStopOnboard: (() -> Void)? = nil,
+        onSendCommand: ((WalkingEngineCommand) -> Void)? = nil
     ) {
         self.session = session
         self.onStartOnboard = onStartOnboard
         self.onStopOnboard = onStopOnboard
+        self.onSendCommand = onSendCommand
     }
 
     public var body: some View {
@@ -104,28 +110,51 @@ public struct WalkingEnginePicker: View {
 
     @ViewBuilder
     private var onboardActions: some View {
-        HStack(spacing: DFSpace.xs2) {
-            Button {
-                onStartOnboard?()
-            } label: {
-                Label("ROBOTIS 측 시작", systemImage: "play.fill")
-                    .font(DFFont.micro)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(onStartOnboard == nil)
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.xs2) {
+                Button {
+                    onStartOnboard?()
+                } label: {
+                    Label("ROBOTIS 측 시작", systemImage: "play.fill")
+                        .font(DFFont.micro)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(onStartOnboard == nil)
 
-            Button {
-                onStopOnboard?()
-            } label: {
-                Label("ROBOTIS 측 종료", systemImage: "stop.fill")
-                    .font(DFFont.micro)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(onStopOnboard == nil)
+                Button {
+                    onStopOnboard?()
+                } label: {
+                    Label("ROBOTIS 측 종료", systemImage: "stop.fill")
+                        .font(DFFont.micro)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(onStopOnboard == nil)
 
-            Spacer()
+                Spacer()
+            }
+
+            // **v1.11.5.1 (2026-05-18)** — x/y/a 명령 brokering 송출 버튼.
+            // 사용자가 preset 또는 tuning 변경 후 누르면 robot 의 `/tmp/df-walklab-cmd`
+            // 에 한 줄 write — robot-side patch 가 5Hz polling 으로 read.
+            let currentCmd = session.currentWalkingEngineCommand(
+                enabled: session.current != .idle
+            )
+            HStack(spacing: DFSpace.xs2) {
+                Button {
+                    onSendCommand?(currentCmd)
+                } label: {
+                    Label("현재 명령 송출 (\(currentCmd.serializedLine))",
+                          systemImage: "paperplane.fill")
+                        .font(DFFont.micro)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(onSendCommand == nil)
+                Spacer()
+            }
         }
     }
 }

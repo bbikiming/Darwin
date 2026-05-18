@@ -49,6 +49,10 @@ import ForgeCore
 /// 5. **Event log** — 시간역순 이벤트 로그.
 struct FallPreventionMonitor: View {
     @ObservedObject var session: WalkLabSession
+    /// **v1.11.5.1 (2026-05-18) — ROBOTIS onboard 모드 brokering 채널**.
+    /// `WalkingEnginePicker` 의 시작/종료 버튼이 이 RemoteShell 을 통해 SSH 명령 send.
+    /// 종전 (v1.11.5): callback 미전달 → 버튼 disabled 상태. 이번 fix.
+    @EnvironmentObject private var remoteShell: RemoteShell
     /// **2026-05-16 a11y 정정**: `repeatForever` animation 은 SwiftUI 가
     /// 자동 disable 안 함. 명시적 @Environment 가드 필요.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -125,11 +129,30 @@ struct FallPreventionMonitor: View {
             )
             .frame(maxWidth: .infinity, alignment: .center)
             CorrectorIntensityCard(session: session)
-            // **v1.11.5 (2026-05-18)** — 보행 엔진 선택 (Mac sparse vs ROBOTIS onboard).
-            // FallPreventionMonitor 가 EnvironmentObject 로 RemoteShell 직접 access 어려움 →
-            // onStartOnboard/onStopOnboard nil 전달, 부모 view 가 inject 옵션. 현재는
-            // robot-side patch 부재 안내 + axis 토글만.
-            WalkingEnginePicker(session: session)
+            // **v1.11.5.1 (2026-05-18)** — 보행 엔진 선택 (Mac sparse vs ROBOTIS onboard).
+            // 시작/종료 버튼이 RemoteShell.send 로 SSH 명령 송출. 종전 v1.11.5 는
+            // callback 미전달로 disabled — 이번 fix.
+            WalkingEnginePicker(
+                session: session,
+                onStartOnboard: { [remoteShell] in
+                    Task { @MainActor in
+                        await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
+                    }
+                },
+                onStopOnboard: { [remoteShell] in
+                    Task { @MainActor in
+                        await remoteShell.send(RobotSetupCommand.walkLabRobotisStop)
+                    }
+                },
+                onSendCommand: { [remoteShell] cmd in
+                    Task { @MainActor in
+                        let line = cmd.serializedLine
+                        await remoteShell.send(
+                            RobotSetupCommand.walkLabRobotisSendCommand(line: line)
+                        )
+                    }
+                }
+            )
             BalanceExperimentControls(session: session)   // v1.11: 4축 분리 패널
             // **v1.11.4 (2026-05-18)** — 정적 IMU 캘리브레이션 (5축 손 캡처 + 부호 진단).
             // 부호 컨벤션 검증 후 BalanceExperimentControls 의 pitchInputConvention 토글로 적용.
