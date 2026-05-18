@@ -173,13 +173,16 @@ public final class WalkLabSession: ObservableObject {
                 )
             }
             // 안전 차단 — alternateDiagnostic + 실 적용 조합은 자동으로 applyToRobot=false.
+            // **v1.11.5.2 (2026-05-18, Codex Med #4 fix)**: pitchInputConvention 보존 추가.
+            // 종전 누락 → blocked 강등 시 default `.imuRaw` 로 reset 되어 정규화 무효화.
             if case .blocked = balanceExperimentConfig.safetyVerdict {
                 if balanceExperimentConfig.applyToRobot {
                     balanceExperimentConfig = BalanceExperimentConfig(
                         algorithmMode: balanceExperimentConfig.algorithmMode,
                         signConvention: balanceExperimentConfig.signConvention,
                         gainProfile: balanceExperimentConfig.gainProfile,
-                        applyToRobot: false
+                        applyToRobot: false,
+                        pitchInputConvention: balanceExperimentConfig.pitchInputConvention
                     )
                     logSafetyEvent(
                         kind: .correctorOff,
@@ -873,11 +876,13 @@ public final class WalkLabSession: ObservableObject {
                 kind: .correctorOff,
                 message: "보행 시작 시 안전 차단: \(reason)"
             )
+            // **v1.11.5.2 (2026-05-18, Codex Med #4 fix)**: pitchInputConvention 보존 추가.
             balanceExperimentConfig = BalanceExperimentConfig(
                 algorithmMode: balanceExperimentConfig.algorithmMode,
                 signConvention: balanceExperimentConfig.signConvention,
                 gainProfile: balanceExperimentConfig.gainProfile,
-                applyToRobot: false
+                applyToRobot: false,
+                pitchInputConvention: balanceExperimentConfig.pitchInputConvention
             )
         }
 
@@ -914,6 +919,20 @@ public final class WalkLabSession: ObservableObject {
 
         if preset == .idle {
             sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(presetLabel)")
+            return
+        }
+
+        // **v1.11.5 (2026-05-18) — ROBOTIS Onboard 모드 분기**:
+        // walkingEngine == .robotisOnboard 면 Mac sparse keyframe 합성 + setPosition
+        // 송출 경로 완전 우회. 사용자가 별도 UI 토글로 robot-side demo-pilot 활성화한
+        // 상태라 가정. WalkLabSession 은 currentWalkingEngineCommand() 만 published —
+        // 외부 component (예: WalkLabOnboardBridge) 가 RemoteShell 통해 SSH brokering.
+        //
+        // **robot-side patch 필요** — UI 가 patch 미설치 시 사용자에게 명시 경고.
+        if walkingEngine == .robotisOnboard {
+            lastRobotEvent = "▶ ROBOTIS Onboard 모드: \(presetLabel) — Mac sparse 합성 우회. 별도 RemoteShell 측 brokering 필요."
+            // Mac 측 sparse keyframe 송출 안 함. cycleStartedAt 만 갱신 — UI 시간 표시 동기.
+            cycleStartedAt = Date()
             return
         }
 
@@ -1087,6 +1106,38 @@ public final class WalkLabSession: ObservableObject {
     /// 0~20°, default 13° (ROBOTIS Walking.cpp 원본).
     /// 사용자가 cradle 캘리브레이션 중 0/5/13° 비교해서 mean pitch bias 측정 가능.
     @Published public var hipPitchOffsetTrimDeg: Double = 13.0
+
+    /// **v1.11.5 (2026-05-18)** — 보행 엔진 선택 axis.
+    /// `.macSparseKeyframe` (default) = 기존 6 phase 합성 + setPosition 순차.
+    /// `.robotisOnboard` = robot-side `Walking::GetInstance()` 사용 (안정 보행, patch 필요).
+    /// 변경 시 `walkingEngineDidChange` 가 호출 (engine bootstrap / shutdown).
+    @Published public var walkingEngine: WalkingEngine = .macSparseKeyframe {
+        didSet {
+            guard walkingEngine != oldValue else { return }
+            logSafetyEvent(
+                kind: .correctorOff,  // engine 전환은 보정과 무관하지만 event log 용도 재사용.
+                message: "보행 엔진: \(oldValue.shortLabel) → \(walkingEngine.shortLabel)"
+            )
+        }
+    }
+
+    /// 현재 preset + tuning 으로부터 ROBOTIS onboard 모드의 명령 패킷 생성.
+    /// 사용자 UI 가 `RemoteShell` 통해 robot 에 SSH write 할 때 사용.
+    ///
+    /// **v1.11.5.2 (2026-05-18)**: `hipPitchOffsetDeg` 필드 추가. 종전 누락으로
+    /// `.robotisOnboard` 모드에서 trim slider 변경이 robot 에 전달 안 되던 버그 fix.
+    public func currentWalkingEngineCommand(enabled: Bool) -> WalkingEngineCommand {
+        let tuning = currentWalkTuning() ?? WalkMotionLibrary.defaultTuning(for: current)
+        return WalkingEngineCommand(
+            enabled: enabled && current != .idle,
+            xMm: tuning.strideMm,
+            yMm: tuning.sideMm,
+            aDeg: tuning.turnDeg,
+            periodMs: tuning.periodMs,
+            footHeightMm: tuning.footHeightMm,
+            hipPitchOffsetDeg: tuning.hipPitchOffsetDeg
+        )
+    }
 
     /// Preflight: dxl_power ON + 모든 토크 ON. 하체 실패 / 상체 4개+ 실패 시 차단.
     /// Codex P0 권고: WalkLab cycle 이 torque OFF 상태에서 시작해도 silent 했던 버그 차단.

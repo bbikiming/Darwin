@@ -1,0 +1,160 @@
+import SwiftUI
+
+/// **v1.11.5 (2026-05-18) — 보행 엔진 선택 UI 패널**.
+///
+/// 사용자가 한 화면에서 두 보행 엔진을 토글:
+/// - **Mac sparse keyframe** (default) — 즉시 동작, 약 10Hz 등가, IMU balance 없음
+/// - **ROBOTIS onboard** — 안정 보행 (Ball tracker 와 동일 엔진), robot-side patch 필요
+///
+/// 사용자 흐름:
+/// 1. 패널에서 ROBOTIS onboard 선택
+/// 2. 안전 경고 표시 — "robot-side patch 미설치 시 SOCCER 기본 모드로 시작됨"
+/// 3. "ROBOTIS 측 시작" 버튼 — RemoteShell 통해 walkLabRobotisStart 명령 send
+/// 4. WalkLab preset 시작 → Mac sparse 합성 우회, robot 측 Walking::GetInstance() 사용
+/// 5. 사용자가 종료 시 "ROBOTIS 측 종료" 버튼 → walkLabRobotisStop send
+public struct WalkingEnginePicker: View {
+    @ObservedObject var session: WalkLabSession
+    /// RemoteShell 명령 전송 callback — 부모 view 가 inject. nil 이면 버튼 disabled.
+    public var onStartOnboard: (() -> Void)? = nil
+    public var onStopOnboard: (() -> Void)? = nil
+    /// **v1.11.5.1 (2026-05-18)** — 현재 preset/tuning 의 x/y/a 명령 brokering callback.
+    /// 부모 view 가 `WalkLabSession.currentWalkingEngineCommand(enabled:)` 결과를
+    /// `RemoteShell.send(RobotSetupCommand.walkLabRobotisSendCommand(line:))` 로 전달.
+    public var onSendCommand: ((WalkingEngineCommand) -> Void)? = nil
+
+    public init(
+        session: WalkLabSession,
+        onStartOnboard: (() -> Void)? = nil,
+        onStopOnboard: (() -> Void)? = nil,
+        onSendCommand: ((WalkingEngineCommand) -> Void)? = nil
+    ) {
+        self.session = session
+        self.onStartOnboard = onStartOnboard
+        self.onStopOnboard = onStopOnboard
+        self.onSendCommand = onSendCommand
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            // 헤더
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "cpu.fill")
+                    .font(DFFont.label)
+                    .foregroundStyle(engineTint)
+                Text("보행 엔진 (v1.11.5)")
+                    .font(DFFont.sectionLabel)
+                    .foregroundStyle(DFColor.textPrimary)
+                Spacer()
+                Text(session.walkingEngine.shortLabel)
+                    .font(DFFont.micro)
+                    .foregroundStyle(engineTint)
+            }
+
+            // 2 옵션 picker — segmented
+            Picker("보행 엔진", selection: $session.walkingEngine) {
+                ForEach(WalkingEngine.allCases) { engine in
+                    HStack(spacing: 4) {
+                        Image(systemName: engine.icon)
+                        Text(engine.shortLabel)
+                    }
+                    .tag(engine)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            // 현재 엔진 설명
+            Text(session.walkingEngine.description)
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // ROBOTIS onboard 시 안전 경고 + 시작/종료 버튼
+            if session.walkingEngine == .robotisOnboard {
+                onboardWarning
+                onboardActions
+            }
+        }
+        .padding(DFSpace.xs2)
+        .background(DFColor.info.opacity(DFOpacity.o06))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+    }
+
+    // MARK: - Components
+
+    private var engineTint: Color {
+        switch session.walkingEngine {
+        case .macSparseKeyframe: return DFColor.textSecondary
+        case .robotisOnboard:    return DFColor.warning
+        }
+    }
+
+    @ViewBuilder
+    private var onboardWarning: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.warning)
+                Text("robot-side patch 필요")
+                    .font(DFFont.sectionLabel)
+                    .foregroundStyle(DFColor.textPrimary)
+            }
+            Text("미설치 시 SOCCER 기본 모드로 동작 (ball tracker 와 동일). Mac 측 x/y/a 명령은 무시됩니다. patched binary 경로: ~/Framework/Linux/project/demo/demo-pilot")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, DFSpace.xs2)
+    }
+
+    @ViewBuilder
+    private var onboardActions: some View {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.xs2) {
+                Button {
+                    onStartOnboard?()
+                } label: {
+                    Label("ROBOTIS 측 시작", systemImage: "play.fill")
+                        .font(DFFont.micro)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(onStartOnboard == nil)
+
+                Button {
+                    onStopOnboard?()
+                } label: {
+                    Label("ROBOTIS 측 종료", systemImage: "stop.fill")
+                        .font(DFFont.micro)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(onStopOnboard == nil)
+
+                Spacer()
+            }
+
+            // **v1.11.5.1 (2026-05-18)** — x/y/a 명령 brokering 송출 버튼.
+            // 사용자가 preset 또는 tuning 변경 후 누르면 robot 의 `/tmp/df-walklab-cmd`
+            // 에 한 줄 write — robot-side patch 가 5Hz polling 으로 read.
+            let currentCmd = session.currentWalkingEngineCommand(
+                enabled: session.current != .idle
+            )
+            HStack(spacing: DFSpace.xs2) {
+                Button {
+                    onSendCommand?(currentCmd)
+                } label: {
+                    Label("현재 명령 송출 (\(currentCmd.serializedLine))",
+                          systemImage: "paperplane.fill")
+                        .font(DFFont.micro)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(onSendCommand == nil)
+                Spacer()
+            }
+        }
+    }
+}
