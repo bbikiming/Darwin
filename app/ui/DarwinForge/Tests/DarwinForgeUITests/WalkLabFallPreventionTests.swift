@@ -693,13 +693,16 @@ final class WalkLabFallPreventionTests: XCTestCase {
 
     /// 초기 상태 — 시계열 비어 있음, 이벤트 비어 있음, 펼침 OFF.
     func testMonitoringInitialState() {
+        // **v1.11.6 (2026-05-18)**: UserDefaults 명시 false 후 검증 (default 가 true 이라).
+        UserDefaults.standard.set(false, forKey: "df.walklab.monitoringExpanded")
+        defer { UserDefaults.standard.removeObject(forKey: "df.walklab.monitoringExpanded") }
         let session = WalkLabSession()
         XCTAssertTrue(session.safetyTimeline.isEmpty,
             "초기 시계열 buffer 가 비어 있어야 함")
         XCTAssertTrue(session.safetyEvents.isEmpty,
             "초기 이벤트 로그가 비어 있어야 함")
         XCTAssertFalse(session.monitoringExpanded,
-            "기본 펼침 OFF — progressive disclosure (NN/g)")
+            "UserDefaults 명시 false 면 false 유지 (사용자 선택 보존)")
     }
 
     /// **Corrector 토글 — 이벤트 로그 발행** (v1.11.4 default OFF 기준).
@@ -804,8 +807,11 @@ final class WalkLabFallPreventionTests: XCTestCase {
 
     /// **모니터링 펼침 토글** — 외부 코드에서 변경 가능 (@Published).
     func testMonitoringExpandedTogglable() {
+        // **v1.11.6 (2026-05-18)**: default true 로 변경 (UX 개선). 명시 false 후엔 false 유지.
+        UserDefaults.standard.set(false, forKey: "df.walklab.monitoringExpanded")
+        defer { UserDefaults.standard.removeObject(forKey: "df.walklab.monitoringExpanded") }
         let session = WalkLabSession()
-        XCTAssertFalse(session.monitoringExpanded, "default 닫힘")
+        XCTAssertFalse(session.monitoringExpanded, "UserDefaults false 면 false 유지")
         session.monitoringExpanded = true
         XCTAssertTrue(session.monitoringExpanded)
         session.monitoringExpanded = false
@@ -889,10 +895,17 @@ final class WalkLabFallPreventionTests: XCTestCase {
     func testMonitoringExpandedPersistsToUserDefaults() {
         let key = "df.walklab.monitoringExpanded"
         UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
 
         let session = WalkLabSession()
-        XCTAssertFalse(session.monitoringExpanded,
-            "초기 — UserDefaults 에 키 없으면 false")
+        // **v1.11.6 (2026-05-18)**: UserDefaults 미설정 시 default true (UX fix).
+        XCTAssertTrue(session.monitoringExpanded,
+            "초기 — UserDefaults 미설정 시 default true (v1.11.6 UX fix)")
+
+        // false 로 명시 설정 후 persist 검증.
+        session.monitoringExpanded = false
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: key),
+            "false 설정 — UserDefaults persist")
 
         session.monitoringExpanded = true
         XCTAssertTrue(UserDefaults.standard.bool(forKey: key),

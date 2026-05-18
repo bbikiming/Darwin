@@ -38,6 +38,12 @@ public struct WalkLabView: View {
             detail
                 .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
         }
+        // **v1.11.6 (2026-05-18)** — invisible onboard brokering bridge.
+        // session.walkingEngine == .robotisOnboard + autoOnboardBrokering=true 시
+        // preset/tuning 변경 300ms debounce 후 자동 SSH send.
+        .overlay(alignment: .topTrailing) {
+            WalkLabOnboardBridge(session: session)
+        }
         .sheet(isPresented: $showingRiskConfirm) {
             riskConfirmSheet
         }

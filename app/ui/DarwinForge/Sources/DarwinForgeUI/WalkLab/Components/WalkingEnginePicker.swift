@@ -155,6 +155,23 @@ public struct WalkingEnginePicker: View {
                 .disabled(onSendCommand == nil)
                 Spacer()
             }
+
+            // **v1.11.6 (2026-05-18)** — 자동 brokering 토글 + 300ms debounce 안내.
+            // ON 이면 preset/tuning 변경 시 WalkLabOnboardBridge 가 자동 SSH send.
+            Toggle(isOn: $session.autoOnboardBrokering) {
+                HStack(spacing: 4) {
+                    Image(systemName: session.autoOnboardBrokering
+                          ? "antenna.radiowaves.left.and.right"
+                          : "antenna.radiowaves.left.and.right.slash")
+                        .font(DFFont.micro)
+                        .foregroundStyle(session.autoOnboardBrokering ? DFColor.success : DFColor.textSecondary)
+                    Text("자동 명령 송출 (300ms debounce)")
+                        .font(DFFont.micro)
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
         }
     }
 }
