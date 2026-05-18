@@ -1,0 +1,17 @@
+--- a/Linux/project/demo/Makefile
++++ b/Linux/project/demo/Makefile
+@@ -18,7 +18,7 @@ LFLAGS += -lpthread -ljpeg -lrt
+
+-OBJECTS = VisionMode.o StatusCheck.o main.o
++OBJECTS = VisionMode.o StatusCheck.o main.o WalkLabBrokerage.o
+
+ all: $(TARGET)
+
+@@ -38,3 +38,9 @@ libdarwin:
+ $(TARGET): libdarwin $(OBJECTS)
+ 	$(CXX) -o $(TARGET) $(OBJECTS) ../../build/darwin.a $(LFLAGS)
+ 	chmod 755 $(TARGET)
+
++# **v1.11.7 (DarwinForge)** — WalkLabBrokerage 모듈.
++WalkLabBrokerage.o: WalkLabBrokerage.cpp WalkLabBrokerage.h
++	$(CXX) $(CXXFLAGS) -c WalkLabBrokerage.cpp

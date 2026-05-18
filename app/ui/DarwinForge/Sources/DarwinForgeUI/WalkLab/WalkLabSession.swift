@@ -818,6 +818,14 @@ public final class WalkLabSession: ObservableObject {
         current = .idle
         // sway 도 zero 로 디케이 — 다음 tick 에서 매끄럽게 감소.
 
+        // **v1.11.7 (2026-05-18, GPT HIGH-2)** — onboard 모드도 lifecycle 정리.
+        // walkingEngine == .robotisOnboard 일 때 walkCycleTask 가 없으므로 별도 cleanup.
+        if onboardWalkingActive {
+            onboardWalkingActive = false
+            logSafetyEvent(kind: .sessionStop,
+                message: "ROBOTIS Onboard 정지 — robot 측 SSH stop 명령 별도 필요")
+        }
+
         // 실 보행 cycle cancel — Task 내부에서 walkReady 복귀 후 종료.
         if wasRunning {
             cancelWalkCycle(eventLabel: "정지 — 직립 자세 복귀")
@@ -961,11 +969,22 @@ public final class WalkLabSession: ObservableObject {
         // 상태라 가정. WalkLabSession 은 currentWalkingEngineCommand() 만 published —
         // 외부 component (예: WalkLabOnboardBridge) 가 RemoteShell 통해 SSH brokering.
         //
-        // **robot-side patch 필요** — UI 가 patch 미설치 시 사용자에게 명시 경고.
+        // **v1.11.7 (2026-05-18, GPT HIGH-2 fix)** — lifecycle 명시:
+        // - onboardWalkingActive=true 로 UI/log 가 "robot 측 active" 인식
+        // - safety event 로깅
+        // - cycleStartedAt 갱신 (UI 경과 시간 동기)
+        // - autoOnboardBrokering ON 이면 WalkLabOnboardBridge 가 첫 명령 자동 송출
         if walkingEngine == .robotisOnboard {
-            lastRobotEvent = "▶ ROBOTIS Onboard 모드: \(presetLabel) — Mac sparse 합성 우회. 별도 RemoteShell 측 brokering 필요."
-            // Mac 측 sparse keyframe 송출 안 함. cycleStartedAt 만 갱신 — UI 시간 표시 동기.
+            onboardWalkingActive = true
             cycleStartedAt = Date()
+            logSafetyEvent(
+                kind: .correctorOn,
+                message: "ROBOTIS Onboard 시작: \(presetLabel) (Mac sparse 우회). 자동 brokering=\(autoOnboardBrokering ? "ON" : "OFF")"
+            )
+            let brokeringHint = autoOnboardBrokering
+                ? "자동 명령 송출 활성"
+                : "수동 송출 (현재 명령 송출 버튼 필요)"
+            lastRobotEvent = "▶ ROBOTIS Onboard 모드: \(presetLabel) — Mac sparse 우회, \(brokeringHint)"
             return
         }
 
@@ -1144,6 +1163,12 @@ public final class WalkLabSession: ObservableObject {
     /// true 면 preset / tuning 변경 시 `WalkLabOnboardBridge` 가 300ms debounce 후
     /// 자동으로 RemoteShell.send 호출. default OFF — 안전상 사용자가 명시 ON.
     @Published public var autoOnboardBrokering: Bool = false
+
+    /// **v1.11.7 (2026-05-18, GPT HIGH-2)** — ROBOTIS onboard 모드 활성 상태.
+    /// startWalkCycle 진입 시 onboard 분기에서 true, stop / cancelWalkCycle 시 false.
+    /// UI 가 이 값으로 "robot 측에서 보행 중" 표시 가능.
+    /// Mac sparse 의 walkCycleTask 와 별개 — onboard 는 SSH brokering 으로만 동작.
+    @Published public private(set) var onboardWalkingActive: Bool = false
 
     /// **v1.11.6 (2026-05-18)** — `.custom` gainProfile 의 사용자 지정 gain 값.
     /// gainProfile == .custom 일 때만 makeCorrector 가 이 값들을 적용.
