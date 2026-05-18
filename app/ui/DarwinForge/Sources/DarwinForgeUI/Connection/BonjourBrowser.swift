@@ -29,13 +29,16 @@ public final class BonjourBrowser: ObservableObject {
         params.includePeerToPeer = true
 
         let b = NWBrowser(for: descriptor, using: params)
-        b.browseResultsChangedHandler = { [weak self] results, _ in
-            Task { @MainActor in
+        // v1.11.2 (2026-05-18): CI Swift 5.9 strict concurrency 호환 — inner Task
+        // closure 에서 outer `[weak self]` 재캡쳐 시 error. Task closure 자체에
+        // `[weak self]` 명시.
+        b.browseResultsChangedHandler = { results, _ in
+            Task { @MainActor [weak self] in
                 self?.refresh(from: results)
             }
         }
-        b.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
+        b.stateUpdateHandler = { state in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 switch state {
                 case .ready, .setup:

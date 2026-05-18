@@ -412,6 +412,14 @@ public final class WalkLabSession: ObservableObject {
         store?.imuAccelZMagnitudeAvg ?? 0
     }
 
+    /// **v1.11.2 (2026-05-18) — CI Swift 5.9 strict concurrency 호환 helper**.
+    /// Task.detached 의 inner closure 에서 `await MainActor.run { self?.store?... }`
+    /// 가 weak self 재캡쳐 error. MainActor isolated method 로 추출.
+    /// 사용처: runContinuousWalk / runWalkCycle 의 isBusAlive closure.
+    public func isBusAliveSnapshot() -> Bool {
+        store?.bus != nil
+    }
+
     /// 2026-05-17 안전 강화: 보행 시작 전 종합 안전 체크리스트.
     /// 사용자가 "지금 시작하면 안전한가" 한 눈에 인지.
     /// nil 이면 모든 체크 통과 (시작 안전), 비어있지 않으면 차단 사유 명시.
@@ -957,7 +965,10 @@ public final class WalkLabSession: ObservableObject {
             // 2026-05-17 chaos #1: weak store capture — Task 내부에서 매 step 마다
             // store?.bus !== nil 확인 가능. 종전엔 bus strong capture 로 dead handle
             // 송출 ~5 step 지속.
-            walkCycleTask = Task.detached(priority: .userInitiated) { [weak self, weak store = self.store] in
+            // v1.11.2 (2026-05-18): CI Swift 5.9 strict concurrency 호환 — outer
+            // `weak store = self.store` 가 inner closure 에서 var-like 로 재캡쳐되어
+            // error. `[weak self]` 만 캡쳐하고 inner 가 self?.store 통해 access.
+            walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
                 await prev?.value
                 let result = await Self.runContinuousWalk(
                     bus: bus, plan: plan,
@@ -965,12 +976,13 @@ public final class WalkLabSession: ObservableObject {
                     lowerBodyJoints: lowerBody,
                     onPose: onPose,
                     transformPose: transformPose,
-                    isBusAlive: { [weak store] in
-                        await MainActor.run { store?.bus != nil }
+                    isBusAlive: { [weak self] in
+                        guard let self else { return false }
+                        return await self.isBusAliveSnapshot()
                     },
                     // v1.11.1 MEDIUM-5: bus write 실패 시 ConnectionStore counter 누적.
-                    onBusWriteFailure: { [weak store] in
-                        store?._bumpBusWriteFailureCount()
+                    onBusWriteFailure: { [weak self] in
+                        self?.store?._bumpBusWriteFailureCount()
                     }
                 )
                 await MainActor.run { [weak self] in
@@ -995,7 +1007,8 @@ public final class WalkLabSession: ObservableObject {
         }
         isRobotWalking = true
         lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(presetLabel)"
-        walkCycleTask = Task.detached(priority: .userInitiated) { [weak self, weak store = self.store] in
+        // v1.11.2 (2026-05-18): CI Swift 5.9 strict concurrency 호환 (line 960 와 동일).
+        walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
             await prev?.value
             let result = await Self.runWalkCycle(
                 bus: bus, page: page,
@@ -1004,12 +1017,13 @@ public final class WalkLabSession: ObservableObject {
                 loop: false,   // jog 는 kick chain 끝나면 종료.
                 onPose: onPose,
                 transformPose: transformPose,
-                isBusAlive: { [weak store] in
-                    await MainActor.run { store?.bus != nil }
+                isBusAlive: { [weak self] in
+                    guard let self else { return false }
+                    return await self.isBusAliveSnapshot()
                 },
                 // v1.11.1 MEDIUM-5: bus write 실패 시 ConnectionStore counter 누적.
-                onBusWriteFailure: { [weak store] in
-                    store?._bumpBusWriteFailureCount()
+                onBusWriteFailure: { [weak self] in
+                    self?.store?._bumpBusWriteFailureCount()
                 }
             )
             await MainActor.run { [weak self] in
