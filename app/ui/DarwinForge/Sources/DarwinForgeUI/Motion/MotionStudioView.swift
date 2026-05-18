@@ -1374,10 +1374,14 @@ extension MotionStudioView {
         // 150-182 충돌 없음. 250+ 시작 시 UInt8 overflow trap.
         let mixamoExtras = mixamoStyleStarterPages(startId: 150)
 
-        return [idle, tPose, bow, wave, sit] + extras
-             + officialCatalog
-             + walkTest + ergonomic + greetings + social
-             + mixamoExtras
+        // v1.11.2 (2026-05-18): CI Swift 5.9 type-checker timeout 회피 — generic
+        // `+` 5단계 concatenation 을 단계별 variable 로 분리. 로컬 5.10 은 inference
+        // 가능하지만 CI 옛 toolchain 은 표현식 복잡도 초과 → error.
+        let starters: [MotionPage] = [idle, tPose, bow, wave, sit]
+        let withExtras = starters + extras
+        let withOfficial = withExtras + officialCatalog
+        let withWalk = withOfficial + walkTest + ergonomic + greetings + social
+        return withWalk + mixamoExtras
     }
 
     /// `walkReady` 의 현재 raw 값에서 각 관절에 delta(°) 를 더한 새 pose.
