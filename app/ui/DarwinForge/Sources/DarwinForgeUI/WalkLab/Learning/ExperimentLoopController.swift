@@ -81,4 +81,10 @@ public final class ExperimentLoopController: ObservableObject {
         await loop.cancel()
         current = await loop.current
     }
+
+    /// **v1.11.14**: WalkDataView 의 validate(currentConfig:) 결과를 사용자에게 표시.
+    /// 외부 caller 가 issue 를 lastError 채널로 전달하기 위한 setter.
+    public func setLastError(_ message: String?) {
+        lastError = message
+    }
 }

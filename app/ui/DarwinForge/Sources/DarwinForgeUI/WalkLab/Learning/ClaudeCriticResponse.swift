@@ -153,6 +153,80 @@ extension ClaudeCriticResponse {
         public let passed: Bool
         public let issues: [String]
     }
+
+    /// **v1.11.14 (2026-05-19) — 진단 문서 #5 fix**: 현재 config 기준 forbidden 조합 검증.
+    ///
+    /// 종전 `validate()` 는 응답 자체의 self-consistency 만 검사 (단축 표현). 그러나
+    /// 실제 위험은 "현재 사용자 config + 제안 변경" 조합에 있음. 이 overload 가
+    /// `BalanceExperimentConfig.safetyVerdict` 로직을 한 axis 변경 후 미리 시뮬레이션해
+    /// blocked 면 issue 추가. hipPitchOffsetTrimDeg 같은 non-config axis 도 별도 검사.
+    ///
+    /// - Parameters:
+    ///   - currentConfig: 현재 WalkLabSession 의 BalanceExperimentConfig
+    ///   - currentTrim: 현재 hipPitchOffsetTrimDeg (default 13)
+    /// - Returns: 응답 자체 + 조합 검사 결과
+    public func validate(currentConfig: BalanceExperimentConfig,
+                         currentTrim: Double = 13.0) -> ValidationResult {
+        var issues = self.validate().issues
+        guard let exp = nextExperiment else {
+            return ValidationResult(passed: issues.isEmpty, issues: issues)
+        }
+        // forbidden phrase 매칭 (Claude 가 명시한 금지 조합과 일치 시).
+        // 예: forbiddenChanges: ["algorithmMode→hybridBA + applyToRobot=true"]
+        let forbiddenPhrase = "\(exp.axis.rawValue)→\(exp.to)"
+        for f in forbiddenChanges {
+            if f.contains(forbiddenPhrase) {
+                issues.append("제안 변경이 응답의 forbiddenChanges 와 충돌: \(f)")
+            }
+        }
+        // 한 axis 변경 후 safetyVerdict 시뮬레이션.
+        let simulated = simulateChange(exp: exp, from: currentConfig)
+        if case .blocked(let reason) = simulated.safetyVerdict {
+            issues.append("제안 적용 시 safetyVerdict=blocked: \(reason)")
+        }
+        // hipPitchOffsetTrimDeg 범위 가드 — ROBOTIS 안전 범위 ±20° 권장.
+        if exp.axis == .hipPitchOffsetTrimDeg, let target = Double(exp.to) {
+            if abs(target - currentTrim) > 10.0 {
+                issues.append("hipPitchOffsetTrimDeg 변경 폭 \(abs(target - currentTrim))° > 10° — 단일 실험으로 위험. 5° 이하 권장.")
+            }
+            if target < -20 || target > 35 {
+                issues.append("hipPitchOffsetTrimDeg=\(target)° 범위 초과 (-20..35 권장).")
+            }
+        }
+        // enableBalanceCorrection=false 인 환경에서 algorithm/sign/gain/pitch 변경은 no-op.
+        // (사용자가 toggleable 상태가 아닌 환경에서 critic 이 무의미한 제안)
+        // 본 PR 에선 issue 만 표시 — caller 가 알림 + 사용자 인지 후 진행.
+        return ValidationResult(passed: issues.isEmpty, issues: issues)
+    }
+
+    /// 한 axis 변경 적용한 BalanceExperimentConfig 시뮬레이션 — safetyVerdict 만 검사용.
+    private func simulateChange(exp: NextExperiment,
+                                from current: BalanceExperimentConfig) -> BalanceExperimentConfig {
+        var algorithm = current.algorithmMode
+        var sign = current.signConvention
+        var gain = current.gainProfile
+        var apply = current.applyToRobot
+        var pitchInput = current.pitchInputConvention
+        switch exp.axis {
+        case .algorithmMode:
+            if let v = BalanceAlgorithmMode(rawValue: exp.to) { algorithm = v }
+        case .signConvention:
+            if let v = BalanceSignConvention(rawValue: exp.to) { sign = v }
+        case .gainProfile:
+            if let v = BalanceGainProfile(rawValue: exp.to) { gain = v }
+        case .pitchInputConvention:
+            if let v = BalancePitchInputConvention(rawValue: exp.to) { pitchInput = v }
+        case .applyToRobot:
+            apply = (exp.to.lowercased() == "true")
+        default:
+            break  // non-config axis — 시뮬 변경 없음
+        }
+        return BalanceExperimentConfig(
+            algorithmMode: algorithm, signConvention: sign,
+            gainProfile: gain, applyToRobot: apply,
+            pitchInputConvention: pitchInput
+        )
+    }
 }
 
 // MARK: - JSON Schema (draft-7) — prompt 에 embed

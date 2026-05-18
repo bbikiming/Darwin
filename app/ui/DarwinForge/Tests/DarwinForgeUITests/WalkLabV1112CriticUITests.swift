@@ -12,9 +12,22 @@ import XCTest
 final class WalkLabV1112CriticUITests: XCTestCase {
 
     /// fake claude CLI 의 경로 — 테스트 fixture.
+    /// **v1.11.14**: Bundle.module ("fake-claude.sh") 우선, source 트리 fallback.
+    /// Package.swift 가 fixtures/fake-claude.sh 를 resource 로 copy.
     private var fakeCliPath: String {
-        // Bundle.module 사용 시 SPM 의 fixture path. 실 fixture 는 source 트리 의
-        // Tests/DarwinForgeUITests/fixtures/ 위치 — 절대 경로 시도.
+        // 1. Bundle.module resource (SwiftPM copy 후) — 실행 권한 있어야 함.
+        if let url = Bundle.module.url(forResource: "fake-claude", withExtension: "sh") {
+            let path = url.path
+            // copy 된 파일은 executable bit 없을 수 있음 — chmod +x 시도.
+            if !FileManager.default.isExecutableFile(atPath: path) {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                        ofItemAtPath: path)
+            }
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        // 2. Source 트리 절대 경로 fallback (개발자 로컬).
         let candidates = [
             "/Users/bbikiming/Documents/vibe_coding/Darwin/app/ui/DarwinForge/Tests/DarwinForgeUITests/fixtures/fake-claude.sh",
         ]
@@ -40,18 +53,34 @@ final class WalkLabV1112CriticUITests: XCTestCase {
         XCTAssertTrue(response.validate().passed)
     }
 
-    /// **회귀 가드**: fail fixture → quality.verdict=fail + nextExperiment=null + 검증 통과.
+    /// **v1.11.14 (2026-05-19) — 진단 문서 #6 fix**: 실 fail fixture 검증.
+    /// 종전 (v1.11.12) 은 default fixture 만 호출하는 no-op 였음.
+    /// wrapper script 를 /tmp 에 두고 그 안에서 fake-claude.sh --fixture=fail 호출.
+    /// 결과 — dataQuality.verdict=fail + nextExperiment=null + recommendation=recollect 검증.
     func testFakeCliFailFixture() async throws {
         guard FileManager.default.isExecutableFile(atPath: fakeCliPath) else {
             throw XCTSkip("fake-claude.sh 실행 권한 없음 — skip")
         }
-        let analyst = WalkSessionClaudeAnalyst(cliPath: fakeCliPath, timeoutSeconds: 10)
-        // fixture 인자 전달 위해 별도 path 또는 wrapper 필요. 본 fake CLI 는 인자
-        // 받지만 analyst 가 인자 변경 안 함. 대신 환경 변수 또는 path suffix 사용.
-        // 본 테스트는 default fixture (pass) 기대만 검증.
-        // (fail fixture 검증은 별도 wrapper 스크립트 필요 — v1.11.13 에서 추가)
+        let wrapper = "/tmp/fake-claude-fail-wrapper.sh"
+        let content = "#!/bin/bash\n\"\(fakeCliPath)\" --fixture=fail\n"
+        try? content.write(toFile: wrapper, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                ofItemAtPath: wrapper)
+        guard FileManager.default.isExecutableFile(atPath: wrapper) else {
+            throw XCTSkip("wrapper 실행 권한 setup 실패")
+        }
+        defer { try? FileManager.default.removeItem(atPath: wrapper) }
+
+        let analyst = WalkSessionClaudeAnalyst(cliPath: wrapper, timeoutSeconds: 10)
         let response = try await analyst.analyzeAsCritic(prompt: "test")
-        XCTAssertNotNil(response)
+        XCTAssertEqual(response.dataQuality.verdict, .fail,
+                       "fail fixture 는 quality.verdict=fail 기대")
+        XCTAssertNil(response.nextExperiment,
+                     "fail fixture 는 nextExperiment=null 기대")
+        XCTAssertEqual(response.recommendation?.action, .recollect,
+                       "fail → recollect 권고 기대")
+        XCTAssertTrue(response.validate().passed,
+                      "fail + nextExperiment=null 은 self-consistent (validation 통과)")
     }
 
     /// **회귀 가드**: malformed JSON → AnalystError.jsonParseError.

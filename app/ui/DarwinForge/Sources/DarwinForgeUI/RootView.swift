@@ -21,6 +21,11 @@ public struct RootView: View {
     // **v1.11.12/13 (2026-05-19)** — Critic + A/B 실험 loop 전역 singleton.
     @StateObject private var claudeCritic = WalkSessionClaudeCritic()
     @StateObject private var experimentLoop = ExperimentLoopController()
+    // **v1.11.14 (2026-05-19)** — WalkLabSession 전역 singleton.
+    // 종전 WalkLabView 내 @StateObject — WalkDataView 의 실험 승인 흐름이 같은
+    // session 인스턴스 (현재 config) 를 읽고 변경하도록 RootView 로 hoist.
+    // 라이프사이클: 앱 전체. 메뉴/탭 전환 시 보존.
+    @StateObject private var walkLabSession = WalkLabSession()
     private let commander: ClaudeCommander
 
     @State private var section: Section = .studio
@@ -123,6 +128,11 @@ public struct RootView: View {
         .environmentObject(remoteShell)
         .environmentObject(claudeCritic)
         .environmentObject(experimentLoop)
+        .environmentObject(walkLabSession)
+        .onAppear {
+            // v1.11.14: session ↔ experimentLoop weak ref wiring.
+            walkLabSession.setExperimentLoop(experimentLoop)
+        }
         // 글로벌 단축키 (메뉴와 같은 단축키 — 메뉴 enabled 일 때 메뉴가 우선 처리)
         .background(globalShortcuts)
     }

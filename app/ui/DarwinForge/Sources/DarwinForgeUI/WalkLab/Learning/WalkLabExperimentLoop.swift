@@ -110,37 +110,95 @@ public actor WalkLabExperimentLoop {
                                     reason: "실험 세션 0건 — 보행 1회 이상 실행 필요",
                                     metrics: [:])
         }
-        // 단순 metric 비교: meanAbsPitch 평균.
-        let baseMeanPitch = baselineSummary.meanAbsPitch
-        let expMeanPitch = experimentSummaries.map(\.meanAbsPitch).reduce(0, +) / Double(experimentSummaries.count)
-        let basePeakPitch = baselineSummary.peakAbsPitch
-        let expPeakPitch = experimentSummaries.map(\.peakAbsPitch).reduce(0, +) / Double(experimentSummaries.count)
+        // **v1.11.14 (2026-05-19)** — 다축 metric 비교. 진단 문서 §4 verdict 단순함 fix.
+        func avg(_ kp: KeyPath<WalkSessionSummary, Double>) -> Double {
+            experimentSummaries.map { $0[keyPath: kp] }.reduce(0, +) / Double(experimentSummaries.count)
+        }
+        func avgInt(_ kp: KeyPath<WalkSessionSummary, Int>) -> Double {
+            Double(experimentSummaries.map { $0[keyPath: kp] }.reduce(0, +)) / Double(experimentSummaries.count)
+        }
 
-        let pitchDelta = expMeanPitch - baseMeanPitch    // 음수 = 개선
-        let peakDelta = expPeakPitch - basePeakPitch
+        // Pitch 변화 (음수 = 개선).
+        let basePitchMean = baselineSummary.meanAbsPitch
+        let expPitchMean = avg(\.meanAbsPitch)
+        let basePitchPeak = baselineSummary.peakAbsPitch
+        let expPitchPeak = avg(\.peakAbsPitch)
+        let pitchDelta = expPitchMean - basePitchMean
+        let peakPitchDelta = expPitchPeak - basePitchPeak
+
+        // Roll 변화 (악화 검출).
+        let baseRollMean = baselineSummary.meanAbsRoll
+        let expRollMean = avg(\.meanAbsRoll)
+        let baseRollPeak = baselineSummary.peakAbsRoll
+        let expRollPeak = avg(\.peakAbsRoll)
+        let rollDelta = expRollMean - baseRollMean
+        let peakRollDelta = expRollPeak - baseRollPeak
+
+        // Data quality (verdict / stale / duplicate / bus / appliedZero).
+        let expQualityFails = experimentSummaries.filter {
+            $0.dataQuality?.verdict == .fail
+        }.count
+        let avgStaleRatio = experimentSummaries.compactMap { $0.dataQuality?.staleSampleRatio }
+            .reduce(0, +) / Double(max(1, experimentSummaries.count))
+        let avgBusFails = experimentSummaries.compactMap { $0.dataQuality?.busWriteFailureDelta }
+            .reduce(0, +)
+
+        // Sample count (abort 검출 — baseline 대비 70% 미만이면 의심).
+        let baseSampleCount = baselineSummary.sampleCount
+        let expSampleCount = Int(avgInt(\.sampleCount))
+        let sampleRatio = baseSampleCount > 0 ? Double(expSampleCount) / Double(baseSampleCount) : 1.0
+        let abortLike = sampleRatio < 0.7
+
+        // Sagittal drift (앞기울 누적).
+        let avgDrift = experimentSummaries.compactMap { $0.sagittal?.pitchDriftPerSec }
+            .reduce(0, +) / Double(max(1, experimentSummaries.count))
+
         let metrics: [String: Double] = [
-            "baseline_meanAbsPitch": baseMeanPitch,
-            "experiment_meanAbsPitch": expMeanPitch,
+            "baseline_meanAbsPitch": basePitchMean,
+            "experiment_meanAbsPitch": expPitchMean,
             "delta_meanAbsPitch": pitchDelta,
-            "baseline_peakAbsPitch": basePeakPitch,
-            "experiment_peakAbsPitch": expPeakPitch,
-            "delta_peakAbsPitch": peakDelta,
+            "baseline_peakAbsPitch": basePitchPeak,
+            "experiment_peakAbsPitch": expPitchPeak,
+            "delta_peakAbsPitch": peakPitchDelta,
+            "baseline_meanAbsRoll": baseRollMean,
+            "experiment_meanAbsRoll": expRollMean,
+            "delta_meanAbsRoll": rollDelta,
+            "delta_peakAbsRoll": peakRollDelta,
+            "experiment_qualityFails": Double(expQualityFails),
+            "experiment_avgStaleRatio": avgStaleRatio,
+            "experiment_busFailures": Double(avgBusFails),
+            "experiment_sampleCountRatio": sampleRatio,
+            "experiment_pitchDriftPerSec": avgDrift,
         ]
-        // 권고: success metric 에 명시된 변화량 매칭 시도.
-        // 간단 규칙: meanAbsPitch 감소 ≥ 0.5° AND peakAbsPitch 증가 ≤ 5° → success
-        // peakAbsPitch 증가 ≥ 10° → failRollback (위험)
-        // 그 외 → inconclusive
+
+        // **다축 verdict 규칙** (우선순위 — 위 → 아래로 가장 보수적 verdict).
         let verdict: Experiment.Verdict
         let reason: String
-        if peakDelta >= 10.0 {
+        if expQualityFails > 0 {
+            verdict = .inconclusive
+            reason = "실험 세션 \(expQualityFails)건 data quality fail — 재수집 필요"
+        } else if abortLike {
             verdict = .failRollback
-            reason = "peakAbsPitch 가 baseline 대비 +\(String(format: "%.1f", peakDelta))° 증가 — rollback 권고"
-        } else if pitchDelta <= -0.5 && peakDelta <= 5.0 {
+            reason = "실험 세션 sampleCount 가 baseline 의 \(String(format: "%.0f", sampleRatio * 100))% — abort/fall 의심"
+        } else if peakPitchDelta >= 10.0 {
+            verdict = .failRollback
+            reason = "peakAbsPitch 가 baseline 대비 +\(String(format: "%.1f", peakPitchDelta))° 증가"
+        } else if peakRollDelta >= 8.0 {
+            verdict = .failRollback
+            reason = "peakAbsRoll 가 +\(String(format: "%.1f", peakRollDelta))° 악화 — lateral 안정성 손실"
+        } else if avgBusFails > 5 {
+            verdict = .failRollback
+            reason = "bus write 실패 누적 \(Int(avgBusFails))건 — 통신 불안정"
+        } else if avgStaleRatio > 0.15 {
+            verdict = .inconclusive
+            reason = "IMU staleness \(String(format: "%.0f", avgStaleRatio * 100))% — 데이터 신뢰도 부족"
+        } else if pitchDelta <= -0.5 && peakPitchDelta <= 5.0
+                  && rollDelta <= 1.0 && peakRollDelta <= 5.0 {
             verdict = .success
-            reason = "meanAbsPitch \(String(format: "%+.1f", pitchDelta))°, peak \(String(format: "%+.1f", peakDelta))° — 성공 기준 충족"
+            reason = "pitch \(String(format: "%+.1f", pitchDelta))°/peak\(String(format: "%+.1f", peakPitchDelta))°, roll \(String(format: "%+.1f", rollDelta))°/peak\(String(format: "%+.1f", peakRollDelta))° — 다축 성공 기준 충족"
         } else {
             verdict = .inconclusive
-            reason = "meanAbsPitch \(String(format: "%+.1f", pitchDelta))°, peak \(String(format: "%+.1f", peakDelta))° — 추가 데이터 권고"
+            reason = "pitch \(String(format: "%+.1f", pitchDelta))°, roll \(String(format: "%+.1f", rollDelta))°, drift \(String(format: "%+.2f", avgDrift))°/s — 추가 보행 권고"
         }
         // 결과 저장.
         var updated = exp

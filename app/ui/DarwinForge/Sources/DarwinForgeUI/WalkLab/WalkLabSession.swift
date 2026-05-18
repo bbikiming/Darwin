@@ -1067,9 +1067,10 @@ public final class WalkLabSession: ObservableObject {
                     customGainKnee: balanceExperimentConfig.gainProfile == .custom ? customKneeGain : nil,
                     customGainAnklePitch: balanceExperimentConfig.gainProfile == .custom ? customAnklePitchGain : nil,
                     customGainAnkleRoll: balanceExperimentConfig.gainProfile == .custom ? customAnkleRollGain : nil,
-                    robotModel: "DARwIn-OP2"
-                    // firmwareVersion / onboardPatchVersion / experimentId / baselineSessionId
-                    // 는 향후 robot SSH + experiment loop 통합 시 (v1.11.12+)
+                    robotModel: "DARwIn-OP2",
+                    // v1.11.14: 실험 컨텍스트 — applyExperimentChange 후 활성.
+                    experimentId: activeExperimentId,
+                    baselineSessionId: activeBaselineSessionId
                 )
                 // v1.9.2: Logger 의 startedAt 과 sync — summary.id 와 jsonl filename
                 // 일치 보장. 종전: 별도 Date() → 3ms drift → matching 실패.
@@ -1201,6 +1202,58 @@ public final class WalkLabSession: ObservableObject {
     /// true 면 preset / tuning 변경 시 `WalkLabOnboardBridge` 가 300ms debounce 후
     /// 자동으로 RemoteShell.send 호출. default OFF — 안전상 사용자가 명시 ON.
     @Published public var autoOnboardBrokering: Bool = false
+
+    /// **v1.11.14 (2026-05-19)** — A/B 실험 컨텍스트 (사용자 명시 승인 후 set).
+    /// `nil` = 일반 보행 (실험 X). Logger header 의 experimentId/baselineSessionId 로 기록.
+    @Published public var activeExperimentId: String? = nil
+    @Published public var activeBaselineSessionId: String? = nil
+
+    /// **v1.11.14**: ExperimentLoopController weak ref — 세션 종료 시 자동 폐루프.
+    /// RootView 가 setExperimentLoop(_:) 로 inject. weak 라 actor lifecycle 의존성 없음.
+    /// `@Published` 와 `weak` 호환 불가 — 단일 set 만 일어나므로 non-published 로 둠.
+    public weak var experimentLoop: ExperimentLoopController? = nil
+
+    /// RootView 또는 외부 caller 가 controller 주입.
+    public func setExperimentLoop(_ controller: ExperimentLoopController?) {
+        self.experimentLoop = controller
+    }
+
+    /// **v1.11.14**: ExperimentApprovalUI 가 사용자 승인 후 호출. axis 한 개만 변경.
+    /// - safetyVerdict.blocked → reject (deterministic gate)
+    /// - changeOneAxisOnly invariant — 호출자가 axis 하나만 변경한 config 전달 책임
+    public func applyExperimentChange(
+        experimentId: String,
+        baselineSessionId: String,
+        proposedConfig: BalanceExperimentConfig,
+        proposedHipPitchOffsetTrimDeg: Double? = nil
+    ) -> ApplyExperimentResult {
+        if case .blocked(let reason) = proposedConfig.safetyVerdict {
+            return .failed(reason: "safetyVerdict.blocked — \(reason)")
+        }
+        // 실제 config 변경.
+        balanceExperimentConfig = proposedConfig
+        if let trim = proposedHipPitchOffsetTrimDeg {
+            hipPitchOffsetTrimDeg = trim
+        }
+        activeExperimentId = experimentId
+        activeBaselineSessionId = baselineSessionId
+        logSafetyEvent(
+            kind: .correctorOn,
+            message: "실험 적용: \(experimentId) (baseline=\(baselineSessionId))"
+        )
+        return .applied
+    }
+
+    /// **v1.11.14**: 실험 종료 (사용자 명시 또는 finalize).
+    public func clearExperimentContext() {
+        activeExperimentId = nil
+        activeBaselineSessionId = nil
+    }
+
+    public enum ApplyExperimentResult: Sendable {
+        case applied
+        case failed(reason: String)
+    }
 
     /// **v1.11.7 (2026-05-18, GPT HIGH-2)** — ROBOTIS onboard 모드 활성 상태.
     /// startWalkCycle 진입 시 onboard 분기에서 true, stop / cancelWalkCycle 시 false.
@@ -2450,6 +2503,69 @@ public final class WalkLabSession: ObservableObject {
         sessionStartedAt = nil
         autoTuner.record(summary, currentLevel: correctorIntensityLevel)
         lastRobotEvent = "📊 session 분석 완료 — \(summary.recommendationReason)"
+
+        // **v1.11.14 (2026-05-19)** — 활성 실험이 있으면 자동 폐루프:
+        // - 1. appendExperimentSession(summary.id)
+        // - 2. compareWithBaseline (baseline summary 디스크 load + 비교)
+        // - 3. lastRobotEvent 에 verdict 표시
+        // 실험 finalize 는 사용자 명시 (UI 버튼) — 자동 finalize X.
+        if let expId = activeExperimentId, let baselineId = activeBaselineSessionId,
+           let controller = experimentLoop {
+            let summaryId = summary.id
+            Task { @MainActor [controller] in
+                await controller.appendExperimentSession(summaryId)
+                // baseline summary 디스크 load.
+                if let baseline = loadSummaryFromDisk(sessionId: baselineId) {
+                    let experimentSummaries = loadAllExperimentSummaries(experimentId: expId)
+                    await controller.compareWithBaseline(
+                        baselineSummary: baseline,
+                        experimentSummaries: experimentSummaries
+                    )
+                    if let comp = controller.lastComparison {
+                        lastRobotEvent = "🔬 A/B 비교: \(comp.verdict.rawValue) — \(comp.reason)"
+                    }
+                }
+            }
+        }
+    }
+
+    /// **v1.11.14**: baseline session 디스크 load (summary.json).
+    private func loadSummaryFromDisk(sessionId: String) -> WalkSessionSummary? {
+        guard let dir = WalkSessionStore.sessionsDir else { return nil }
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        let match = files.first { url in
+            url.lastPathComponent.contains(sessionId) && url.pathExtension == "json"
+                && url.lastPathComponent.hasSuffix(".summary.json")
+        }
+        guard let url = match, let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(WalkSessionSummary.self, from: data)
+    }
+
+    /// **v1.11.14**: 같은 experimentId 의 모든 실험 세션 summary load.
+    private func loadAllExperimentSummaries(experimentId: String) -> [WalkSessionSummary] {
+        guard let dir = WalkSessionStore.sessionsDir else { return [] }
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        let decoder = JSONDecoder()
+        // jsonl 의 header 에 experimentId 매치 → summary load.
+        var summaries: [WalkSessionSummary] = []
+        for jsonlURL in files where jsonlURL.pathExtension == "jsonl" {
+            guard let data = try? Data(contentsOf: jsonlURL),
+                  let firstLine = data.split(separator: 0x0a).first,
+                  let header = try? decoder.decode(WalkSessionHeader.self, from: Data(firstLine)),
+                  header.experimentId == experimentId else { continue }
+            let summaryURL = jsonlURL.deletingPathExtension()
+                .appendingPathExtension("summary.json")
+            guard let sData = try? Data(contentsOf: summaryURL),
+                  let s = try? decoder.decode(WalkSessionSummary.self, from: sData) else { continue }
+            summaries.append(s)
+        }
+        return summaries
     }
 
     /// **Stage 3 (v1.1 fall prevention)**: IMU ring buffer 갱신 + predictor 호출.

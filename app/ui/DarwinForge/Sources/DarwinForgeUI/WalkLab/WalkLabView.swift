@@ -16,7 +16,11 @@ import SwiftUI
 /// - L4: 모터 max 온도 60°C 도달 → 자동 stop
 public struct WalkLabView: View {
     @EnvironmentObject private var store: ConnectionStore
-    @StateObject private var session = WalkLabSession()
+    // **v1.11.14 (2026-05-19)**: RootView hoisted session — WalkDataView 의 실험 승인이
+    // 동일 인스턴스를 변경하도록 EnvironmentObject 로 변경. 종전 @StateObject 시
+    // WalkDataView 가 별도 session 인스턴스를 못 봐 applyExperimentChange 의 부작용
+    // 단절. 라이프사이클은 RootView 가 관리.
+    @EnvironmentObject private var session: WalkLabSession
     @State private var showingRiskConfirm: Bool = false
     @State private var pendingHighRiskPreset: WalkLabPreset?
 

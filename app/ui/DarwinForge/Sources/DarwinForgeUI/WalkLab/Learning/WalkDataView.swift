@@ -29,6 +29,10 @@ public struct WalkDataView: View {
     // **v1.11.12 (2026-05-19)** — Critic V2 (typed JSON 응답).
     @EnvironmentObject private var critic: WalkSessionClaudeCritic
     @EnvironmentObject private var experimentLoop: ExperimentLoopController
+    // **v1.11.14 (2026-05-19)** — RootView hoisted WalkLabSession.
+    // ExperimentApprovalUI 의 onApprove 가 실제 WalkLabSession config 를 변경하기 위해
+    // 필요. 종전엔 WalkLabView 내부 @StateObject 라 접근 불가했음.
+    @EnvironmentObject private var session: WalkLabSession
     @State private var showV2Panel: Bool = false
 
     public init() {}
@@ -85,13 +89,29 @@ public struct WalkDataView: View {
         }
         .sheet(isPresented: $showApprovalSheet) {
             if let resp = critic.currentResponse, let exp = resp.nextExperiment {
+                // v1.11.14: 현재 WalkLabSession config 를 base 로 한 axis 만 override.
+                // baseline header (디스크) 가 있으면 더 정확한 값 (당시 trim 등).
+                let baselineId = selectedId ?? (summaries.first?.id ?? "unknown")
+                let baseHeader = loadHeader(forSessionId: baselineId)
+                let (proposedConfig, _) = buildProposedConfig(
+                    from: exp,
+                    currentConfig: session.balanceExperimentConfig,
+                    currentHipPitchOffsetTrimDeg: session.hipPitchOffsetTrimDeg,
+                    baselineHeader: baseHeader
+                )
                 ExperimentApprovalUI(
                     response: resp,
-                    baselineSessionId: selectedId ?? (summaries.first?.id ?? "unknown"),
-                    proposedConfig: buildProposedConfig(from: exp),
+                    baselineSessionId: baselineId,
+                    proposedConfig: proposedConfig,
                     onApprove: {
                         Task {
-                            await applyExperimentApproval(response: resp, experiment: exp)
+                            await applyExperimentApproval(
+                                response: resp,
+                                experiment: exp,
+                                currentConfig: session.balanceExperimentConfig,
+                                currentTrim: session.hipPitchOffsetTrimDeg,
+                                session: session
+                            )
                         }
                     },
                     onCancel: { showApprovalSheet = false }
@@ -138,18 +158,33 @@ public struct WalkDataView: View {
         return WalkSessionClaudePromptV2.phaseStatsV2(from: samples)
     }
 
-    /// **v1.11.13**: critic 의 nextExperiment 를 기준으로 사용자 현재 config 위에
-    /// axis 한 개만 변경한 BalanceExperimentConfig 미리보기 생성.
-    /// (실 적용은 사용자가 WalkLab UI 에서 명시 — 본 sheet 는 미리보기 + 승인 기록만)
-    private func buildProposedConfig(from exp: NextExperiment) -> BalanceExperimentConfig {
-        // 기본 default — robotisOriginal P-control.
-        // axis 별로 변경 적용. 현재 사용자 config 를 모르므로 default 위에 from→to.
-        var algorithm: BalanceAlgorithmMode = .robotisPControl
-        var sign: BalanceSignConvention = .robotisWalkingCpp
-        var gain: BalanceGainProfile = .robotisOriginal
-        var apply: Bool = true
-        var pitchInput: BalancePitchInputConvention = .imuRaw
+    /// **v1.11.14 (2026-05-19) — fix 진단 문서 #2**: 현재 WalkLab config 기준 + 한 axis 만 override.
+    /// `currentConfig` 는 RootView/WalkLabView 가 전달. baseline session 의 Header V2
+    /// 도 우선 사용 (있으면 더 정확). nil 이면 default — backward compat.
+    /// 또한 hipPitchOffsetTrimDeg 같은 non-config axis 도 같이 반환 (Tuple).
+    func buildProposedConfig(from exp: NextExperiment,
+                             currentConfig: BalanceExperimentConfig?,
+                             currentHipPitchOffsetTrimDeg: Double = 13.0,
+                             baselineHeader: WalkSessionHeader? = nil)
+        -> (config: BalanceExperimentConfig, proposedHipPitchOffsetTrimDeg: Double?) {
+        // base = current config or baseline header values or default.
+        var algorithm: BalanceAlgorithmMode = currentConfig?.algorithmMode ?? .robotisPControl
+        var sign: BalanceSignConvention = currentConfig?.signConvention ?? .robotisWalkingCpp
+        var gain: BalanceGainProfile = currentConfig?.gainProfile ?? .robotisOriginal
+        var apply: Bool = currentConfig?.applyToRobot ?? true
+        var pitchInput: BalancePitchInputConvention = currentConfig?.pitchInputConvention ?? .imuRaw
+        if let h = baselineHeader {
+            if let v = h.balanceAlgorithmMode.flatMap(BalanceAlgorithmMode.init) { algorithm = v }
+            if let v = h.balanceSignConvention.flatMap(BalanceSignConvention.init) { sign = v }
+            if let v = h.balanceGainProfile.flatMap(BalanceGainProfile.init) { gain = v }
+            if let v = h.pitchInputConvention.flatMap(BalancePitchInputConvention.init) { pitchInput = v }
+        }
 
+        var trim = currentHipPitchOffsetTrimDeg
+        if let baseTrim = baselineHeader?.hipPitchOffsetTrimDegAtStart { trim = baseTrim }
+        var proposedTrim: Double? = nil
+
+        // 한 axis 만 override.
         switch exp.axis {
         case .algorithmMode:
             if let v = BalanceAlgorithmMode(rawValue: exp.to) { algorithm = v }
@@ -161,35 +196,88 @@ public struct WalkDataView: View {
             if let v = BalancePitchInputConvention(rawValue: exp.to) { pitchInput = v }
         case .applyToRobot:
             apply = (exp.to.lowercased() == "true")
+        case .hipPitchOffsetTrimDeg:
+            if let d = Double(exp.to) { proposedTrim = d }
+        case .strideMm, .sideMm, .turnDeg, .periodMs, .footHeightMm, .balanceGain:
+            // tuning slider — config 외 별도 axis. 현재 PR 에선 trim 만 처리.
+            // 향후 (v1.11.15+) advanced slider 통합.
+            break
         default:
-            // 다른 axis (tuning slider / customGain) 는 별도 처리 필요. 현재 default config.
             break
         }
-        return BalanceExperimentConfig(
-            algorithmMode: algorithm,
-            signConvention: sign,
-            gainProfile: gain,
-            applyToRobot: apply,
+        let config = BalanceExperimentConfig(
+            algorithmMode: algorithm, signConvention: sign,
+            gainProfile: gain, applyToRobot: apply,
             pitchInputConvention: pitchInput
         )
+        // proposedTrim = exp.axis 가 hipPitchOffset 인 경우만. 아니면 nil (현재값 유지).
+        return (config, proposedTrim)
     }
 
-    /// **v1.11.13**: 사용자 명시 승인 후 ExperimentLoop 시작.
+    /// **v1.11.14**: 사용자 명시 승인 후 ExperimentLoop start + WalkLabSession 실 변경.
+    /// 진단 문서 #1 fix — 승인 시 실제 config 변경.
     @MainActor
-    private func applyExperimentApproval(response: ClaudeCriticResponse, experiment: NextExperiment) async {
+    private func applyExperimentApproval(response: ClaudeCriticResponse,
+                                         experiment: NextExperiment,
+                                         currentConfig: BalanceExperimentConfig?,
+                                         currentTrim: Double,
+                                         session: WalkLabSession?) async {
         let baselineId = selectedId ?? (summaries.first?.id ?? "unknown")
-        let proposedConfig = buildProposedConfig(from: experiment)
+        let baseHeader = loadHeader(forSessionId: baselineId)
+        let (proposedConfig, proposedTrim) = buildProposedConfig(
+            from: experiment,
+            currentConfig: currentConfig,
+            currentHipPitchOffsetTrimDeg: currentTrim,
+            baselineHeader: baseHeader
+        )
+        // v1.11.14 진단 문서 #5 fix — 현재 config 기준 forbidden 조합 검증.
+        // self.validate() 는 응답 시점에 이미 실행됨 (analyst); 여기는 사용자 명시
+        // 승인 직전 추가 검사. 응답이 통과됐어도 사용자 현재 config 와 조합 시
+        // safetyVerdict.blocked 이면 reject.
+        let validation = response.validate(currentConfig: currentConfig ?? proposedConfig,
+                                           currentTrim: currentTrim)
+        if !validation.passed {
+            // experimentLoop 가 lastError 에 issues 첫 줄 표시.
+            experimentLoop.setLastError("승인 검증 실패: \(validation.issues.joined(separator: " | "))")
+            showApprovalSheet = false
+            return
+        }
         let started = await experimentLoop.startExperiment(
             from: response,
             baselineSessionId: baselineId,
             proposedConfig: proposedConfig
         )
-        showApprovalSheet = false
-        if !started {
-            // experimentLoop.lastError 에 실패 사유.
-            // UI 가 별도 alert 으로 표시 (현재는 sheet 닫기만 + lastError 는 보행
-            // 페이지의 다른 banner 가 picking).
+        if started, let session = session, let current = experimentLoop.current {
+            // 실 WalkLabSession 에 한 axis 변경 적용 (사용자 명시 승인 + safety gate 통과 후).
+            let result = session.applyExperimentChange(
+                experimentId: current.id,
+                baselineSessionId: baselineId,
+                proposedConfig: proposedConfig,
+                proposedHipPitchOffsetTrimDeg: proposedTrim
+            )
+            switch result {
+            case .applied: break  // WalkLab 의 lastRobotEvent 가 사용자에게 표시.
+            case .failed(let reason):
+                // safetyVerdict 강등 등 — experimentLoop.cancel 후 사용자 안내.
+                await experimentLoop.cancel()
+                _ = reason  // 별도 alert 또는 lastError 채널 (v1.11.15)
+            }
         }
+        showApprovalSheet = false
+    }
+
+    /// 한 sessionId 의 jsonl 첫 줄 (header) load.
+    private func loadHeader(forSessionId id: String) -> WalkSessionHeader? {
+        guard let dir = WalkSessionStore.sessionsDir else { return nil }
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        let match = files.first { $0.lastPathComponent.contains(id) && $0.pathExtension == "jsonl" }
+        guard let url = match, let data = try? Data(contentsOf: url),
+              let firstLine = data.split(separator: 0x0a).first
+        else { return nil }
+        return try? JSONDecoder().decode(WalkSessionHeader.self, from: Data(firstLine))
     }
 
     // MARK: - Claude AI panel (v1.11.9)
