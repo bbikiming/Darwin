@@ -200,6 +200,10 @@ public struct AdvancedSlidersPanel: View {
         .onChange(of: session.customPeriodMs) { _, _ in session.syncCommandToEngine() }
         .onChange(of: session.footHeightMm)   { _, _ in session.syncCommandToEngine() }
         .onChange(of: session.balanceGain)    { _, _ in session.syncCommandToEngine() }
+        // **v1.11.5.3 (2026-05-18, Codex Med #5 fix)**: hipPitchOffsetTrimDeg 누락 fix.
+        // 종전엔 trim slider 변경 시 syncCommandToEngine 미호출 → 실시간 갱신 안 되고
+        // 다음 startWalkCycle 까지 stale tuning 사용.
+        .onChange(of: session.hipPitchOffsetTrimDeg) { _, _ in session.syncCommandToEngine() }
     }
 }
 
