@@ -28,11 +28,13 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         )
         XCTAssertEqual(safeConfig.safetyVerdict, .safe, "test setup — safe 기대")
 
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.hipPitchOffsetTrimDeg = 12.0
         let result = session.applyExperimentChange(
             experimentId: "exp-test",
             baselineSessionId: "base-1",
             proposedConfig: safeConfig,
-            proposedHipPitchOffsetTrimDeg: 12.0
+            deltas: deltas
         )
         if case .applied = result {
             XCTAssertEqual(session.balanceExperimentConfig.gainProfile, .robotisOriginal)
@@ -60,11 +62,13 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         if case .blocked = blockedConfig.safetyVerdict { /* OK */ }
         else { XCTFail("test setup — blocked 기대"); return }
 
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.hipPitchOffsetTrimDeg = 99.0
         let result = session.applyExperimentChange(
             experimentId: "exp-bad",
             baselineSessionId: "base-1",
             proposedConfig: blockedConfig,
-            proposedHipPitchOffsetTrimDeg: 99.0
+            deltas: deltas
         )
         if case .failed(let reason) = result {
             XCTAssertTrue(reason.contains("blocked"), "reason: \(reason)")
@@ -240,6 +244,127 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         )
         let result = response.validate(currentConfig: currentConfig)
         XCTAssertTrue(result.passed, "issues: \(result.issues)")
+    }
+
+    // MARK: - v1.11.14.1 — activeExperimentId clear + reentry guard + 새 axis
+
+    /// finalize → activeExperimentId/baselineSessionId clear.
+    func testFinalizeClearsActiveContext() async {
+        let session = WalkLabSession()
+        let controller = ExperimentLoopController()
+        session.setExperimentLoop(controller)
+
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        let response = mockSafeResponse()
+        _ = await controller.startExperiment(
+            from: response, baselineSessionId: "base-1", proposedConfig: safeConfig
+        )
+        _ = session.applyExperimentChange(
+            experimentId: controller.current?.id ?? "exp-?",
+            baselineSessionId: "base-1",
+            proposedConfig: safeConfig
+        )
+        XCTAssertNotNil(session.activeExperimentId)
+        XCTAssertNotNil(session.activeBaselineSessionId)
+
+        await controller.finalize()
+        // onCleared callback 이 호출되어 activeExperimentId/BaselineSessionId clear.
+        XCTAssertNil(session.activeExperimentId)
+        XCTAssertNil(session.activeBaselineSessionId)
+    }
+
+    /// cancel → activeExperimentId/baselineSessionId clear.
+    func testCancelClearsActiveContext() async {
+        let session = WalkLabSession()
+        let controller = ExperimentLoopController()
+        session.setExperimentLoop(controller)
+
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        let response = mockSafeResponse()
+        _ = await controller.startExperiment(
+            from: response, baselineSessionId: "base-1", proposedConfig: safeConfig
+        )
+        _ = session.applyExperimentChange(
+            experimentId: controller.current?.id ?? "exp-?",
+            baselineSessionId: "base-1",
+            proposedConfig: safeConfig
+        )
+        XCTAssertNotNil(session.activeExperimentId)
+
+        await controller.cancel()
+        XCTAssertNil(session.activeExperimentId)
+    }
+
+    /// reentry — 이미 활성 실험 진행 중이면 새 applyExperimentChange reject.
+    func testApplyExperimentChangeRejectsReentry() {
+        let session = WalkLabSession()
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        let result1 = session.applyExperimentChange(
+            experimentId: "exp-1", baselineSessionId: "base-1",
+            proposedConfig: safeConfig
+        )
+        if case .applied = result1 { /* OK */ }
+        else { XCTFail("첫 호출 applied 기대"); return }
+
+        let result2 = session.applyExperimentChange(
+            experimentId: "exp-2", baselineSessionId: "base-2",
+            proposedConfig: safeConfig
+        )
+        if case .failed(let reason) = result2 {
+            XCTAssertTrue(reason.contains("이미 활성 실험"), "reason: \(reason)")
+            XCTAssertEqual(session.activeExperimentId, "exp-1",
+                           "이전 실험 ID 유지 (덮어쓰기 X)")
+        } else {
+            XCTFail("두번째 호출 reject 기대")
+        }
+    }
+
+    /// tuning slider axis (strideMm) — deltas 로 적용.
+    func testApplyExperimentChangeAppliesTuningSliderAxis() {
+        let session = WalkLabSession()
+        let originalStride = session.strideMm
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.strideMm = originalStride + 5.0
+        _ = session.applyExperimentChange(
+            experimentId: "exp-slider", baselineSessionId: "base-1",
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        XCTAssertEqual(session.strideMm, originalStride + 5.0)
+    }
+
+    /// customGain axis (customHipRollGain) — deltas 로 적용.
+    func testApplyExperimentChangeAppliesCustomGainAxis() {
+        let session = WalkLabSession()
+        let original = session.customHipRollGain
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .custom, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.customHipRollGain = original + 0.2
+        _ = session.applyExperimentChange(
+            experimentId: "exp-cg", baselineSessionId: "base-1",
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        XCTAssertEqual(session.customHipRollGain, original + 0.2, accuracy: 1e-6)
     }
 
     // MARK: - Helpers

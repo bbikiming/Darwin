@@ -18,17 +18,22 @@ public struct ExperimentApprovalUI: View {
     /// 제안 config — Critic 의 nextExperiment 에 부합하는 BalanceExperimentConfig.
     /// caller 가 사용자 현재 config 위에 axis 변경 적용한 결과.
     public let proposedConfig: BalanceExperimentConfig
+    /// **v1.11.14.1 (2026-05-19)**: validate(currentConfig:) 결과. caller 가 미리 계산.
+    /// nil → 검증 미실행 (legacy compat). issues 있으면 승인 버튼 비활성 + 사유 표시.
+    public let validationResult: ClaudeCriticResponse.ValidationResult?
     public let onApprove: () -> Void
     public let onCancel: () -> Void
 
     public init(response: ClaudeCriticResponse,
                 baselineSessionId: String,
                 proposedConfig: BalanceExperimentConfig,
+                validationResult: ClaudeCriticResponse.ValidationResult? = nil,
                 onApprove: @escaping () -> Void,
                 onCancel: @escaping () -> Void) {
         self.response = response
         self.baselineSessionId = baselineSessionId
         self.proposedConfig = proposedConfig
+        self.validationResult = validationResult
         self.onApprove = onApprove
         self.onCancel = onCancel
     }
@@ -54,6 +59,11 @@ public struct ExperimentApprovalUI: View {
             Divider()
             // v1.11.13: safety verdict 미리보기 — deterministic gate 결과.
             safetyVerdictPreview
+            // v1.11.14.1: validate(currentConfig:) issues 사전 표시.
+            if let vr = validationResult, !vr.passed {
+                Divider()
+                validationIssuesBanner(vr)
+            }
             Divider()
             confidenceFooter
             Spacer()
@@ -245,11 +255,36 @@ public struct ExperimentApprovalUI: View {
                 Label("실험 시작 (사용자 명시 승인)", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
-            // safetyVerdict.blocked 면 승인 불가.
+            // safetyVerdict.blocked 또는 validation 실패 → 승인 불가.
+            // v1.11.14.1: validate(currentConfig:) issue 도 disable 트리거.
             .disabled(response.nextExperiment == nil || {
                 if case .blocked = proposedConfig.safetyVerdict { return true }
+                if let vr = validationResult, !vr.passed { return true }
                 return false
             }())
         }
+    }
+
+    @ViewBuilder
+    private func validationIssuesBanner(_ vr: ClaudeCriticResponse.ValidationResult) -> some View {
+        HStack(alignment: .top, spacing: DFSpace.xs) {
+            Image(systemName: "exclamationmark.octagon.fill")
+                .foregroundStyle(DFColor.danger)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("승인 검증 실패 — 현재 config 기준")
+                    .font(DFFont.sectionLabel)
+                    .foregroundStyle(DFColor.danger)
+                ForEach(vr.issues, id: \.self) { issue in
+                    Text("• \(issue)")
+                        .font(DFFont.label)
+                        .foregroundStyle(DFColor.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+        }
+        .padding(DFSpace.xs)
+        .background(DFColor.danger.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
     }
 }

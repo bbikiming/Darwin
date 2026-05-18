@@ -75,11 +75,13 @@ public final class ExperimentLoopController: ObservableObject {
         await loop.finalize()
         current = await loop.current
         history = await loop.history
+        if current == nil { onCleared?() }
     }
 
     public func cancel() async {
         await loop.cancel()
         current = await loop.current
+        if current == nil { onCleared?() }
     }
 
     /// **v1.11.14**: WalkDataView 의 validate(currentConfig:) 결과를 사용자에게 표시.
@@ -87,4 +89,11 @@ public final class ExperimentLoopController: ObservableObject {
     public func setLastError(_ message: String?) {
         lastError = message
     }
+
+    /// **v1.11.14.1 (2026-05-19)**: current → nil 전환 (finalize/cancel) 시 호출.
+    /// WalkLabSession 이 setExperimentLoop 시점에 등록 — clearExperimentContext 가
+    /// 호출되어 activeExperimentId/activeBaselineSessionId 가 cleared 됨.
+    /// 종전엔 finalize/cancel 후에도 activeExperimentId 가 남아 다음 일반 보행이
+    /// experiment 로 인식되는 silent failure.
+    public var onCleared: (() -> Void)? = nil
 }

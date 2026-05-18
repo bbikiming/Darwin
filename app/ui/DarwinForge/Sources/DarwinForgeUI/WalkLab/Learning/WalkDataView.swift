@@ -99,10 +99,16 @@ public struct WalkDataView: View {
                     currentHipPitchOffsetTrimDeg: session.hipPitchOffsetTrimDeg,
                     baselineHeader: baseHeader
                 )
+                // v1.11.14.1: validate(currentConfig:) 미리 계산 — sheet 안에 issue 표시.
+                let validationResult = resp.validate(
+                    currentConfig: session.balanceExperimentConfig,
+                    currentTrim: session.hipPitchOffsetTrimDeg
+                )
                 ExperimentApprovalUI(
                     response: resp,
                     baselineSessionId: baselineId,
                     proposedConfig: proposedConfig,
+                    validationResult: validationResult,
                     onApprove: {
                         Task {
                             await applyExperimentApproval(
@@ -161,12 +167,13 @@ public struct WalkDataView: View {
     /// **v1.11.14 (2026-05-19) — fix 진단 문서 #2**: 현재 WalkLab config 기준 + 한 axis 만 override.
     /// `currentConfig` 는 RootView/WalkLabView 가 전달. baseline session 의 Header V2
     /// 도 우선 사용 (있으면 더 정확). nil 이면 default — backward compat.
-    /// 또한 hipPitchOffsetTrimDeg 같은 non-config axis 도 같이 반환 (Tuple).
+    /// **v1.11.14.1**: tuning slider (stride/side/turn/period/footHeight/balanceGain) +
+    /// customGain* 4종 도 ExperimentDeltas 로 반환.
     func buildProposedConfig(from exp: NextExperiment,
                              currentConfig: BalanceExperimentConfig?,
                              currentHipPitchOffsetTrimDeg: Double = 13.0,
                              baselineHeader: WalkSessionHeader? = nil)
-        -> (config: BalanceExperimentConfig, proposedHipPitchOffsetTrimDeg: Double?) {
+        -> (config: BalanceExperimentConfig, deltas: WalkLabSession.ExperimentDeltas) {
         // base = current config or baseline header values or default.
         var algorithm: BalanceAlgorithmMode = currentConfig?.algorithmMode ?? .robotisPControl
         var sign: BalanceSignConvention = currentConfig?.signConvention ?? .robotisWalkingCpp
@@ -180,9 +187,9 @@ public struct WalkDataView: View {
             if let v = h.pitchInputConvention.flatMap(BalancePitchInputConvention.init) { pitchInput = v }
         }
 
-        var trim = currentHipPitchOffsetTrimDeg
-        if let baseTrim = baselineHeader?.hipPitchOffsetTrimDegAtStart { trim = baseTrim }
-        var proposedTrim: Double? = nil
+        _ = currentHipPitchOffsetTrimDeg  // baseline header 우선이지만 logging 용 reserved.
+        _ = baselineHeader?.hipPitchOffsetTrimDegAtStart  // header 의 baseline trim 도 검사 reserved.
+        var deltas = WalkLabSession.ExperimentDeltas()
 
         // 한 axis 만 override.
         switch exp.axis {
@@ -197,11 +204,28 @@ public struct WalkDataView: View {
         case .applyToRobot:
             apply = (exp.to.lowercased() == "true")
         case .hipPitchOffsetTrimDeg:
-            if let d = Double(exp.to) { proposedTrim = d }
-        case .strideMm, .sideMm, .turnDeg, .periodMs, .footHeightMm, .balanceGain:
-            // tuning slider — config 외 별도 axis. 현재 PR 에선 trim 만 처리.
-            // 향후 (v1.11.15+) advanced slider 통합.
-            break
+            if let d = Double(exp.to) { deltas.hipPitchOffsetTrimDeg = d }
+        // v1.11.14.1: tuning slider 6종 + customGain 4종 적용.
+        case .strideMm:
+            if let d = Double(exp.to) { deltas.strideMm = d }
+        case .sideMm:
+            if let d = Double(exp.to) { deltas.sideMm = d }
+        case .turnDeg:
+            if let d = Double(exp.to) { deltas.turnDeg = d }
+        case .periodMs:
+            if let d = Double(exp.to) { deltas.customPeriodMs = d }
+        case .footHeightMm:
+            if let d = Double(exp.to) { deltas.footHeightMm = d }
+        case .balanceGain:
+            if let d = Double(exp.to) { deltas.balanceGain = d }
+        case .customGainHipRoll:
+            if let d = Double(exp.to) { deltas.customHipRollGain = d }
+        case .customGainKnee:
+            if let d = Double(exp.to) { deltas.customKneeGain = d }
+        case .customGainAnklePitch:
+            if let d = Double(exp.to) { deltas.customAnklePitchGain = d }
+        case .customGainAnkleRoll:
+            if let d = Double(exp.to) { deltas.customAnkleRollGain = d }
         default:
             break
         }
@@ -210,8 +234,7 @@ public struct WalkDataView: View {
             gainProfile: gain, applyToRobot: apply,
             pitchInputConvention: pitchInput
         )
-        // proposedTrim = exp.axis 가 hipPitchOffset 인 경우만. 아니면 nil (현재값 유지).
-        return (config, proposedTrim)
+        return (config, deltas)
     }
 
     /// **v1.11.14**: 사용자 명시 승인 후 ExperimentLoop start + WalkLabSession 실 변경.
@@ -224,7 +247,7 @@ public struct WalkDataView: View {
                                          session: WalkLabSession?) async {
         let baselineId = selectedId ?? (summaries.first?.id ?? "unknown")
         let baseHeader = loadHeader(forSessionId: baselineId)
-        let (proposedConfig, proposedTrim) = buildProposedConfig(
+        let (proposedConfig, deltas) = buildProposedConfig(
             from: experiment,
             currentConfig: currentConfig,
             currentHipPitchOffsetTrimDeg: currentTrim,
@@ -249,11 +272,12 @@ public struct WalkDataView: View {
         )
         if started, let session = session, let current = experimentLoop.current {
             // 실 WalkLabSession 에 한 axis 변경 적용 (사용자 명시 승인 + safety gate 통과 후).
+            // v1.11.14.1: deltas struct 로 tuning slider + customGain* 4종 모두 포함.
             let result = session.applyExperimentChange(
                 experimentId: current.id,
                 baselineSessionId: baselineId,
                 proposedConfig: proposedConfig,
-                proposedHipPitchOffsetTrimDeg: proposedTrim
+                deltas: deltas
             )
             switch result {
             case .applied: break  // WalkLab 의 lastRobotEvent 가 사용자에게 표시.

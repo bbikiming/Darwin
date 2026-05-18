@@ -1214,27 +1214,75 @@ public final class WalkLabSession: ObservableObject {
     public weak var experimentLoop: ExperimentLoopController? = nil
 
     /// RootView 또는 외부 caller 가 controller 주입.
+    /// **v1.11.14.1**: controller.onCleared callback 등록 — finalize/cancel 시 자동
+    /// clearExperimentContext 호출. 종전엔 activeExperimentId 가 leak 되어 다음 일반
+    /// 보행도 experiment 로 인식되는 버그.
     public func setExperimentLoop(_ controller: ExperimentLoopController?) {
         self.experimentLoop = controller
+        controller?.onCleared = { [weak self] in
+            self?.clearExperimentContext()
+        }
+    }
+
+    /// **v1.11.14.1**: critic 이 제안 가능한 모든 non-config axis 의 delta.
+    /// nil = 변경 없음 (현재값 유지). 한 번에 1개만 non-nil 이어야 changeOneAxisOnly 준수.
+    public struct ExperimentDeltas: Sendable, Equatable {
+        public var hipPitchOffsetTrimDeg: Double? = nil
+        public var strideMm: Double? = nil
+        public var sideMm: Double? = nil
+        public var turnDeg: Double? = nil
+        public var customPeriodMs: Double? = nil
+        public var footHeightMm: Double? = nil
+        public var balanceGain: Double? = nil
+        public var customHipRollGain: Double? = nil
+        public var customKneeGain: Double? = nil
+        public var customAnklePitchGain: Double? = nil
+        public var customAnkleRollGain: Double? = nil
+
+        public init() {}
+
+        /// 모든 delta 가 nil 인 경우 — config axis 변경만 적용.
+        public var isEmpty: Bool {
+            hipPitchOffsetTrimDeg == nil && strideMm == nil && sideMm == nil
+                && turnDeg == nil && customPeriodMs == nil && footHeightMm == nil
+                && balanceGain == nil && customHipRollGain == nil && customKneeGain == nil
+                && customAnklePitchGain == nil && customAnkleRollGain == nil
+        }
     }
 
     /// **v1.11.14**: ExperimentApprovalUI 가 사용자 승인 후 호출. axis 한 개만 변경.
+    /// **v1.11.14.1**: deltas struct 도입 — tuning slider + customGain* axis 통합.
     /// - safetyVerdict.blocked → reject (deterministic gate)
+    /// - 활성 실험 진행 중이면 reject (reentry 가드)
     /// - changeOneAxisOnly invariant — 호출자가 axis 하나만 변경한 config 전달 책임
     public func applyExperimentChange(
         experimentId: String,
         baselineSessionId: String,
         proposedConfig: BalanceExperimentConfig,
-        proposedHipPitchOffsetTrimDeg: Double? = nil
+        deltas: ExperimentDeltas = ExperimentDeltas()
     ) -> ApplyExperimentResult {
         if case .blocked(let reason) = proposedConfig.safetyVerdict {
             return .failed(reason: "safetyVerdict.blocked — \(reason)")
         }
+        // **v1.11.14.1**: reentry 가드 — 활성 실험 진행 중에 새 실험 적용 차단.
+        // 종전엔 activeExperimentId 덮어쓰기 + leak 으로 이전 실험 데이터 추적 단절.
+        if let existing = activeExperimentId {
+            return .failed(reason: "이미 활성 실험 (\(existing)) — 종료 후 재시도")
+        }
         // 실제 config 변경.
         balanceExperimentConfig = proposedConfig
-        if let trim = proposedHipPitchOffsetTrimDeg {
-            hipPitchOffsetTrimDeg = trim
-        }
+        // v1.11.14.1: 모든 non-config axis delta 적용 (nil 인 axis 는 현재값 유지).
+        if let v = deltas.hipPitchOffsetTrimDeg { hipPitchOffsetTrimDeg = v }
+        if let v = deltas.strideMm { strideMm = v }
+        if let v = deltas.sideMm { sideMm = v }
+        if let v = deltas.turnDeg { turnDeg = v }
+        if let v = deltas.customPeriodMs { customPeriodMs = v }
+        if let v = deltas.footHeightMm { footHeightMm = v }
+        if let v = deltas.balanceGain { balanceGain = v }
+        if let v = deltas.customHipRollGain { customHipRollGain = v }
+        if let v = deltas.customKneeGain { customKneeGain = v }
+        if let v = deltas.customAnklePitchGain { customAnklePitchGain = v }
+        if let v = deltas.customAnkleRollGain { customAnkleRollGain = v }
         activeExperimentId = experimentId
         activeBaselineSessionId = baselineSessionId
         logSafetyEvent(
@@ -2504,33 +2552,40 @@ public final class WalkLabSession: ObservableObject {
         autoTuner.record(summary, currentLevel: correctorIntensityLevel)
         lastRobotEvent = "📊 session 분석 완료 — \(summary.recommendationReason)"
 
-        // **v1.11.14 (2026-05-19)** — 활성 실험이 있으면 자동 폐루프:
-        // - 1. appendExperimentSession(summary.id)
-        // - 2. compareWithBaseline (baseline summary 디스크 load + 비교)
-        // - 3. lastRobotEvent 에 verdict 표시
-        // 실험 finalize 는 사용자 명시 (UI 버튼) — 자동 finalize X.
+        // **v1.11.14 (2026-05-19)** — 활성 실험이 있으면 자동 폐루프.
+        // **v1.11.14.1**: disk IO 는 detached Task (background), controller 호출은
+        // MainActor. 종전엔 MainActor Task 안에서 jsonl 전체 스캔 → UI hang.
+        // 단일 MainActor Task + 안쪽에서 disk IO 만 detached await — nested capture
+        // (Sendable 경고) 회피.
         if let expId = activeExperimentId, let baselineId = activeBaselineSessionId,
            let controller = experimentLoop {
             let summaryId = summary.id
-            Task { @MainActor [controller] in
+            Task { @MainActor [weak self, weak controller] in
+                // Disk IO 는 detached background Task 로 await — main actor 비차단.
+                let baseline = await Task.detached(priority: .userInitiated) {
+                    WalkLabSession.loadSummaryFromDisk(sessionId: baselineId)
+                }.value
+                let experimentSummaries = await Task.detached(priority: .userInitiated) {
+                    WalkLabSession.loadAllExperimentSummaries(experimentId: expId)
+                }.value
+                guard let controller = controller else { return }
                 await controller.appendExperimentSession(summaryId)
-                // baseline summary 디스크 load.
-                if let baseline = loadSummaryFromDisk(sessionId: baselineId) {
-                    let experimentSummaries = loadAllExperimentSummaries(experimentId: expId)
-                    await controller.compareWithBaseline(
-                        baselineSummary: baseline,
-                        experimentSummaries: experimentSummaries
-                    )
-                    if let comp = controller.lastComparison {
-                        lastRobotEvent = "🔬 A/B 비교: \(comp.verdict.rawValue) — \(comp.reason)"
-                    }
+                guard let b = baseline else { return }
+                await controller.compareWithBaseline(
+                    baselineSummary: b,
+                    experimentSummaries: experimentSummaries
+                )
+                if let comp = controller.lastComparison {
+                    self?.lastRobotEvent =
+                        "🔬 A/B 비교: \(comp.verdict.rawValue) — \(comp.reason)"
                 }
             }
         }
     }
 
     /// **v1.11.14**: baseline session 디스크 load (summary.json).
-    private func loadSummaryFromDisk(sessionId: String) -> WalkSessionSummary? {
+    /// **v1.11.14.1**: static + Sendable — Task.detached 에서 background 호출.
+    nonisolated static func loadSummaryFromDisk(sessionId: String) -> WalkSessionSummary? {
         guard let dir = WalkSessionStore.sessionsDir else { return nil }
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
@@ -2545,7 +2600,8 @@ public final class WalkLabSession: ObservableObject {
     }
 
     /// **v1.11.14**: 같은 experimentId 의 모든 실험 세션 summary load.
-    private func loadAllExperimentSummaries(experimentId: String) -> [WalkSessionSummary] {
+    /// **v1.11.14.1**: static + Sendable — Task.detached 에서 background 호출.
+    nonisolated static func loadAllExperimentSummaries(experimentId: String) -> [WalkSessionSummary] {
         guard let dir = WalkSessionStore.sessionsDir else { return [] }
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
