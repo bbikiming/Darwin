@@ -18,6 +18,9 @@ public struct RootView: View {
     // 등 다른 화면이 같은 인스턴스로 명령을 보내고, RemoteShellView 가 그 히스토리를
     // 보여준다.
     @StateObject private var remoteShell = RemoteShell()
+    // **v1.11.12 (2026-05-19)** — Critic + A/B 실험 loop 전역 singleton.
+    @StateObject private var claudeCritic = WalkSessionClaudeCritic()
+    private let experimentLoop = WalkLabExperimentLoop()
     private let commander: ClaudeCommander
 
     @State private var section: Section = .studio
@@ -118,6 +121,7 @@ public struct RootView: View {
         .environmentObject(store)
         .environmentObject(dispatcher)
         .environmentObject(remoteShell)
+        .environmentObject(claudeCritic)
         // 글로벌 단축키 (메뉴와 같은 단축키 — 메뉴 enabled 일 때 메뉴가 우선 처리)
         .background(globalShortcuts)
     }

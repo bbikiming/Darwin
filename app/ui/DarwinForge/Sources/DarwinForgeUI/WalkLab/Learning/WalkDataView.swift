@@ -26,6 +26,10 @@ public struct WalkDataView: View {
     @State private var claudeUserReport: String = ""
     @State private var claudeShowPanel: Bool = false
 
+    // **v1.11.12 (2026-05-19)** — Critic V2 (typed JSON 응답).
+    @EnvironmentObject private var critic: WalkSessionClaudeCritic
+    @State private var showV2Panel: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -38,7 +42,19 @@ public struct WalkDataView: View {
                 } else {
                     emptyDetailPanel
                 }
-                if claudeShowPanel {
+                if showV2Panel {
+                    Divider()
+                    // v1.11.12: typed JSON UI.
+                    WalkDataClaudeV2Panel(
+                        showApprovalSheet: $showApprovalSheet,
+                        summaries: summaries,
+                        headersById: loadHeaders(),
+                        sampleStatsBuilder: { sessionId in
+                            self.phaseStatsForSession(sessionId)
+                        }
+                    )
+                    .frame(maxHeight: 480)
+                } else if claudeShowPanel {
                     Divider()
                     claudePanel
                         .frame(maxHeight: 360)
@@ -49,14 +65,79 @@ public struct WalkDataView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    claudeShowPanel.toggle()
+                    showV2Panel.toggle()
+                    if showV2Panel { claudeShowPanel = false }
                 } label: {
-                    Label(claudeShowPanel ? "Claude 패널 숨김" : "Claude AI 분석",
+                    Label(showV2Panel ? "Critic V2 숨김" : "Critic V2 (typed)",
+                          systemImage: "sparkles.rectangle.stack.fill")
+                }
+            }
+            ToolbarItem(placement: .secondaryAction) {
+                Button {
+                    claudeShowPanel.toggle()
+                    if claudeShowPanel { showV2Panel = false }
+                } label: {
+                    Label(claudeShowPanel ? "Markdown 패널 숨김" : "Markdown 분석 (v1.11.9)",
                           systemImage: "sparkles")
                 }
             }
         }
+        .sheet(isPresented: $showApprovalSheet) {
+            if let resp = critic.currentResponse {
+                ExperimentApprovalUI(
+                    response: resp,
+                    onApprove: { applyExperimentApproval(response: resp) },
+                    onCancel: { showApprovalSheet = false }
+                )
+            }
+        }
         .onAppear { reload() }
+    }
+
+    @State private var showApprovalSheet: Bool = false
+
+    /// 모든 세션의 jsonl 에서 header load.
+    private func loadHeaders() -> [String: WalkSessionHeader] {
+        var map: [String: WalkSessionHeader] = [:]
+        guard let dir = WalkSessionStore.sessionsDir else { return map }
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return map
+        }
+        let decoder = JSONDecoder()
+        for url in files where url.pathExtension == "jsonl" {
+            guard let data = try? Data(contentsOf: url),
+                  let firstLine = data.split(separator: 0x0a).first,
+                  let header = try? decoder.decode(WalkSessionHeader.self, from: Data(firstLine))
+            else { continue }
+            map[header.sessionId] = header
+        }
+        return map
+    }
+
+    private func phaseStatsForSession(_ sessionId: String) -> [WalkSessionClaudePromptV2.PhaseStatsV2] {
+        guard let dir = WalkSessionStore.sessionsDir else { return [] }
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
+        let match = files.first { $0.lastPathComponent.contains(sessionId) && $0.pathExtension == "jsonl" }
+        guard let url = match, let data = try? Data(contentsOf: url) else { return [] }
+        let decoder = JSONDecoder()
+        var samples: [WalkSessionSample] = []
+        for line in data.split(separator: 0x0a).dropFirst() {
+            if let s = try? decoder.decode(WalkSessionSample.self, from: Data(line)) {
+                samples.append(s)
+            }
+        }
+        return WalkSessionClaudePromptV2.phaseStatsV2(from: samples)
+    }
+
+    /// **v1.11.12**: 사용자가 ExperimentApprovalUI 에서 "실험 시작" 클릭.
+    /// 실 ExperimentLoop start 는 RootView 단의 inject 가 필요하지만, 본 PR 에선
+    /// stub — 사용자 의도 기록만 (실 보행 적용은 향후 sprint).
+    private func applyExperimentApproval(response: ClaudeCriticResponse) {
+        // 향후: ExperimentLoop.startExperiment(...) 호출.
+        // 현재: sheet 닫고 사용자에게 "기록됨" 안내.
+        showApprovalSheet = false
     }
 
     // MARK: - Claude AI panel (v1.11.9)
