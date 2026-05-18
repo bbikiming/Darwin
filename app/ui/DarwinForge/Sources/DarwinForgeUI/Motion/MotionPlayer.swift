@@ -54,8 +54,9 @@ public final class MotionPlayer: ObservableObject {
         mode = .playing
         lastTickTime = .now
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+        // v1.11.2 (2026-05-18): CI Swift 5.9 호환 — inner Task closure 에 weak self 재캡쳐.
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
+            Task { @MainActor [weak self] in self?.tick() }
         }
     }
 

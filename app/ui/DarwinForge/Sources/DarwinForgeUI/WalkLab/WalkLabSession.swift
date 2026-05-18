@@ -717,8 +717,9 @@ public final class WalkLabSession: ObservableObject {
         startTime = Date()
 
         simTimer?.invalidate()
-        simTimer = Timer.scheduledTimer(withTimeInterval: tickDtSec, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        // v1.11.2 (2026-05-18): CI Swift 5.9 호환 — Task closure 에 weak self 재캡쳐.
+        simTimer = Timer.scheduledTimer(withTimeInterval: tickDtSec, repeats: true) { _ in
+            Task { @MainActor [weak self] in
                 self?.tick()
             }
         }
