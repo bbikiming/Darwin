@@ -28,6 +28,7 @@ public struct WalkDataView: View {
 
     // **v1.11.12 (2026-05-19)** — Critic V2 (typed JSON 응답).
     @EnvironmentObject private var critic: WalkSessionClaudeCritic
+    @EnvironmentObject private var experimentLoop: ExperimentLoopController
     @State private var showV2Panel: Bool = false
 
     public init() {}
@@ -83,10 +84,16 @@ public struct WalkDataView: View {
             }
         }
         .sheet(isPresented: $showApprovalSheet) {
-            if let resp = critic.currentResponse {
+            if let resp = critic.currentResponse, let exp = resp.nextExperiment {
                 ExperimentApprovalUI(
                     response: resp,
-                    onApprove: { applyExperimentApproval(response: resp) },
+                    baselineSessionId: selectedId ?? (summaries.first?.id ?? "unknown"),
+                    proposedConfig: buildProposedConfig(from: exp),
+                    onApprove: {
+                        Task {
+                            await applyExperimentApproval(response: resp, experiment: exp)
+                        }
+                    },
                     onCancel: { showApprovalSheet = false }
                 )
             }
@@ -131,13 +138,58 @@ public struct WalkDataView: View {
         return WalkSessionClaudePromptV2.phaseStatsV2(from: samples)
     }
 
-    /// **v1.11.12**: 사용자가 ExperimentApprovalUI 에서 "실험 시작" 클릭.
-    /// 실 ExperimentLoop start 는 RootView 단의 inject 가 필요하지만, 본 PR 에선
-    /// stub — 사용자 의도 기록만 (실 보행 적용은 향후 sprint).
-    private func applyExperimentApproval(response: ClaudeCriticResponse) {
-        // 향후: ExperimentLoop.startExperiment(...) 호출.
-        // 현재: sheet 닫고 사용자에게 "기록됨" 안내.
+    /// **v1.11.13**: critic 의 nextExperiment 를 기준으로 사용자 현재 config 위에
+    /// axis 한 개만 변경한 BalanceExperimentConfig 미리보기 생성.
+    /// (실 적용은 사용자가 WalkLab UI 에서 명시 — 본 sheet 는 미리보기 + 승인 기록만)
+    private func buildProposedConfig(from exp: NextExperiment) -> BalanceExperimentConfig {
+        // 기본 default — robotisOriginal P-control.
+        // axis 별로 변경 적용. 현재 사용자 config 를 모르므로 default 위에 from→to.
+        var algorithm: BalanceAlgorithmMode = .robotisPControl
+        var sign: BalanceSignConvention = .robotisWalkingCpp
+        var gain: BalanceGainProfile = .robotisOriginal
+        var apply: Bool = true
+        var pitchInput: BalancePitchInputConvention = .imuRaw
+
+        switch exp.axis {
+        case .algorithmMode:
+            if let v = BalanceAlgorithmMode(rawValue: exp.to) { algorithm = v }
+        case .signConvention:
+            if let v = BalanceSignConvention(rawValue: exp.to) { sign = v }
+        case .gainProfile:
+            if let v = BalanceGainProfile(rawValue: exp.to) { gain = v }
+        case .pitchInputConvention:
+            if let v = BalancePitchInputConvention(rawValue: exp.to) { pitchInput = v }
+        case .applyToRobot:
+            apply = (exp.to.lowercased() == "true")
+        default:
+            // 다른 axis (tuning slider / customGain) 는 별도 처리 필요. 현재 default config.
+            break
+        }
+        return BalanceExperimentConfig(
+            algorithmMode: algorithm,
+            signConvention: sign,
+            gainProfile: gain,
+            applyToRobot: apply,
+            pitchInputConvention: pitchInput
+        )
+    }
+
+    /// **v1.11.13**: 사용자 명시 승인 후 ExperimentLoop 시작.
+    @MainActor
+    private func applyExperimentApproval(response: ClaudeCriticResponse, experiment: NextExperiment) async {
+        let baselineId = selectedId ?? (summaries.first?.id ?? "unknown")
+        let proposedConfig = buildProposedConfig(from: experiment)
+        let started = await experimentLoop.startExperiment(
+            from: response,
+            baselineSessionId: baselineId,
+            proposedConfig: proposedConfig
+        )
         showApprovalSheet = false
+        if !started {
+            // experimentLoop.lastError 에 실패 사유.
+            // UI 가 별도 alert 으로 표시 (현재는 sheet 닫기만 + lastError 는 보행
+            // 페이지의 다른 banner 가 picking).
+        }
     }
 
     // MARK: - Claude AI panel (v1.11.9)
