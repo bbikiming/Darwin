@@ -1050,7 +1050,26 @@ public final class WalkLabSession: ObservableObject {
                     imuSourceAtStart: imuSourceAtStart,
                     imuScaleSuspicionAtStart: imuScaleSuspicionAtStart,
                     operatorNoteAtStart: operatorNote,
-                    comparisonTag: comparisonTag
+                    comparisonTag: comparisonTag,
+                    // v1.11.10 V2 — 8 axis + tuning + experiment context
+                    walkingEngine: walkingEngine.rawValue,
+                    pitchInputConvention: balanceExperimentConfig.pitchInputConvention.rawValue,
+                    enableBalanceCorrectionAtStart: enableBalanceCorrection,
+                    autoOnboardBrokeringAtStart: autoOnboardBrokering,
+                    hipPitchOffsetTrimDegAtStart: hipPitchOffsetTrimDeg,
+                    tuningStrideMm: advanced ? strideMm : nil,
+                    tuningSideMm: advanced ? sideMm : nil,
+                    tuningTurnDeg: advanced ? turnDeg : nil,
+                    tuningPeriodMs: advanced ? customPeriodMs : nil,
+                    tuningFootHeightMm: advanced ? footHeightMm : nil,
+                    tuningBalanceGain: advanced ? balanceGain : nil,
+                    customGainHipRoll: balanceExperimentConfig.gainProfile == .custom ? customHipRollGain : nil,
+                    customGainKnee: balanceExperimentConfig.gainProfile == .custom ? customKneeGain : nil,
+                    customGainAnklePitch: balanceExperimentConfig.gainProfile == .custom ? customAnklePitchGain : nil,
+                    customGainAnkleRoll: balanceExperimentConfig.gainProfile == .custom ? customAnkleRollGain : nil,
+                    robotModel: "DARwIn-OP2"
+                    // firmwareVersion / onboardPatchVersion / experimentId / baselineSessionId
+                    // 는 향후 robot SSH + experiment loop 통합 시 (v1.11.12+)
                 )
                 // v1.9.2: Logger 의 startedAt 과 sync — summary.id 와 jsonl filename
                 // 일치 보장. 종전: 별도 Date() → 3ms drift → matching 실패.
@@ -2422,7 +2441,8 @@ public final class WalkLabSession: ObservableObject {
             preset: logger.header.preset,
             startTime: started,
             durationSec: duration,
-            intensityLevelUsed: correctorIntensityLevel
+            intensityLevelUsed: correctorIntensityLevel,
+            header: logger.header   // v1.11.10: V2 metric (quality + sagittal + candidateApplied)
         )
         try? logger.writeSummary(summary)
         logger.close()
