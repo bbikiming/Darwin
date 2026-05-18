@@ -173,13 +173,16 @@ public final class WalkLabSession: ObservableObject {
                 )
             }
             // 안전 차단 — alternateDiagnostic + 실 적용 조합은 자동으로 applyToRobot=false.
+            // **v1.11.5.2 (2026-05-18, Codex Med #4 fix)**: pitchInputConvention 보존 추가.
+            // 종전 누락 → blocked 강등 시 default `.imuRaw` 로 reset 되어 정규화 무효화.
             if case .blocked = balanceExperimentConfig.safetyVerdict {
                 if balanceExperimentConfig.applyToRobot {
                     balanceExperimentConfig = BalanceExperimentConfig(
                         algorithmMode: balanceExperimentConfig.algorithmMode,
                         signConvention: balanceExperimentConfig.signConvention,
                         gainProfile: balanceExperimentConfig.gainProfile,
-                        applyToRobot: false
+                        applyToRobot: false,
+                        pitchInputConvention: balanceExperimentConfig.pitchInputConvention
                     )
                     logSafetyEvent(
                         kind: .correctorOff,
@@ -873,11 +876,13 @@ public final class WalkLabSession: ObservableObject {
                 kind: .correctorOff,
                 message: "보행 시작 시 안전 차단: \(reason)"
             )
+            // **v1.11.5.2 (2026-05-18, Codex Med #4 fix)**: pitchInputConvention 보존 추가.
             balanceExperimentConfig = BalanceExperimentConfig(
                 algorithmMode: balanceExperimentConfig.algorithmMode,
                 signConvention: balanceExperimentConfig.signConvention,
                 gainProfile: balanceExperimentConfig.gainProfile,
-                applyToRobot: false
+                applyToRobot: false,
+                pitchInputConvention: balanceExperimentConfig.pitchInputConvention
             )
         }
 
@@ -1118,6 +1123,9 @@ public final class WalkLabSession: ObservableObject {
 
     /// 현재 preset + tuning 으로부터 ROBOTIS onboard 모드의 명령 패킷 생성.
     /// 사용자 UI 가 `RemoteShell` 통해 robot 에 SSH write 할 때 사용.
+    ///
+    /// **v1.11.5.2 (2026-05-18)**: `hipPitchOffsetDeg` 필드 추가. 종전 누락으로
+    /// `.robotisOnboard` 모드에서 trim slider 변경이 robot 에 전달 안 되던 버그 fix.
     public func currentWalkingEngineCommand(enabled: Bool) -> WalkingEngineCommand {
         let tuning = currentWalkTuning() ?? WalkMotionLibrary.defaultTuning(for: current)
         return WalkingEngineCommand(
@@ -1126,7 +1134,8 @@ public final class WalkLabSession: ObservableObject {
             yMm: tuning.sideMm,
             aDeg: tuning.turnDeg,
             periodMs: tuning.periodMs,
-            footHeightMm: tuning.footHeightMm
+            footHeightMm: tuning.footHeightMm,
+            hipPitchOffsetDeg: tuning.hipPitchOffsetDeg
         )
     }
 

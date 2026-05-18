@@ -70,11 +70,16 @@ public enum WalkingEngine: String, CaseIterable, Codable, Sendable, Identifiable
 
 /// ROBOTIS onboard 모드의 명령 패킷 — Mac 이 file 로 write, robot 이 5Hz polling 으로 read.
 ///
-/// File format (1 줄): `enabled x_mm y_mm a_deg period_ms foot_mm`
-/// 예: `1 28.0 0.0 0.0 600 40`
+/// **File format (1 줄, v1.11.5.2 — 7 필드)**:
+/// `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg`
+/// 예: `1 28.0 0.0 0.0 600 40 13.0`
 ///
 /// Mac → robot 명령 주기: 50ms (Mac tick 동기). robot 측 patch 가 file 변경 감지 시
 /// `Walking::GetInstance()->X_MOVE_AMPLITUDE = x_mm` 등 적용.
+///
+/// **v1.11.5.2 (2026-05-18) chain break fix**: 종전 6 필드는 `hipPitchOffsetDeg` 누락 →
+/// 사용자가 trim slider 변경해도 `.robotisOnboard` 모드에서 robot 에 전달 안 되는 버그.
+/// 7 번째 필드 추가로 Mac sparse / ROBOTIS onboard 양쪽에서 trim 일관 적용.
 public struct WalkingEngineCommand: Equatable, Sendable {
     public let enabled: Bool
     public let xMm: Double
@@ -82,26 +87,30 @@ public struct WalkingEngineCommand: Equatable, Sendable {
     public let aDeg: Double
     public let periodMs: Double
     public let footHeightMm: Double
+    /// **v1.11.5.2 (2026-05-18)**: HIP_PITCH_OFFSET (°). robot-side `Walking::GetInstance()->HIP_PITCH_OFFSET` set.
+    /// default 13.0 (ROBOTIS Walking.cpp 원본). UI trim slider 와 일관.
+    public let hipPitchOffsetDeg: Double
 
     public init(enabled: Bool, xMm: Double, yMm: Double, aDeg: Double,
-                periodMs: Double, footHeightMm: Double) {
+                periodMs: Double, footHeightMm: Double, hipPitchOffsetDeg: Double = 13.0) {
         self.enabled = enabled
         self.xMm = xMm
         self.yMm = yMm
         self.aDeg = aDeg
         self.periodMs = periodMs
         self.footHeightMm = footHeightMm
+        self.hipPitchOffsetDeg = hipPitchOffsetDeg
     }
 
     /// file 로 write 할 직렬화 — 한 줄, robot-side parser 가 sscanf 로 read.
     public var serializedLine: String {
-        // `enabled x_mm y_mm a_deg period_ms foot_mm` — space-separated, %f.
-        // robot-side patch (예시 sscanf): `sscanf(line, "%d %f %f %f %f %f", &en, &x, &y, &a, &p, &f)`.
-        String(format: "%d %.2f %.2f %.2f %.0f %.0f",
-               enabled ? 1 : 0, xMm, yMm, aDeg, periodMs, footHeightMm)
+        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg` — space-separated.
+        // robot-side patch sscanf: `sscanf(line, "%d %f %f %f %f %f %f", &en,&x,&y,&a,&p,&f,&h)`.
+        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f",
+               enabled ? 1 : 0, xMm, yMm, aDeg, periodMs, footHeightMm, hipPitchOffsetDeg)
     }
 
-    /// 정지 명령 — enabled=0, 나머지 0.
+    /// 정지 명령 — enabled=0, 나머지 0, hipPitchOffsetDeg=13 (기본 유지).
     public static let stop = WalkingEngineCommand(
         enabled: false, xMm: 0, yMm: 0, aDeg: 0, periodMs: 0, footHeightMm: 0
     )
