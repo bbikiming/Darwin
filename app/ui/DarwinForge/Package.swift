@@ -49,6 +49,8 @@ let package = Package(
                 // 향후 영어/일본어 등 추가 가능.
                 .process("Resources/ko.lproj"),
                 .process("Resources/Base.lproj"),
+                // 2026-05-18 (v1.11.3 사용자 요청): 새 wordmark SVG (light/dark variant).
+                .process("Resources/Branding"),
             ]
         ),
         .executableTarget(

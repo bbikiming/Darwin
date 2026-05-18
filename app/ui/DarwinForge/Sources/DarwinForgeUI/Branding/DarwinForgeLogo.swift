@@ -1,10 +1,14 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// DarwinForge 워드마크.
 ///
-/// `docs/assets/logo-darwinforge.svg`와 동일한 비주얼을 SwiftUI 네이티브로 재현한다.
-/// 마크(헥사곤 + 스파크)는 Path로 그려 폰트와 무관하게 일정. 워드마크는 시스템 폰트
-/// 기반이라 macOS에서 SF Pro로 자동 매핑된다.
+/// **v1.11.3 (2026-05-18 사용자 SVG 적용)**: wordmark 를 SVG asset 으로 교체.
+/// `Resources/Branding/logo-darwinforge-{light,dark}.svg` 를 colorScheme 따라 선택.
+/// 종전 SwiftUI Text wordmark ("Darwin" + "Forge") 는 fallback (asset load 실패 시).
+/// 마크(헥사곤)는 그대로 Canvas Path 로 그려 폰트 무관 일정.
 public struct DarwinForgeLogo: View {
     public enum Variant {
         /// 마크 + 워드마크 (기본). 사이드바 헤더, About 화면.
@@ -32,6 +36,8 @@ public struct DarwinForgeLogo: View {
     private let variant: Variant
     private let density: Density
     private let showsTagline: Bool
+
+    @Environment(\.colorScheme) private var colorScheme
 
     public init(
         variant: Variant = .full,
@@ -66,13 +72,42 @@ public struct DarwinForgeLogo: View {
         .accessibilityLabel("DarwinForge")
     }
 
+    /// v1.11.3: SVG wordmark asset. Resources/Branding/logo-darwinforge-{light,dark}.svg.
+    /// asset load 실패 시 fallback 으로 종전 Text 기반 wordmark 사용.
+    @ViewBuilder
     private var wordmark: some View {
+        if let nsImage = wordmarkImage {
+            // SVG aspect ratio 1448:292 ≈ 4.96. height = fontSize × 1.0 기준.
+            // (종전 Text 보다 약간 크게 표시 — 새 wordmark 의 시각 임팩트 보존).
+            let h = density.fontSize * 1.05
+            Image(nsImage: nsImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(height: h)
+                .accessibilityHidden(true)
+        } else {
+            // Fallback: SwiftUI Text wordmark (종전 형태).
+            fallbackTextWordmark
+        }
+    }
+
+    /// asset bundle 에서 colorScheme 별 SVG load.
+    private var wordmarkImage: NSImage? {
+        #if canImport(AppKit)
+        let assetName = colorScheme == .dark
+            ? "logo-darwinforge-dark"
+            : "logo-darwinforge-light"
+        return Bundle.module.image(forResource: NSImage.Name(assetName))
+        #else
+        return nil
+        #endif
+    }
+
+    private var fallbackTextWordmark: some View {
         HStack(spacing: DFSpace.none) {
             Text("Darwin").foregroundStyle(DarwinForgePalette.body)
             Text("Forge").foregroundStyle(DarwinForgePalette.forge)
         }
-        // 2026-05-16 슬림 재디자인: `.black` (heavy) → `.semibold` — 슬림 워드마크.
-        // kerning 도 -4% → -2% 로 조금 더 자연스러운 간격.
         .font(.system(size: density.fontSize, weight: .semibold, design: .default))
         .kerning(-density.fontSize * 0.02)
         .lineLimit(1)
