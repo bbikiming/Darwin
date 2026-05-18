@@ -1,0 +1,56 @@
+--- a/Linux/project/demo/main.cpp
++++ b/Linux/project/demo/main.cpp
+@@ -8,6 +8,7 @@
+ #include <unistd.h>
+ #include <limits.h>
+ #include <string.h>
++#include <stdio.h>
+ #include <libgen.h>
+ #include <signal.h>
+
+@@ -16,6 +17,7 @@
+
+ #include "StatusCheck.h"
+ #include "VisionMode.h"
++#include "WalkLabBrokerage.h"
+
+ #ifdef MX28_1024
+ #define MOTION_FILE_PATH    "../../../Data/motion_1024.bin"
+@@ -50,6 +52,21 @@ void sighandler(int sig)
+     exit(0);
+ }
+
++/// **v1.11.7 (DarwinForge)** — `/tmp/df-pilot-mode` 읽어 모드 분기.
++/// "walklab" 이면 WalkLabBrokerage 진입, 그 외 (기본 SOCCER 모드) 는 원본 흐름.
++static bool ShouldRunWalkLabBrokerage()
++{
++    char mode[16] = {0};
++    FILE* fp = fopen("/tmp/df-pilot-mode", "r");
++    if (!fp) return false;
++    if (!fgets(mode, sizeof(mode), fp)) { fclose(fp); return false; }
++    fclose(fp);
++    // trailing newline / whitespace 제거.
++    char* nl = strchr(mode, '\n'); if (nl) *nl = 0;
++    return (strcmp(mode, "walklab") == 0);
++}
++
+ int main(void)
+ {
+     signal(SIGABRT, &sighandler);
+@@ -149,6 +166,16 @@ int main(void)
+
+     Walking::GetInstance()->Initialize();
+
++    // **v1.11.7 (DarwinForge)** — WalkLab brokerage 분기.
++    // `/tmp/df-pilot-mode == "walklab"` 이면 ROBOTIS Walking 엔진을 Mac SSH 명령
++    // (`/tmp/df-walklab-cmd`) 으로 제어. SOCCER 모드 / ball tracker 우회.
++    // 기본 (mode 미설정 또는 "soccer") 은 원본 흐름 유지.
++    if (ShouldRunWalkLabBrokerage()) {
++        printf("[main] entering WalkLabBrokerage mode\n");
++        Robotis::WalkLabBrokerage().Run();   // 무한 루프 — SIGTERM 까지 동작
++        return 0;
++    }
++
+     // ...
+     // 기존 SOCCER 모드 / ball tracker 흐름 그대로 ...
+     // ...

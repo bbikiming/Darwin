@@ -50,14 +50,13 @@ public struct WalkingEnginePicker: View {
                     .foregroundStyle(engineTint)
             }
 
-            // 2 옵션 picker — segmented
+            // 2 옵션 picker — segmented.
+            // **v1.11.7.1 (2026-05-18) fix**: macOS SwiftUI Picker.segmented 의 HStack
+            // 안 tag 시각 버그 — selection binding 변경되지만 indicator 가 첫 옵션에
+            // 남는 케이스. Text-only + tag 단순화로 시각/실제 state 일치 보장.
             Picker("보행 엔진", selection: $session.walkingEngine) {
                 ForEach(WalkingEngine.allCases) { engine in
-                    HStack(spacing: 4) {
-                        Image(systemName: engine.icon)
-                        Text(engine.shortLabel)
-                    }
-                    .tag(engine)
+                    Text(engine.shortLabel).tag(engine)
                 }
             }
             .pickerStyle(.segmented)

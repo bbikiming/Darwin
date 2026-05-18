@@ -26,13 +26,21 @@ struct WalkLabOnboardBridge: View {
 
     var body: some View {
         // invisible view — UI 출력 없음.
+        // **v1.11.7 (2026-05-18, GPT HIGH-1 fix)**: brokering trigger 를 특정 튜닝
+        // 값으로 축소. 종전 session.objectWillChange 전체 → IMU/safetyTimeline/
+        // fallPrediction 같은 published 가 50ms tick 마다 변경 → debounce 계속 reset
+        // 되어 실 송신 못 함. 8 개 specific @Published 만 watch.
         Color.clear
             .frame(width: 0, height: 0)
-            // walking command source 8 변수의 onChange → debounce send.
-            // session 의 published 변경 detect.
-            .onReceive(session.objectWillChange) { _ in
-                scheduleDebouncedSend()
-            }
+            .onChange(of: session.current)                  { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.walkingEngine)            { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.autoOnboardBrokering)     { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.strideMm)                 { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.sideMm)                   { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.turnDeg)                  { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.customPeriodMs)           { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.footHeightMm)             { _, _ in scheduleDebouncedSend() }
+            .onChange(of: session.hipPitchOffsetTrimDeg)    { _, _ in scheduleDebouncedSend() }
     }
 
     /// 300ms debounce — 마지막 변경 후 가만히 있으면 send. drag 중에는 매번 cancel.

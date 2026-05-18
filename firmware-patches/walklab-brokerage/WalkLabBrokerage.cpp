@@ -28,6 +28,8 @@
  * 컴파일: gcc make 시 Framework/Linux/Makefile.mk 의 OBJS 에 WalkLabBrokerage.o 추가.
  */
 
+#include "WalkLabBrokerage.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,23 +41,7 @@
 
 namespace Robotis {
 
-class WalkLabBrokerage {
-public:
-    /// 명령 파일 경로.
-    static constexpr const char* CMD_PATH = "/tmp/df-walklab-cmd";
-
-    /// Polling 주기 (ms). Mac 측 50ms tick 의 4배 = 200ms = 5Hz.
-    static constexpr int POLL_INTERVAL_MS = 200;
-
-    /// 명령 stale 임계 (ms). Mac 명령 갱신 끊긴 후 자동 stop.
-    static constexpr int STALE_TIMEOUT_MS = 5000;
-
-    /// HIP_PITCH_OFFSET 안전 clamp 범위 (°).
-    static constexpr double HIP_PITCH_MIN = 0.0;
-    static constexpr double HIP_PITCH_MAX = 20.0;
-
-    /// 무한 루프 — robot main() 가 호출. 외부에서 SIGTERM 또는 demo-pilot kill 까지 동작.
-    void Run() {
+    void WalkLabBrokerage::Run() {
         Walking* walking = Walking::GetInstance();
         if (!walking) {
             fprintf(stderr, "WalkLabBrokerage: Walking::GetInstance() == NULL\n");
@@ -112,10 +98,7 @@ public:
         }
     }
 
-private:
-    /// CMD_PATH 한 줄 read + parse + Walking 적용.
-    /// @return true = 정상 parse, false = 파싱 실패 (이전 명령 유지).
-    bool ParseAndApply(Walking* walking, bool& walking_active) {
+    bool WalkLabBrokerage::ParseAndApply(Walking* walking, bool& walking_active) {
         FILE* fp = fopen(CMD_PATH, "r");
         if (!fp) return false;
 
@@ -167,6 +150,5 @@ private:
         }
         return true;
     }
-};
 
 }  // namespace Robotis

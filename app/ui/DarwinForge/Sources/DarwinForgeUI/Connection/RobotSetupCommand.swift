@@ -377,18 +377,50 @@ public enum RobotSetupCommand {
     fi
     """#
 
-    /// **WalkLab Onboard mode 종료 명령** — demo-pilot 정지 + 명령 파일 정리.
+    /// **WalkLab Onboard mode 종료 명령** — demo-pilot 정지 + 명령 파일 정리 +
+    /// forge-bridge 복구 (Mac 측 모터 송출 경로 복원).
+    ///
+    /// **v1.11.7 (2026-05-18, GPT HIGH-3 fix)**: 종전엔 killall + rm 만 하고 끝나서
+    /// Mac 측 직접 setPosition 송출 경로가 복구 안 되던 버그. demoStop 패턴 그대로
+    /// forge-bridge 복구 추가.
     public static let walkLabRobotisStop: String = #"""
     set +e
     echo "▶ WalkLab onboard 모드 종료"
     sudo killall demo demo-pilot 2>/dev/null
     rm -f /tmp/df-pilot-mode /tmp/df-walklab-cmd 2>/dev/null
-    echo "✅ 명령 파일 정리 + 데모 정지"
+    sleep 0.5
+
+    echo "▶ forge-bridge 복구 (Mac 측 모터 송출용)"
+    if [ -x /etc/init.d/forge-bridge ]; then
+      sudo /etc/init.d/forge-bridge start 2>/dev/null
+      sleep 0.5
+      sudo /etc/init.d/forge-bridge status 2>/dev/null
+    else
+      if command -v socat >/dev/null 2>&1; then
+        sudo bash -c 'stty -F /dev/ttyUSB0 1000000 raw -echo 2>/dev/null
+                      nohup socat tcp-l:5530,reuseaddr,fork,nodelay open:/dev/ttyUSB0,nonblock=0 >/dev/null 2>&1 &'
+        sleep 0.3
+        if ss -lnt 2>/dev/null | grep -q ":5530"; then
+          echo "forge-bridge: running (raw socat, 영구 등록 X)"
+        else
+          echo "forge-bridge: failed — 마스터 셋업이 필요해요"
+        fi
+      else
+        echo "forge-bridge: socat 미설치 — 수동 셋업 필요"
+      fi
+    fi
+    echo "✅ WalkLab onboard 종료 + Mac 직접 송출 경로 복구"
     """#
 
-    /// **x/y/a brokering 명령 송출** — Mac → robot `/tmp/df-walklab-cmd` write.
+    /// **x/y/a brokering 명령 송출** — Mac → robot `/tmp/df-walklab-cmd` atomic write.
     ///
     /// shell-quote 안전 (template — caller 가 line 변수 escaping 책임).
+    ///
+    /// **v1.11.7 (2026-05-18, GPT MEDIUM-1 fix)** — atomic write:
+    /// 종전 `printf > /tmp/df-walklab-cmd` 직접 덮어쓰기 → robot C++ polling 이
+    /// write 중간에 read 하면 빈 파일/부분 line 가능. tmp file 에 write 후 mv 로
+    /// atomic 교체. POSIX rename(2) 는 같은 filesystem 안에서 atomic 보장.
+    ///
     /// 예시 usage (Swift side):
     /// ```swift
     /// let line = WalkingEngineCommand(enabled: true, xMm: 28, ...).serializedLine
@@ -396,10 +428,10 @@ public enum RobotSetupCommand {
     /// try await ssh.execute(cmd)
     /// ```
     public static func walkLabRobotisSendCommand(line: String) -> String {
-        // line 은 `enabled x_mm y_mm a_deg period_ms foot_mm` — space-separated, 숫자만.
-        // 안전성: WalkingEngineCommand.serializedLine 이 %d %.2f 같은 format 만 출력 →
+        // line 은 `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg` — 숫자만.
+        // 안전성: WalkingEngineCommand.serializedLine 이 %d %.2f format 만 출력 →
         // shell metacharacters 위험 없음. 추가 guard 로 single-quote 사용.
-        return "printf '%s\\n' '\(line)' > /tmp/df-walklab-cmd"
+        return "printf '%s\\n' '\(line)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd"
     }
 
     /// 현재 demo 활성 상태 — 사용자에게 어떤 모드인지 알려줌.
