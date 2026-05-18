@@ -65,6 +65,13 @@ public struct BalanceExperimentControls: View {
             // 2) Profile picker — 한 줄로 자주 쓰는 4개 프로파일.
             profileRow
 
+            // **v1.11.8 (2026-05-18) — HIGH-1 fix**: .robotisOnboard 모드에선 Mac
+            // corrector path 자체가 우회되므로 5축 토글 (algorithm/sign/gain/pitchInput
+            // + applyToRobot) 변경이 무효. 사용자 혼동 차단 — 안내 배너 + 토글 disabled.
+            if session.walkingEngine == .robotisOnboard {
+                onboardModeNotice
+            }
+
             // 3) Expert disclosure — 4축 개별 세그먼티드 컨트롤.
             DisclosureGroup(isExpanded: $showExpert) {
                 VStack(alignment: .leading, spacing: DFSpace.xs2) {
@@ -179,6 +186,9 @@ public struct BalanceExperimentControls: View {
                     }
                 }
                 .padding(.top, DFSpace.xs2)
+                // **v1.11.8 HIGH-1**: .robotisOnboard 시 5축 무효 → disabled.
+                .disabled(fiveAxisDisabledForOnboard)
+                .opacity(fiveAxisDisabledForOnboard ? 0.5 : 1.0)
             } label: {
                 HStack(spacing: DFSpace.xs2) {
                     Image(systemName: showExpert ? "chevron.down.circle.fill" : "chevron.right.circle")
@@ -315,6 +325,33 @@ public struct BalanceExperimentControls: View {
             Text(text).font(.system(size: 12))
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: - Onboard mode notice (v1.11.8)
+
+    /// **v1.11.8 (2026-05-18) — HIGH-1 fix**: .robotisOnboard 모드에선 Mac corrector
+    /// path 가 우회되므로 5축 토글이 무효임을 명시. expert disclosure 내 토글들도
+    /// 자동 disabled 처리.
+    @ViewBuilder
+    private var onboardModeNotice: some View {
+        HStack(alignment: .top, spacing: DFSpace.xs2) {
+            Image(systemName: "info.circle.fill")
+                .font(DFFont.label)
+                .foregroundStyle(DFColor.info)
+            Text("ROBOTIS Onboard 모드에선 Mac balance corrector 가 우회됩니다. 아래 5축 토글은 robot-side Walking 엔진에 영향 없음 (record 만).")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(DFSpace.xs2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DFColor.info.opacity(DFOpacity.o10))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    /// **v1.11.8**: .robotisOnboard 시 5축 토글 disabled 헬퍼.
+    private var fiveAxisDisabledForOnboard: Bool {
+        session.walkingEngine == .robotisOnboard
     }
 
     // MARK: - Safety banner

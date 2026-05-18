@@ -184,6 +184,15 @@ public struct BalanceExperimentConfig: Codable, Equatable, Sendable {
     }
 
     public var safetyVerdict: SafetyVerdict {
+        // **v1.11.8 (2026-05-18) — HIGH-4 fix**: pitchInputConvention=.negate +
+        // signConvention=.alternateDiagnostic 조합은 double-negate 로 부호 가 원본 으로
+        // 회귀 (수학적). 그러나 안전 검증 측면에선 두 toggle 의 의도가 명확히 분리되어야
+        // 함 — 정규화(calibration)와 진단(experimental inversion)을 동시에 사용하는 건
+        // 사용자 의도 모순. 모든 applyToRobot 조합에서 차단 (observe-only 도 비권장).
+        if pitchInputConvention == .negateForwardIsNegative
+            && signConvention == .alternateDiagnostic {
+            return .blocked("정규화 + 부호 반전 중복 — 둘 중 하나만 선택하세요 (.imuRaw + .alternateDiagnostic 또는 .negate + .robotisWalkingCpp).")
+        }
         // 1. alternateDiagnostic sign 은 실 적용 시 fall 가속 — 강제 차단.
         if signConvention == .alternateDiagnostic && applyToRobot {
             return .blocked("반대 부호 실험은 실 robot 적용 차단됨 (fall 가속 위험). observe-only 로 전환하세요.")
@@ -197,13 +206,21 @@ public struct BalanceExperimentConfig: Codable, Equatable, Sendable {
         // v110Experimental + applyToRobot 조합이 mean pitch -25~-31°, peak -38°,
         // 1.4~2.6s 내 fall 시도 확인. caution 등급으로는 사용자 보호 불충분 — blocked
         // 격상하여 실 적용 자체를 차단. observe-only 는 그대로 허용 (데이터 수집).
-        // 3. hybridBA + 실 적용 — 실 fall 데이터 입증 차단.
+        // **v1.11.8 (2026-05-18) — MEDIUM-2 fix**: 메시지 분리 — 사용자가 "왜 blocked
+        // 인가" 명확히 인지 가능. 종전 메시지는 algorithm/gain 두 원인 구분 불명.
+        // 3. hybridBA + 실 적용 — 알고리즘 자체 미검증.
         if algorithmMode == .hybridBA && applyToRobot {
-            return .blocked("Hybrid B+A 실 적용 차단 — 2026-05-18 실 데이터: mean pitch -25~-31°, peak -38°, 1.4-2.6s 내 fall. observe-only 로 전환하세요.")
+            let gainNote = gainProfile == .robotisOriginal
+                ? "gain 은 ROBOTIS 안전값"
+                : (gainProfile == .v110Experimental ? "gain 도 미검증" : "gain 은 custom")
+            return .blocked("알고리즘 (Hybrid B+A) 미검증 — 2026-05-18 실 데이터 fall. \(gainNote). observe-only 로 전환하세요.")
         }
-        // 4. v110Experimental gain + 실 적용 — 실 fall 데이터 입증 차단.
+        // 4. v110Experimental gain + 실 적용 — gain 자체 미검증.
         if gainProfile == .v110Experimental && applyToRobot {
-            return .blocked("v1.10 gain 실 적용 차단 — 2026-05-18 실 데이터 fall 확인. observe-only 또는 robotisOriginal gain 으로 전환하세요.")
+            let algoNote = algorithmMode == .robotisPControl
+                ? "알고리즘은 ROBOTIS P-control (안전)"
+                : "알고리즘도 미검증"
+            return .blocked("gain (v1.10 experimental) 미검증 — 2026-05-18 실 fall. \(algoNote). gain 만 robotisOriginal 로 바꾸면 안전.")
         }
         return .safe
     }
