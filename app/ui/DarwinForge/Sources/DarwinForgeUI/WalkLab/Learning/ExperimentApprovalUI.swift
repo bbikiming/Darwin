@@ -14,13 +14,21 @@ import SwiftUI
 /// - "취소" 버튼
 public struct ExperimentApprovalUI: View {
     public let response: ClaudeCriticResponse
+    public let baselineSessionId: String
+    /// 제안 config — Critic 의 nextExperiment 에 부합하는 BalanceExperimentConfig.
+    /// caller 가 사용자 현재 config 위에 axis 변경 적용한 결과.
+    public let proposedConfig: BalanceExperimentConfig
     public let onApprove: () -> Void
     public let onCancel: () -> Void
 
     public init(response: ClaudeCriticResponse,
+                baselineSessionId: String,
+                proposedConfig: BalanceExperimentConfig,
                 onApprove: @escaping () -> Void,
                 onCancel: @escaping () -> Void) {
         self.response = response
+        self.baselineSessionId = baselineSessionId
+        self.proposedConfig = proposedConfig
         self.onApprove = onApprove
         self.onCancel = onCancel
     }
@@ -44,12 +52,57 @@ public struct ExperimentApprovalUI: View {
                     .foregroundStyle(DFColor.warning)
             }
             Divider()
+            // v1.11.13: safety verdict 미리보기 — deterministic gate 결과.
+            safetyVerdictPreview
+            Divider()
             confidenceFooter
             Spacer()
             buttonRow
         }
         .padding(DFSpace.md)
-        .frame(minWidth: 520, minHeight: 480, idealHeight: 560)
+        .frame(minWidth: 520, minHeight: 540, idealHeight: 620)
+    }
+
+    @ViewBuilder
+    private var safetyVerdictPreview: some View {
+        let verdict = proposedConfig.safetyVerdict
+        HStack(alignment: .top, spacing: DFSpace.xs) {
+            Image(systemName: safetyIcon(verdict))
+                .foregroundStyle(safetyColor(verdict))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("safetyVerdict (적용 후)").font(DFFont.sectionLabel)
+                Text(safetyText(verdict))
+                    .font(DFFont.label)
+                    .foregroundStyle(safetyColor(verdict))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(DFSpace.xs)
+        .background(safetyColor(verdict).opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    private func safetyIcon(_ v: BalanceExperimentConfig.SafetyVerdict) -> String {
+        switch v {
+        case .safe: return "checkmark.shield.fill"
+        case .caution: return "exclamationmark.shield.fill"
+        case .blocked: return "xmark.shield.fill"
+        }
+    }
+    private func safetyColor(_ v: BalanceExperimentConfig.SafetyVerdict) -> Color {
+        switch v {
+        case .safe: return DFColor.success
+        case .caution: return DFColor.warning
+        case .blocked: return DFColor.danger
+        }
+    }
+    private func safetyText(_ v: BalanceExperimentConfig.SafetyVerdict) -> String {
+        switch v {
+        case .safe: return "안전 — 적용 가능"
+        case .caution(let msg): return msg
+        case .blocked(let msg): return msg
+        }
     }
 
     private var header: some View {
@@ -192,7 +245,11 @@ public struct ExperimentApprovalUI: View {
                 Label("실험 시작 (사용자 명시 승인)", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(response.nextExperiment == nil)
+            // safetyVerdict.blocked 면 승인 불가.
+            .disabled(response.nextExperiment == nil || {
+                if case .blocked = proposedConfig.safetyVerdict { return true }
+                return false
+            }())
         }
     }
 }
