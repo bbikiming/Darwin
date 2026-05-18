@@ -19,21 +19,181 @@ public struct WalkDataView: View {
     @State private var loadedSamples: [WalkSessionSample] = []
     @State private var isLoadingSamples: Bool = false
 
+    // **v1.11.9 (2026-05-19)** — Claude CLI 보행 분석.
+    @State private var claudeMarkdown: String? = nil
+    @State private var claudeError: String? = nil
+    @State private var claudeInProgress: Bool = false
+    @State private var claudeUserReport: String = ""
+    @State private var claudeShowPanel: Bool = false
+
     public init() {}
 
     public var body: some View {
         HSplitView {
             sessionListPanel
                 .frame(minWidth: 280, idealWidth: 320, maxWidth: 400)
-            if let id = selectedId, let summary = summaries.first(where: { $0.id == id }) {
-                detailPanel(summary: summary)
-                    .frame(minWidth: 500)
-            } else {
-                emptyDetailPanel
-                    .frame(minWidth: 500)
+            VStack(spacing: 0) {
+                if let id = selectedId, let summary = summaries.first(where: { $0.id == id }) {
+                    detailPanel(summary: summary)
+                } else {
+                    emptyDetailPanel
+                }
+                if claudeShowPanel {
+                    Divider()
+                    claudePanel
+                        .frame(maxHeight: 360)
+                }
+            }
+            .frame(minWidth: 500)
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    claudeShowPanel.toggle()
+                } label: {
+                    Label(claudeShowPanel ? "Claude 패널 숨김" : "Claude AI 분석",
+                          systemImage: "sparkles")
+                }
             }
         }
         .onAppear { reload() }
+    }
+
+    // MARK: - Claude AI panel (v1.11.9)
+
+    @ViewBuilder
+    private var claudePanel: some View {
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            HStack(spacing: DFSpace.xs) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(DFColor.accent)
+                Text("Claude AI 분석")
+                    .font(DFFont.bodyEmph)
+                Spacer()
+                if claudeInProgress {
+                    ProgressView().controlSize(.small)
+                }
+                Button {
+                    Task { await invokeClaudeAnalysis() }
+                } label: {
+                    Label("분석 실행", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(claudeInProgress || summaries.isEmpty)
+
+                if claudeMarkdown != nil {
+                    Button {
+                        claudeMarkdown = nil
+                        claudeError = nil
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("결과 초기화")
+                }
+            }
+            .padding(.horizontal, DFSpace.sm)
+            .padding(.top, DFSpace.xs)
+
+            // 사용자 자연어 보고 입력.
+            HStack(alignment: .top, spacing: DFSpace.xs) {
+                Image(systemName: "text.bubble")
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.textSecondary)
+                TextField("사용자 보고 (예: \"앞으로 넘어지려고 했어\")",
+                          text: $claudeUserReport,
+                          axis: .vertical)
+                    .lineLimit(2...3)
+                    .textFieldStyle(.roundedBorder)
+                    .font(DFFont.label)
+            }
+            .padding(.horizontal, DFSpace.sm)
+
+            Divider()
+
+            // 결과 표시.
+            ScrollView {
+                if let md = claudeMarkdown {
+                    Text(md)
+                        .font(DFFont.monoCaption)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(DFSpace.sm)
+                } else if let err = claudeError {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("분석 실패", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(DFColor.danger)
+                            .font(DFFont.bodyEmph)
+                        Text(err)
+                            .font(DFFont.label)
+                            .foregroundStyle(DFColor.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(DFSpace.sm)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Claude CLI 가 최근 \(min(WalkSessionClaudePrompt.maxSessions, summaries.count))개 세션 + 사용자 보고를 분석합니다.")
+                            .font(DFFont.label)
+                            .foregroundStyle(DFColor.textSecondary)
+                        Text("• 8 axis (engine/algorithm/sign/gain/pitchInput/apply/correction/trim) 기반 진단")
+                            .font(DFFont.micro)
+                            .foregroundStyle(DFColor.textSecondary)
+                        Text("• Mac sparse vs ROBOTIS onboard architecture 한계 인식")
+                            .font(DFFont.micro)
+                            .foregroundStyle(DFColor.textSecondary)
+                        Text("• axis 별 권고 + 다음 실험 가설")
+                            .font(DFFont.micro)
+                            .foregroundStyle(DFColor.textSecondary)
+                    }
+                    .padding(DFSpace.sm)
+                }
+            }
+        }
+        .background(DFColor.accent.opacity(DFOpacity.o06))
+    }
+
+    private func invokeClaudeAnalysis() async {
+        claudeInProgress = true
+        claudeError = nil
+        defer { claudeInProgress = false }
+
+        if summaries.isEmpty {
+            claudeError = "분석할 세션이 없습니다."
+            return
+        }
+
+        // sessionId → jsonl 파일에서 sample 배열 load 후 phase 통계.
+        let builder: (String) -> [WalkSessionClaudePrompt.PhaseStats] = { sessionId in
+            guard let dir = WalkSessionStore.sessionsDir else { return [] }
+            let fm = FileManager.default
+            guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
+            let match = files.first { $0.lastPathComponent.contains(sessionId) && $0.pathExtension == "jsonl" }
+            guard let url = match else { return [] }
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            let decoder = JSONDecoder()
+            var samples: [WalkSessionSample] = []
+            for line in data.split(separator: 0x0a).dropFirst() {
+                if let s = try? decoder.decode(WalkSessionSample.self, from: Data(line)) {
+                    samples.append(s)
+                }
+            }
+            return WalkSessionClaudePrompt.phaseStats(from: samples)
+        }
+
+        let prompt = WalkSessionClaudePrompt.build(
+            sessions: summaries,
+            userReport: claudeUserReport,
+            sampleStatsBuilder: builder
+        )
+
+        let analyst = WalkSessionClaudeAnalyst(timeoutSeconds: 90)
+        do {
+            let md = try await analyst.analyze(prompt: prompt)
+            claudeMarkdown = md
+        } catch {
+            claudeError = error.localizedDescription
+        }
     }
 
     private var sessionListPanel: some View {

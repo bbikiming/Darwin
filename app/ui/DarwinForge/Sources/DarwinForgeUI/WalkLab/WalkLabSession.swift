@@ -2839,6 +2839,87 @@ public final class WalkLabSession: ObservableObject {
     public func resetCalibrationCaptures() {
         calibrationCaptures = []
     }
+
+    // MARK: - v1.11.9 (2026-05-19) — Claude CLI 보행 분석
+
+    /// 마지막 Claude 분석 결과 markdown.
+    @Published public private(set) var claudeAnalysisMarkdown: String? = nil
+
+    /// 분석 진행 중 여부 — UI 의 progress indicator.
+    @Published public private(set) var claudeAnalysisInProgress: Bool = false
+
+    /// 마지막 분석 에러 메시지 — nil 이면 정상.
+    @Published public private(set) var claudeAnalysisError: String? = nil
+
+    /// 사용자 자연어 보고 — UI binding.
+    @Published public var claudeUserReport: String = ""
+
+    /// **최근 N 세션 + 사용자 보고 → Claude CLI 분석 invoke**.
+    ///
+    /// - Parameter limit: 분석에 포함할 세션 수 (default 5, 최대 `WalkSessionClaudePrompt.maxSessions`)
+    /// - 동작:
+    ///   1. autoTuner.recentSummaries 의 최신 N session 가져옴
+    ///   2. 각 session 의 jsonl 에서 sample 배열 load (메모리 buffer 우선, 없으면 디스크)
+    ///   3. phase 별 통계 계산
+    ///   4. WalkSessionClaudePrompt.build → markdown prompt
+    ///   5. WalkSessionClaudeAnalyst.analyze → claude CLI 호출
+    ///   6. 결과 markdown 을 claudeAnalysisMarkdown 에 publish
+    public func invokeClaudeAnalysis(limit: Int = 5) async {
+        claudeAnalysisInProgress = true
+        claudeAnalysisError = nil
+        defer { claudeAnalysisInProgress = false }
+
+        let summaries = Array(autoTuner.recentSummaries.prefix(limit))
+        if summaries.isEmpty {
+            claudeAnalysisError = "분석할 보행 세션이 없습니다. 보행을 1회 이상 실행해주세요."
+            return
+        }
+
+        // sample 통계 builder — sessionId → PhaseStats 배열.
+        // 세션 jsonl 을 디스크에서 read.
+        let builder: (String) -> [WalkSessionClaudePrompt.PhaseStats] = { sessionId in
+            guard let dir = WalkSessionStore.sessionsDir else { return [] }
+            // sessionId 기준으로 .jsonl 파일 찾기.
+            let fm = FileManager.default
+            guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+                return []
+            }
+            let match = files.first { $0.lastPathComponent.contains(sessionId) && $0.pathExtension == "jsonl" }
+            guard let url = match else { return [] }
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            let lines = data.split(separator: 0x0a)  // newline
+            let decoder = JSONDecoder()
+            var samples: [WalkSessionSample] = []
+            // 첫 줄은 header — skip.
+            for line in lines.dropFirst() {
+                if let sample = try? decoder.decode(WalkSessionSample.self, from: Data(line)) {
+                    samples.append(sample)
+                }
+            }
+            return WalkSessionClaudePrompt.phaseStats(from: samples)
+        }
+
+        let prompt = WalkSessionClaudePrompt.build(
+            sessions: summaries,
+            userReport: claudeUserReport,
+            sampleStatsBuilder: builder
+        )
+
+        // Claude CLI 호출 (60초 timeout).
+        let analyst = WalkSessionClaudeAnalyst(timeoutSeconds: 60)
+        do {
+            let markdown = try await analyst.analyze(prompt: prompt)
+            claudeAnalysisMarkdown = markdown
+        } catch {
+            claudeAnalysisError = error.localizedDescription
+        }
+    }
+
+    /// 분석 결과 초기화.
+    public func clearClaudeAnalysis() {
+        claudeAnalysisMarkdown = nil
+        claudeAnalysisError = nil
+    }
 }
 
 public struct FootTrailPoint: Identifiable, Hashable {
