@@ -57,6 +57,13 @@ struct IMUGauge: View {
         .padding(8)
         .background(Color(NSColor.controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        // v1.11.15 cycle 3 (2026-05-19): 자이로 게이지 강조 — forge blue 보더 + 색 보존.
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DFColor.forge.opacity(DFOpacity.o25), lineWidth: 0.8)
+        )
+        .dfThemedShadow(color: DFColor.forge.opacity(0.12), radius: 6, y: 1)
+        .dfChartAccent()
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(axis) 기울기 \(Int(degrees.rounded()))도, \(safetyLevelLabel)")
     }

@@ -16,7 +16,7 @@ public struct TelemetrySparkline: View {
                 range: ClosedRange<Double>,
                 label: String,
                 unit: String = "",
-                color: Color = DFColor.accent,
+                color: Color = DFColor.forge,    // v1.11.15 cycle 2: 메인 푸른 컬러 (#0050D5).
                 warnThreshold: Double? = nil) {
         self.samples = samples
         self.range = range
@@ -46,6 +46,8 @@ public struct TelemetrySparkline: View {
         .padding(.vertical, DFSpace.xs + 2)
         .background(DFColor.card)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm, style: .continuous))
+        // v1.11.15 cycle 2: 무채색 GUI 에서 차트 색 보존 — 데이터 시각화는 색 유지.
+        .dfChartAccent()
     }
 
     private var currentColor: Color {

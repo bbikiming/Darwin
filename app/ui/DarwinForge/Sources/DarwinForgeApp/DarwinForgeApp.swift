@@ -149,9 +149,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct DarwinForgeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    // **v1.11.15 (2026-05-19)** — 테마 매니저 (시스템 / 흰색 플랫 / 다크 토글).
+    // UserDefaults 영속화. RootView 가 environmentObject 로 받고
+    // .preferredColorScheme 와 \.dfTheme env 가 자식 view 에 전파.
+    @StateObject private var themeManager = DFThemeManager()
+
     var body: some Scene {
         WindowGroup {
             RootView()
+                .environmentObject(themeManager)
+                .environment(\.dfTheme, themeManager.theme)
+                .preferredColorScheme(themeManager.theme.preferredColorScheme)
                 // minWidth 1024 → 13" MacBook (1280×800) 미만 외부 모니터 + 일반 노트북 모두 지원.
                 // minHeight 640 → 일부 압축된 dock/menu 환경의 13" 화면에서도 동작.
                 // **maxWidth/maxHeight = .infinity**: 사용자가 윈도우를 확장하거나 fullscreen
@@ -259,6 +267,34 @@ struct DarwinForgeApp: App {
                 // **2026-05-16**: 로봇 카메라 floating window — 모션 도중에도 호출 가능.
                 // ⌘⌥C — `Window` Scene (id: "robot-camera") 새 인스턴스 / 활성화.
                 OpenCameraWindowButton()
+
+                Divider()
+
+                // **v1.11.15 (2026-05-19)** — 테마 토글.
+                // 사용자 요청: "흰색의 플랫한 스타일의 GUI" — lightFlat 옵션 노출.
+                // ⌘⇧T 로 다음 테마 순환 (시스템 → 흰색 플랫 → 다크 → 시스템 ...).
+                Menu("테마") {
+                    Button("시스템 (자동)") {
+                        NotificationCenter.default.post(
+                            name: .dfSetTheme, object: DFTheme.system.rawValue
+                        )
+                    }
+                    Button("흰색 플랫") {
+                        NotificationCenter.default.post(
+                            name: .dfSetTheme, object: DFTheme.lightFlat.rawValue
+                        )
+                    }
+                    Button("다크") {
+                        NotificationCenter.default.post(
+                            name: .dfSetTheme, object: DFTheme.dark.rawValue
+                        )
+                    }
+                    Divider()
+                    Button("다음 테마로 전환") {
+                        NotificationCenter.default.post(name: .dfCycleTheme, object: nil)
+                    }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+                }
             }
 
             CommandMenu("로봇") {

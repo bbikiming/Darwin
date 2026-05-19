@@ -111,6 +111,14 @@ public struct CircularGyroMeter: View {
             axisLabels
         }
         .frame(width: diameter, height: diameter)
+        // v1.11.15 cycle 3 (2026-05-19): 자이로 시각화 외곽에 forge blue 강조 ring +
+        // 무채색 GUI 에서도 색 보존. 자동차 g-meter 처럼 차트 자체가 시각 hero 요소.
+        .overlay(
+            Circle()
+                .stroke(DFColor.forge.opacity(DFOpacity.o30), lineWidth: 1.5)
+        )
+        .dfThemedShadow(color: DFColor.forge.opacity(0.15), radius: 8, y: 2)
+        .dfChartAccent()
         .accessibilityElement(children: .combine)
         .accessibilityLabel("자이로 기울기")
         .accessibilityValue("Roll \(Int(rollDeg.rounded()))도, Pitch \(Int(pitchDeg.rounded()))도, \(safetyLabel)")

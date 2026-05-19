@@ -26,6 +26,8 @@ public struct RootView: View {
     // session 인스턴스 (현재 config) 를 읽고 변경하도록 RootView 로 hoist.
     // 라이프사이클: 앱 전체. 메뉴/탭 전환 시 보존.
     @StateObject private var walkLabSession = WalkLabSession()
+    // **v1.11.15 (2026-05-19)** — 테마 매니저. DarwinForgeApp 이 environmentObject 로 주입.
+    @EnvironmentObject private var themeManager: DFThemeManager
     private let commander: ClaudeCommander
 
     @State private var section: Section = .studio
@@ -82,8 +84,13 @@ public struct RootView: View {
             // 사용자가 실수로 사이드바 토글 버튼을 눌러도 ⌘⌃S 또는 메뉴
             // "보기 → 사이드바 표시"로 복구 가능.
             .navigationSplitViewStyle(.balanced)
-            .background(DFColor.canvas)
+            // v1.11.15 (2026-05-19): 테마 인식 배경 — flat 모드 시 #FFFFFF, 그 외 light/dark.
+            .background(DFColor.adaptiveCanvas(themeManager.theme))
             .toolbar { toolbarContent }
+            // v1.11.15 cycle 2: 완벽 무채색 — flat 모드에서 자식 view 전체 saturation=0.
+            // accent/forge/danger/success/warning/info/torque 모두 자동으로 grayscale 톤.
+            // 의미는 명도 차이로 유지 (danger = 진한 회색, success = 옅은 회색 등).
+            .saturation(themeManager.theme.isFlat ? 0 : 1)
             .environment(\.dfWindowWidth, geo.size.width)
             .environment(\.dfWindowHeight, geo.size.height)
         }
@@ -94,6 +101,11 @@ public struct RootView: View {
             dispatcher.connectionStore = store
             dispatcher.mode = store.bus != nil ? .hardware : .simulation
             store.refreshPorts()
+            // **v1.11.14.3 (2026-05-19) — 진단 cold #E fix**: 종전 별도 onAppear 에서
+            // setExperimentLoop 호출 — 첫 body render 전 session end 발생 시 nil race.
+            // 첫 onAppear (앱 시작 직후) 에서 wiring 하여 race window 최소화. 또한
+            // idempotent (같은 controller 받으면 closure overwrite, 동작 동일).
+            walkLabSession.setExperimentLoop(experimentLoop)
             // 첫 실행 자동 연결/자동 마법사는 제거됨 — 사용자가 직접
             // 우측 상단 "Auto Connect" 버튼 또는 마법사를 눌러서 연결.
         }
@@ -123,16 +135,21 @@ public struct RootView: View {
             // Pilot 카메라 패널 등에서 "연결 마법사로 가기" 요청.
             wizardOpen = true
         }
+        // v1.11.15 (2026-05-19): 메뉴 / 외부 → 테마 설정.
+        .onReceive(NotificationCenter.default.publisher(for: .dfSetTheme)) { note in
+            if let raw = note.object as? String, let parsed = DFTheme(rawValue: raw) {
+                themeManager.setTheme(parsed)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .dfCycleTheme)) { _ in
+            themeManager.cycle()
+        }
         .environmentObject(store)
         .environmentObject(dispatcher)
         .environmentObject(remoteShell)
         .environmentObject(claudeCritic)
         .environmentObject(experimentLoop)
         .environmentObject(walkLabSession)
-        .onAppear {
-            // v1.11.14: session ↔ experimentLoop weak ref wiring.
-            walkLabSession.setExperimentLoop(experimentLoop)
-        }
         // 글로벌 단축키 (메뉴와 같은 단축키 — 메뉴 enabled 일 때 메뉴가 우선 처리)
         .background(globalShortcuts)
     }
@@ -463,9 +480,15 @@ public struct RootView: View {
     }
 
     // MARK: - Sidebar
+    //
+    // **v1.11.15 cycle 2 (2026-05-19)** — 3구역 분리로 height 안정성 확보.
+    // 종전 단일 VStack + Spacer 패턴은 메뉴/탭 + 5개 하단 버튼 + 테마 picker 합산
+    // height 가 윈도우 높이 초과 시 Spacer 가 음수 → 컨텐츠가 위로 밀려 잘림 (사용자
+    // 보고). 분리 후: 네비게이션만 scroll, 안전 액션은 항상 하단 고정.
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: DFSpace.none) {
+            // ── ① FIXED TOP — 로고 (브랜드) ────────────────────────────
             DarwinForgeLogo(variant: .full, density: .standard, showsTagline: true)
                 .padding(.horizontal, DFSpace.md)
                 .padding(.top, DFSpace.md)
@@ -473,98 +496,114 @@ public struct RootView: View {
 
             Divider()
 
-            ForEach(Section.allCases, id: \.self) { s in
-                sidebarRow(section: s)
+            // ── ② SCROLLABLE MIDDLE — 메뉴/탭 네비게이션 ─────────────
+            // 높은 윈도우에서는 자연스럽게 fill, 짧은 윈도우에서는 scroll.
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: DFSpace.none) {
+                    ForEach(Section.allCases, id: \.self) { s in
+                        sidebarRow(section: s)
+                    }
+
+                    Divider()
+                        .padding(.vertical, DFSpace.xs)
+
+                    Text("전문가 콘솔")
+                        .font(DFFont.caption)
+                        .foregroundStyle(DFColor.textSecondary)
+                        .padding(.horizontal, DFSpace.md)
+                        .padding(.top, DFSpace.xs)
+                        .padding(.bottom, 2)
+
+                    ForEach(ExpertTab.allCases) { tab in
+                        expertTabRow(tab)
+                    }
+                }
+                .padding(.vertical, DFSpace.xs)
             }
+            .frame(maxHeight: .infinity)
 
             Divider()
-                .padding(.vertical, DFSpace.xs)
 
-            Text("전문가 콘솔")
-                .font(DFFont.caption)
-                .foregroundStyle(DFColor.textSecondary)
-                .padding(.horizontal, DFSpace.md)
-                .padding(.top, DFSpace.xs)
-                .padding(.bottom, 2)
+            // ── ③ FIXED BOTTOM — 액션 + 테마 + 배지 ──────────────────
+            VStack(alignment: .leading, spacing: DFSpace.none) {
+                // 원격 도구 빠른 접근 — 연결 여부와 무관하게 항상 노출.
+                remoteToolsQuickRow
+                    .padding(.horizontal, DFSpace.sm)
+                    .padding(.top, DFSpace.sm)
+                    .padding(.bottom, 8)
 
-            ForEach(ExpertTab.allCases) { tab in
-                expertTabRow(tab)
-            }
-
-            Spacer()
-
-            // 원격 도구 빠른 접근 — 연결 여부와 무관하게 항상 노출.
-            // 사용자가 연결 전에도 VNC/Vision Tool/SMB 로 접근해 셋업 가능.
-            remoteToolsQuickRow
+                // 연결 마법사 — 첫 진입과 도움 요청 시 launch.
+                Button {
+                    wizardOpen = true
+                } label: {
+                    HStack {
+                        Image(systemName: "wand.and.stars")
+                        Text("연결 마법사").font(DFFont.bodyEmph)
+                        Spacer()
+                        Image(systemName: connectionStatusIcon)
+                            .foregroundStyle(connectionStatusTint)
+                            .font(.system(size: DFFontSize.s11))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, DFSpace.md)
+                    .background(DFColor.elev2)
+                    .foregroundStyle(DFColor.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DFRadius.md)
+                            .stroke(DFColor.forge.opacity(DFOpacity.o30), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
                 .padding(.horizontal, DFSpace.sm)
                 .padding(.bottom, 8)
+                .help("연결 안내 화면 열기 — USB / 네트워크 / 자동 검색")
 
-            // 연결 마법사 — 첫 진입과 도움 요청 시 launch.
-            Button {
-                wizardOpen = true
-            } label: {
-                HStack {
-                    Image(systemName: "wand.and.stars")
-                    Text("연결 마법사").font(DFFont.bodyEmph)
-                    Spacer()
-                    Image(systemName: connectionStatusIcon)
-                        .foregroundStyle(connectionStatusTint)
-                        .font(.system(size: DFFontSize.s11))
+                // 로봇 복구 — E-stop 이후 액추에이터 재활성 + 기본 자세로 매우 천천히 이동.
+                recoveryButton
+
+                // E-Stop big button
+                Button {
+                    store.emergencyStop()
+                } label: {
+                    HStack {
+                        Image(systemName: "exclamationmark.octagon.fill")
+                        Text("긴급 정지").font(DFFont.bodyEmph)
+                        Spacer()
+                        Text("⌘⇧.")
+                            .font(DFFont.caption.monospaced())
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, DFSpace.md)
+                    .background(DFColor.danger)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .padding(.horizontal, DFSpace.md)
-                .background(DFColor.elev2)
-                .foregroundStyle(DFColor.textPrimary)
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DFRadius.md)
-                        .stroke(DFColor.forge.opacity(DFOpacity.o30), lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, DFSpace.sm)
-            .padding(.bottom, 8)
-            .help("연결 안내 화면 열기 — USB / 네트워크 / 자동 검색")
+                .buttonStyle(.plain)
+                .keyboardShortcut(".", modifiers: [.command, .shift])
+                .padding(.horizontal, DFSpace.sm)
+                .padding(.bottom, DFSpace.sm)
 
-            // 로봇 복구 — E-stop 이후 액추에이터 재활성 + 기본 자세로 매우 천천히 이동.
-            recoveryButton
+                // v1.11.15 (2026-05-19) cycle 2: 컴팩트 테마 picker — 라벨 제거.
+                // 사이드바 height 절약 — icon 3개 + 짧은 텍스트 ("자동/흰색/다크") 행.
+                DFThemePicker(layout: .horizontal, showsLabel: false)
+                    .padding(.horizontal, DFSpace.sm)
+                    .padding(.bottom, DFSpace.xs2)
 
-            // E-Stop big button
-            Button {
-                store.emergencyStop()
-            } label: {
-                HStack {
-                    Image(systemName: "exclamationmark.octagon.fill")
-                    Text("긴급 정지").font(DFFont.bodyEmph)
-                    Spacer()
-                    Text("⌘⇧.")
+                // Forge core badge
+                HStack(spacing: DFSpace.xs) {
+                    Image(systemName: "cube.box")
+                        .font(.system(size: DFFontSize.s10))
+                    Text("forge-core \(forgeCoreVersion())")
                         .font(DFFont.caption.monospaced())
-                        .foregroundStyle(.white.opacity(0.9))
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .foregroundStyle(DFColor.textSecondary)
                 .padding(.horizontal, DFSpace.md)
-                .background(DFColor.danger)
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+                .padding(.bottom, DFSpace.sm)
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(".", modifiers: [.command, .shift])
-            .padding(.horizontal, DFSpace.sm)
-            .padding(.bottom, DFSpace.sm)
-
-            // Forge core badge
-            HStack(spacing: DFSpace.xs) {
-                Image(systemName: "cube.box")
-                    .font(.system(size: DFFontSize.s10))
-                Text("forge-core \(forgeCoreVersion())")
-                    .font(DFFont.caption.monospaced())
-            }
-            .foregroundStyle(DFColor.textSecondary)
-            .padding(.horizontal, DFSpace.md)
-            .padding(.bottom, DFSpace.sm)
-
         }
     }
 
