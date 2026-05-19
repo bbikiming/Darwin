@@ -25,6 +25,9 @@ public struct ExperimentApprovalUI: View {
     /// re-eval 에 의존. 본 view 가 session 직접 @EnvironmentObject 로 받으면
     /// session.@Published 변경 시 본 view body 자체가 재평가 → closure 재호출 보장.
     @EnvironmentObject private var session: WalkLabSession
+    /// **v1.11.14.6 (2026-05-19)** — 테마 통합. flat 모드에서 sheet 배경 #FFFFFF 사용.
+    /// 종전: DFColor 직접 사용으로 light 의 #F2F2F7 표시 → flat 의도와 불일치.
+    @Environment(\.dfTheme) private var theme: DFTheme
     public let onApprove: () -> Void
     public let onCancel: () -> Void
 
@@ -97,6 +100,8 @@ public struct ExperimentApprovalUI: View {
         }
         .padding(DFSpace.md)
         .frame(minWidth: 520, minHeight: 540, idealHeight: 620)
+        // v1.11.14.6: 테마 통합 — flat 시 #FFFFFF, 그 외 default light/dark.
+        .background(DFColor.adaptiveCanvas(theme))
     }
 
     @ViewBuilder
