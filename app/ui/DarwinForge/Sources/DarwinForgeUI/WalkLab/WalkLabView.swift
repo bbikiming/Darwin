@@ -349,6 +349,11 @@ public struct WalkLabView: View {
     private var mainDetailContent: some View {
         ScrollView {
             VStack(spacing: DFSpace.sm3) {
+                // **v1.11.17 (2026-05-19)**: 워크랩 진입 즉시 자이로 실시간 패널.
+                // 사용자가 보행 시작 전 (preset 선택 전) 부터 IMU 상태 확인 가능.
+                // 보행 중 panel 우측의 FallPreventionMonitor 와 별개 — 항상 표시.
+                LiveGyroPanel()
+
                 simOnlyNotice
 
                 if session.balanceLost {
