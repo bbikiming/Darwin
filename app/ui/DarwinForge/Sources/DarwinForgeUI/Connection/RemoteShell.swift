@@ -76,9 +76,13 @@ public final class RemoteShell: ObservableObject {
     }
 
     /// 명령 전송 → 결과 반환. SSH 가능하면 즉시 (30-80ms), 아니면 SMB watcher (2-30초).
-    public func send(_ command: String) async {
+    /// **v1.11.16 (2026-05-19) — onboard 통합 fix**: `Exchange?` 반환 — caller 가
+    /// 결과/에러 확인 가능. 종전 `async` 반환만 → 호출자가 history 폴링 필요해 silent
+    /// failure 위험. nil = 빈 명령 (no-op).
+    @discardableResult
+    public func send(_ command: String) async -> Exchange? {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return nil }
 
         var exchange = Exchange(command: trimmed, sentAt: Date())
         history.append(exchange)
@@ -96,7 +100,7 @@ public final class RemoteShell: ObservableObject {
                 exchange.receivedAt = Date()
                 if index < history.count { history[index] = exchange }
                 activeChannel = .ssh
-                return
+                return exchange
             } catch SSHShell.SSHError.keyAuthRequired {
                 // key 미셋업 — 명확한 안내 + SMB fallback.
                 activeChannel = .smb
@@ -136,7 +140,7 @@ public final class RemoteShell: ObservableObject {
                     exchange.result = body
                     exchange.receivedAt = Date()
                     if index < history.count { history[index] = exchange }
-                    return
+                    return exchange
                 }
             }
             throw ShellError.resultTimeout
@@ -149,6 +153,7 @@ public final class RemoteShell: ObservableObject {
             exchange.receivedAt = Date()
             if index < history.count { history[index] = exchange }
         }
+        return exchange
     }
 
     public func clear() { history.removeAll() }

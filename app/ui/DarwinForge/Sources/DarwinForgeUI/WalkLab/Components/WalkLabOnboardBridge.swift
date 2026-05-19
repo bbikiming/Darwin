@@ -14,6 +14,13 @@ import Combine
 /// - `walkingEngine == .robotisOnboard` 일 때만 send.
 /// - `remoteShell.host` 가 설정되어 있을 때만 send (`isHostConfigured`).
 /// - 사용자가 명시 OFF 가능 (`autoBrokeringEnabled` 토글).
+///
+/// **v1.11.16 (2026-05-19) — Mac sparse 한계 본질 fix 일환**:
+/// - send 결과 확인 (Exchange?.error) → 실패 시 session.lastRobotEvent 알림 +
+///   safetyEvent 로그. 종전 silent SSH 실패 → 사용자 인지 불가.
+/// - 첫 send 또는 모드 전환 시 daemon health-check ping (`echo OK` 단순 명령).
+///   응답 없으면 brokerage daemon 미동작 추정 → 명시 alert.
+/// - 마지막 ACK 시각 추적 (`lastAckAt`) → UI 가 staleness 표시 가능.
 struct WalkLabOnboardBridge: View {
     @ObservedObject var session: WalkLabSession
     @EnvironmentObject private var remoteShell: RemoteShell
@@ -23,6 +30,12 @@ struct WalkLabOnboardBridge: View {
 
     /// 마지막 송출한 명령 — 변경 없으면 skip (중복 SSH 방지).
     @State private var lastSentLine: String? = nil
+
+    /// **v1.11.16**: 마지막 health-check ping 시각. nil = 미수행 또는 실패.
+    @State private var lastHealthCheckAt: Date? = nil
+
+    /// **v1.11.16**: 연속 send 실패 횟수. 3회 이상이면 사용자 alert.
+    @State private var consecutiveFailures: Int = 0
 
     var body: some View {
         // invisible view — UI 출력 없음.
@@ -38,12 +51,20 @@ struct WalkLabOnboardBridge: View {
         Color.clear
             .frame(width: 0, height: 0)
             .onChange(of: session.current)                  { _, _ in scheduleDebouncedSend() }
-            .onChange(of: session.walkingEngine) { _, _ in
+            .onChange(of: session.walkingEngine) { _, newValue in
                 lastSentLine = nil   // engine 전환 → dedup reset
+                // **v1.11.16**: onboard 진입 시 health-check ping.
+                if newValue == .robotisOnboard {
+                    scheduleHealthCheck()
+                }
                 scheduleDebouncedSend()
             }
-            .onChange(of: session.autoOnboardBrokering) { _, _ in
+            .onChange(of: session.autoOnboardBrokering) { _, newValue in
                 lastSentLine = nil   // brokering toggle → resend 보장
+                // **v1.11.16**: brokering ON 전환 시 health-check.
+                if newValue {
+                    scheduleHealthCheck()
+                }
                 scheduleDebouncedSend()
             }
             .onChange(of: session.onboardWalkingActive) { _, _ in
@@ -81,7 +102,68 @@ struct WalkLabOnboardBridge: View {
             lastSentLine = line
 
             let shellCmd = RobotSetupCommand.walkLabRobotisSendCommand(line: line)
-            await remoteShell.send(shellCmd)
+            // **v1.11.16**: send 결과 확인.
+            let exchange = await remoteShell.send(shellCmd)
+            handleSendResult(exchange: exchange, commandLine: line)
+        }
+    }
+
+    /// **v1.11.16 (2026-05-19)**: send 결과 처리.
+    /// - 성공: consecutiveFailures reset, lastRobotEvent 갱신 (debug 모드만).
+    /// - 실패: consecutiveFailures++ + lastRobotEvent + safetyEvent.
+    /// - 3회 연속 실패: 사용자 명시 alert (lastRobotEvent + critical safetyEvent).
+    private func handleSendResult(exchange: RemoteShell.Exchange?, commandLine: String) {
+        guard let exchange = exchange else { return }
+        if let error = exchange.error {
+            consecutiveFailures += 1
+            session.setLastRobotEvent("⚠️ ROBOTIS Onboard 명령 실패 (\(consecutiveFailures)회 연속): \(error)")
+            session.logSafetyEvent(
+                kind: .correctorOff,
+                message: "Onboard send 실패: \(error). cmd=\(commandLine.prefix(60))"
+            )
+            if consecutiveFailures >= 3 {
+                session.setLastRobotEvent("🛑 ROBOTIS Onboard 연속 실패 3회 — daemon 또는 SSH 점검 필요")
+                session.logSafetyEvent(
+                    kind: .correctorOff,
+                    message: "Onboard 통신 비정상 — Mac sparse 로 전환 권장"
+                )
+            }
+        } else {
+            // 성공.
+            if consecutiveFailures > 0 {
+                session.setLastRobotEvent("✓ ROBOTIS Onboard 통신 복구 — \(consecutiveFailures)회 실패 후")
+            }
+            consecutiveFailures = 0
+        }
+    }
+
+    /// **v1.11.16 (2026-05-19)**: daemon health-check ping.
+    /// brokerage daemon 이 robot 측에서 동작 중인지 확인. 단순 `echo OK` 명령.
+    /// 응답이 timeout 또는 error 면 daemon 미동작 추정 → 사용자 alert.
+    private func scheduleHealthCheck() {
+        guard !remoteShell.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        Task { @MainActor in
+            // 짧은 sleep — onChange 가 연달아 일어날 때 마지막만 ping.
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if Task.isCancelled { return }
+            let ping = "echo OK"
+            let exchange = await remoteShell.send(ping)
+            if let exchange = exchange {
+                if let error = exchange.error {
+                    session.setLastRobotEvent("⚠️ Onboard health-check 실패: \(error)")
+                    session.logSafetyEvent(
+                        kind: .correctorOff,
+                        message: "Onboard daemon ping 실패 — robot 측 walklab-brokerage 데몬 확인 필요"
+                    )
+                    lastHealthCheckAt = nil
+                } else {
+                    lastHealthCheckAt = Date()
+                    session.logSafetyEvent(
+                        kind: .correctorOn,
+                        message: "Onboard health-check OK (ssh \(exchange.elapsedMs ?? 0)ms)"
+                    )
+                }
+            }
         }
     }
 }

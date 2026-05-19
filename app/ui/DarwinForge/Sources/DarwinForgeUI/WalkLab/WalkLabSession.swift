@@ -2238,7 +2238,17 @@ public final class WalkLabSession: ObservableObject {
     /// **이슈 처리 (2026-05-16)**: 이전엔 append + removeFirst 2 mutations =
     /// 2 publisher notifications. 정정: local var batched → 1 notification
     /// (safetyTimeline 와 동일 패턴).
-    private func logSafetyEvent(kind: SafetyEvent.Kind, message: String) {
+    /// **v1.11.16 (2026-05-19)**: `lastRobotEvent` 외부 setter — Bridge 가 onboard
+    /// send 결과 표시할 때 호출. 종전 `private(set)` → bridge 가 직접 set 불가.
+    /// 명시 메서드 형태로 노출하여 호출처 명확화.
+    public func setLastRobotEvent(_ message: String?) {
+        lastRobotEvent = message
+    }
+
+    /// **v1.11.16 (2026-05-19)**: visibility — private → internal.
+    /// WalkLabOnboardBridge (다른 파일, 같은 module) 가 onboard send 실패 시 직접
+    /// 호출하기 위해 노출. external 모듈에선 여전히 비공개.
+    func logSafetyEvent(kind: SafetyEvent.Kind, message: String) {
         var newEvents = safetyEvents
         newEvents.append(SafetyEvent(timestamp: Date(), kind: kind, message: message))
         if newEvents.count > Self.safetyEventsMaxCount {
