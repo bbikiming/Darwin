@@ -656,6 +656,138 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         await restoreSharedHistoryFile(historyBefore)
     }
 
+    // MARK: - v1.11.14.7 — 사용자 평가 부족한 점 6건 fix
+
+    /// **CRIT**: rollback 시 보행 중이면 자동 stop + walkReady 복귀.
+    /// 종전: rollback 이 config 만 복원, walkCycleTask 는 이전 walkingEngine 으로 계속.
+    func testRollbackStopsWalkingFirst() {
+        let session = WalkLabSession()
+        // 보행 시뮬: current = .march
+        session.current = .march
+        // 실험 적용 (snapshot 저장 — current=.idle 이었을 때의 값)
+        // 실제로는 보행 시작 전 apply 가 일반적이지만, 테스트 시뮬을 위해 강제 set.
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        // 보행 중 applyExperimentChange 는 walkingEngine 변경 없으면 통과.
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.hipPitchOffsetTrimDeg = 16
+        _ = session.applyExperimentChange(
+            experimentId: "exp-rb-stop", baselineSessionId: "base-1",
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        // session 은 보행 중 + 활성 실험 상태.
+        XCTAssertEqual(session.current, .march)
+        XCTAssertNotNil(session.activeExperimentId)
+
+        // Rollback 호출 → 보행 stop + config 복원 기대.
+        _ = session.rollbackExperiment()
+        XCTAssertEqual(session.current, .idle, "rollback 이 stop 호출 → current=.idle")
+        XCTAssertNil(session.activeExperimentId)
+    }
+
+    /// **HIGH**: ActiveExperimentBanner 가 활성 실험 시 표시 + rollback 가능.
+    /// SwiftUI view rendering 검증은 어렵지만, 데이터 흐름 (session.activeExperimentId)
+    /// 으로 시각 표시 조건 검증.
+    func testActiveExperimentVisibilityCondition() {
+        let session = WalkLabSession()
+        XCTAssertNil(session.activeExperimentId, "초기 nil — banner 미표시")
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        _ = session.applyExperimentChange(
+            experimentId: "exp-banner", baselineSessionId: "base-1",
+            proposedConfig: safeConfig
+        )
+        XCTAssertNotNil(session.activeExperimentId, "활성 실험 — banner 표시 조건")
+        // rollbackExperiment → 다시 nil → banner 자동 숨김.
+        _ = session.rollbackExperiment()
+        XCTAssertNil(session.activeExperimentId, "rollback 후 banner 숨김")
+    }
+
+    // MARK: - ExperimentThresholds 검증
+
+    /// **MED**: 임계값 default 값 검증.
+    func testExperimentThresholdsDefaults() {
+        let t = ExperimentThresholds()
+        XCTAssertEqual(t.abortSampleRatio, 0.7)
+        XCTAssertEqual(t.peakPitchDeltaFailDeg, 10.0)
+        XCTAssertEqual(t.peakRollDeltaFailDeg, 8.0)
+        XCTAssertEqual(t.busFailsMax, 5)
+        XCTAssertEqual(t.maxStaleRatio, 0.15)
+        XCTAssertEqual(t.successPitchDelta, -0.5)
+    }
+
+    /// **MED**: UserDefaults round-trip — save/load 일치.
+    func testExperimentThresholdsPersistence() {
+        var t = ExperimentThresholds()
+        t.peakPitchDeltaFailDeg = 7.5
+        t.peakRollDeltaFailDeg = 6.0
+        t.saveToDisk()
+        defer { ExperimentThresholds.reset() }
+        let loaded = ExperimentThresholds.loadFromDisk()
+        XCTAssertEqual(loaded.peakPitchDeltaFailDeg, 7.5)
+        XCTAssertEqual(loaded.peakRollDeltaFailDeg, 6.0)
+    }
+
+    /// **MED**: reset → default 로 복귀.
+    func testExperimentThresholdsReset() {
+        var t = ExperimentThresholds()
+        t.peakPitchDeltaFailDeg = 99.9
+        t.saveToDisk()
+        ExperimentThresholds.reset()
+        let loaded = ExperimentThresholds.loadFromDisk()
+        XCTAssertEqual(loaded.peakPitchDeltaFailDeg, 10.0, "reset 후 default 복귀")
+    }
+
+    /// **MED**: ExperimentThresholdsManager singleton — UserDefaults 동기화.
+    @MainActor
+    func testExperimentThresholdsManagerPersists() {
+        ExperimentThresholds.reset()
+        let manager = ExperimentThresholdsManager()
+        XCTAssertEqual(manager.thresholds.peakPitchDeltaFailDeg, 10.0)
+        var newT = manager.thresholds
+        newT.peakPitchDeltaFailDeg = 12.0
+        manager.setThresholds(newT)
+        XCTAssertEqual(manager.thresholds.peakPitchDeltaFailDeg, 12.0)
+        // 디스크에서 다시 read — 일치.
+        let reloaded = ExperimentThresholds.loadFromDisk()
+        XCTAssertEqual(reloaded.peakPitchDeltaFailDeg, 12.0)
+        ExperimentThresholds.reset()
+    }
+
+    /// **MED**: compareWithBaseline 가 사용자 정의 임계값 적용.
+    /// peakPitchDeltaFailDeg=5.0 으로 strict 하게 set → +6° 도 failRollback.
+    func testCompareWithBaselineUsesCustomThresholds() async {
+        ExperimentThresholds.reset()
+        var custom = ExperimentThresholds()
+        custom.peakPitchDeltaFailDeg = 5.0  // default 10 → strict 5
+        custom.saveToDisk()
+        defer { ExperimentThresholds.reset() }
+
+        let loop = ExperimentLoopController()
+        let response = mockSafeResponse()
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        _ = await loop.startExperiment(
+            from: response, baselineSessionId: "b1", proposedConfig: safeConfig
+        )
+        let baseline = mockSummary(id: "b1", peakPitch: 20)
+        let exp = [mockSummary(id: "e1", peakPitch: 26)]  // +6° (custom 5° 초과)
+        await loop.compareWithBaseline(
+            baselineSummary: baseline, experimentSummaries: exp
+        )
+        XCTAssertEqual(loop.lastComparison?.verdict, .failRollback,
+                       "custom 임계값 (5°) 적용 — +6° → failRollback")
+    }
+
     // MARK: - v1.11.14.6 — 사용자 cold 추가 검증
 
     /// **v1.11.14.6 fix 1**: rollbackExperiment 가 controller 도 cancel 호출.

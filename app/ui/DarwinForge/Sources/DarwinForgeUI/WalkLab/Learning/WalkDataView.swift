@@ -33,6 +33,8 @@ public struct WalkDataView: View {
     // ExperimentApprovalUI 의 onApprove 가 실제 WalkLabSession config 를 변경하기 위해
     // 필요. 종전엔 WalkLabView 내부 @StateObject 라 접근 불가했음.
     @EnvironmentObject private var session: WalkLabSession
+    // **v1.11.14.7 (2026-05-19)** — 테마 인식 — flat 모드에서 elev2 도 무채색.
+    @Environment(\.dfTheme) private var theme: DFTheme
     @State private var showV2Panel: Bool = false
 
     public init() {}
@@ -475,7 +477,7 @@ public struct WalkDataView: View {
                 }
             }
             .padding(DFSpace.sm)
-            .background(DFColor.elev2)
+            .background(DFColor.adaptiveElev2(theme))
 
             if summaries.isEmpty {
                 VStack(spacing: DFSpace.sm) {
@@ -655,7 +657,7 @@ public struct WalkDataView: View {
             .frame(height: 200)
         }
         .padding(DFSpace.sm)
-        .background(DFColor.elev2)
+        .background(DFColor.adaptiveElev2(theme))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
 
@@ -679,7 +681,7 @@ public struct WalkDataView: View {
             .frame(height: 40)
         }
         .padding(DFSpace.sm)
-        .background(DFColor.elev2)
+        .background(DFColor.adaptiveElev2(theme))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
 
@@ -713,7 +715,7 @@ public struct WalkDataView: View {
             .frame(height: 150)
         }
         .padding(DFSpace.sm)
-        .background(DFColor.elev2)
+        .background(DFColor.adaptiveElev2(theme))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
     }
 

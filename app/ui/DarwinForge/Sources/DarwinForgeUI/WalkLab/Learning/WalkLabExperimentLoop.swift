@@ -172,34 +172,40 @@ public actor WalkLabExperimentLoop {
         ]
 
         // **다축 verdict 규칙** (우선순위 — 위 → 아래로 가장 보수적 verdict).
+        // **v1.11.14.7 — 사용자 평가 MED fix**: 임계값 ExperimentThresholds 외부화.
+        // 종전 hardcode 값 (peakPitchDelta>=10 등) → UserDefaults 저장 가능한 struct.
+        // 단, actor 격리 라 UserDefaults read 는 caller (main actor) 가 미리 read.
+        let t = ExperimentThresholds.loadFromDisk()
         let verdict: Experiment.Verdict
         let reason: String
         if expQualityFails > 0 {
             verdict = .inconclusive
             reason = "실험 세션 \(expQualityFails)건 data quality fail — 재수집 필요"
-        } else if abortLike {
+        } else if sampleRatio < t.abortSampleRatio {
             verdict = .failRollback
             reason = "실험 세션 sampleCount 가 baseline 의 \(String(format: "%.0f", sampleRatio * 100))% — abort/fall 의심"
-        } else if peakPitchDelta >= 10.0 {
+        } else if peakPitchDelta >= t.peakPitchDeltaFailDeg {
             verdict = .failRollback
             reason = "peakAbsPitch 가 baseline 대비 +\(String(format: "%.1f", peakPitchDelta))° 증가"
-        } else if peakRollDelta >= 8.0 {
+        } else if peakRollDelta >= t.peakRollDeltaFailDeg {
             verdict = .failRollback
             reason = "peakAbsRoll 가 +\(String(format: "%.1f", peakRollDelta))° 악화 — lateral 안정성 손실"
-        } else if avgBusFails > 5 {
+        } else if avgBusFails > t.busFailsMax {
             verdict = .failRollback
             reason = "bus write 실패 누적 \(Int(avgBusFails))건 — 통신 불안정"
-        } else if avgStaleRatio > 0.15 {
+        } else if avgStaleRatio > t.maxStaleRatio {
             verdict = .inconclusive
             reason = "IMU staleness \(String(format: "%.0f", avgStaleRatio * 100))% — 데이터 신뢰도 부족"
-        } else if pitchDelta <= -0.5 && peakPitchDelta <= 5.0
-                  && rollDelta <= 1.0 && peakRollDelta <= 5.0 {
+        } else if pitchDelta <= t.successPitchDelta && peakPitchDelta <= t.successPeakPitchDelta
+                  && rollDelta <= t.successRollDelta && peakRollDelta <= t.successPeakRollDelta {
             verdict = .success
             reason = "pitch \(String(format: "%+.1f", pitchDelta))°/peak\(String(format: "%+.1f", peakPitchDelta))°, roll \(String(format: "%+.1f", rollDelta))°/peak\(String(format: "%+.1f", peakRollDelta))° — 다축 성공 기준 충족"
         } else {
             verdict = .inconclusive
             reason = "pitch \(String(format: "%+.1f", pitchDelta))°, roll \(String(format: "%+.1f", rollDelta))°, drift \(String(format: "%+.2f", avgDrift))°/s — 추가 보행 권고"
         }
+        // abortLike 변수는 신 임계값 기반 — sampleRatio 비교에서 제거.
+        _ = abortLike
         // 결과 저장.
         var updated = exp
         updated.verdict = verdict

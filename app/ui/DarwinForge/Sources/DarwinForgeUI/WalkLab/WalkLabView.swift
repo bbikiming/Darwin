@@ -48,6 +48,13 @@ public struct WalkLabView: View {
         .overlay(alignment: .topTrailing) {
             WalkLabOnboardBridge(session: session)
         }
+        // **v1.11.14.7 (2026-05-19)** — 활성 실험 floating banner.
+        // session.activeExperimentId != nil 시 자동 표시. Rollback/수락 버튼 노출.
+        // 종전: 자동 rollback (failRollback) 만, 사용자 명시 rollback 불가.
+        .overlay(alignment: .bottomTrailing) {
+            ActiveExperimentBanner()
+                .padding(DFSpace.md)
+        }
         .sheet(isPresented: $showingRiskConfirm) {
             riskConfirmSheet
         }

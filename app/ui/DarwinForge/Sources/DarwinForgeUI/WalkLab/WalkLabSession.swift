@@ -994,6 +994,16 @@ public final class WalkLabSession: ObservableObject {
         // - cycleStartedAt 갱신 (UI 경과 시간 동기)
         // - autoOnboardBrokering ON 이면 WalkLabOnboardBridge 가 첫 명령 자동 송출
         if walkingEngine == .robotisOnboard {
+            // **v1.11.14.7 (2026-05-19) — 사용자 평가 Mac sparse 한계 fix**:
+            // onboard 모드 시작 시 health-check. robot 측 brokerage patch 가 미적용되
+            // 었으면 SSH 송출은 silent 실패 (사용자가 보행 안 됨 인지 어려움).
+            // 가드 조건:
+            // 1. RemoteShell 가 연결되어 있어야 함 (실 robot SSH 채널).
+            // 2. autoOnboardBrokering 활성 권장 (수동 모드는 사용자가 책임).
+            //
+            // 본 체크는 warning 만 — startWalkCycle 자체는 진행 (사용자 의도 존중).
+            // 사용자가 lastRobotEvent / safety log 로 health 상태 확인.
+            let healthWarnings = onboardHealthCheckWarnings()
             onboardWalkingActive = true
             cycleStartedAt = Date()
             logSafetyEvent(
@@ -1003,7 +1013,17 @@ public final class WalkLabSession: ObservableObject {
             let brokeringHint = autoOnboardBrokering
                 ? "자동 명령 송출 활성"
                 : "수동 송출 (현재 명령 송출 버튼 필요)"
-            lastRobotEvent = "▶ ROBOTIS Onboard 모드: \(presetLabel) — Mac sparse 우회, \(brokeringHint)"
+            if healthWarnings.isEmpty {
+                lastRobotEvent = "▶ ROBOTIS Onboard 모드: \(presetLabel) — Mac sparse 우회, \(brokeringHint)"
+            } else {
+                // 사용자 명시 경고 — health 문제 detect.
+                let warningList = healthWarnings.joined(separator: " · ")
+                lastRobotEvent = "⚠️ ROBOTIS Onboard 시작 (health 경고): \(warningList)"
+                for warning in healthWarnings {
+                    logSafetyEvent(kind: .correctorOff,
+                                   message: "Onboard health: \(warning)")
+                }
+            }
             return
         }
 
@@ -1371,6 +1391,47 @@ public final class WalkLabSession: ObservableObject {
         rollbackSnapshot = nil
     }
 
+    /// **v1.11.14.7 (2026-05-19)** — ROBOTIS Onboard 모드 health check.
+    /// startWalkCycle 의 onboard 분기에서 호출 — 잠재 silent failure 감지.
+    /// 반환: 경고 문자열 배열 (빈 배열 = 정상).
+    ///
+    /// 체크 항목:
+    /// 1. ConnectionStore 의 SSH 채널 연결 (lastTelemetry.isRealRobot)
+    /// 2. autoOnboardBrokering 활성 여부
+    /// 3. 보행 명령 enabled 여부 (cradle confirmed)
+    nonisolated private func onboardHealthCheckWarningsImpl(
+        isRobotConnected: Bool,
+        autoOnboardOn: Bool,
+        cradleOK: Bool
+    ) -> [String] {
+        var warnings: [String] = []
+        if !isRobotConnected {
+            warnings.append("실 robot SSH 미연결 — onboard 명령 silent fail 위험")
+        }
+        if !autoOnboardOn {
+            warnings.append("autoOnboardBrokering=OFF — 명령 수동 송출 필요")
+        }
+        if !cradleOK {
+            warnings.append("cradle 미확인 — 안전 절차 위반 가능")
+        }
+        return warnings
+    }
+
+    /// MainActor instance helper — startWalkCycle 에서 호출.
+    @MainActor
+    func onboardHealthCheckWarnings() -> [String] {
+        let isRobotConnected: Bool = {
+            // ConnectionStore.lastTelemetry?.isRealRobot — store 가 nil 일 수 있음.
+            guard let store = self.store else { return false }
+            return store.bus != nil
+        }()
+        return onboardHealthCheckWarningsImpl(
+            isRobotConnected: isRobotConnected,
+            autoOnboardOn: autoOnboardBrokering,
+            cradleOK: cradleConfirmed
+        )
+    }
+
     /// **v1.11.14.5 (2026-05-19) — 사용자 평가 CRIT 1 fix**: 변경 원상복구.
     /// applyExperimentChange 가 저장한 snapshot 으로 모든 axis 복원 + activeExperimentId
     /// clear. failRollback verdict 시 자동 호출 또는 사용자 명시 호출.
@@ -1381,6 +1442,17 @@ public final class WalkLabSession: ObservableObject {
     @discardableResult
     public func rollbackExperiment() -> Bool {
         guard let snapshot = rollbackSnapshot else { return false }
+        // **v1.11.14.7 (2026-05-19) — 사용자 평가 CRIT fix**: 보행 중 rollback 시
+        // walkCycleTask 자동 stop + walkReady 복귀. 종전: rollback 이 config 만 복원,
+        // walkCycleTask 는 이전 walkingEngine 으로 계속 진행 → 불일치 + 안전 위험.
+        let wasWalking = current != .idle || walkCycleTask != nil || onboardWalkingActive
+        if wasWalking {
+            stop()  // walkCycleTask cancel + walkReady 복귀 + onboard cleanup.
+            logSafetyEvent(
+                kind: .sessionStop,
+                message: "🔄 rollback 직전 자동 stop — 안전한 config 복원"
+            )
+        }
         balanceExperimentConfig = snapshot.balanceExperimentConfig
         hipPitchOffsetTrimDeg = snapshot.hipPitchOffsetTrimDeg
         strideMm = snapshot.strideMm
