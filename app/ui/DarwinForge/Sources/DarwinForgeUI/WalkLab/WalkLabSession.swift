@@ -2585,6 +2585,10 @@ public final class WalkLabSession: ObservableObject {
 
     /// **v1.11.14**: baseline session 디스크 load (summary.json).
     /// **v1.11.14.1**: static + Sendable — Task.detached 에서 background 호출.
+    /// **v1.11.14.2 (2026-05-19)**: substring match 제거 — WalkSessionLogger 의 명명
+    /// 규칙 "{sessionId}-{preset}.summary.json" 따라 prefix match 로 강화. 종전
+    /// `contains(sessionId)` 는 sessionId A 가 B 의 substring 일 때 false positive
+    /// 가능 (현실에선 ISO timestamp 라 거의 충돌 X, 그러나 defensive coding).
     nonisolated static func loadSummaryFromDisk(sessionId: String) -> WalkSessionSummary? {
         guard let dir = WalkSessionStore.sessionsDir else { return nil }
         let fm = FileManager.default
@@ -2592,8 +2596,8 @@ public final class WalkLabSession: ObservableObject {
             return nil
         }
         let match = files.first { url in
-            url.lastPathComponent.contains(sessionId) && url.pathExtension == "json"
-                && url.lastPathComponent.hasSuffix(".summary.json")
+            let name = url.lastPathComponent
+            return name.hasPrefix("\(sessionId)-") && name.hasSuffix(".summary.json")
         }
         guard let url = match, let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(WalkSessionSummary.self, from: data)
