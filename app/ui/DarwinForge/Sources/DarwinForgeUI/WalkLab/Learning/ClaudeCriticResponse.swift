@@ -232,6 +232,8 @@ extension ClaudeCriticResponse {
     }
 
     /// 한 axis 변경 적용한 BalanceExperimentConfig 시뮬레이션 — safetyVerdict 만 검사용.
+    /// **v1.11.14.4 — cold 3차 HIGH 4**: exhaustive switch — ResponseAxis 신규 case
+    /// 추가 시 silent skip 차단. compiler 가 미처리 case 경고.
     private func simulateChange(exp: NextExperiment,
                                 from current: BalanceExperimentConfig) -> BalanceExperimentConfig {
         var algorithm = current.algorithmMode
@@ -250,8 +252,12 @@ extension ClaudeCriticResponse {
             if let v = BalancePitchInputConvention(rawValue: exp.to) { pitchInput = v }
         case .applyToRobot:
             apply = (exp.to.lowercased() == "true")
-        default:
-            break  // non-config axis — 시뮬 변경 없음
+        // 명시 모든 non-config axis — 시뮬 X (BalanceExperimentConfig 영향 X).
+        case .walkingEngine, .enableBalanceCorrection, .hipPitchOffsetTrimDeg,
+             .strideMm, .sideMm, .turnDeg, .periodMs, .footHeightMm, .balanceGain,
+             .customGainHipRoll, .customGainKnee, .customGainAnklePitch, .customGainAnkleRoll,
+             .none, .unknown:
+            break  // 시뮬 변경 X — config 자체에 영향 없는 axis. axis 별 가드는 validate(currentConfig:) 본체에서 처리.
         }
         return BalanceExperimentConfig(
             algorithmMode: algorithm, signConvention: sign,

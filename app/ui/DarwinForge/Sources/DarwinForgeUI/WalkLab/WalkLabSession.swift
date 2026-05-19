@@ -2553,32 +2553,37 @@ public final class WalkLabSession: ObservableObject {
         lastRobotEvent = "📊 session 분석 완료 — \(summary.recommendationReason)"
 
         // **v1.11.14 (2026-05-19)** — 활성 실험이 있으면 자동 폐루프.
-        // **v1.11.14.1**: disk IO 는 detached Task (background), controller 호출은
-        // MainActor. 종전엔 MainActor Task 안에서 jsonl 전체 스캔 → UI hang.
-        // 단일 MainActor Task + 안쪽에서 disk IO 만 detached await — nested capture
-        // (Sendable 경고) 회피.
-        if let expId = activeExperimentId, let baselineId = activeBaselineSessionId,
-           let controller = experimentLoop {
-            let summaryId = summary.id
-            Task { @MainActor [weak self, weak controller] in
-                // Disk IO 는 detached background Task 로 await — main actor 비차단.
-                let baseline = await Task.detached(priority: .userInitiated) {
-                    WalkLabSession.loadSummaryFromDisk(sessionId: baselineId)
-                }.value
-                let experimentSummaries = await Task.detached(priority: .userInitiated) {
-                    WalkLabSession.loadAllExperimentSummaries(experimentId: expId)
-                }.value
-                guard let controller = controller else { return }
-                await controller.appendExperimentSession(summaryId)
-                guard let b = baseline else { return }
-                await controller.compareWithBaseline(
-                    baselineSummary: b,
-                    experimentSummaries: experimentSummaries
-                )
-                if let comp = controller.lastComparison {
-                    self?.lastRobotEvent =
-                        "🔬 A/B 비교: \(comp.verdict.rawValue) — \(comp.reason)"
-                }
+        // **v1.11.14.4 cold 3차 MED 6**: orchestration 을 testable async helper 로 추출.
+        // 종전엔 Task closure 내부에 inlined — test 에서 trigger 불가.
+        triggerAutoLoopIfActive(summaryId: summary.id)
+    }
+
+    /// **v1.11.14.4**: 자동 폐루프 orchestration — session end 후 호출.
+    /// activeExperimentId/baselineSessionId 가 있으면 controller append + compare 자동.
+    /// disk IO 는 detached Task (UI hang 방지). test 에서 직접 호출 가능하도록
+    /// internal 노출 + `baseDir` inject.
+    @MainActor
+    func triggerAutoLoopIfActive(summaryId: String, baseDir: URL? = nil) {
+        guard let expId = activeExperimentId, let baselineId = activeBaselineSessionId,
+              let controller = experimentLoop else { return }
+        Task { @MainActor [weak self, weak controller] in
+            // Disk IO 는 detached background Task 로 await — main actor 비차단.
+            let baseline = await Task.detached(priority: .userInitiated) {
+                WalkLabSession.loadSummaryFromDisk(sessionId: baselineId, baseDir: baseDir)
+            }.value
+            let experimentSummaries = await Task.detached(priority: .userInitiated) {
+                WalkLabSession.loadAllExperimentSummaries(experimentId: expId, baseDir: baseDir)
+            }.value
+            guard let controller = controller else { return }
+            await controller.appendExperimentSession(summaryId)
+            guard let b = baseline else { return }
+            await controller.compareWithBaseline(
+                baselineSummary: b,
+                experimentSummaries: experimentSummaries
+            )
+            if let comp = controller.lastComparison {
+                self?.lastRobotEvent =
+                    "🔬 A/B 비교: \(comp.verdict.rawValue) — \(comp.reason)"
             }
         }
     }
@@ -2646,19 +2651,28 @@ public final class WalkLabSession: ObservableObject {
     }
 
     /// **v1.11.14.3**: jsonl 의 첫 줄만 streaming read (전체 load X).
-    /// FileHandle 로 chunk 단위 read → newline 만나면 즉시 종료. header 는 보통 ≤ 2KB
-    /// 라 한 번의 read 로 충분. 매우 큰 sample 파일에서도 메모리 절감.
+    /// FileHandle 로 chunk 단위 read → newline 만나면 즉시 종료.
     /// `nonisolated` — loadAllExperimentSummaries 가 nonisolated 라 동일하게 표시.
+    /// **v1.11.14.4 (2026-05-19) — cold 3차 CRIT 1**: 동적 chunk 확장. header 의
+    /// operatorNoteAtStart 등 사용자 입력 길이 무제한 → 8KB 초과 시 silent miss.
+    /// newline 만날 때까지 반복 read. 최대 1MB 안전 한도 (그 이상은 header 오염).
     nonisolated private static func readFirstLine(from url: URL) -> Data? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
-        // 8KB chunk — header 가 더 크면 (이론상) 추가 read 필요하나 현실에서 < 2KB.
-        guard let chunk = try? handle.read(upToCount: 8192) else { return nil }
-        guard let newlineIdx = chunk.firstIndex(of: 0x0a) else {
-            // 8KB 안에 newline 없음 — header 비정상 (또는 헤더만 있는 파일). 전체 반환.
-            return chunk
+        var accumulated = Data()
+        let chunkSize = 8192
+        let maxBytes = 1_048_576  // 1MB — header 안전 한도. 넘으면 비정상 jsonl.
+        while accumulated.count < maxBytes {
+            guard let chunk = try? handle.read(upToCount: chunkSize), !chunk.isEmpty else {
+                // EOF — newline 못 찾았지만 끝까지 read. 누적 데이터 반환 (caller 가 parse 시도).
+                return accumulated.isEmpty ? nil : accumulated
+            }
+            accumulated.append(chunk)
+            if let newlineIdx = accumulated.firstIndex(of: 0x0a) {
+                return accumulated.prefix(upTo: newlineIdx)
+            }
         }
-        return chunk.prefix(newlineIdx)
+        return nil  // 1MB 넘는 header — 비정상.
     }
 
     /// **Stage 3 (v1.1 fall prevention)**: IMU ring buffer 갱신 + predictor 호출.

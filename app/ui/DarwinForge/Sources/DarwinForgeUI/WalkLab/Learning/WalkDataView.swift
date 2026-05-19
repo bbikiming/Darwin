@@ -282,9 +282,10 @@ public struct WalkDataView: View {
             switch result {
             case .applied: break  // WalkLab 의 lastRobotEvent 가 사용자에게 표시.
             case .failed(let reason):
-                // safetyVerdict 강등 등 — experimentLoop.cancel 후 사용자 안내.
+                // **v1.11.14.4 — cold 3차 CRIT 2 fix**: 종전 `_ = reason` 으로 silent.
+                // safetyVerdict 강등 등 사용자에게 명시 알림 + experimentLoop.cancel.
+                experimentLoop.setLastError("실험 적용 실패: \(reason)")
                 await experimentLoop.cancel()
-                _ = reason  // 별도 alert 또는 lastError 채널 (v1.11.15)
             }
         }
         showApprovalSheet = false

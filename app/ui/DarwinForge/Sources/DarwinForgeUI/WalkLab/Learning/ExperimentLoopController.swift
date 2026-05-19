@@ -95,5 +95,8 @@ public final class ExperimentLoopController: ObservableObject {
     /// 호출되어 activeExperimentId/activeBaselineSessionId 가 cleared 됨.
     /// 종전엔 finalize/cancel 후에도 activeExperimentId 가 남아 다음 일반 보행이
     /// experiment 로 인식되는 silent failure.
-    public var onCleared: (() -> Void)? = nil
+    /// **v1.11.14.4 — cold 3차 HIGH 3**: 명시 `@MainActor` — Swift 6 strict 격리.
+    /// closure 안의 self?.clearExperimentContext() 가 @MainActor WalkLabSession 호출
+    /// 인데 closure 가 nonisolated 추론될 위험. 명시 표기로 호출 시점 main actor 보장.
+    public var onCleared: (@MainActor () -> Void)? = nil
 }

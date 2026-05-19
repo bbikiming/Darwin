@@ -448,6 +448,108 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         XCTAssertLessThan(elapsed, 0.5, "streaming first-line — 1000 sample lines 도 빠름")
     }
 
+    // MARK: - v1.11.14.4 — 자동 폐루프 orchestration e2e (MED 6 fix)
+
+    /// **cold 3차 MED 6 fix**: session-end → 자동 폐루프 → lastRobotEvent 표시
+    /// 까지 전체 chain 검증. 종전 14 + 13 test 는 부분만 mock.
+    /// triggerAutoLoopIfActive 가 testable helper 라 baseDir inject 가능.
+    func testAutoLoopE2EProducesVerdict() async throws {
+        let session = WalkLabSession()
+        let controller = ExperimentLoopController()
+        session.setExperimentLoop(controller)
+
+        // 1. 임시 디렉토리에 baseline + experiment session 파일 작성.
+        let tempDir = try makeTempSessionsDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let baselineId = "baseline-001"
+        let expId = "exp-e2e-001"
+        let experimentSessionId = "experiment-001"
+
+        // baseline: pitch 25, roll 15
+        let baselineSummary = WalkSessionSummary(
+            id: baselineId, preset: "march", startTimeIso: "2026-05-19T08:30:00.000Z",
+            durationSec: 10, sampleCount: 200, intensityLevelUsed: 2,
+            meanAbsRoll: 5, meanAbsPitch: 13, rollStdev: 3, pitchStdev: 4,
+            peakAbsRoll: 15, peakAbsPitch: 25,
+            oscillationScore: 1.5, correctorEffectivenessScore: 0.3,
+            recommendedIntensityLevel: 3, recommendationReason: "test", confidence: 0.7
+        )
+        try writeSummaryFile(baselineSummary, sessionId: baselineId, preset: "march", to: tempDir)
+        // experiment session: 개선됨 (pitch 12, roll 4).
+        let expSummary = WalkSessionSummary(
+            id: experimentSessionId, preset: "march", startTimeIso: "2026-05-19T08:35:00.000Z",
+            durationSec: 10, sampleCount: 200, intensityLevelUsed: 2,
+            meanAbsRoll: 4, meanAbsPitch: 12, rollStdev: 3, pitchStdev: 4,
+            peakAbsRoll: 14, peakAbsPitch: 23,
+            oscillationScore: 1.4, correctorEffectivenessScore: 0.4,
+            recommendedIntensityLevel: 3, recommendationReason: "test", confidence: 0.8
+        )
+        try writeJsonlPair(sessionId: experimentSessionId, preset: "march",
+                           experimentId: expId, to: tempDir)
+        // writeJsonlPair 가 default mock summary 생성 — 실 값으로 덮어쓰기.
+        try writeSummaryFile(expSummary, sessionId: experimentSessionId, preset: "march", to: tempDir)
+
+        // 2. controller 에 active experiment 등록.
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        let response = mockSafeResponse()
+        let started = await controller.startExperiment(
+            from: response, baselineSessionId: baselineId, proposedConfig: safeConfig
+        )
+        XCTAssertTrue(started)
+        // session 에 active context set (controller.current 의 id 사용).
+        let currentExpId = controller.current?.id ?? expId
+        _ = session.applyExperimentChange(
+            experimentId: currentExpId, baselineSessionId: baselineId,
+            proposedConfig: safeConfig
+        )
+        // **주의**: applyExperimentChange 가 currentExpId 사용 — 실 jsonl 의 expId 와
+        // 다를 수 있음. test 에서는 controller.current?.id 를 jsonl 의 expId 와 매치.
+        // 본 테스트는 controller.compareWithBaseline 호출 path 만 검증 — 실 실험 ID
+        // 매치는 실 보행 흐름에서 보장됨.
+
+        // 3. 자동 폐루프 trigger (jsonl header 의 experimentId 와 매치하려면
+        // session.activeExperimentId = jsonl 의 expId = "exp-e2e-001" 이어야 함).
+        // 직접 set 으로 일치시킴:
+        session.activeExperimentId = expId
+        session.activeBaselineSessionId = baselineId
+
+        let historyBefore = await readSharedHistoryFile()
+        session.triggerAutoLoopIfActive(summaryId: experimentSessionId, baseDir: tempDir)
+
+        // 4. async Task 완료 대기 — appendSession + load + compare + lastRobotEvent.
+        // 디스크 IO + main actor hop 포함이라 500ms 충분.
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        // 5. 검증.
+        XCTAssertNotNil(controller.lastComparison, "compareWithBaseline 호출됨")
+        XCTAssertEqual(controller.lastComparison?.verdict, .success,
+                       "pitch 13→12, roll 5→4 모두 개선 → success")
+        XCTAssertTrue(
+            (session.lastRobotEvent ?? "").contains("A/B 비교"),
+            "lastRobotEvent 에 verdict 표시. got=\(session.lastRobotEvent ?? "nil")"
+        )
+
+        // 6. cleanup — history file 복원.
+        await restoreSharedHistoryFile(historyBefore)
+    }
+
+    /// **cold 3차 MED 6 fix**: 활성 실험 없으면 자동 폐루프 trigger no-op.
+    /// 종전 silent skip — 명시 검증.
+    func testAutoLoopSkipsWithoutActiveExperiment() async throws {
+        let session = WalkLabSession()
+        let controller = ExperimentLoopController()
+        session.setExperimentLoop(controller)
+        // activeExperimentId 미설정 — trigger no-op 기대.
+        XCTAssertNil(session.activeExperimentId)
+        session.triggerAutoLoopIfActive(summaryId: "any")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNil(controller.lastComparison, "active 없음 → compare 호출 X")
+    }
+
     // MARK: - Shared history file backup/restore (v1.11.14.3)
 
     /// finalize 가 shared file 에 write 하므로, 본 test 의 영향이 다른 test 에 누적

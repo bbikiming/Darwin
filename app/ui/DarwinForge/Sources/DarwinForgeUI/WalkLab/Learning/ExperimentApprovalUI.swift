@@ -20,6 +20,11 @@ public struct ExperimentApprovalUI: View {
     /// stale. closure 는 body 재평가 시마다 호출되어 최신 session 값 반영.
     private let proposedConfigProvider: () -> BalanceExperimentConfig
     private let validationResultProvider: () -> ClaudeCriticResponse.ValidationResult?
+    /// **v1.11.14.4 — cold 3차 HIGH 5**: session 을 명시적으로 observe.
+    /// 종전 closure 로만 의존성 표시 — SwiftUI body 재평가 trigger 가 외부 view 의
+    /// re-eval 에 의존. 본 view 가 session 직접 @EnvironmentObject 로 받으면
+    /// session.@Published 변경 시 본 view body 자체가 재평가 → closure 재호출 보장.
+    @EnvironmentObject private var session: WalkLabSession
     public let onApprove: () -> Void
     public let onCancel: () -> Void
 
@@ -44,7 +49,12 @@ public struct ExperimentApprovalUI: View {
     private var validationResult: ClaudeCriticResponse.ValidationResult? { validationResultProvider() }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DFSpace.sm) {
+        // v1.11.14.4: session 의 @Published 값 명시 read — SwiftUI subscription 보장.
+        // 종전 closure-only 의존성 — SwiftUI 가 본 view 의 body 재평가 trigger 못 잡을
+        // 위험. 직접 read 로 dependency tracking 강제.
+        let _ = session.balanceExperimentConfig
+        let _ = session.hipPitchOffsetTrimDeg
+        return VStack(alignment: .leading, spacing: DFSpace.sm) {
             header
             Divider()
             if let exp = response.nextExperiment {
