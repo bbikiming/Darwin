@@ -389,7 +389,10 @@ public struct WalkLabView: View {
                     // footTrace 는 좌측 발 자취 (2D 캔버스와 동일 source).
                     RobotScene3D(
                         pose: session.visualPose,
-                        footTrace: session.footTrail.map { $0.left }
+                        footTrace: session.footTrail.map { $0.left },
+                        // v1.11.18: 실시간 IMU 기반 robot 기울기 반영.
+                        imuRollDeg: session.imuRollDeg,
+                        imuPitchDeg: session.imuPitchDeg
                     )
                     .frame(minHeight: 360, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
@@ -400,6 +403,15 @@ public struct WalkLabView: View {
                     .overlay(alignment: .topLeading) {
                         // v1.11: 빈 영역 시각 채움 — walking phase / elapsed / 보정 Δ.
                         sceneInfoOverlay
+                            .padding(DFSpace.sm)
+                    }
+                    // v1.11.18 사용자 요청: 좌하단 자이로 mini + 우하단 walking 그래프.
+                    .overlay(alignment: .bottomLeading) {
+                        SceneGyroMiniOverlay()
+                            .padding(DFSpace.sm)
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        SceneWalkGraphOverlay()
                             .padding(DFSpace.sm)
                     }
 
