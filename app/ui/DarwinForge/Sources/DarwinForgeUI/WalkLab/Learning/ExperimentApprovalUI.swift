@@ -79,6 +79,17 @@ public struct ExperimentApprovalUI: View {
                 Divider()
                 validationIssuesBanner(vr)
             }
+            // **v1.11.14.6 (2026-05-19)** — tuning slider axis 권고 + advanced=false 면
+            // 자동 활성 안내. 사용자 명시 동의 없이 UI 상태 변경되는 silent UX 차단.
+            if isTuningSliderAxis(response.nextExperiment?.axis), !session.advanced {
+                Divider()
+                advancedAutoEnableBanner
+            }
+            // **v1.11.14.6** — walkingEngine axis 권고 + 보행 중이면 reject 예상 안내.
+            if response.nextExperiment?.axis == .walkingEngine, session.current != .idle {
+                Divider()
+                walkingNotIdleBanner
+            }
             Divider()
             confidenceFooter
             Spacer()
@@ -278,6 +289,55 @@ public struct ExperimentApprovalUI: View {
                 return false
             }())
         }
+    }
+
+    /// **v1.11.14.6**: tuning slider axis 인지 검사.
+    private func isTuningSliderAxis(_ axis: ResponseAxis?) -> Bool {
+        guard let axis = axis else { return false }
+        switch axis {
+        case .strideMm, .sideMm, .turnDeg, .periodMs, .footHeightMm, .balanceGain:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// **v1.11.14.6**: advanced 자동 활성 안내 — 사용자 동의 transparency.
+    private var advancedAutoEnableBanner: some View {
+        HStack(alignment: .top, spacing: DFSpace.xs) {
+            Image(systemName: "slider.horizontal.3")
+                .foregroundStyle(DFColor.info)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Advanced 모드 자동 활성").font(DFFont.sectionLabel)
+                Text("tuning slider 변경이 실 보행에 반영되려면 advanced=true 필요. 승인 시 자동으로 활성됩니다.")
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(DFSpace.xs)
+        .background(DFColor.info.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    /// **v1.11.14.6**: 보행 중 walkingEngine 변경 reject 예상 안내.
+    private var walkingNotIdleBanner: some View {
+        HStack(alignment: .top, spacing: DFSpace.xs) {
+            Image(systemName: "exclamationmark.octagon.fill")
+                .foregroundStyle(DFColor.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("walkingEngine 변경은 보행 중 적용 불가").font(DFFont.sectionLabel)
+                Text("현재 보행 중 (\(session.current.label)) — 정지 (idle) 후 다시 승인해야 적용됩니다.")
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(DFSpace.xs)
+        .background(DFColor.warning.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
     }
 
     @ViewBuilder

@@ -1308,6 +1308,13 @@ public final class WalkLabSession: ObservableObject {
         if let existing = activeExperimentId {
             return .failed(reason: "이미 활성 실험 (\(existing)) — 종료 후 재시도")
         }
+        // **v1.11.14.6 (2026-05-19) — cold 3차 추가 HIGH fix**: walkingEngine 변경 시
+        // 보행 중이면 reject. didSet 이 walkCycleTask cancel 안 하므로, 보행 도중
+        // engine 변경하면 이전 engine 의 task 가 진행 + 새 명령은 새 engine 으로 →
+        // 불일치 / 충돌 위험. 사용자가 명시 stop 후 재승인하도록 강제.
+        if deltas.walkingEngine != nil, current != .idle {
+            return .failed(reason: "walkingEngine 변경은 보행 중 적용 불가 — 정지 (idle) 후 재시도")
+        }
         // **v1.11.14.5 — 사용자 평가 CRIT 1 fix**: rollback snapshot 저장 (mutation 전).
         rollbackSnapshot = ExperimentSnapshot(
             balanceExperimentConfig: balanceExperimentConfig,
@@ -1368,6 +1375,9 @@ public final class WalkLabSession: ObservableObject {
     /// applyExperimentChange 가 저장한 snapshot 으로 모든 axis 복원 + activeExperimentId
     /// clear. failRollback verdict 시 자동 호출 또는 사용자 명시 호출.
     /// snapshot 없으면 no-op.
+    /// **v1.11.14.6 (2026-05-19)**: ExperimentLoopController.current 도 cancel.
+    /// 종전엔 session 측만 clear → controller.current 살아있어 사용자가 새 실험 시도
+    /// 시 controller.startExperiment 가 reject (current != nil). silent UX failure.
     @discardableResult
     public func rollbackExperiment() -> Bool {
         guard let snapshot = rollbackSnapshot else { return false }
@@ -1390,6 +1400,14 @@ public final class WalkLabSession: ObservableObject {
         activeExperimentId = nil
         activeBaselineSessionId = nil
         rollbackSnapshot = nil
+        // v1.11.14.6: controller 도 cancel — onCleared callback 이 다시 호출되지만
+        // activeExperimentId 이미 nil 이라 idempotent. controller.current=nil 보장으로
+        // 사용자가 새 실험 시도 가능.
+        if let controller = experimentLoop {
+            Task { @MainActor in
+                await controller.cancel()
+            }
+        }
         logSafetyEvent(
             kind: .correctorOff,
             message: "🔄 실험 rollback: \(expId) → 변경 전 상태 복원"

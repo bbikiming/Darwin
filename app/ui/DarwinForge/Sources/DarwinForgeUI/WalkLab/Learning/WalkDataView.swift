@@ -233,7 +233,9 @@ public struct WalkDataView: View {
             if let d = Double(exp.to) { deltas.customAnklePitchGain = d }
         case .customGainAnkleRoll:
             if let d = Double(exp.to) { deltas.customAnkleRollGain = d }
-        default:
+        // **v1.11.14.6 — exhaustive switch**: ResponseAxis 신규 추가 시 silent skip
+        // 차단. .none / .unknown 은 명시 무시 (axis 미지정 또는 미지원).
+        case .none, .unknown:
             break
         }
         let config = BalanceExperimentConfig(
