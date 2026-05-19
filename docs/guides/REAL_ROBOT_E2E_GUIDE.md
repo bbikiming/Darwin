@@ -95,27 +95,88 @@
 
 ---
 
-### Phase 2: ROBOTIS Onboard 모드 검증 (별도 PR — v1.11.16+)
+### Phase 2: ROBOTIS Onboard 모드 검증 (v1.11.16 / v1.11.16.1)
 
 ⚠️ 본 단계는 firmware-patches/walklab-brokerage 적용 후만 가능.
 
-#### 2.1 Onboard health check
+#### 2.0 Firmware patch 적용 (1회만)
 
-1. WalkLab → walkingEngine picker → `.robotisOnboard` 선택
-2. preset 선택 + 보행 시작
-3. lastRobotEvent 확인:
-   - 정상: `▶ ROBOTIS Onboard 모드: <preset> — Mac sparse 우회, 자동 명령 송출 활성`
-   - 경고: `⚠️ ROBOTIS Onboard 시작 (health 경고): <warnings>`
-4. 경고 내용 (있을 시):
-   - `실 robot SSH 미연결` — store.bus 가 nil
-   - `autoOnboardBrokering=OFF` — 수동 송출 모드
-   - `cradle 미확인` — 안전 절차 위반
+robot 측 작업:
 
-#### 2.2 ROBOTIS onboard 보행 실측
+```bash
+# robot SSH 접속 후
+cd ~/darwin/Linux/project/demo  # 또는 firmware 빌드 경로
+# 1. brokerage 소스 복사 (Mac → robot 또는 git clone 후)
+cp ~/firmware-patches/walklab-brokerage/WalkLabBrokerage.{cpp,h} .
+# 2. main.cpp patch 적용
+patch -p1 < ~/firmware-patches/walklab-brokerage/main.cpp.patch
+# 3. Makefile patch 적용
+patch -p1 < ~/firmware-patches/walklab-brokerage/Makefile.patch
+# 4. 재빌드
+make clean && make
+```
+
+검증:
+```bash
+# pilot-mode 파일 set
+echo walklab > /tmp/df-pilot-mode
+# 데몬 실행 (별도 터미널)
+sudo ./demo &
+# log 확인: "[WalkLabBrokerage] start polling /tmp/df-walklab-cmd every 200ms"
+```
+
+#### 2.1 Mac 측 — Onboard 진입 + Health-check
+
+1. WalkLab → toolbar 우측 → walkingEngine picker → `.robotisOnboard` 선택
+2. **OnboardHealthIndicator** 등장 확인 (overlay topTrailing):
+   - 초기 상태 = "stale" (ACK 미수신, ⚠️ 노랑)
+3. 첫 명령 trigger (preset 변경 또는 cradle 토글)
+4. **2초 내** indicator 가 "정상" (✅ 초록) + "최근 ACK: <1s" 표시 기대
+5. 실패 시나리오 검증:
+   - daemon kill (robot 측 `sudo killall demo`)
+   - 다음 명령 trigger 후 indicator "daemon 없음" (❌ 빨강) 또는 "stale"
+   - `lastRobotEvent` 에 "⚠️ Onboard daemon 응답 없음" 표시
+
+#### 2.2 명령 ACK 검증 (v1.11.16.1)
+
+1. 첫 명령 후 SSH 로 robot 측 ACK 파일 확인:
+   ```bash
+   cat /tmp/df-walklab-ack
+   # 기대: "OK 1747xxx (큰 timestamp) 1 28.00 0.00 0.00 600 40 13.00"
+   ```
+2. Mac 의 lastRobotEvent 가 ACK 받은 시점 갱신되는지 확인 (toast)
+3. Bridge 의 `consecutiveFailures` 가 0 유지 확인 (OnboardHealthIndicator 의 텍스트)
+
+#### 2.3 명령 즉시 vs debounce 분리
+
+1. 사용자 빠른 preset 토글 (`.idle` ↔ `.slowWalk` 5회 클릭)
+2. 각 클릭이 **즉시** robot 에 반영되는지 확인 (debounce 우회)
+3. slider drag (예: hipPitchOffsetTrimDeg 빠른 변경)
+4. 300ms 후 마지막 값만 send 되는지 확인 (debounce 적용)
+
+#### 2.4 자동 fallback 검증 (옵션)
+
+1. OnboardHealthIndicator 의 "자동 전환" 체크박스 ON
+2. robot 측 daemon kill 또는 SSH 끊김
+3. 명령 trigger 3회 (preset 토글 3회)
+4. **자동으로** walkingEngine 이 `.macSparseKeyframe` 으로 전환되는지 확인
+5. `lastRobotEvent`: "🔄 자동 fallback: Mac sparse 로 전환됨" 확인
+
+#### 2.5 ROBOTIS onboard 보행 실측
 
 1. cradle 위에서 시작 (낙상 방지)
-2. 실 robot 이 ROBOTIS Walking module 로 보행하는지 시각 확인
-3. 비교: Mac sparse keyframe (뒤뚱거림) vs onboard (ball tracking demo 같은 안정성)
+2. health indicator 가 "정상" 인지 확인 후 walking 시작
+3. 실 robot 이 ROBOTIS Walking module 로 보행하는지 시각 확인
+4. 비교 (선택): Mac sparse keyframe (뒤뚱거림) vs onboard (ball tracking demo 같은 안정성)
+5. 보행 중 slider 조정 (hipPitchOffsetTrimDeg) → robot 자세 즉시 반영 확인
+
+#### 2.6 안전 회복 sequence
+
+비상 시 검증:
+
+1. ⌘⇧. (Emergency Stop) — Mac 측 walking stop + 모터 토크 OFF
+2. robot 측 walking 도 5초 stale timeout 으로 자동 stop 확인
+3. 또는: Mac 의 walkingEngine = `.macSparseKeyframe` 으로 전환 → robot stop 확인
 
 ---
 

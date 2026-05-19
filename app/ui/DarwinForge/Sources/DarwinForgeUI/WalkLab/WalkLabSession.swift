@@ -1499,6 +1499,14 @@ public final class WalkLabSession: ObservableObject {
     /// Mac sparse 의 walkCycleTask 와 별개 — onboard 는 SSH brokering 으로만 동작.
     @Published public private(set) var onboardWalkingActive: Bool = false
 
+    /// **v1.11.16.1 (2026-05-19)** — Onboard health indicator state.
+    /// Bridge 가 send/ping 결과를 set. UI (OnboardHealthIndicator) 가 시각 표시.
+    @Published public internal(set) var onboardLastAckAt: Date? = nil
+    @Published public internal(set) var onboardLastError: String? = nil
+    @Published public internal(set) var onboardConsecutiveFailures: Int = 0
+    /// daemon 응답이 "NO_ACK" 이면 firmware 미패치 가능성.
+    @Published public internal(set) var onboardDaemonMissing: Bool = false
+
     /// **v1.11.6 (2026-05-18)** — `.custom` gainProfile 의 사용자 지정 gain 값.
     /// gainProfile == .custom 일 때만 makeCorrector 가 이 값들을 적용.
     /// 종전 (v1.11.5.2 이하) `.custom` 은 robotisOriginal fallback — UI 라벨과 동작 불일치.

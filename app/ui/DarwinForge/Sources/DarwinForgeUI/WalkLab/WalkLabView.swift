@@ -46,7 +46,12 @@ public struct WalkLabView: View {
         // session.walkingEngine == .robotisOnboard + autoOnboardBrokering=true 시
         // preset/tuning 변경 300ms debounce 후 자동 SSH send.
         .overlay(alignment: .topTrailing) {
-            WalkLabOnboardBridge(session: session)
+            VStack(alignment: .trailing, spacing: DFSpace.xs) {
+                // v1.11.16.1: onboard 모드일 때만 health indicator 표시.
+                OnboardHealthIndicator()
+                WalkLabOnboardBridge(session: session)
+            }
+            .padding(DFSpace.sm)
         }
         // **v1.11.14.7 (2026-05-19)** — 활성 실험 floating banner.
         // session.activeExperimentId != nil 시 자동 표시. Rollback/수락 버튼 노출.

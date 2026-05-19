@@ -431,7 +431,14 @@ public enum RobotSetupCommand {
         // line 은 `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg` — 숫자만.
         // 안전성: WalkingEngineCommand.serializedLine 이 %d %.2f format 만 출력 →
         // shell metacharacters 위험 없음. 추가 guard 로 single-quote 사용.
-        return "printf '%s\\n' '\(line)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd"
+        // **v1.11.16.1 (2026-05-19) — ACK 검증**: 명령 write 후 daemon 의 polling
+        // 주기 (200ms) + 안전 margin (50ms) = 250ms sleep 후 ACK 파일 cat.
+        // 응답 형식:
+        //   "OK {ts_ms} {line}"  — daemon 처리 성공 (firmware ≥ v1.11.16.1)
+        //   "NO_ACK"             — daemon 없음 또는 firmware 미패치
+        //   ""                   — ACK 파일 부재 (Mac 의 SSH 결과에 NO_ACK 로 표시)
+        // Mac 의 OnboardBridge 가 result 에서 prefix 매치로 분기.
+        return "printf '%s\\n' '\(line)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd && sleep 0.25 && (cat /tmp/df-walklab-ack 2>/dev/null || echo NO_ACK)"
     }
 
     /// 현재 demo 활성 상태 — 사용자에게 어떤 모드인지 알려줌.

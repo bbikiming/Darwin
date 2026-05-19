@@ -148,6 +148,17 @@ namespace Robotis {
             walking_active = false;
             printf("[WalkLabBrokerage] stop\n");
         }
+        // **v1.11.16.1 (2026-05-19)** — ACK write. Mac 측이 250ms 후 cat 으로 검증.
+        // ts_ms = unix epoch * 1000 (간단한 monotonic ID).
+        // 형식: "OK {ts_ms} {cmd_line}\n" — Mac 의 검출 regex 와 일치.
+        FILE* ack = fopen(ACK_PATH, "w");
+        if (ack) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            long long ts_ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+            fprintf(ack, "OK %lld %s", ts_ms, line);
+            fclose(ack);
+        }
         return true;
     }
 

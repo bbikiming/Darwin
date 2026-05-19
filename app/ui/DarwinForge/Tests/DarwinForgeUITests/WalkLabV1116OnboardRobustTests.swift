@@ -58,4 +58,50 @@ final class WalkLabV1116OnboardRobustTests: XCTestCase {
                           "result 또는 error 중 하나는 set")
         }
     }
+
+    // MARK: - v1.11.16.1 — ACK + health state + fallback
+
+    /// **v1.11.16.1 fix**: walkLabRobotisSendCommand 가 ACK 검증 sequence 포함.
+    /// 종전: 단순 write. 현재: write + sleep + ACK cat.
+    func testWalkLabSendCommandIncludesAckRead() {
+        let line = "1 28.00 0.00 0.00 600 40 13.00"
+        let cmd = RobotSetupCommand.walkLabRobotisSendCommand(line: line)
+        XCTAssertTrue(cmd.contains("/tmp/df-walklab-cmd"), "기본 write 경로")
+        XCTAssertTrue(cmd.contains("sleep"), "daemon polling 대기")
+        XCTAssertTrue(cmd.contains("/tmp/df-walklab-ack"), "ACK 파일 read")
+        XCTAssertTrue(cmd.contains("NO_ACK"), "fallback echo (firmware 미패치 시)")
+    }
+
+    /// **v1.11.16.1 fix**: WalkLabSession 의 onboard health state 초기값.
+    func testOnboardHealthStateInitial() {
+        let session = WalkLabSession()
+        XCTAssertNil(session.onboardLastAckAt)
+        XCTAssertNil(session.onboardLastError)
+        XCTAssertEqual(session.onboardConsecutiveFailures, 0)
+        XCTAssertFalse(session.onboardDaemonMissing)
+    }
+
+    /// **v1.11.16.1 fix**: health state 외부 set 가능 (Bridge 가 internal 접근).
+    func testOnboardHealthStateMutable() {
+        let session = WalkLabSession()
+        session.onboardConsecutiveFailures = 3
+        session.onboardLastError = "test error"
+        session.onboardDaemonMissing = true
+        session.onboardLastAckAt = Date()
+        XCTAssertEqual(session.onboardConsecutiveFailures, 3)
+        XCTAssertEqual(session.onboardLastError, "test error")
+        XCTAssertTrue(session.onboardDaemonMissing)
+        XCTAssertNotNil(session.onboardLastAckAt)
+    }
+
+    /// **v1.11.16.1 fix**: UserDefaults 의 autoOnboardFallback toggle.
+    func testAutoOnboardFallbackUserDefault() {
+        let key = "df.walklab.autoOnboardFallback"
+        UserDefaults.standard.removeObject(forKey: key)
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: key),
+                       "default false — 사용자 명시 ON 만 자동 전환")
+        UserDefaults.standard.set(true, forKey: key)
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: key))
+        UserDefaults.standard.removeObject(forKey: key)
+    }
 }

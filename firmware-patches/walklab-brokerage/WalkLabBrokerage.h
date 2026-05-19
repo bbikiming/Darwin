@@ -17,6 +17,12 @@ public:
     /// 명령 파일 경로 — Mac SSH 가 atomic mv 로 write.
     static constexpr const char* CMD_PATH = "/tmp/df-walklab-cmd";
 
+    /// **v1.11.16.1 (2026-05-19)** — ACK 파일 경로.
+    /// daemon 이 ParseAndApply 성공 시 "OK {ts_ms} {cmd_line}\n" write.
+    /// Mac 측 send 명령이 250ms 후 cat 으로 ACK 검증 → 진짜 통신 성공 판단.
+    /// 종전: Mac 의 SSH 가 명령 write 성공만 알고 daemon 처리 여부 silent.
+    static constexpr const char* ACK_PATH = "/tmp/df-walklab-ack";
+
     /// Polling 주기 (ms). Mac 측 50ms tick 의 4배 = 200ms = 5Hz.
     static constexpr int POLL_INTERVAL_MS = 200;
 
