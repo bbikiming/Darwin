@@ -205,6 +205,13 @@ public struct WalkDataView: View {
             apply = (exp.to.lowercased() == "true")
         case .hipPitchOffsetTrimDeg:
             if let d = Double(exp.to) { deltas.hipPitchOffsetTrimDeg = d }
+        // **v1.11.14.5 — 사용자 평가 HIGH 2 fix**: walkingEngine + enableBalanceCorrection.
+        // 종전엔 ResponseAxis 에는 있지만 buildProposedConfig 가 처리 안 함 → critic 이
+        // "ROBOTIS onboard 로 바꿔라" 또는 "보정 켜라" 권고해도 silent no-op.
+        case .walkingEngine:
+            if let v = WalkingEngine(rawValue: exp.to) { deltas.walkingEngine = v }
+        case .enableBalanceCorrection:
+            deltas.enableBalanceCorrection = (exp.to.lowercased() == "true")
         // v1.11.14.1: tuning slider 6종 + customGain 4종 적용.
         case .strideMm:
             if let d = Double(exp.to) { deltas.strideMm = d }

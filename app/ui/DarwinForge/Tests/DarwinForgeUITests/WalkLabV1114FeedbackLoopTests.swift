@@ -448,6 +448,214 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         XCTAssertLessThan(elapsed, 0.5, "streaming first-line — 1000 sample lines 도 빠름")
     }
 
+    // MARK: - v1.11.14.5 — rollback + missing axis + advanced (사용자 평가 fix)
+
+    /// **사용자 평가 CRIT 1 fix**: applyExperimentChange → rollbackExperiment 복원.
+    /// 모든 변경된 axis 가 snapshot 으로 원상복구되는지 검증.
+    func testRollbackExperimentRestoresAllAxes() {
+        let session = WalkLabSession()
+        // 원래 상태 기록.
+        let origConfig = session.balanceExperimentConfig
+        let origTrim = session.hipPitchOffsetTrimDeg
+        let origStride = session.strideMm
+        let origAdvanced = session.advanced
+        let origWalkingEngine = session.walkingEngine
+        let origBalanceCorrection = session.enableBalanceCorrection
+
+        // 실험 적용 — 여러 axis 변경.
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.hipPitchOffsetTrimDeg = origTrim + 2
+        deltas.strideMm = origStride + 10
+        deltas.walkingEngine = (origWalkingEngine == .macSparseKeyframe) ? .robotisOnboard : .macSparseKeyframe
+        deltas.enableBalanceCorrection = !origBalanceCorrection
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        let result = session.applyExperimentChange(
+            experimentId: "exp-rb", baselineSessionId: "base-1",
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        guard case .applied = result else { XCTFail("apply failed"); return }
+        // snapshot 저장됨.
+        XCTAssertNotNil(session.rollbackSnapshot)
+        // axis 들이 실제 변경됨.
+        XCTAssertEqual(session.hipPitchOffsetTrimDeg, origTrim + 2)
+        XCTAssertEqual(session.strideMm, origStride + 10)
+        XCTAssertNotEqual(session.walkingEngine, origWalkingEngine)
+        XCTAssertEqual(session.enableBalanceCorrection, !origBalanceCorrection)
+        XCTAssertTrue(session.advanced, "tuning slider delta 있어 advanced=true 강제")
+
+        // Rollback.
+        let rolledBack = session.rollbackExperiment()
+        XCTAssertTrue(rolledBack)
+        // 모든 axis 가 원래 값으로 복원됨.
+        XCTAssertEqual(session.balanceExperimentConfig, origConfig)
+        XCTAssertEqual(session.hipPitchOffsetTrimDeg, origTrim)
+        XCTAssertEqual(session.strideMm, origStride)
+        XCTAssertEqual(session.walkingEngine, origWalkingEngine)
+        XCTAssertEqual(session.enableBalanceCorrection, origBalanceCorrection)
+        XCTAssertEqual(session.advanced, origAdvanced)
+        XCTAssertNil(session.activeExperimentId)
+        XCTAssertNil(session.rollbackSnapshot, "snapshot cleared")
+    }
+
+    /// **사용자 평가 CRIT 1 fix**: snapshot 없을 때 rollback no-op.
+    func testRollbackExperimentNoOpWithoutSnapshot() {
+        let session = WalkLabSession()
+        XCTAssertNil(session.rollbackSnapshot)
+        let result = session.rollbackExperiment()
+        XCTAssertFalse(result, "snapshot 없으면 false 반환")
+    }
+
+    /// **사용자 평가 HIGH 2 fix**: walkingEngine axis 가 실제 적용.
+    func testApplyExperimentChangeAppliesWalkingEngine() {
+        let session = WalkLabSession()
+        let origEngine = session.walkingEngine
+        let targetEngine: WalkingEngine = (origEngine == .macSparseKeyframe) ? .robotisOnboard : .macSparseKeyframe
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.walkingEngine = targetEngine
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        _ = session.applyExperimentChange(
+            experimentId: "exp-we", baselineSessionId: "base-1",
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        XCTAssertEqual(session.walkingEngine, targetEngine,
+                       "critic 의 walkingEngine 권고가 실 적용 — 종전 silent no-op")
+    }
+
+    /// **사용자 평가 HIGH 2 fix**: enableBalanceCorrection axis 가 실제 적용.
+    func testApplyExperimentChangeAppliesEnableBalanceCorrection() {
+        let session = WalkLabSession()
+        let orig = session.enableBalanceCorrection
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.enableBalanceCorrection = !orig
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        _ = session.applyExperimentChange(
+            experimentId: "exp-bc", baselineSessionId: "base-1",
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        XCTAssertEqual(session.enableBalanceCorrection, !orig,
+                       "critic 의 enableBalanceCorrection 권고가 실 적용")
+    }
+
+    /// **사용자 평가 HIGH 3 fix**: tuning slider delta 있으면 advanced 자동 true.
+    /// 종전: advanced=false 면 currentWalkTuning 이 preset default 사용 → silent no-op.
+    func testApplyExperimentChangeForcesAdvancedForTuningSlider() {
+        let session = WalkLabSession()
+        XCTAssertFalse(session.advanced, "초기 advanced=false")
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.strideMm = 30.0
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        _ = session.applyExperimentChange(
+            experimentId: "exp-adv", baselineSessionId: "base-1",
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        XCTAssertTrue(session.advanced,
+                      "tuning slider delta 있어 advanced=true 강제 — 실 보행 반영 보장")
+    }
+
+    /// **사용자 평가 HIGH 3 fix**: tuning slider 없으면 advanced 변경 안 함.
+    func testApplyExperimentChangeKeepsAdvancedFalseWithoutTuningSlider() {
+        let session = WalkLabSession()
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.hipPitchOffsetTrimDeg = 15.0  // tuning slider 아님
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        _ = session.applyExperimentChange(
+            experimentId: "exp-noad", baselineSessionId: "base-1",
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        XCTAssertFalse(session.advanced,
+                       "tuning slider 없으면 advanced 변경 X — 의도하지 않은 UI 변경 차단")
+    }
+
+    /// **사용자 평가 CRIT 1 fix**: failRollback verdict → 자동 rollback.
+    /// triggerAutoLoopIfActive 의 verdict.failRollback 분기 검증.
+    func testAutoLoopTriggersRollbackOnFailRollbackVerdict() async throws {
+        let session = WalkLabSession()
+        let controller = ExperimentLoopController()
+        session.setExperimentLoop(controller)
+
+        let tempDir = try makeTempSessionsDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let baselineId = "baseline-rb"
+        let expId = "exp-fail-rb"
+        let experimentSessionId = "exp-session-fail"
+
+        // baseline: pitch 13, roll 5
+        let baselineSummary = WalkSessionSummary(
+            id: baselineId, preset: "march", startTimeIso: "2026-05-19T08:30:00.000Z",
+            durationSec: 10, sampleCount: 200, intensityLevelUsed: 2,
+            meanAbsRoll: 5, meanAbsPitch: 13, rollStdev: 3, pitchStdev: 4,
+            peakAbsRoll: 15, peakAbsPitch: 25,
+            oscillationScore: 1.5, correctorEffectivenessScore: 0.3,
+            recommendedIntensityLevel: 3, recommendationReason: "test", confidence: 0.7
+        )
+        try writeSummaryFile(baselineSummary, sessionId: baselineId, preset: "march", to: tempDir)
+        // experiment: peakAbsPitch +12 → failRollback trigger.
+        let expSummary = WalkSessionSummary(
+            id: experimentSessionId, preset: "march", startTimeIso: "2026-05-19T08:35:00.000Z",
+            durationSec: 10, sampleCount: 200, intensityLevelUsed: 2,
+            meanAbsRoll: 5, meanAbsPitch: 13, rollStdev: 3, pitchStdev: 4,
+            peakAbsRoll: 15, peakAbsPitch: 37,  // +12 → failRollback
+            oscillationScore: 1.5, correctorEffectivenessScore: 0.3,
+            recommendedIntensityLevel: 3, recommendationReason: "test", confidence: 0.7
+        )
+        try writeJsonlPair(sessionId: experimentSessionId, preset: "march",
+                           experimentId: expId, to: tempDir)
+        try writeSummaryFile(expSummary, sessionId: experimentSessionId, preset: "march", to: tempDir)
+
+        let safeConfig = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl, signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal, applyToRobot: true,
+            pitchInputConvention: .imuRaw
+        )
+        let response = mockSafeResponse()
+        _ = await controller.startExperiment(
+            from: response, baselineSessionId: baselineId, proposedConfig: safeConfig
+        )
+        // applyExperimentChange 로 변경.
+        let origTrim = session.hipPitchOffsetTrimDeg
+        var deltas = WalkLabSession.ExperimentDeltas()
+        deltas.hipPitchOffsetTrimDeg = origTrim + 2
+        _ = session.applyExperimentChange(
+            experimentId: expId, baselineSessionId: baselineId,
+            proposedConfig: safeConfig, deltas: deltas
+        )
+        XCTAssertEqual(session.hipPitchOffsetTrimDeg, origTrim + 2)
+        session.activeExperimentId = expId
+        session.activeBaselineSessionId = baselineId
+
+        let historyBefore = await readSharedHistoryFile()
+        session.triggerAutoLoopIfActive(summaryId: experimentSessionId, baseDir: tempDir)
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        XCTAssertEqual(controller.lastComparison?.verdict, .failRollback,
+                       "peakPitch +12 → failRollback")
+        XCTAssertEqual(session.hipPitchOffsetTrimDeg, origTrim,
+                       "auto-rollback 으로 origTrim 복원")
+        XCTAssertNil(session.activeExperimentId,
+                     "rollback 이 activeExperimentId clear")
+        await restoreSharedHistoryFile(historyBefore)
+    }
+
     // MARK: - v1.11.14.4 — 자동 폐루프 orchestration e2e (MED 6 fix)
 
     /// **cold 3차 MED 6 fix**: session-end → 자동 폐루프 → lastRobotEvent 표시

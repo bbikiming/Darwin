@@ -1226,6 +1226,9 @@ public final class WalkLabSession: ObservableObject {
 
     /// **v1.11.14.1**: critic 이 제안 가능한 모든 non-config axis 의 delta.
     /// nil = 변경 없음 (현재값 유지). 한 번에 1개만 non-nil 이어야 changeOneAxisOnly 준수.
+    /// **v1.11.14.5 (2026-05-19)**: walkingEngine + enableBalanceCorrection 추가.
+    /// 종전엔 ResponseAxis 에는 있지만 applyExperimentChange 가 적용 안 함 — silent
+    /// no-op (critic 이 "ROBOTIS onboard 로 바꿔라" 권고해도 변화 X).
     public struct ExperimentDeltas: Sendable, Equatable {
         public var hipPitchOffsetTrimDeg: Double? = nil
         public var strideMm: Double? = nil
@@ -1238,6 +1241,8 @@ public final class WalkLabSession: ObservableObject {
         public var customKneeGain: Double? = nil
         public var customAnklePitchGain: Double? = nil
         public var customAnkleRollGain: Double? = nil
+        public var walkingEngine: WalkingEngine? = nil
+        public var enableBalanceCorrection: Bool? = nil
 
         public init() {}
 
@@ -1247,8 +1252,42 @@ public final class WalkLabSession: ObservableObject {
                 && turnDeg == nil && customPeriodMs == nil && footHeightMm == nil
                 && balanceGain == nil && customHipRollGain == nil && customKneeGain == nil
                 && customAnklePitchGain == nil && customAnkleRollGain == nil
+                && walkingEngine == nil && enableBalanceCorrection == nil
+        }
+
+        /// tuning slider (stride/side/turn/period/foot/balanceGain) 가 포함되면 true.
+        /// applyExperimentChange 에서 session.advanced 자동 true 강제 — 종전엔 advanced=false
+        /// 면 currentWalkTuning 이 preset default 사용해 silent no-op 였음.
+        public var hasTuningSlider: Bool {
+            strideMm != nil || sideMm != nil || turnDeg != nil
+                || customPeriodMs != nil || footHeightMm != nil || balanceGain != nil
         }
     }
+
+    /// **v1.11.14.5 (2026-05-19) — 사용자 평가 CRIT 1 fix**: rollback snapshot.
+    /// applyExperimentChange 직전 모든 mutable axis 값 저장. failRollback verdict 시
+    /// 또는 사용자 명시 rollback 호출 시 복원.
+    public struct ExperimentSnapshot: Sendable {
+        public let balanceExperimentConfig: BalanceExperimentConfig
+        public let hipPitchOffsetTrimDeg: Double
+        public let strideMm: Double
+        public let sideMm: Double
+        public let turnDeg: Double
+        public let customPeriodMs: Double
+        public let footHeightMm: Double
+        public let balanceGain: Double
+        public let customHipRollGain: Double
+        public let customKneeGain: Double
+        public let customAnklePitchGain: Double
+        public let customAnkleRollGain: Double
+        public let walkingEngine: WalkingEngine
+        public let enableBalanceCorrection: Bool
+        public let advanced: Bool
+    }
+
+    /// rollback 용 snapshot. applyExperimentChange 가 set, rollbackExperiment 또는
+    /// clearExperimentContext 가 clear.
+    @Published public private(set) var rollbackSnapshot: ExperimentSnapshot? = nil
 
     /// **v1.11.14**: ExperimentApprovalUI 가 사용자 승인 후 호출. axis 한 개만 변경.
     /// **v1.11.14.1**: deltas struct 도입 — tuning slider + customGain* axis 통합.
@@ -1269,6 +1308,19 @@ public final class WalkLabSession: ObservableObject {
         if let existing = activeExperimentId {
             return .failed(reason: "이미 활성 실험 (\(existing)) — 종료 후 재시도")
         }
+        // **v1.11.14.5 — 사용자 평가 CRIT 1 fix**: rollback snapshot 저장 (mutation 전).
+        rollbackSnapshot = ExperimentSnapshot(
+            balanceExperimentConfig: balanceExperimentConfig,
+            hipPitchOffsetTrimDeg: hipPitchOffsetTrimDeg,
+            strideMm: strideMm, sideMm: sideMm, turnDeg: turnDeg,
+            customPeriodMs: customPeriodMs, footHeightMm: footHeightMm,
+            balanceGain: balanceGain,
+            customHipRollGain: customHipRollGain, customKneeGain: customKneeGain,
+            customAnklePitchGain: customAnklePitchGain, customAnkleRollGain: customAnkleRollGain,
+            walkingEngine: walkingEngine,
+            enableBalanceCorrection: enableBalanceCorrection,
+            advanced: advanced
+        )
         // 실제 config 변경.
         balanceExperimentConfig = proposedConfig
         // v1.11.14.1: 모든 non-config axis delta 적용 (nil 인 axis 는 현재값 유지).
@@ -1283,6 +1335,16 @@ public final class WalkLabSession: ObservableObject {
         if let v = deltas.customKneeGain { customKneeGain = v }
         if let v = deltas.customAnklePitchGain { customAnklePitchGain = v }
         if let v = deltas.customAnkleRollGain { customAnkleRollGain = v }
+        // **v1.11.14.5 — 사용자 평가 HIGH 2 fix**: walkingEngine + enableBalanceCorrection
+        // 도 실 적용. 종전엔 ResponseAxis 에 있지만 silent no-op.
+        if let v = deltas.walkingEngine { walkingEngine = v }
+        if let v = deltas.enableBalanceCorrection { enableBalanceCorrection = v }
+        // **v1.11.14.5 — 사용자 평가 HIGH 3 fix**: tuning slider delta 있으면 advanced=true.
+        // 종전엔 advanced=false 시 currentWalkTuning 이 preset default 사용 → 데이터상
+        // "실험 적용" 처럼 보이지만 실 보행은 거의 그대로. critic 의 강건한 비교 차단.
+        if deltas.hasTuningSlider {
+            advanced = true
+        }
         activeExperimentId = experimentId
         activeBaselineSessionId = baselineSessionId
         logSafetyEvent(
@@ -1293,9 +1355,47 @@ public final class WalkLabSession: ObservableObject {
     }
 
     /// **v1.11.14**: 실험 종료 (사용자 명시 또는 finalize).
+    /// **v1.11.14.5**: rollbackSnapshot 도 clear — 사용자가 변경 결과 수락한 것으로 간주.
+    /// 종전엔 snapshot 남아있어 다음 applyExperimentChange 가 다른 baseline 으로 잘못
+    /// 복원할 위험. 사용자가 rollback 원하면 rollbackExperiment() 명시 호출 필요.
     public func clearExperimentContext() {
         activeExperimentId = nil
         activeBaselineSessionId = nil
+        rollbackSnapshot = nil
+    }
+
+    /// **v1.11.14.5 (2026-05-19) — 사용자 평가 CRIT 1 fix**: 변경 원상복구.
+    /// applyExperimentChange 가 저장한 snapshot 으로 모든 axis 복원 + activeExperimentId
+    /// clear. failRollback verdict 시 자동 호출 또는 사용자 명시 호출.
+    /// snapshot 없으면 no-op.
+    @discardableResult
+    public func rollbackExperiment() -> Bool {
+        guard let snapshot = rollbackSnapshot else { return false }
+        balanceExperimentConfig = snapshot.balanceExperimentConfig
+        hipPitchOffsetTrimDeg = snapshot.hipPitchOffsetTrimDeg
+        strideMm = snapshot.strideMm
+        sideMm = snapshot.sideMm
+        turnDeg = snapshot.turnDeg
+        customPeriodMs = snapshot.customPeriodMs
+        footHeightMm = snapshot.footHeightMm
+        balanceGain = snapshot.balanceGain
+        customHipRollGain = snapshot.customHipRollGain
+        customKneeGain = snapshot.customKneeGain
+        customAnklePitchGain = snapshot.customAnklePitchGain
+        customAnkleRollGain = snapshot.customAnkleRollGain
+        walkingEngine = snapshot.walkingEngine
+        enableBalanceCorrection = snapshot.enableBalanceCorrection
+        advanced = snapshot.advanced
+        let expId = activeExperimentId ?? "?"
+        activeExperimentId = nil
+        activeBaselineSessionId = nil
+        rollbackSnapshot = nil
+        logSafetyEvent(
+            kind: .correctorOff,
+            message: "🔄 실험 rollback: \(expId) → 변경 전 상태 복원"
+        )
+        lastRobotEvent = "🔄 실험 rollback — 변경 전 config 복원됨"
+        return true
     }
 
     public enum ApplyExperimentResult: Sendable {
@@ -2584,6 +2684,14 @@ public final class WalkLabSession: ObservableObject {
             if let comp = controller.lastComparison {
                 self?.lastRobotEvent =
                     "🔬 A/B 비교: \(comp.verdict.rawValue) — \(comp.reason)"
+                // **v1.11.14.5 — 사용자 평가 CRIT 1 fix**: failRollback verdict 시 자동
+                // rollback. 종전엔 verdict 만 표시되고 위험한 config 가 그대로 남음 →
+                // 다음 보행에서 fall 가속 위험. 안전한 자동 보호.
+                if comp.verdict == .failRollback {
+                    _ = self?.rollbackExperiment()
+                    // 사용자에게 명시 알림 — rollback 사유 (verdict reason) 포함.
+                    self?.lastRobotEvent = "🔄 자동 rollback — \(comp.reason)"
+                }
             }
         }
     }
