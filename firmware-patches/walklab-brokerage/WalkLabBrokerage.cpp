@@ -68,9 +68,13 @@ namespace Robotis {
             int stat_ret = stat(CMD_PATH, &current_stat);
 
             if (stat_ret == 0) {
-                // 파일이 mtime 변경됐을 때만 re-parse (불필요한 disk read 회피).
-                bool file_changed = (current_stat.st_mtime != last_stat.st_mtime) ||
-                                    (current_stat.st_size != last_stat.st_size);
+                // **v1.11.16.2 (2026-05-19) — Codex CRITICAL 1 fix**: mtime+size 만으로는
+                // 같은 길이 명령이 1초 내 변경 시 미처리. nanosecond mtim 사용 + 매 poll
+                // 시 cmd_id 비교로 신뢰성 확보. Linux 의 st_mtim.tv_sec/tv_nsec 사용.
+                bool file_changed =
+                    (current_stat.st_mtim.tv_sec != last_stat.st_mtim.tv_sec) ||
+                    (current_stat.st_mtim.tv_nsec != last_stat.st_mtim.tv_nsec) ||
+                    (current_stat.st_size != last_stat.st_size);
                 if (file_changed) {
                     last_stat = current_stat;
                     if (ParseAndApply(walking, walking_active)) {
@@ -109,13 +113,26 @@ namespace Robotis {
         }
         fclose(fp);
 
+        // **v1.11.16.2 (2026-05-19) — Codex CRITICAL 1 fix**: cmd_id nonce 첫 token.
+        // 형식: "{cmd_id} {enabled} {x} {y} {a} {period} {foot} {hip}"
+        // 또는 backward-compat: "{enabled} {x} {y} {a} {period} {foot} {hip}" (cmd_id 없음).
+        // cmd_id 가 있으면 ACK 에 echo 하여 Mac 이 stale ACK 검출 가능.
+        char cmd_id[32] = "no_id";  // default — backward compat
         int enabled = 0;
         float x = 0, y = 0, a = 0, period = 0, foot = 0, hip = 13.0f;
-        int n = sscanf(line, "%d %f %f %f %f %f %f",
+        // 첫 token 이 숫자가 아니면 cmd_id 로 간주.
+        // 시도 1: cmd_id 포함 형식 (8 token).
+        int n = sscanf(line, "%31s %d %f %f %f %f %f %f",
+                       cmd_id, &enabled, &x, &y, &a, &period, &foot, &hip);
+        if (n < 7) {
+            // 시도 2: 기존 형식 (7 token, cmd_id 없음).
+            n = sscanf(line, "%d %f %f %f %f %f %f",
                        &enabled, &x, &y, &a, &period, &foot, &hip);
-        if (n < 6) {
-            // 잘못된 line 무시 — 이전 명령 유지 (safety).
-            return false;
+            if (n < 6) {
+                // 잘못된 line 무시 — 이전 명령 유지 (safety).
+                return false;
+            }
+            strcpy(cmd_id, "no_id");
         }
         if (n == 6) {
             // v1.11.5 (6 필드) backward-compat — hip 미전달 시 default 유지.
@@ -150,14 +167,19 @@ namespace Robotis {
         }
         // **v1.11.16.1 (2026-05-19)** — ACK write. Mac 측이 250ms 후 cat 으로 검증.
         // ts_ms = unix epoch * 1000 (간단한 monotonic ID).
-        // 형식: "OK {ts_ms} {cmd_line}\n" — Mac 의 검출 regex 와 일치.
-        FILE* ack = fopen(ACK_PATH, "w");
+        // **v1.11.16.2 — Codex CRITICAL 1 fix**: cmd_id echo 로 stale ACK 검출.
+        // 형식: "OK {ts_ms} {cmd_id} {cmd_line}\n" — Mac 의 검출 시 cmd_id 매치.
+        // ACK write 도 tmp + rename 으로 atomic (부분 read 차단).
+        const char* ack_tmp = "/tmp/df-walklab-ack.tmp";
+        FILE* ack = fopen(ack_tmp, "w");
         if (ack) {
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             long long ts_ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
-            fprintf(ack, "OK %lld %s", ts_ms, line);
+            fprintf(ack, "OK %lld %s %s", ts_ms, cmd_id, line);
             fclose(ack);
+            // atomic rename (같은 filesystem 보장).
+            rename(ack_tmp, ACK_PATH);
         }
         return true;
     }

@@ -427,18 +427,36 @@ public enum RobotSetupCommand {
     /// let cmd = RobotSetupCommand.walkLabRobotisSendCommand(line: line)
     /// try await ssh.execute(cmd)
     /// ```
-    public static func walkLabRobotisSendCommand(line: String) -> String {
+    public static func walkLabRobotisSendCommand(line: String, cmdId: String? = nil) -> String {
         // line 은 `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg` — 숫자만.
         // 안전성: WalkingEngineCommand.serializedLine 이 %d %.2f format 만 출력 →
         // shell metacharacters 위험 없음. 추가 guard 로 single-quote 사용.
         // **v1.11.16.1 (2026-05-19) — ACK 검증**: 명령 write 후 daemon 의 polling
         // 주기 (200ms) + 안전 margin (50ms) = 250ms sleep 후 ACK 파일 cat.
+        // **v1.11.16.2 (2026-05-19) — Codex CRITICAL 1+MED fix**: cmd_id nonce 추가
+        // 로 stale ACK 검출. deadline polling (1.5s) — sleep 0.25 보다 robust.
+        // - cmd_id 가 line prefix 로 prepend: "{cmd_id} {line}"
+        // - firmware 가 sscanf 첫 token 으로 cmd_id parse → ACK 에 echo
+        // - Mac 의 Bridge 가 result 의 cmd_id 매치 → stale ACK reject
+        //
         // 응답 형식:
-        //   "OK {ts_ms} {line}"  — daemon 처리 성공 (firmware ≥ v1.11.16.1)
-        //   "NO_ACK"             — daemon 없음 또는 firmware 미패치
-        //   ""                   — ACK 파일 부재 (Mac 의 SSH 결과에 NO_ACK 로 표시)
-        // Mac 의 OnboardBridge 가 result 에서 prefix 매치로 분기.
-        return "printf '%s\\n' '\(line)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd && sleep 0.25 && (cat /tmp/df-walklab-ack 2>/dev/null || echo NO_ACK)"
+        //   "OK {ts_ms} {cmd_id} {line}"  — daemon 처리 성공 (firmware ≥ v1.11.16.2)
+        //   "OK {ts_ms} {line}"            — firmware ≥ v1.11.16.1 (cmd_id 없음, backward)
+        //   "NO_ACK"                       — daemon 없음 또는 firmware 미패치
+        let id = cmdId ?? generateCmdId()
+        let fullLine = "\(id) \(line)"
+        // Bash polling loop: 최대 1.5s 대기 + 50ms 단위 check (안전 margin 충분).
+        // 종전 sleep 0.25 는 daemon polling 200ms + 부하 시 부족.
+        let pollLoop = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do sleep 0.05; if [ -s /tmp/df-walklab-ack ]; then cat /tmp/df-walklab-ack; exit 0; fi; done; echo NO_ACK"
+        return "printf '%s\\n' '\(fullLine)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd && (\(pollLoop))"
+    }
+
+    /// **v1.11.16.2 (2026-05-19)**: cmd_id 생성 — UUID prefix 8글자 + millisecond timestamp.
+    /// shell-safe ([a-zA-Z0-9_-]) 만 사용. 길이 < 32.
+    public static func generateCmdId() -> String {
+        let uuid = UUID().uuidString.prefix(8)  // 8 hex chars
+        let ts = Int(Date().timeIntervalSince1970 * 1000) % 1_000_000  // 6 digits
+        return "c\(ts)_\(uuid)"
     }
 
     /// 현재 demo 활성 상태 — 사용자에게 어떤 모드인지 알려줌.

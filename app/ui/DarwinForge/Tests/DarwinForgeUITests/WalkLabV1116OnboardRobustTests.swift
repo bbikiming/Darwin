@@ -104,4 +104,62 @@ final class WalkLabV1116OnboardRobustTests: XCTestCase {
         XCTAssertTrue(UserDefaults.standard.bool(forKey: key))
         UserDefaults.standard.removeObject(forKey: key)
     }
+
+    // MARK: - v1.11.16.2 — Codex CRITICAL/HIGH/MED fix
+
+    /// **v1.11.16.2 CRITICAL 1 fix**: cmd_id nonce 생성 — UUID prefix + timestamp.
+    /// 길이 < 32, shell-safe ([a-zA-Z0-9_-]).
+    func testGenerateCmdIdIsShellSafe() {
+        for _ in 0..<10 {
+            let id = RobotSetupCommand.generateCmdId()
+            XCTAssertLessThan(id.count, 32, "cmd_id 길이 < 32 (sscanf %31s 제한)")
+            XCTAssertFalse(id.isEmpty)
+            // shell-safe characters only.
+            let allowedChars = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+            for ch in id {
+                XCTAssertTrue(allowedChars.contains(ch),
+                              "cmd_id '\(id)' 에 shell-unsafe char '\(ch)' 포함")
+            }
+        }
+    }
+
+    /// **v1.11.16.2 CRITICAL 1 fix**: cmd_id uniqueness — 짧은 시간 내 10회 호출 시
+    /// collision 없음 (UUID prefix + ms ts).
+    func testGenerateCmdIdIsUnique() {
+        var ids = Set<String>()
+        for _ in 0..<10 {
+            ids.insert(RobotSetupCommand.generateCmdId())
+        }
+        XCTAssertEqual(ids.count, 10, "10회 호출 모두 unique id")
+    }
+
+    /// **v1.11.16.2 CRITICAL 1 fix**: walkLabRobotisSendCommand 의 line prefix 에 cmd_id 포함.
+    /// firmware 가 sscanf 첫 token 으로 parse 가능.
+    func testWalkLabSendCommandIncludesCmdIdPrefix() {
+        let line = "1 28.00 0.00 0.00 600 40 13.00"
+        let cmdId = "c123_abcd"
+        let cmd = RobotSetupCommand.walkLabRobotisSendCommand(line: line, cmdId: cmdId)
+        // command 내부에 "{cmdId} {line}" 형태로 들어가는지.
+        XCTAssertTrue(cmd.contains("\(cmdId) \(line)"),
+                      "cmd_id + line prefix 포함. got=\(cmd.prefix(120))")
+    }
+
+    /// **v1.11.16.2 MED 5 fix**: deadline polling loop — sleep 단일 250ms 대신 1.5s 한도.
+    func testWalkLabSendCommandUsesDeadlinePolling() {
+        let cmd = RobotSetupCommand.walkLabRobotisSendCommand(line: "1 0 0 0 600 40 13", cmdId: nil)
+        // 30 iter × 50ms = 1.5s deadline.
+        XCTAssertTrue(cmd.contains("for i in"), "polling loop")
+        XCTAssertTrue(cmd.contains("sleep 0.05"), "50ms 단위 check")
+        XCTAssertTrue(cmd.contains("[ -s /tmp/df-walklab-ack ]"), "ACK 파일 size check")
+        XCTAssertTrue(cmd.contains("NO_ACK"), "deadline 후 NO_ACK fallback")
+    }
+
+    /// **v1.11.16.2 default cmdId**: nil 이면 자동 생성.
+    func testWalkLabSendCommandAutoGeneratesCmdId() {
+        let cmd1 = RobotSetupCommand.walkLabRobotisSendCommand(line: "1 0 0 0 600 40 13", cmdId: nil)
+        let cmd2 = RobotSetupCommand.walkLabRobotisSendCommand(line: "1 0 0 0 600 40 13", cmdId: nil)
+        // 두 호출의 cmd_id 가 다른지 (자동 생성).
+        XCTAssertNotEqual(cmd1, cmd2,
+                          "cmdId nil → 매번 자동 생성 (unique)")
+    }
 }

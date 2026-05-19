@@ -20,22 +20,27 @@ public struct OnboardHealthIndicator: View {
     public var body: some View {
         // .robotisOnboard 모드일 때만 표시 — 다른 모드면 invisible.
         if session.walkingEngine == .robotisOnboard {
-            HStack(spacing: DFSpace.xs) {
-                statusIcon
-                statusLabel
-                Spacer(minLength: DFSpace.xs)
-                fallbackToggle
+            // **v1.11.16.2 — Codex HIGH 4 fix**: TimelineView 로 1초마다 redraw.
+            // 종전: stale 판정 (lastAckAt > 5s) 이 onChange 만 — UI 가 자동 갱신 X.
+            // TimelineView(.periodic) 으로 1s 마다 body 재평가 → 시간 경과 즉시 반영.
+            TimelineView(.periodic(from: .now, by: 1.0)) { _ in
+                HStack(spacing: DFSpace.xs) {
+                    statusIcon
+                    statusLabel
+                    Spacer(minLength: DFSpace.xs)
+                    fallbackToggle
+                }
+                .padding(.horizontal, DFSpace.sm)
+                .padding(.vertical, DFSpace.xs2)
+                .background(DFColor.adaptiveCard(theme))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DFRadius.xs2)
+                        .stroke(statusColor.opacity(DFOpacity.o30), lineWidth: DFSize.borderHairline)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("ROBOTIS Onboard 상태: \(statusText)")
             }
-            .padding(.horizontal, DFSpace.sm)
-            .padding(.vertical, DFSpace.xs2)
-            .background(DFColor.adaptiveCard(theme))
-            .overlay(
-                RoundedRectangle(cornerRadius: DFRadius.xs2)
-                    .stroke(statusColor.opacity(DFOpacity.o30), lineWidth: DFSize.borderHairline)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("ROBOTIS Onboard 상태: \(statusText)")
         }
     }
 
