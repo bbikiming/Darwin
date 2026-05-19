@@ -212,6 +212,9 @@ final class WalkLabV1111CriticLoopTests: XCTestCase {
     }
 
     /// **회귀 가드**: finalize 후 history 이동.
+    /// **v1.11.14.3**: cap (30) 인지 — beforeCount = 30 saturated 인 경우엔 cap 유지.
+    /// 종전 `XCTAssertEqual(after, before+1)` 는 누적 saturated 시 fail (다른 test 의
+    /// finalize 도 shared file 에 누적되어 30 도달 시 cap 적용).
     func testFinalizeAddsToHistory() async {
         let loop = WalkLabExperimentLoop()
         let response = mockSafeResponse()
@@ -226,7 +229,8 @@ final class WalkLabV1111CriticLoopTests: XCTestCase {
         let current = await loop.current
         XCTAssertNil(current, "finalize 후 current=nil")
         let afterCount = await loop.history.count
-        XCTAssertEqual(afterCount, beforeCount + 1)
+        XCTAssertEqual(afterCount, min(beforeCount + 1, 30),
+                       "history += 1 (cap 30). before=\(beforeCount) after=\(afterCount)")
     }
 
     /// **회귀 가드**: cancel — current=nil 즉시.

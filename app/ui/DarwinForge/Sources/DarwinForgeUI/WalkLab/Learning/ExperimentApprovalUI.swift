@@ -15,28 +15,33 @@ import SwiftUI
 public struct ExperimentApprovalUI: View {
     public let response: ClaudeCriticResponse
     public let baselineSessionId: String
-    /// 제안 config — Critic 의 nextExperiment 에 부합하는 BalanceExperimentConfig.
-    /// caller 가 사용자 현재 config 위에 axis 변경 적용한 결과.
-    public let proposedConfig: BalanceExperimentConfig
-    /// **v1.11.14.1 (2026-05-19)**: validate(currentConfig:) 결과. caller 가 미리 계산.
-    /// nil → 검증 미실행 (legacy compat). issues 있으면 승인 버튼 비활성 + 사유 표시.
-    public let validationResult: ClaudeCriticResponse.ValidationResult?
+    /// **v1.11.14.3 (2026-05-19) — 진단 cold #F fix**: closure 로 변경.
+    /// 종전 immutable struct field — sheet 열어둔 채 외부에서 session.config 변경 시
+    /// stale. closure 는 body 재평가 시마다 호출되어 최신 session 값 반영.
+    private let proposedConfigProvider: () -> BalanceExperimentConfig
+    private let validationResultProvider: () -> ClaudeCriticResponse.ValidationResult?
     public let onApprove: () -> Void
     public let onCancel: () -> Void
 
+    /// **v1.11.14.3 신 init**: closure 기반 — dynamic 재계산.
     public init(response: ClaudeCriticResponse,
                 baselineSessionId: String,
-                proposedConfig: BalanceExperimentConfig,
-                validationResult: ClaudeCriticResponse.ValidationResult? = nil,
+                proposedConfig: @escaping @autoclosure () -> BalanceExperimentConfig,
+                validationResult: @escaping @autoclosure () -> ClaudeCriticResponse.ValidationResult? = nil,
                 onApprove: @escaping () -> Void,
                 onCancel: @escaping () -> Void) {
         self.response = response
         self.baselineSessionId = baselineSessionId
-        self.proposedConfig = proposedConfig
-        self.validationResult = validationResult
+        self.proposedConfigProvider = proposedConfig
+        self.validationResultProvider = validationResult
         self.onApprove = onApprove
         self.onCancel = onCancel
     }
+
+    /// 현재 proposed config (body 평가 시 매번 재계산).
+    private var proposedConfig: BalanceExperimentConfig { proposedConfigProvider() }
+    /// 현재 validation 결과 (body 평가 시 매번 재계산).
+    private var validationResult: ClaudeCriticResponse.ValidationResult? { validationResultProvider() }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.sm) {

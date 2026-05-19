@@ -91,24 +91,24 @@ public struct WalkDataView: View {
             if let resp = critic.currentResponse, let exp = resp.nextExperiment {
                 // v1.11.14: 현재 WalkLabSession config 를 base 로 한 axis 만 override.
                 // baseline header (디스크) 가 있으면 더 정확한 값 (당시 trim 등).
+                // v1.11.14.3 cold #F fix: proposedConfig + validationResult 를 closure
+                // 로 전달 — sheet body 평가 시마다 session.balanceExperimentConfig +
+                // hipPitchOffsetTrimDeg 재read 하여 stale 차단.
                 let baselineId = selectedId ?? (summaries.first?.id ?? "unknown")
                 let baseHeader = loadHeader(forSessionId: baselineId)
-                let (proposedConfig, _) = buildProposedConfig(
-                    from: exp,
-                    currentConfig: session.balanceExperimentConfig,
-                    currentHipPitchOffsetTrimDeg: session.hipPitchOffsetTrimDeg,
-                    baselineHeader: baseHeader
-                )
-                // v1.11.14.1: validate(currentConfig:) 미리 계산 — sheet 안에 issue 표시.
-                let validationResult = resp.validate(
-                    currentConfig: session.balanceExperimentConfig,
-                    currentTrim: session.hipPitchOffsetTrimDeg
-                )
                 ExperimentApprovalUI(
                     response: resp,
                     baselineSessionId: baselineId,
-                    proposedConfig: proposedConfig,
-                    validationResult: validationResult,
+                    proposedConfig: self.buildProposedConfig(
+                        from: exp,
+                        currentConfig: session.balanceExperimentConfig,
+                        currentHipPitchOffsetTrimDeg: session.hipPitchOffsetTrimDeg,
+                        baselineHeader: baseHeader
+                    ).config,
+                    validationResult: resp.validate(
+                        currentConfig: session.balanceExperimentConfig,
+                        currentTrim: session.hipPitchOffsetTrimDeg
+                    ),
                     onApprove: {
                         Task {
                             await applyExperimentApproval(

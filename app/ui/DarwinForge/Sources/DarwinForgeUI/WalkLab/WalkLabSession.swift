@@ -2589,35 +2589,52 @@ public final class WalkLabSession: ObservableObject {
     /// 규칙 "{sessionId}-{preset}.summary.json" 따라 prefix match 로 강화. 종전
     /// `contains(sessionId)` 는 sessionId A 가 B 의 substring 일 때 false positive
     /// 가능 (현실에선 ISO timestamp 라 거의 충돌 X, 그러나 defensive coding).
-    nonisolated static func loadSummaryFromDisk(sessionId: String) -> WalkSessionSummary? {
-        guard let dir = WalkSessionStore.sessionsDir else { return nil }
+    nonisolated static func loadSummaryFromDisk(sessionId: String,
+                                                 baseDir: URL? = nil) -> WalkSessionSummary? {
+        guard let dir = baseDir ?? WalkSessionStore.sessionsDir else { return nil }
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
             return nil
         }
         let match = files.first { url in
-            let name = url.lastPathComponent
-            return name.hasPrefix("\(sessionId)-") && name.hasSuffix(".summary.json")
+            extractSessionIdFromSummary(url) == sessionId
         }
         guard let url = match, let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(WalkSessionSummary.self, from: data)
     }
 
+    /// **v1.11.14.3 cold 2차**: prefix match 강화. WalkSessionLogger 의 명명 규칙
+    /// "{sessionId}-{preset}.summary.json" 에서 마지막 hyphen 으로 sessionId 추출.
+    /// 종전 `hasPrefix("\(sessionId)-")` 는 sessionId 가 hyphen 포함한 ISO timestamp
+    /// (예: 2026-05-19T08-30) 라 짧은 prefix 가 false positive 매치.
+    /// 본 함수는 ".summary.json" 제거 + 마지막 hyphen 분리 → 정확한 sessionId 추출.
+    nonisolated private static func extractSessionIdFromSummary(_ url: URL) -> String? {
+        let name = url.lastPathComponent
+        guard name.hasSuffix(".summary.json") else { return nil }
+        let stem = String(name.dropLast(".summary.json".count))
+        // stem = "{sessionId}-{preset}". 마지막 hyphen 으로 분리.
+        guard let lastHyphenIdx = stem.lastIndex(of: "-") else { return nil }
+        return String(stem[stem.startIndex..<lastHyphenIdx])
+    }
+
     /// **v1.11.14**: 같은 experimentId 의 모든 실험 세션 summary load.
     /// **v1.11.14.1**: static + Sendable — Task.detached 에서 background 호출.
-    nonisolated static func loadAllExperimentSummaries(experimentId: String) -> [WalkSessionSummary] {
-        guard let dir = WalkSessionStore.sessionsDir else { return [] }
+    /// **v1.11.14.3**: baseDir inject — test 에서 임시 디렉토리 사용 가능.
+    nonisolated static func loadAllExperimentSummaries(experimentId: String,
+                                                       baseDir: URL? = nil) -> [WalkSessionSummary] {
+        guard let dir = baseDir ?? WalkSessionStore.sessionsDir else { return [] }
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
             return []
         }
         let decoder = JSONDecoder()
         // jsonl 의 header 에 experimentId 매치 → summary load.
+        // **v1.11.14.3 (2026-05-19) — 진단 cold #D fix**: jsonl 전체 load 가 큰 sample
+        // (수만 줄) 시 메모리 부담. 첫 줄 (header) 만 streaming read → O(header size).
         var summaries: [WalkSessionSummary] = []
         for jsonlURL in files where jsonlURL.pathExtension == "jsonl" {
-            guard let data = try? Data(contentsOf: jsonlURL),
-                  let firstLine = data.split(separator: 0x0a).first,
-                  let header = try? decoder.decode(WalkSessionHeader.self, from: Data(firstLine)),
+            guard let firstLineData = readFirstLine(from: jsonlURL),
+                  let header = try? decoder.decode(WalkSessionHeader.self, from: firstLineData),
                   header.experimentId == experimentId else { continue }
             let summaryURL = jsonlURL.deletingPathExtension()
                 .appendingPathExtension("summary.json")
@@ -2626,6 +2643,22 @@ public final class WalkLabSession: ObservableObject {
             summaries.append(s)
         }
         return summaries
+    }
+
+    /// **v1.11.14.3**: jsonl 의 첫 줄만 streaming read (전체 load X).
+    /// FileHandle 로 chunk 단위 read → newline 만나면 즉시 종료. header 는 보통 ≤ 2KB
+    /// 라 한 번의 read 로 충분. 매우 큰 sample 파일에서도 메모리 절감.
+    /// `nonisolated` — loadAllExperimentSummaries 가 nonisolated 라 동일하게 표시.
+    nonisolated private static func readFirstLine(from url: URL) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        // 8KB chunk — header 가 더 크면 (이론상) 추가 read 필요하나 현실에서 < 2KB.
+        guard let chunk = try? handle.read(upToCount: 8192) else { return nil }
+        guard let newlineIdx = chunk.firstIndex(of: 0x0a) else {
+            // 8KB 안에 newline 없음 — header 비정상 (또는 헤더만 있는 파일). 전체 반환.
+            return chunk
+        }
+        return chunk.prefix(newlineIdx)
     }
 
     /// **Stage 3 (v1.1 fall prevention)**: IMU ring buffer 갱신 + predictor 호출.

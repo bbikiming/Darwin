@@ -184,19 +184,51 @@ extension ClaudeCriticResponse {
         if case .blocked(let reason) = simulated.safetyVerdict {
             issues.append("제안 적용 시 safetyVerdict=blocked: \(reason)")
         }
-        // hipPitchOffsetTrimDeg 범위 가드 — ROBOTIS 안전 범위 ±20° 권장.
+        // **v1.11.14.3 (2026-05-19) — 진단 문서 cold #A/#G fix**:
+        // hipPitchOffsetTrimDeg 범위 가드 강화. ROBOTIS DARwIn-OP 실 안전 범위는
+        // 12°~18°. ±20°/±35° 는 너무 넓음 (절대값 25° 도 fall 가속).
         if exp.axis == .hipPitchOffsetTrimDeg, let target = Double(exp.to) {
-            if abs(target - currentTrim) > 10.0 {
-                issues.append("hipPitchOffsetTrimDeg 변경 폭 \(abs(target - currentTrim))° > 10° — 단일 실험으로 위험. 5° 이하 권장.")
+            if abs(target - currentTrim) > 5.0 {
+                issues.append("hipPitchOffsetTrimDeg 변경 폭 \(String(format: "%.1f", abs(target - currentTrim)))° > 5° — 단일 실험으로 위험. 2~3° 점진 권장.")
             }
-            if target < -20 || target > 35 {
-                issues.append("hipPitchOffsetTrimDeg=\(target)° 범위 초과 (-20..35 권장).")
+            if target < 5 || target > 25 {
+                issues.append("hipPitchOffsetTrimDeg=\(target)° 절대 안전 범위 (5..25) 초과 — fall 위험.")
+            } else if target < 8 || target > 20 {
+                issues.append("hipPitchOffsetTrimDeg=\(target)° 권장 범위 (8..20) 밖 — caution. 12~18 권장.")
             }
         }
+        // **v1.11.14.3 — 진단 문서 cold #C fix**: tuning slider + customGain* axis
+        // 의 범위 가드. WalkLabSession 의 slider 범위와 일치시켜 critic 의 비현실
+        // 권고 (예: customPeriodMs=2000) silent 적용 차단.
+        // 임계값 출처: BalanceExperimentControls.swift slider range + 실 robot 안전.
+        validateAxisRange(exp: exp, issues: &issues)
         // enableBalanceCorrection=false 인 환경에서 algorithm/sign/gain/pitch 변경은 no-op.
         // (사용자가 toggleable 상태가 아닌 환경에서 critic 이 무의미한 제안)
         // 본 PR 에선 issue 만 표시 — caller 가 알림 + 사용자 인지 후 진행.
         return ValidationResult(passed: issues.isEmpty, issues: issues)
+    }
+
+    /// **v1.11.14.3**: axis 별 안전 범위 검사. critic 이 비현실적 값 권고 시 reject.
+    /// 범위는 WalkLabSession 의 slider min/max + ROBOTIS 안전 documentation 기준.
+    private func validateAxisRange(exp: NextExperiment, issues: inout [String]) {
+        guard let target = Double(exp.to) else { return }
+        let ranges: [(ResponseAxis, ClosedRange<Double>, String)] = [
+            (.strideMm, -80...80, "보폭 (mm)"),
+            (.sideMm, -50...50, "측보 (mm)"),
+            (.turnDeg, -25...25, "회전 (°)"),
+            (.periodMs, 400...800, "주기 (ms)"),
+            (.footHeightMm, 20...60, "발 들어올림 (mm)"),
+            (.balanceGain, 0.0...2.0, "balance 강도"),
+            (.customGainHipRoll, 0.0...2.0, "custom hip roll gain"),
+            (.customGainKnee, 0.0...2.0, "custom knee gain"),
+            (.customGainAnklePitch, 0.0...2.0, "custom ankle pitch gain"),
+            (.customGainAnkleRoll, 0.0...2.0, "custom ankle roll gain"),
+        ]
+        for (axis, range, label) in ranges where exp.axis == axis {
+            if !range.contains(target) {
+                issues.append("\(label) \(target) 안전 범위 \(range.lowerBound)..\(range.upperBound) 밖 — slider 한도 초과.")
+            }
+        }
     }
 
     /// 한 axis 변경 적용한 BalanceExperimentConfig 시뮬레이션 — safetyVerdict 만 검사용.
