@@ -1171,6 +1171,13 @@ struct FallPreventionMonitor: View {
         case .motorTempSourceChange: return "thermometer"
         case .thermalAlarm:          return "thermometer.sun.fill"
         case .preflightFailure:      return "xmark.shield"
+        // v1.11.25 audit log-D — dedicated cases.
+        case .engineSwitched:        return "cpu"
+        case .experimentApplied:     return "flask.fill"
+        case .experimentRolledBack:  return "arrow.uturn.backward.circle"
+        case .autoTunerApplied:      return "wand.and.stars"
+        case .voltageDroop:          return "battery.25"
+        case .manualSendSucceeded:   return "paperplane.fill"
         }
     }
 
@@ -1179,9 +1186,15 @@ struct FallPreventionMonitor: View {
         case .sessionStart, .sessionStop, .correctorOff: return DFColor.textSecondary
         case .stateChange:                               return DFColor.warning
         case .emergencyTriggered, .predictorRecommend,
-             .thermalAlarm, .preflightFailure:           return DFColor.danger
-        case .correctorOn, .rampComplete:                return DFColor.success
+             .thermalAlarm, .preflightFailure,
+             .voltageDroop:                              return DFColor.danger
+        case .correctorOn, .rampComplete,
+             .manualSendSucceeded:                       return DFColor.success
         case .imuSourceChange, .motorTempSourceChange:   return DFColor.info
+        // v1.11.25 audit log-D
+        case .engineSwitched:                            return DFColor.info
+        case .experimentApplied, .autoTunerApplied:      return DFColor.accent
+        case .experimentRolledBack:                      return DFColor.warning
         }
     }
 

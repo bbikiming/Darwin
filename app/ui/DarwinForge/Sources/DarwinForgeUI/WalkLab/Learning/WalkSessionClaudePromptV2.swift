@@ -151,6 +151,28 @@ public enum WalkSessionClaudePromptV2 {
                 if let base = h.baselineSessionId {
                     out += headerLine("baselineSession", base)
                 }
+                // v1.11.25 audit log-A — v1.11.24 신규 진단 필드 dump.
+                if let req = h.requestedPreset, req != h.preset {
+                    out += headerLine("requestedPreset", "\(req) (≠ active \(h.preset) — preflight 차단 흔적)")
+                }
+                if let block = h.startBlockedReason {
+                    out += headerLine("startBlockedReason", block)
+                }
+                if h.walkCycleTaskActiveAtStart == true {
+                    out += headerLine("walkCycleTaskActiveAtStart", "true (audit §1 race window)")
+                }
+                if let mws = h.motorWriteStarted {
+                    out += headerLine("motorWriteStarted", String(describing: mws))
+                }
+                if let count = h.motorWriteStepCount {
+                    out += headerLine("motorWriteStepCount", "\(count)")
+                }
+                if let ack = h.onboardAckStatus {
+                    out += headerLine("onboardAckStatus", ack)
+                }
+                if let lastEvt = h.lastRobotEventAtStart {
+                    out += headerLine("lastRobotEventAtStart", lastEvt)
+                }
             } else {
                 out += "  (header 미수신 — V1 legacy session)\n"
             }

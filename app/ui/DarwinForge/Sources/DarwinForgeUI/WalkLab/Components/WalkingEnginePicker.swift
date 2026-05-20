@@ -137,9 +137,18 @@ public struct WalkingEnginePicker: View {
             // **v1.11.5.1 (2026-05-18)** — x/y/a 명령 brokering 송출 버튼.
             // 사용자가 preset 또는 tuning 변경 후 누르면 robot 의 `/tmp/df-walklab-cmd`
             // 에 한 줄 write — robot-side patch 가 5Hz polling 으로 read.
+            //
+            // **v1.11.24 (2026-05-20) audit iter2-E** — quickPreflight 와 동일한 차단 사유
+            // (cradle / caution + balance OFF / SSH / IMU) 를 버튼 단계에서 적용.
+            // 종전: 사용자가 fastWalk + 보정 OFF 상태로 본 버튼 눌러 robot 에 직접 송출 가능 → 낙상 위험.
+            // v1.11.24 audit iter3-B — enabled 는 실 motor task 가 active 인 preset 우선.
+            // 종전: session.current 만 보고 enabled 결정 → preflight 차단으로 current 가
+            // 바뀌지 않더라도 stale `enabled` 송출. 일관성을 위해 bridge 와 같은 source.
+            let effectivePreset = session.activeRobotPreset ?? session.current
             let currentCmd = session.currentWalkingEngineCommand(
-                enabled: session.current != .idle
+                enabled: effectivePreset != .idle
             )
+            let manualSendBlock = session.onboardManualSendBlockReason
             HStack(spacing: DFSpace.xs2) {
                 Button {
                     onSendCommand?(currentCmd)
@@ -151,7 +160,14 @@ public struct WalkingEnginePicker: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(onSendCommand == nil)
+                .disabled(onSendCommand == nil || manualSendBlock != nil)
+                .help(manualSendBlock ?? "현재 preset/tuning 을 robot 에 송출")
+                if let reason = manualSendBlock {
+                    Text(reason)
+                        .font(DFFont.micro)
+                        .foregroundStyle(DFColor.warning)
+                        .lineLimit(1)
+                }
                 Spacer()
             }
 

@@ -159,6 +159,10 @@ public struct WalkDataView: View {
         let decoder = JSONDecoder()
         var samples: [WalkSessionSample] = []
         for line in data.split(separator: 0x0a).dropFirst() {
+            // v1.11.24 audit iter4 critic — footer 줄 (`"type":"footer"`) 은 sample 아니므로 skip.
+            // 종전: try? decode 가 nil 로 silent drop 이지만, 향후 field collision 시 garbage
+            // sample 이 분석 pipeline 에 진입할 위험. 명시 skip 으로 future-proof.
+            if line.contains("\"type\":\"footer\"".utf8) { continue }
             if let s = try? decoder.decode(WalkSessionSample.self, from: Data(line)) {
                 samples.append(s)
             }

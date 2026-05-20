@@ -93,10 +93,17 @@ public struct WalkLabView: View {
             ScrollView {
                 VStack(spacing: DFSpace.xs2) {
                     ForEach(WalkLabPreset.allCases) { preset in
+                        // v1.11.24 audit P0-2/P0-3 — 차단 사유 미리 평가해서 버튼 상태/사유 노출.
+                        let blocking = presetBlockingReason(for: preset)
+                        // v1.11.24 audit iter2-J — active 표시는 실 motor task 가 진행 중인 preset
+                        // 우선 (activeRobotPreset). robot 미연결 (sim) 일 땐 fallback 으로 current.
+                        let activePreset = session.activeRobotPreset ?? session.current
                         PresetButton(
                             preset: preset,
-                            isActive: session.current == preset,
-                            isEnabled: session.cradleConfirmed
+                            isActive: activePreset == preset,
+                            isEnabled: session.cradleConfirmed,
+                            blockingReason: blocking.reason,
+                            onUnblock: blocking.unblock
                         ) {
                             tap(preset)
                         }
@@ -113,6 +120,12 @@ public struct WalkLabView: View {
                         AdvancedSlidersPanel(session: session)
                             .padding(.top, DFSpace.xs)
                     }
+
+                    // v1.11.25 audit log-B — operatorNote 입력 UI.
+                    // 종전: WalkLabSession.operatorNote 변수만 존재, 입력 경로 없음 → header
+                    // 에 항상 nil 기록. 본 TextField 가 next session start 시 header.operatorNoteAtStart
+                    // 로 영구 저장. 사용자가 "표면 미끄러움 / 배터리 막 충전" 같은 맥락 메모.
+                    operatorNoteField
                 }
                 .padding(DFSpace.sm3)
             }
@@ -950,10 +963,72 @@ public struct WalkLabView: View {
             showingRiskConfirm = true
             return
         }
+        // v1.11.24 audit iter2-C — slider 동기화는 session.start() 가 preflight 통과 후 내부에서 수행.
+        // 종전: tap() 가 직접 호출 → start() 가 차단되어도 slider 만 바뀌는 UX 불일치.
         session.start(preset)
+    }
+
+    /// v1.11.24 audit P0-2/P0-3 — 버튼 클릭 전에 미리 차단 사유 평가.
+    /// 사용자가 클릭하기 전에 "왜 이 버튼이 비활성인지" UI 에 표시 (PresetButton.blockingReason).
+    ///
+    /// 반환:
+    /// - `reason` nil = 차단 없음 (정상 활성)
+    /// - `reason` 문자열 = 사용자에게 표시할 이유
+    /// - `unblock` closure 가 있으면 inline action 으로 해소 시도 (예: 자세 보정 ON)
+    ///
+    /// 이 사전 평가는 `WalkLabSession.quickPreflight` 의 subset 이지만 UI 만 표시 — 실 차단은
+    /// session 의 preflight 가 마지막에 한 번 더 검증.
+    private func presetBlockingReason(for preset: WalkLabPreset) -> (reason: String?, unblock: (() -> Void)?) {
+        // idle 은 정지 버튼이므로 차단 안 함.
+        if preset == .idle { return (nil, nil) }
+        // cradle 미확인 — 모든 preset 차단.
+        if !session.cradleConfirmed {
+            return ("정비 스탠드에 거치 후 활성화", nil)
+        }
+        // 보행 중 → 다른 non-idle preset 비활성 (이미 walking 표시는 active 별도).
+        if session.isWalkActive && session.current != preset {
+            let activeLabel = session.activeRobotPreset?.label ?? session.current.label
+            return ("'\(activeLabel)' 진행 중 — 정지 후 변경", nil)
+        }
+        // caution preset 인데 자세 보정 OFF → 차단 + 한 번에 켜는 unblock 제공.
+        if preset.safety == .caution && !session.enableBalanceCorrection {
+            return ("자세 보정 OFF — 켜야 시작 가능", { session.enableBalanceCorrection = true })
+        }
+        // advanced + stability critical → 차단.
+        if session.advanced && session.stabilityScore.category == .critical {
+            return ("고급 슬라이더 위험도 critical — 조합 점검", nil)
+        }
+        // high risk preset → risk 동의 안 됐으면 안내만 (실 차단은 risk sheet 가 처리).
+        if preset.requiresRiskConfirmation && !session.riskAcknowledged {
+            return ("위험 동의 필요 — 클릭 후 확인", nil)
+        }
+        return (nil, nil)
     }
 
     private func fmt3(_ v: SIMD3<Double>) -> String {
         String(format: "%+.3f %+.3f %+.3f", v.x, v.y, v.z)
+    }
+
+    /// v1.11.25 audit log-B — operatorNote 1줄 TextField.
+    /// 사용자가 "표면 / 배터리 / 환경" 같은 세션 맥락 메모 입력 → 다음 보행 시작 시
+    /// header.operatorNoteAtStart 로 영구 저장. 분석가가 retrospective 시 활용.
+    private var operatorNoteField: some View {
+        VStack(alignment: .leading, spacing: DFSpace.micro) {
+            Text("운영자 메모 (다음 보행 헤더에 저장)")
+                .font(DFFont.label)
+                .foregroundStyle(DFColor.textSecondary)
+                .padding(.horizontal, DFSpace.sm)
+            TextField(
+                "예: '두꺼운 카펫, 배터리 11.2V'",
+                text: Binding(
+                    get: { session.operatorNote ?? "" },
+                    set: { session.operatorNote = $0.isEmpty ? nil : $0 }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(DFFont.bodySmall)
+            .padding(.horizontal, DFSpace.sm)
+        }
+        .padding(.top, DFSpace.xs)
     }
 }

@@ -20,6 +20,33 @@ import ForgeCore
 /// 통합 테스트 30+ 케이스 선결 (T3.1 deferral 문서 참조).
 
 extension WalkLabSession {
+    /// **v1.11.25 (2026-05-21) audit log-G** — emergencyStop 호출 출처.
+    ///
+    /// 종전: 모든 trigger 가 Harness 의 actor=.user 로 기록 → 사용자 클릭 vs 자동 trigger
+    /// (balance lost / thermal / voltage) 발생률 통계 추출 불가.
+    public enum EmergencyTrigger: String, Sendable {
+        /// 사용자 비상정지 버튼 / ESC 키.
+        case userClick
+        /// L3 hard gate — IMU tilt ≥ 50° 3 sample 연속.
+        case balanceLostL3
+        /// L4 — 모터 평균 온도 ≥ 60°C.
+        case thermalOverheat
+        /// L0 — battery voltage < 9.5V 지속.
+        case voltageDroop
+        /// fall predictor 가 recommend emergency rising-edge.
+        case fallPredictorRecommend
+        /// 외부 emergency (Pilot ESC, RootView 전역 단축키 등).
+        case externalEStop
+
+        /// Harness telemetry actor — `.user` 만 사용자, 그 외는 자동.
+        public var harnessActor: TelemetryActor {
+            switch self {
+            case .userClick, .externalEStop: return .user
+            case .balanceLostL3, .thermalOverheat, .voltageDroop, .fallPredictorRecommend: return .robot
+            }
+        }
+    }
+
     /// 모터 온도 데이터 출처 — Stage 1 분석 후 추가 (2026-05-16).
     public enum MotorTempSource: Equatable, Sendable {
         /// 실 robot 미연결 또는 telemetry 미수신 — `updateSimThermal` 모델 값.
@@ -137,6 +164,19 @@ extension WalkLabSession {
             case motorTempSourceChange
             case thermalAlarm
             case preflightFailure
+            // v1.11.25 audit log-D — kind 재사용 제거를 위한 dedicated case.
+            /// 보행 엔진 전환 (Mac sparse ↔ ROBOTIS onboard).
+            case engineSwitched
+            /// A/B 실험 적용 (applyExperimentChange).
+            case experimentApplied
+            /// A/B 실험 rollback.
+            case experimentRolledBack
+            /// AutoTuner 가 권고 자동 적용.
+            case autoTunerApplied
+            /// L0 voltage droop trigger (전압 임계 도달).
+            case voltageDroop
+            /// 사용자가 onboard 수동 송출 성공.
+            case manualSendSucceeded
         }
         public let id = UUID()
         public let timestamp: Date
@@ -206,6 +246,19 @@ extension WalkLabSession {
             case imuUnavailable
             case imuStale
             case imuPlausibilityFailed(String)
+            // v1.11.24 (2026-05-20 audit P0-1, P0-2) — 상태 일관성 가드:
+            // 다른 cycle 활성 상태에서 새 preset 클릭 시 UI/log/robot mismatch 방지.
+            case alreadyWalking(activePresetLabel: String, requestedLabel: String)
+            /// 고급 모드에서 stability 점수가 critical 인 슬라이더 조합.
+            case advancedStabilityCritical
+            /// preset.requiresRiskConfirmation true 이지만 사용자 risk 미확인.
+            case highRiskNotAcknowledged(presetLabel: String)
+            // v1.11.24 audit P1-3 — ROBOTIS onboard 시작 차단 사유.
+            case onboardSshNotConnected
+            case onboardAutoBrokeringOff
+            case onboardAckTimeout
+            // v1.11.25 audit-D — thermal cool-down 강제. 60°C 도달 후 50°C 미만까지 재시작 차단.
+            case motorTempCoolDownRequired(currentTempC: Double, exitTempC: Double)
         }
         public let cause: Cause
         public var userMessage: String {
@@ -229,6 +282,43 @@ extension WalkLabSession {
                 return "🛑 IMU 지연 5초+ — outdated 데이터로 보정 시 fall 위험. 연결 확인 후 재시도"
             case .imuPlausibilityFailed(let detail):
                 return "🛑 IMU plausibility 실패 (\(detail)) — 1g 중력 감지 안 됨. chip 확인 후 재시도"
+            case .alreadyWalking(let active, let requested):
+                return "⚠️ '\(active)' 진행 중 — '\(requested)' 으로 바꾸려면 먼저 정지(■) 누르세요"
+            case .advancedStabilityCritical:
+                return "🛑 고급 슬라이더 위험도 critical — 슬라이더 조합 점검 후 재시도"
+            case .highRiskNotAcknowledged(let label):
+                return "⚠️ '\(label)' 위험 동의 필요 — 위험 시나리오 확인 후 재시도"
+            case .onboardSshNotConnected:
+                return "🛑 ROBOTIS Onboard 시작 차단 — SSH (RemoteShell) 미연결. 연결 후 재시도"
+            case .onboardAutoBrokeringOff:
+                return "🛑 ROBOTIS Onboard 시작 차단 — 자동 brokering OFF. 토글을 ON 으로 바꾼 뒤 재시도"
+            case .onboardAckTimeout:
+                return "🛑 ROBOTIS Onboard ACK 타임아웃 — robot-side demo-pilot patch 미설치/구버전 의심"
+            case .motorTempCoolDownRequired(let current, let exit):
+                return String(format: "🌡️ 모터 냉각 필요 — 현재 %.1f°C, %.1f°C 미만까지 대기 (60°C 알람 후 cool-down)",
+                              current, exit)
+            }
+        }
+
+        /// 진단/로그용 한 단어 코드. 세션 헤더의 startBlockedReason 에 기록.
+        public var diagnosticCode: String {
+            switch cause {
+            case .noConnection:                                 return "noConnection"
+            case .cradleNotConfirmed:                           return "cradleNotConfirmed"
+            case .dxlPowerFailed:                               return "dxlPowerFailed"
+            case .lowerBodyTorqueFailed:                        return "lowerBodyTorqueFailed"
+            case .bulkTorqueFailed:                             return "bulkTorqueFailed"
+            case .balanceCorrectorRequiredForCautionPreset:     return "balanceCorrectorRequiredForCautionPreset"
+            case .imuUnavailable:                               return "imuUnavailable"
+            case .imuStale:                                     return "imuStale"
+            case .imuPlausibilityFailed:                        return "imuPlausibilityFailed"
+            case .alreadyWalking:                               return "alreadyWalking"
+            case .advancedStabilityCritical:                    return "advancedStabilityCritical"
+            case .highRiskNotAcknowledged:                      return "highRiskNotAcknowledged"
+            case .onboardSshNotConnected:                       return "onboardSshNotConnected"
+            case .onboardAutoBrokeringOff:                      return "onboardAutoBrokeringOff"
+            case .onboardAckTimeout:                            return "onboardAckTimeout"
+            case .motorTempCoolDownRequired:                    return "motorTempCoolDownRequired"
             }
         }
     }

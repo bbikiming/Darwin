@@ -32,7 +32,10 @@ struct WalkLabOnboardBridge: View {
         Color.clear
             .frame(width: 0, height: 0)
             // IMMEDIATE: critical user action.
+            // v1.11.24 audit iter2-I — activeRobotPreset 도 같이 관찰 (P1-1 split 이후
+            // 실 motor task 가 cycle 종료 / 자동 정지로 nil 이 되는 시점도 trigger).
             .onChange(of: session.current)                  { _, _ in scheduleImmediateSend() }
+            .onChange(of: session.activeRobotPreset)        { _, _ in scheduleImmediateSend() }
             .onChange(of: session.walkingEngine) { _, newValue in
                 lastAckedLine = nil   // engine 전환 → dedup reset
                 if newValue == .robotisOnboard {
@@ -69,7 +72,10 @@ struct WalkLabOnboardBridge: View {
     private func scheduleImmediateSend() {
         guard shouldSend() else { return }
         debounceTask?.cancel()
-        let cmd = session.currentWalkingEngineCommand(enabled: session.current != .idle)
+        // v1.11.24 audit iter2-I — enabled 는 activeRobotPreset 우선 (실 task 진행 중 여부).
+        // sim / no-task 시 fallback 으로 current.
+        let effectivePreset = session.activeRobotPreset ?? session.current
+        let cmd = session.currentWalkingEngineCommand(enabled: effectivePreset != .idle)
         let line = cmd.serializedLine
         if line == lastAckedLine { return }
         Task { @MainActor in
@@ -85,7 +91,10 @@ struct WalkLabOnboardBridge: View {
         debounceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             if Task.isCancelled { return }
-            let cmd = session.currentWalkingEngineCommand(enabled: session.current != .idle)
+            // v1.11.24 audit iter2-I — enabled 는 activeRobotPreset 우선 (실 task 진행 중 여부).
+        // sim / no-task 시 fallback 으로 current.
+        let effectivePreset = session.activeRobotPreset ?? session.current
+        let cmd = session.currentWalkingEngineCommand(enabled: effectivePreset != .idle)
             let line = cmd.serializedLine
             if line == lastAckedLine { return }
             await performSend(line: line, isImmediate: false)
@@ -127,6 +136,8 @@ struct WalkLabOnboardBridge: View {
             session.onboardConsecutiveFailures = consecutiveFailures
             session.onboardLastError = error
             session.onboardLastAckAt = nil
+            // v1.11.24 audit iter4-A — footer 의 onboardAckStatus 가 "pending" 으로 남지 않도록.
+            session.setOnboardAckStatus("error: \(error.prefix(40))")
             session.setLastRobotEvent("⚠️ ROBOTIS Onboard 명령 실패 (\(consecutiveFailures)회 연속): \(error)")
             session.logSafetyEvent(
                 kind: .correctorOff,
@@ -153,6 +164,7 @@ struct WalkLabOnboardBridge: View {
                 consecutiveFailures += 1
                 session.onboardConsecutiveFailures = consecutiveFailures
                 session.onboardLastError = "stale ACK (expected=\(expectedCmdId), got=\(ackCmdId ?? "nil"))"
+                session.setOnboardAckStatus("stale")  // v1.11.24 audit iter4-A
                 session.logSafetyEvent(
                     kind: .correctorOff,
                     message: "Onboard stale ACK — daemon 처리 지연 또는 race. expected=\(expectedCmdId)"
@@ -163,6 +175,7 @@ struct WalkLabOnboardBridge: View {
             session.onboardLastAckAt = Date()
             session.onboardLastError = nil
             session.onboardDaemonMissing = false
+            session.setOnboardAckStatus("ok")  // v1.11.24 audit iter4-A
             lastAckedLine = commandLine
             if consecutiveFailures > 0 {
                 session.setLastRobotEvent("✓ ROBOTIS Onboard 통신 복구 — \(consecutiveFailures)회 실패 후")
@@ -174,6 +187,7 @@ struct WalkLabOnboardBridge: View {
             session.onboardConsecutiveFailures = consecutiveFailures
             session.onboardDaemonMissing = true
             session.onboardLastError = "daemon 응답 없음 (NO_ACK)"
+            session.setOnboardAckStatus("no_ack")  // v1.11.24 audit iter4-A
             session.setLastRobotEvent("⚠️ Onboard daemon 응답 없음 — firmware patch 적용 또는 데몬 시작 필요")
             session.logSafetyEvent(
                 kind: .correctorOff,

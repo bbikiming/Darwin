@@ -66,7 +66,12 @@ public final class WalkSessionLogger {
                 firmwareVersion: String? = nil,
                 onboardPatchVersion: String? = nil,
                 experimentId: String? = nil,
-                baselineSessionId: String? = nil) throws {
+                baselineSessionId: String? = nil,
+                // v1.11.24 audit P1-2 — start-state diagnostic fields.
+                requestedPreset: String? = nil,
+                startBlockedReason: String? = nil,
+                walkCycleTaskActiveAtStart: Bool? = nil,
+                lastRobotEventAtStart: String? = nil) throws {
         let fm = FileManager.default
         let baseDir = try fm.url(for: .applicationSupportDirectory,
                                  in: .userDomainMask,
@@ -121,7 +126,15 @@ public final class WalkSessionLogger {
             firmwareVersion: firmwareVersion,
             onboardPatchVersion: onboardPatchVersion,
             experimentId: experimentId,
-            baselineSessionId: baselineSessionId
+            baselineSessionId: baselineSessionId,
+            // v1.11.24 audit P1-2
+            requestedPreset: requestedPreset,
+            startBlockedReason: startBlockedReason,
+            walkCycleTaskActiveAtStart: walkCycleTaskActiveAtStart,
+            motorWriteStarted: nil,           // logger close 시 caller 가 update (header is immutable)
+            motorWriteStepCount: nil,
+            onboardAckStatus: nil,
+            lastRobotEventAtStart: lastRobotEventAtStart
         )
 
         self.encoder = JSONEncoder()
@@ -134,15 +147,63 @@ public final class WalkSessionLogger {
     }
 
     /// 매 tick 호출 — sample 한 줄 append + 메모리 buffer 에도 보관.
+    ///
+    /// **v1.11.25 (2026-05-21) audit log-C/P**:
+    /// - **fsync**: 매 `fsyncEverySampleCount` (50 = 2.5초 at 20Hz) 마다 disk flush.
+    ///   종전: OS page cache 만 → crash 시 마지막 ~수 KB sample 손실.
+    /// - **메모리 cap**: `samples` 배열 size `samplesMemoryCap` (30,000 ≈ 25분 at 20Hz) 초과
+    ///   시 oldest 부터 drop. 장시간 보행에서 14 MB+ 누적 방지.
     public func append(_ sample: WalkSessionSample) {
         samples.append(sample)
+        if samples.count > Self.samplesMemoryCap {
+            samples.removeFirst(samples.count - Self.samplesMemoryCap)
+        }
         sampleCount += 1
         // file write 는 throw 가능 — silent 처리 (디스크 full 같은 edge case).
         try? writeLine(sample)
+        // 주기 fsync — disk flush 보장.
+        if sampleCount % Self.fsyncEverySampleCount == 0 {
+            try? fileHandle.synchronize()
+        }
     }
 
+    /// **v1.11.25 audit log-C**: fsync cadence (sample 단위).
+    /// 50 samples × 50ms = 2.5초마다 disk flush.
+    /// trade-off: 너무 자주 (매 tick) = disk I/O ↑, 너무 드물면 crash 손실 ↑.
+    /// 2.5초 ≈ 1 보행 cycle 정도 — 합리적 균형.
+    public static let fsyncEverySampleCount: Int = 50
+
+    /// **v1.11.25 audit log-P**: in-memory samples buffer cap.
+    /// 30,000 sample × ~500 bytes ≈ 15 MB. 25분 보행분 (대부분 1 session 충분).
+    /// 분석 시 `WalkSessionAnalyzer.analyze(logger.samples, ...)` 는 최근 25분만 사용.
+    /// 디스크 jsonl 은 cap 없음 (전체 보존).
+    public static let samplesMemoryCap: Int = 30_000
+
     /// session 종료 — file close + sync.
-    public func close() {
+    ///
+    /// **v1.11.24 (2026-05-20) audit iter2-H**: motor write 진단을 footer 로 append.
+    /// 종전: header 가 immutable 이라 종료-시점 값 (motorWriteStarted / stepCount / ackStatus)
+    /// 이 jsonl 에 안 남았음. 본 close 가 마지막 줄에 footer object 한 줄 추가.
+    /// `WalkSessionFooter` 를 별도 decode 하지 않는 분석기는 마지막 줄을 그냥 skip → 호환.
+    public func close(
+        motorWriteStarted: Bool? = nil,
+        motorWriteStepCount: Int? = nil,
+        onboardAckStatus: String? = nil,
+        endReason: String? = nil
+    ) {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let footer = WalkSessionFooter(
+            closedAtIso: isoFormatter.string(from: Date()),
+            totalSampleCount: sampleCount,
+            motorWriteStarted: motorWriteStarted,
+            motorWriteStepCount: motorWriteStepCount,
+            onboardAckStatus: onboardAckStatus,
+            endReason: endReason
+        )
+        try? writeLine(footer)
+        // v1.11.25 audit log-C — 종료 시 명시 fsync. close() 만으로는 disk flush 미보장.
+        try? fileHandle.synchronize()
         try? fileHandle.close()
     }
 

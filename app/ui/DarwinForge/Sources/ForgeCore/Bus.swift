@@ -68,6 +68,53 @@ public enum JointID: UInt8, CaseIterable, Codable, Sendable, Hashable {
 }
 
 /// 한 관절의 실시간 상태.
+/// **v1.11.25 (2026-05-21) audit P0 robot-D** — ROBOTIS-OP2 FSR (Force Sensitive Resistor) board.
+///
+/// 두 개의 FSR board (left foot ID 112, right foot ID 111) 가 발 sole 의 4 cell 압력 +
+/// center-of-pressure (X, Y) 를 측정. ZMP-기반 보행 안정성 분석의 객관 지표.
+public struct FsrReading: Sendable, Equatable {
+    /// Dynamixel ID (111=right, 112=left).
+    public let id: UInt8
+    /// 4 cell 압력 raw (0..1023). [front-left, front-right, rear-right, rear-left].
+    public let cellFrontLeft: UInt16
+    public let cellFrontRight: UInt16
+    public let cellRearRight: UInt16
+    public let cellRearLeft: UInt16
+    /// 중심점 X (사용자 시점 좌측=음수, -127..127). 0 = 발 중앙.
+    public let centerX: Int8
+    /// 중심점 Y (앞=음수, -127..127).
+    public let centerY: Int8
+
+    /// 4 cell 합 — 발 total 압력 (raw). 큰 값 = 그 발에 weight 더 실림.
+    public var totalPressureRaw: UInt32 {
+        UInt32(cellFrontLeft) + UInt32(cellFrontRight) + UInt32(cellRearRight) + UInt32(cellRearLeft)
+    }
+
+    init(_ ffi: FfiFsrReading) {
+        self.id = ffi.id
+        self.cellFrontLeft = ffi.cell_fl
+        self.cellFrontRight = ffi.cell_fr
+        self.cellRearRight = ffi.cell_rr
+        self.cellRearLeft = ffi.cell_rl
+        self.centerX = ffi.center_x
+        self.centerY = ffi.center_y
+    }
+
+    /// 테스트 / 시뮬레이션용 public init.
+    public init(id: UInt8,
+                cellFrontLeft: UInt16, cellFrontRight: UInt16,
+                cellRearRight: UInt16, cellRearLeft: UInt16,
+                centerX: Int8, centerY: Int8) {
+        self.id = id
+        self.cellFrontLeft = cellFrontLeft
+        self.cellFrontRight = cellFrontRight
+        self.cellRearRight = cellRearRight
+        self.cellRearLeft = cellRearLeft
+        self.centerX = centerX
+        self.centerY = centerY
+    }
+}
+
 public struct JointState: Sendable, Equatable {
     public let id: JointID
     public let torqueEnabled: Bool
@@ -307,6 +354,27 @@ public final class Bus: @unchecked Sendable {
             var ffi = fc_imu_raw()
             try checkForgeReturn(fc_bus_read_imu(raw(), &ffi))
             return ImuRaw(ffi)
+        }
+    }
+
+    /// **v1.11.25 (2026-05-21) audit P0 robot-D** — 좌측 발 FSR (ID 112) read.
+    ///
+    /// board 미장착 robot (개발용 일부) 에서는 timeout 으로 throw. 호출자가 try? 로
+    /// fallback 처리 → 한 번 실패한 후 polling 주기 늘려서 spam 차단 권장.
+    public func readFsrLeft() throws -> FsrReading {
+        try locked {
+            var ffi = FfiFsrReading(id: 0, cell_fl: 0, cell_fr: 0, cell_rr: 0, cell_rl: 0, center_x: 0, center_y: 0)
+            try checkForgeReturn(fc_bus_read_fsr_left(raw(), &ffi))
+            return FsrReading(ffi)
+        }
+    }
+
+    /// 우측 발 FSR (ID 111) read.
+    public func readFsrRight() throws -> FsrReading {
+        try locked {
+            var ffi = FfiFsrReading(id: 0, cell_fl: 0, cell_fr: 0, cell_rr: 0, cell_rl: 0, center_x: 0, center_y: 0)
+            try checkForgeReturn(fc_bus_read_fsr_right(raw(), &ffi))
+            return FsrReading(ffi)
         }
     }
 

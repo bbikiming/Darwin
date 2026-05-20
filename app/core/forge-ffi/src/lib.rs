@@ -501,6 +501,95 @@ pub unsafe extern "C" fn fc_bus_read_imu(handle: *mut FcBus, out: *mut FfiImuRaw
     })
 }
 
+// MARK: - v1.11.25 (2026-05-21) audit P0 robot-D — FSR (foot pressure) FFI.
+//
+// 종전: FSR_LEFT=112 / FSR_RIGHT=111 ID 상수만 forge-core 에 정의되어 있고 read 함수 부재 →
+//       Swift 가 FSR 데이터를 얻을 방법 자체가 없어 ZMP / 발 지지 phase 분석 불가.
+// 현재: forge-core::joint::fsr 모듈 신규 + 본 FFI 노출 + Swift wrapper. board 미장착 robot
+//       에서는 timeout 으로 fail — Swift 측에서 fallback 처리.
+
+/// FSR 한 발의 4 cell + center-of-pressure 측정.
+/// `fc_bus_read_fsr_left` / `fc_bus_read_fsr_right` 의 out 파라미터.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FfiFsrReading {
+    /// Dynamixel ID (111=right, 112=left).
+    pub id: u8,
+    /// 4 cell 압력 raw (0..1023). \[front-left, front-right, rear-right, rear-left\].
+    pub cell_fl: u16,
+    pub cell_fr: u16,
+    pub cell_rr: u16,
+    pub cell_rl: u16,
+    /// 중심점 X (사용자 시점 좌측=음수, -127..127). 0 = 발 중앙.
+    pub center_x: i8,
+    /// 중심점 Y (앞=음수, -127..127).
+    pub center_y: i8,
+}
+
+impl From<forge_core::joint::fsr::FsrReading> for FfiFsrReading {
+    fn from(s: forge_core::joint::fsr::FsrReading) -> Self {
+        Self {
+            id: s.id,
+            cell_fl: s.cells[0],
+            cell_fr: s.cells[1],
+            cell_rr: s.cells[2],
+            cell_rl: s.cells[3],
+            center_x: s.center_x,
+            center_y: s.center_y,
+        }
+    }
+}
+
+/// 좌측 발 FSR (ID 112) read. board 미장착 시 timeout 으로 `FC_ERR_TIMEOUT`.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_read_fsr_left(handle: *mut FcBus, out: *mut FfiFsrReading) -> c_int {
+    if handle.is_null() || out.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(b: &mut Bus<P>, out: *mut FfiFsrReading) -> c_int {
+            match b.read_fsr_left() {
+                Ok(s) => {
+                    unsafe { *out = s.into(); }
+                    FC_OK
+                }
+                Err(e) => err_code(&e),
+            }
+        }
+        match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, out),
+            BusBackend::Loopback(b) => run(b, out),
+            BusBackend::Tcp(b) => run(b, out),
+        }
+    })
+}
+
+/// 우측 발 FSR (ID 111) read.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_read_fsr_right(handle: *mut FcBus, out: *mut FfiFsrReading) -> c_int {
+    if handle.is_null() || out.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(b: &mut Bus<P>, out: *mut FfiFsrReading) -> c_int {
+            match b.read_fsr_right() {
+                Ok(s) => {
+                    unsafe { *out = s.into(); }
+                    FC_OK
+                }
+                Err(e) => err_code(&e),
+            }
+        }
+        match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, out),
+            BusBackend::Loopback(b) => run(b, out),
+            BusBackend::Tcp(b) => run(b, out),
+        }
+    })
+}
+
 /// CM Dynamixel 전원 게이트.
 #[no_mangle]
 pub unsafe extern "C" fn fc_bus_set_dxl_power(handle: *mut FcBus, on: c_int) -> c_int {
