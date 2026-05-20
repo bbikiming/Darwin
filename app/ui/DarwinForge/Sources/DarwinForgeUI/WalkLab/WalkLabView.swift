@@ -98,10 +98,13 @@ public struct WalkLabView: View {
                         // v1.11.24 audit iter2-J — active 표시는 실 motor task 가 진행 중인 preset
                         // 우선 (activeRobotPreset). robot 미연결 (sim) 일 땐 fallback 으로 current.
                         let activePreset = session.activeRobotPreset ?? session.current
+                        // **v1.14.6 (2026-05-21)** — 시뮬 모드 (bus 미연결) 에선 cradle 검사
+                        // 강제 안 함 → 모든 preset 활성. 실 로봇 연결 시에만 cradle 강제.
+                        let buttonEnabled = (store.bus == nil) || session.cradleConfirmed
                         PresetButton(
                             preset: preset,
                             isActive: activePreset == preset,
-                            isEnabled: session.cradleConfirmed,
+                            isEnabled: buttonEnabled,
                             blockingReason: blocking.reason,
                             onUnblock: blocking.unblock
                         ) {
@@ -430,6 +433,13 @@ public struct WalkLabView: View {
                     .overlay(alignment: .bottomTrailing) {
                         SceneWalkGraphOverlay()
                             .padding(DFSpace.sm)
+                    }
+                    // **v1.14.6 (2026-05-21) — 사용자 요청**: preset 차단 사유 안내 banner.
+                    // 3D 뷰 하단 중앙에 — 사용자가 어떤 preset 이 왜 disabled 인지 즉시 인지.
+                    .overlay(alignment: .bottom) {
+                        walkGuidanceBanner
+                            .padding(.bottom, DFSpace.sm2)
+                            .padding(.horizontal, DFSpace.sm)
                     }
 
                     // 사이드 패널: 2D 발자취 (top-down) + IMU 게이지 2개.
@@ -978,11 +988,64 @@ public struct WalkLabView: View {
     ///
     /// 이 사전 평가는 `WalkLabSession.quickPreflight` 의 subset 이지만 UI 만 표시 — 실 차단은
     /// session 의 preflight 가 마지막에 한 번 더 검증.
+    /// **v1.14.6 (2026-05-21) — 사용자 요청**: 3D 뷰 하단의 차단 사유 안내 banner.
+    /// 모든 non-idle preset 의 unique 차단 사유를 1줄 요약. 없으면 hidden.
+    /// 시뮬 모드에선 cradle 자동 통과 — 다른 사유 (caution + 보정 OFF / 위험 동의 등) 표시.
+    @ViewBuilder
+    private var walkGuidanceBanner: some View {
+        let reasons = uniqueBlockingReasons()
+        if reasons.isEmpty {
+            EmptyView()
+        } else {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(DFColor.warning)
+                    .font(DFFont.label)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("일부 보행 모션 비활성")
+                        .font(DFFont.bodySmallEmph)
+                        .foregroundStyle(DFColor.warning)
+                    Text(reasons.joined(separator: " · "))
+                        .font(DFFont.bodySmall)
+                        .foregroundStyle(DFColor.textPrimary)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, DFSpace.sm2)
+            .padding(.vertical, DFSpace.xs2)
+            .background(
+                RoundedRectangle(cornerRadius: DFRadius.button)
+                    .fill(DFColor.card.opacity(0.9))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DFRadius.button)
+                    .stroke(DFColor.warning.opacity(DFOpacity.o40), lineWidth: 1)
+            )
+            .frame(maxWidth: 520)
+        }
+    }
+
+    /// preset 별 차단 사유 모아서 unique 리스트 반환.
+    private func uniqueBlockingReasons() -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for preset in WalkLabPreset.allCases where preset != .idle {
+            if let r = presetBlockingReason(for: preset).reason, !seen.contains(r) {
+                seen.insert(r)
+                ordered.append(r)
+            }
+        }
+        return ordered
+    }
+
     private func presetBlockingReason(for preset: WalkLabPreset) -> (reason: String?, unblock: (() -> Void)?) {
         // idle 은 정지 버튼이므로 차단 안 함.
         if preset == .idle { return (nil, nil) }
-        // cradle 미확인 — 모든 preset 차단.
-        if !session.cradleConfirmed {
+        // **v1.14.6 (2026-05-21)** — 시뮬 모드 (bus 미연결) 면 cradle 검사 skip.
+        // 사용자가 실 로봇 없이도 보행 알고리즘 / preset 동작을 미리 확인 가능.
+        // 실 로봇 연결 시에만 cradle 강제 — 안전.
+        if store.bus != nil && !session.cradleConfirmed {
             return ("정비 스탠드에 거치 후 활성화", nil)
         }
         // 보행 중 → 다른 non-idle preset 비활성 (이미 walking 표시는 active 별도).
