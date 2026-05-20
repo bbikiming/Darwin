@@ -31,9 +31,24 @@ public final class WalkLabSession: ObservableObject {
 
     // MARK: - 세션 기록
     @Published public var history: [WalkLabRecord] = []
+    @Published public var lastLoggedSessionURL: URL?
+    @Published public var lastLoggedSessionId: String?
+
+    /// 보정 컨텍스트 — v1 baseline 에서는 algorithm/sign/gain 이 없으므로 default 값.
+    /// v1.1+ 에서 BalanceCorrector 가 도입되면 이 값들을 실제 corrector state 로 채운다.
+    public var balanceAlgorithmMode: String = "off"
+    public var balanceSignConvention: String = "robotisWalkingCpp"
+    public var balanceGainProfile: String = "robotisOriginal"
+    public var correctorIntensityLevel: Int = 1
+    public var correctionApplyMode: String = "simOnly"
+    public var imuSourceAtStart: String = "sim"
+    public var imuScaleSuspicionAtStart: String = "normal"
+    public var operatorNote: String?
+    public var comparisonTag: WalkComparisonTag?
 
     // MARK: - 내부
     private let engine: WalkEngine
+    private let recorder: WalkSessionRecorder
     private var simTimer: Timer?
     private var startTime: Date?
     /// Sim IMU 본체 흔들림 위상 (rad). tick 마다 ω·dt 누적.
@@ -48,8 +63,9 @@ public final class WalkLabSession: ObservableObject {
     /// 모터 정상 평형 온도 (idle).
     private let motorAmbientTemp: Double = 35.0
 
-    public init() {
+    public init(recorder: WalkSessionRecorder? = nil) {
         self.engine = WalkEngine()
+        self.recorder = recorder ?? WalkSessionRecorder()
     }
 
     /// 현재 효과적인 command — advanced 모드면 custom, 아니면 preset.
@@ -83,12 +99,52 @@ public final class WalkLabSession: ObservableObject {
         thermalAlarm = false
         startTime = Date()
 
+        startRecording(preset: preset)
+
         simTimer?.invalidate()
         simTimer = Timer.scheduledTimer(withTimeInterval: tickDtSec, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.tick()
             }
         }
+    }
+
+    private func startRecording(preset: WalkLabPreset) {
+        let cmd = effectiveCommand
+        let context = WalkSessionRecorder.Context(
+            preset: preset.id,
+            isRealRobot: imuSourceAtStart == "real",
+            supportMode: cradleConfirmed ? "cradle" : "unknown",
+            walkTuning: WalkTuningSnapshot(
+                periodMs: effectivePeriodMs,
+                xStrideM: cmd.x,
+                yStrideM: cmd.y,
+                aTurnRad: cmd.a
+            ),
+            balanceAlgorithmMode: balanceAlgorithmMode,
+            balanceSignConvention: balanceSignConvention,
+            balanceGainProfile: balanceGainProfile,
+            correctorIntensityLevelAtStart: correctorIntensityLevel,
+            correctionApplyMode: correctionApplyMode,
+            imuSourceAtStart: imuSourceAtStart,
+            imuScaleSuspicionAtStart: imuScaleSuspicionAtStart,
+            safetyPolicy: SafetyPolicySnapshot(
+                cradleRequired: true,
+                highRiskAcknowledged: riskAcknowledged
+            ),
+            appVersion: appVersionString(),
+            operatorNote: operatorNote,
+            comparisonTag: comparisonTag
+        )
+        let url = recorder.startSession(context: context)
+        self.lastLoggedSessionURL = url
+        self.lastLoggedSessionId = recorder.currentSessionId
+        recorder.recordEvent(kind: .sessionStart, message: "session started preset=\(preset.id)")
+    }
+
+    private func appVersionString() -> String {
+        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        return "\(v)"
     }
 
     /// 진행 중 sim 에 현재 슬라이더/프리셋 값을 재밀어넣는다.
@@ -100,7 +156,7 @@ public final class WalkLabSession: ObservableObject {
     }
 
     /// 정지 — 시뮬 멈춤, 기록 누적.
-    public func stop() {
+    public func stop(reason: String = "userStop", endedNormally: Bool = true) {
         simTimer?.invalidate()
         simTimer = nil
         engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
@@ -112,6 +168,10 @@ public final class WalkLabSession: ObservableObject {
             ), at: 0)
             if history.count > 12 { history.removeLast() }
         }
+        if recorder.currentSessionId != nil {
+            recorder.recordEvent(kind: .sessionStop, message: "session stopped reason=\(reason)")
+            _ = recorder.stopSession(endReason: reason, endedNormally: endedNormally)
+        }
         startTime = nil
         current = .idle
         // sway 도 zero 로 디케이 — 다음 tick 에서 매끄럽게 감소.
@@ -119,7 +179,11 @@ public final class WalkLabSession: ObservableObject {
 
     /// 비상 정지 — Stop + risk reset.
     public func emergencyStop() {
-        stop()
+        if recorder.currentSessionId != nil {
+            recorder.recordEvent(kind: .emergencyStop, severity: .critical,
+                                  message: "emergency stop triggered")
+        }
+        stop(reason: "emergencyStop", endedNormally: false)
         riskAcknowledged = false
         balanceLost = false
         // 온도는 그대로 — 사용자가 확인 후 자연 냉각.
@@ -143,25 +207,70 @@ public final class WalkLabSession: ObservableObject {
         updateSimIMU()
         updateSimThermal()
 
+        recordTick(foot: foot)
+
         // 자동 stop (시간 초과)
         if let start = startTime {
             let secs = Date().timeIntervalSince(start)
             if current.maxDurationSec > 0 && Int(secs) >= current.maxDurationSec {
-                stop()
+                stop(reason: "presetMaxDuration")
             }
         }
 
         // L3 — 균형 손실
         if abs(imuRollDeg) > 30 || abs(imuPitchDeg) > 30 {
             balanceLost = true
+            recorder.recordEvent(kind: .balanceLost, severity: .critical,
+                                  message: "balance lost roll=\(String(format: "%.1f", imuRollDeg)) pitch=\(String(format: "%.1f", imuPitchDeg))")
             emergencyStop()
         }
 
         // L4 — 온도 임계
         if maxMotorTemp >= 60 {
             thermalAlarm = true
+            recorder.recordEvent(kind: .thermalAlarm, severity: .critical,
+                                  message: "motor temp \(String(format: "%.1f", maxMotorTemp))°C ≥ 60°C")
             emergencyStop()
         }
+    }
+
+    private func recordTick(foot: FootTargets) {
+        guard let start = startTime, recorder.currentSessionId != nil else { return }
+        let tMs = Date().timeIntervalSince(start) * 1000.0
+        let periodMs = max(effectivePeriodMs, 1)
+        let cycleElapsed = tMs.truncatingRemainder(dividingBy: periodMs)
+        let phase01 = cycleElapsed / periodMs
+        // v1 baseline 에는 corrector 가 없으므로 candidate / applied 모두 0.
+        let zeroDeltas = [Double](repeating: 0, count: 8)
+        let tick = WalkSessionRecorder.TickData(
+            tMs: tMs,
+            walkCycleElapsedMs: cycleElapsed,
+            walkPhase01: phase01,
+            imuRollDeg: imuRollDeg,
+            imuPitchDeg: imuPitchDeg,
+            imuSampleAgeMs: nil,
+            imuSequence: nil,
+            effectivePitchErrDeg: imuPitchDeg,
+            effectiveRollErrDeg: imuRollDeg,
+            candidateDeltas: zeroDeltas,
+            appliedDeltas: zeroDeltas,
+            correctionAppliedToRobot: correctionApplyMode == "robotApplied",
+            observeOnly: correctionApplyMode == "observeOnly",
+            balanceState: balanceState(),
+            batteryVolts: nil,
+            motorAvgTemp: maxMotorTemp,
+            busWriteFailureCount: 0,
+            busReadFailureCount: 0,
+            intensityLevel: correctorIntensityLevel
+        )
+        recorder.recordTick(tick)
+        _ = foot
+    }
+
+    private func balanceState() -> String {
+        if abs(imuRollDeg) > 30 || abs(imuPitchDeg) > 30 { return "danger" }
+        if abs(imuRollDeg) > 15 || abs(imuPitchDeg) > 15 { return "caution" }
+        return "ok"
     }
 
     /// Sim IMU — 워킹 중 본체 흔들림 모델.

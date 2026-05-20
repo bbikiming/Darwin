@@ -15,23 +15,56 @@ import SwiftUI
 /// - L3: live IMU |roll/pitch| > 30° → 자동 stop
 /// - L4: 모터 max 온도 60°C 도달 → 자동 stop
 public struct WalkLabView: View {
+    enum Tab: String, CaseIterable, Identifiable {
+        case live = "라이브 보행"
+        case learning = "데이터 학습"
+        var id: String { rawValue }
+    }
+
     @StateObject private var session = WalkLabSession()
+    @State private var tab: Tab = .live
     @State private var showingRiskConfirm: Bool = false
     @State private var pendingHighRiskPreset: WalkLabPreset?
 
     public init() {}
 
     public var body: some View {
-        HSplitView {
-            sidebar
-                .frame(minWidth: 260, idealWidth: 280, maxWidth: 320)
-            detail
-                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 0) {
+            tabBar
+            Divider()
+            content
         }
         .sheet(isPresented: $showingRiskConfirm) {
             riskConfirmSheet
         }
         .background(Color(NSColor.windowBackgroundColor))
+    }
+
+    private var tabBar: some View {
+        Picker("", selection: $tab) {
+            ForEach(Tab.allCases) { t in
+                Text(t.rawValue).tag(t)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch tab {
+        case .live:
+            HSplitView {
+                sidebar
+                    .frame(minWidth: 260, idealWidth: 280, maxWidth: 320)
+                detail
+                    .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+            }
+        case .learning:
+            WalkLearningView()
+        }
     }
 
     // MARK: - Sidebar
