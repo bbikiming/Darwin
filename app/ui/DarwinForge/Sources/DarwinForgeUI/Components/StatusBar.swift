@@ -102,8 +102,10 @@ public struct StatusBar: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DFColor.accent)
-                .help("연결 대시보드 (⌘I)")
-                .keyboardShortcut("i", modifiers: .command)
+                .help("연결 대시보드")
+                // v1.11.23 (2026-05-21): ⌘I 단축키 제거 — RootView toolbar pill 의 ⌘I
+                // (line 358) 와 중복. 둘 다 같은 action 트리거하여 충돌 가능.
+                // toolbar pill 이 메뉴바와 통합되어 발견성 더 높음 → toolbar 만 유지.
 
                 Button(action: { store.disconnect() }) {
                     Image(systemName: "powerplug")

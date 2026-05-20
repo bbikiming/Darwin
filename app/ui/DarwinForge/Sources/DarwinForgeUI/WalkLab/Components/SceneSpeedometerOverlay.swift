@@ -116,14 +116,20 @@ public struct SceneSpeedometerOverlay: View {
             }
             .frame(height: 70)
             .padding(.top, 8)
-            // IMU sim/stale 시 stability 의미 약함 — dim.
+            // IMU sim/stale 시 stability 의미 약함 — dim. v1.11.23: 부드러운 opacity transition.
             .opacity(isImuLive ? 1.0 : 0.7)
+            // v1.11.23 (Codex MED fix): .standard (0.22s) → .fast (0.15s) — TimelineView
+            // 0.2s tick 과 animation overlap 차단. 연속 telemetry 에서 lag 방지.
+            .animation(DFAnimation.fast, value: isImuLive)
+            .animation(DFAnimation.fast, value: stability)
 
             phaseProgressBar
                 .padding(.horizontal, 10)
                 .padding(.bottom, 6)
                 // 보행 idle 시 phase 정체 — dim.
                 .opacity(isWalking ? 1.0 : 0.55)
+                .animation(DFAnimation.fast, value: isWalking)
+                .animation(DFAnimation.fast, value: phaseIndex)
         }
     }
 

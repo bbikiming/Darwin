@@ -1137,7 +1137,10 @@ public final class ConnectionStore: ObservableObject {
         do {
             jointStates[joint] = try bus.readState(joint)
         } catch {
-            print("readState(\(joint.name)) failed: \(error)")
+            // v1.11.23: print → OSLog. Console.app 에서 subsystem
+            // "com.darwinforge" / category "connection" 으로 필터.
+            // Codex HIGH fix: privacy=.public — joint.name + error 모두 공개 (개인 정보 X).
+            DFLog.connection.error("readState(\(joint.name, privacy: .public)) failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

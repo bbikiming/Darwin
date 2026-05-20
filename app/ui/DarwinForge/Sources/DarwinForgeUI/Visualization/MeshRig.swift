@@ -268,7 +268,9 @@ final class MeshRig {
             originalEmissions[key] = NSColor.black
         } catch {
             // mesh 로드 실패 시 그냥 plain color cube placeholder.
-            print("STL load failed for \(name): \(error)")
+            // v1.11.23: print → OSLog (subsystem "com.darwinforge" / category "visualization").
+            // Codex HIGH fix: privacy=.public — name + error 명시 공개 (Console 에서 표시).
+            DFLog.visualization.warning("STL load failed for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
