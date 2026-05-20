@@ -186,6 +186,30 @@ public final class Harness {
 
     // MARK: Recording
 
+    /// **v1.14.4 (2026-05-21)** — 사용자 요청: "로그 남기는 건 로봇이 정상적으로 연결된
+    /// 상태에서만 진행". 미연결 상태에선 lifecycle/connection 자체 이벤트만 기록 (연결
+    /// 시도/성공/실패 자체는 진단에 필수). 그 외 (heartbeat, walklab, motion, teach, pose,
+    /// claude, ui, imu, bus) 는 connected 상태에서만.
+    ///
+    /// 효과: 미연결 idle 상태에서 main actor 부담 0 — heartbeat / record() 모두 즉시 return.
+    /// 디스크 I/O 도 0 (AsyncStream.yield 도 skip).
+    /// **v1.14.4** 테스트 전용 — connection guard 우회. production 코드에선 false 유지.
+    /// HarnessRealRobotSmokeTests 같이 ConnectionStore 를 등록하지만 실제 연결 없이
+    /// record 발화를 검증하는 fixture 가 사용.
+    internal var _bypassConnectionGuard: Bool = false
+
+    private func shouldRecord(kind: TelemetryKind, context: TelemetryContext?) -> Bool {
+        if _bypassConnectionGuard { return true }
+        // 항상 통과 namespace — 라이프사이클 + 연결 + 텔레메트리 자체 + 사용자 북마크.
+        let alwaysOnNamespaces: Set<String> = ["app", "connection", "harness", "user", "error"]
+        if alwaysOnNamespaces.contains(kind.namespace) { return true }
+        // contextProvider 미등록 (non-ConnectionStore 환경) 이면 가드 비활성.
+        guard contextProvider != nil else { return true }
+        // production — connected 상태에서만.
+        let ctx = context ?? contextProvider?()
+        return ctx?.cn == .connected
+    }
+
     /// Synchronous facade — 단일 큐에 enqueue. UI 스레드 비차단.
     /// 호출 비용: ISO8601 string + monotonic clock + continuation.yield (~10 µs).
     ///
@@ -197,6 +221,8 @@ public final class Harness {
                        data: [String: AnyCodable] = [:],
                        context: TelemetryContext? = nil) {
         guard isEnabled, recorder != nil, let cont = continuation else { return }
+        // **v1.14.4** — 미연결 상태일 때 lifecycle/connection 외 모두 skip.
+        guard shouldRecord(kind: kind, context: context) else { return }
         let wall = isoFormatter.string(from: Date())
         let mono = Self.currentMonotonicNs() &- bootMonotonicNs
         // Context resolution — explicit > provider > nil.
@@ -290,10 +316,12 @@ public final class Harness {
 
     private func emitHeartbeat() {
         let ctx = contextProvider?()
-        // 연결 안 됐을 때는 매 10 초 한 번만 (idle heartbeat).
-        if let cn = ctx?.cn, cn != .connected {
-            let sec = Int(Date().timeIntervalSince1970)
-            if sec % 10 != 0 { return }
+        // **v1.14.4 (2026-05-21)** — 사용자 요청: 미연결 시 heartbeat 완전 skip.
+        // 종전: idle 10s 주기 — 디스크 누적 + AsyncStream + main actor 부담 발생.
+        // 현재: production 에서 connected 가 아니면 즉시 return. 단 테스트 환경
+        // (_bypassConnectionGuard 또는 contextProvider 미등록) 에선 발화.
+        if !_bypassConnectionGuard, contextProvider != nil, ctx?.cn != .connected {
+            return
         }
         record(.heartbeat, level: .trace, actor: .system, context: ctx)
     }

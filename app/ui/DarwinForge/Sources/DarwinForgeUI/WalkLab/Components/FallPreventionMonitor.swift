@@ -784,8 +784,17 @@ struct FallPreventionMonitor: View {
             HStack(spacing: DFSpace.xs2) {
                 ForEach(0..<5) { lvl in
                     Button {
+                        // **v1.14.4 (2026-05-21) — slider 일관성 fix**:
+                        // caution preset 보행 중 lvl=0 시도는 enableBalanceCorrection didSet
+                        // 의 rollback 가드에 걸려 intensity=0 + correction=true mismatch 발생.
+                        // setter 자체 거부 — 사용자는 정지 후 변경 필요.
+                        if lvl == 0,
+                           let active = session.activeRobotPreset,
+                           active.safety == .caution,
+                           session.isWalkActive {
+                            return
+                        }
                         session.correctorIntensityLevel = lvl
-                        // intensity 0 = enableBalanceCorrection off, 1+ = on.
                         session.enableBalanceCorrection = (lvl > 0)
                     } label: {
                         VStack(spacing: 2) {

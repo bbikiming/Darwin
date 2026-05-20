@@ -40,11 +40,14 @@ final class HarnessRealRobotSmokeTests: XCTestCase {
         sessionDir = tempRoot.appendingPathComponent("current-\(UUID().uuidString)", isDirectory: true)
         // 활성화. (전역 default 가 옵트인 false 인 사용자 환경이라도 본 테스트 동안엔 강제.)
         Harness.shared.isEnabled = true
+        // **v1.14.4** — production 의 connection guard 우회 (테스트 환경 — 실제 연결 X).
+        Harness.shared._bypassConnectionGuard = true
         Harness.shared._startInDirectory(sessionDir, id: UUID().uuidString)
     }
 
     override func tearDown() async throws {
         Harness.shared.stop(reason: "test-teardown")
+        Harness.shared._bypassConnectionGuard = false      // singleton 영구 영향 차단.
         try? FileManager.default.removeItem(at: tempRoot)
         try await super.tearDown()
     }
