@@ -80,9 +80,13 @@ public final class Harness {
         guard isEnabled else { return }
         guard recorder == nil else { return }
 
-        // P2 fix — orphan archive + retention 을 비차단으로.
+        // **v1.14.5 (2026-05-21) — race fix**: 종전 archiveOrphanedSessions 를
+        // Task.detached 로 호출했으나, 새 current-<UUID> dir 생성 직후 task 가
+        // fire 되면 새 dir 도 archive 로 옮겨버려 events.jsonl 가 disk 에 안 보임.
+        // **본 호출은 새 dir 만들기 *전*에 동기**로 — current-* 패턴은 이전 launch 의
+        // 잔여만 잡힘. enforceRetention 만 비동기 유지 (오래된 세션 정리 — 비차단).
+        TelemetryStore.archiveOrphanedSessions()
         Task.detached(priority: .utility) {
-            TelemetryStore.archiveOrphanedSessions()
             TelemetryStore.enforceRetention()
         }
         let id = UUID().uuidString
