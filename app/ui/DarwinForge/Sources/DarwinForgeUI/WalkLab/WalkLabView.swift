@@ -959,7 +959,10 @@ public struct WalkLabView: View {
     // MARK: - Actions
 
     private func tap(_ preset: WalkLabPreset) {
-        guard session.cradleConfirmed || preset == .idle else { return }
+        // **v1.14.7 (2026-05-21)** — 시뮬 모드 (bus 미연결) 면 cradle 검사 skip.
+        // 종전: cradle 미확인 시 tap() 첫 줄에서 return → 위험 동의 dialog 도 안 뜸.
+        let needsCradle = (store.bus != nil)
+        guard !needsCradle || session.cradleConfirmed || preset == .idle else { return }
         if preset == .idle {
             session.stop()
             return

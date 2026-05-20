@@ -18,15 +18,20 @@ final class WalkLabV1124AuditFixesTests: XCTestCase {
 
     // MARK: - P0-1: start() validates before mutating state
 
-    /// **start(_:) 시 cradle 미확인 → state 변경 없음 + preflight failure 기록**.
-    /// 종전엔 `guard cradleConfirmed else { return }` 가 silent 였지만 audit 이후엔 사유 기록.
+    /// **v1.14.7 (2026-05-21)** — 시뮬 모드 cradle skip 후 동작 변경:
+    /// 종전: cradle 미확인 → cradleNotConfirmed 사유 기록.
+    /// 신규: 시뮬 모드 (store == nil → bus == nil) 에선 cradle skip → start 진행.
+    /// 단 startWalkCycle 안의 bus guard 가 noConnection 사유 발화. 사용자 의도 보존.
     func testStartWithoutCradleEmitsPreflightFailure() {
         let session = WalkLabSession()
         session.start(.march)
-        XCTAssertEqual(session.current, .idle, "cradle 미확인 — current 변경 없음")
+        // 시뮬 모드 → start 진행 → current 변경.
+        XCTAssertEqual(session.current, .march, "시뮬 모드에선 cradle 우회 (v1.14.7)")
+        // bus 미연결 → startWalkCycle 안에서 noConnection failure 기록.
         XCTAssertNotNil(session.lastPreflightFailure, "preflight failure 기록되어야 함")
-        XCTAssertEqual(session.lastPreflightFailure?.cause, .cradleNotConfirmed)
-        XCTAssertEqual(session.startBlockedReason, "cradleNotConfirmed")
+        XCTAssertEqual(session.lastPreflightFailure?.cause, .noConnection,
+            "시뮬에선 cradle 대신 noConnection 사유로 차단")
+        XCTAssertEqual(session.startBlockedReason, "noConnection")
         XCTAssertEqual(session.requestedPreset, .march, "사용자가 클릭한 preset 은 기록")
     }
 

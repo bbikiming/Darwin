@@ -15,15 +15,20 @@ final class WalkLabSessionIntegrationTests: XCTestCase {
     // MARK: - Lifecycle
 
     /// **start without cradleConfirmed → no-op** — 안전 가드.
-    func testStartWithoutCradleConfirmedNoOp() {
+    /// **v1.14.7 (2026-05-21)** — 시뮬 모드 (bus 미연결) 에선 cradle 검사 skip.
+    /// 종전 가정: cradle false → start 차단. 신규 가정: 시뮬에선 cradle 우회.
+    /// 실 로봇 연결 시에만 cradle 강제 (testStartWithoutCradleConfirmedOnConnectedSession 참조).
+    func testStartWithoutCradleInSimModeProceeds() {
         let session = WalkLabSession()
         XCTAssertFalse(session.cradleConfirmed,
             "default cradleConfirmed false")
         XCTAssertEqual(session.current, .idle, "default current idle")
 
         session.start(.slowWalk)
-        XCTAssertEqual(session.current, .idle,
-            "cradleConfirmed false → start 가 current 변경 안 함 (안전 가드)")
+        // 시뮬 모드 (store == nil) — cradle 우회 → start 진행. 단 noConnection
+        // preflight failure 가 발화 (startWalkCycle 안에서) — current 는 그래도 변경됨.
+        XCTAssertEqual(session.current, .slowWalk,
+            "시뮬 모드에선 cradle 미확인이라도 start 진행 (v1.14.7)")
     }
 
     /// **start with cradleConfirmed → current transitions to preset**.

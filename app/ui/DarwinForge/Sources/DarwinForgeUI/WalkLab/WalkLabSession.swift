@@ -383,29 +383,34 @@ public final class WalkLabSession: ObservableObject {
                 correctorIntensityLevel = clamped
                 return
             }
-            if clamped != oldValue {
-                // v1.11.1 fix: observeOnly forceHybrid 일관성 (balanceExperimentConfig didSet 와 동일).
+            guard clamped != oldValue else { return }
+            // **v1.14.7 (2026-05-21) — 사용자 응답성 fix**: 종전 setter 안에서 동기로
+            // makeCorrector + logSafetyEvent 실행 → 클릭 응답 지연. SwiftUI binding
+            // 갱신은 즉시 (button highlight) — 무거운 작업은 다음 runloop tick 으로.
+            Task { @MainActor [weak self, clamped, oldValue] in
+                guard let self = self else { return }
                 let forceHybrid: Bool? = {
-                    switch balanceExperimentConfig.algorithmMode {
+                    switch self.balanceExperimentConfig.algorithmMode {
                     case .hybridBA:        return true
                     case .robotisPControl: return false
                     case .off:             return false
-                    case .observeOnly:     return nil  // gainProfile native enableHybrid 보존
+                    case .observeOnly:     return nil
                     }
                 }()
-                balanceCorrector = Self.makeCorrector(
+                self.balanceCorrector = Self.makeCorrector(
                     level: clamped,
-                    gainProfile: balanceExperimentConfig.gainProfile,
+                    gainProfile: self.balanceExperimentConfig.gainProfile,
                     forceHybrid: forceHybrid,
-                    customHipRollGain: customHipRollGain,
-                    customKneeGain: customKneeGain,
-                    customAnklePitchGain: customAnklePitchGain,
-                    customAnkleRollGain: customAnkleRollGain
+                    customHipRollGain: self.customHipRollGain,
+                    customKneeGain: self.customKneeGain,
+                    customAnklePitchGain: self.customAnklePitchGain,
+                    customAnkleRollGain: self.customAnkleRollGain
                 )
-                logSafetyEvent(
+                self.logSafetyEvent(
                     kind: .correctorOn,
                     message: "자이로 보정 강도 → \(Self.intensityLabel(level: clamped))"
                 )
+                _ = oldValue
             }
         }
     }
@@ -2057,8 +2062,10 @@ public final class WalkLabSession: ObservableObject {
             ))
         }
 
-        // 2. cradle 미확인.
-        if !cradleConfirmed {
+        // 2. cradle 미확인. **v1.14.7 (2026-05-21)** — 시뮬 모드 (bus 미연결) 면 skip.
+        //    실 로봇 연결 시에만 cradle 강제. 시뮬에선 사용자가 보행 알고리즘 미리보기 가능.
+        let needsCradle = (store?.bus != nil)
+        if needsCradle && !cradleConfirmed {
             return WalkPreflightFailure(cause: .cradleNotConfirmed)
         }
 
