@@ -41,6 +41,19 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$EXEC_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
+# v1.11.23 (Codex HIGH fix): SwiftPM resource bundle 복사.
+# `Bundle.module` 의존 (AppIcon.png, logo SVG, STL meshes 등) — bundle 누락 시
+# 자산 로드 실패. .app/Contents/Resources/ 에 module bundle 들을 복사.
+for bundle in "DarwinForge_DarwinForgeUI.bundle" "DarwinForge_DarwinForgeApp.bundle"; do
+    src="$PKG_ROOT/.build/release/$bundle"
+    if [ -d "$src" ]; then
+        cp -R "$src" "$APP_BUNDLE/Contents/Resources/"
+        echo "  ✓ resource bundle 복사: $bundle"
+    else
+        echo "  ⚠️ resource bundle 누락: $bundle (자산 fallback 가능)" >&2
+    fi
+done
+
 # Info.plist — 최소 필수 키 + Bundle ID + Icon 참조.
 VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "dev")"
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
@@ -65,7 +78,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key>
     <string>$VERSION</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.11.2</string>
+    <string>1.11.23</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -249,7 +262,7 @@ xattr -dr com.apple.quarantine "$DEST_DIR/$APP_NAME.app" 2>/dev/null || true
 
 echo ""
 echo "✅ 설치 완료: $DEST_DIR/$APP_NAME.app"
-echo "   • 버전: 1.11.2 (build $VERSION)"
+echo "   • 버전: 1.11.23 (build $VERSION)"
 echo "   • Bundle ID: $BUNDLE_ID"
 echo ""
 echo "실행:"
