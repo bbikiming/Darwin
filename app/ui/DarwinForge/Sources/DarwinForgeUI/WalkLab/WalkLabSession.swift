@@ -60,6 +60,19 @@ public final class WalkLabSession: ObservableObject {
     @Published public var imuPitchDeg: Double = 0
     /// **Stage 1 (v1.1 fall prevention)**: IMU 출처 표시 — UI 가 sim/real/stale 구분.
     @Published public private(set) var imuSource: ImuSource = .sim
+
+    /// **v1.11.19**: display-only roll (NaN/Inf guard + ±50° clamp). UI 전용.
+    public var displayImuRollDeg: Double {
+        ImuAttitudeDisplayMapping.sanitize(imuRollDeg)
+    }
+    /// **v1.11.19**: display-only pitch (convention 정규화 + NaN/Inf guard + ±50° clamp). UI 전용.
+    public var displayImuPitchDeg: Double {
+        ImuAttitudeDisplayMapping.map(
+            rawRoll: imuRollDeg,
+            rawPitch: imuPitchDeg,
+            convention: balanceExperimentConfig.pitchInputConvention
+        ).pitch
+    }
     @Published public private(set) var maxMotorTemp: Double = 35.0
     /// **2026-05-16**: 모터 온도 출처 — sim/real/stale. 이전 버그: 실 robot 연결 시에도
     /// `updateSimThermal()` 만 호출 → dashboard 가 항상 가짜 온도 표시.
@@ -68,6 +81,11 @@ public final class WalkLabSession: ObservableObject {
     @Published public private(set) var motorTempSource: MotorTempSource = .sim
     @Published public var balanceLost: Bool = false
     @Published public var thermalAlarm: Bool = false
+    /// **v1.11.22.1 (Codex HIGH-1 fix)** — emergencyStop 진행 중/완료 표시.
+    /// runWalkCycle/runContinuousWalk 의 exit phase (walkReady 복귀 setPosition) 가
+    /// 토크 OFF 이후 호출되는 race 차단용. emergency 시 true → exit 자체 skip.
+    /// start/reset 시 false 리셋.
+    @Published public private(set) var emergencyStopActive: Bool = false
 
     // 2026-05-17 T3.1 partial split: MotorTempSource / ImuSource enum 정의는
     // WalkLabSession+Types.swift 로 이동. type identity 그대로 (extension nested).
@@ -76,7 +94,7 @@ public final class WalkLabSession: ObservableObject {
 
     /// 현재 IMU 기반 안전 상태. tick() 마다 갱신.
     @Published public private(set) var balanceState: BalanceState = .normal
-    /// 자동 fall prevention 토글. false 면 emergency (30°) 만 작동. default true.
+    /// 자동 fall prevention 토글. false 면 emergency (50°) 만 작동. default true.
     @Published public var autoFallPrevention: Bool = true
 
     // MARK: - Stage 3 (v1.1 fall prevention): 예측 fall detection
@@ -730,6 +748,8 @@ public final class WalkLabSession: ObservableObject {
         simSwayPhase = 0
         balanceLost = false
         thermalAlarm = false
+        // v1.11.22.1: emergency flag clear — 새 session 시작 시 exit-phase 허용.
+        emergencyStopActive = false
         // v1.8: hysteresis reset — 이전 cycle 잔존 데이터로 false trigger 차단.
         warningStateConsecutiveSamples = 0
         dangerStateConsecutiveSamples = 0
@@ -845,6 +865,10 @@ public final class WalkLabSession: ObservableObject {
 
     /// 비상 정지 — Stop + risk reset + 실 로봇 토크 OFF.
     public func emergencyStop() {
+        // **v1.11.22.1 (Codex HIGH-1 fix)** — exit-phase race 차단:
+        // 0. emergencyStopActive flag 먼저 set → walkCycleTask 의 exit phase 가
+        //    walkReady setPosition 시도 전 check 하여 skip. 토크 OFF 이후 명령 무효 보장.
+        emergencyStopActive = true
         // 1. 보행 cycle 즉시 cancel — 모터 송출 중지.
         walkCycleTask?.cancel()
         walkCycleTask = nil
@@ -961,6 +985,44 @@ public final class WalkLabSession: ObservableObject {
         if let failure = preflightForWalkCycle(bus: bus) {
             lastPreflightFailure = failure
             lastRobotEvent = failure.userMessage + " (\(preset.label))"
+            return
+        }
+
+        // **v1.11.22.1 (Codex HIGH-2 fix)** — 실 robot 보행 시작 전 IMU live + plausible:
+        //   - bus 있는데 IMU 한 번도 안 옴 → 차단 (gate L3/corrector 모두 무력화 위험)
+        //   - IMU stale (5s+ 지연) → 차단
+        //   - imuScaleSuspicion suspectedLegacy10Bit/outOfRange → 차단 (1g 감지 실패)
+        // 정상 보행 시 fall prevention chain (L3 hard gate, corrector) 의 데이터 의존성
+        // 확보. 정합 안 되면 실 robot 송출 자체 금지.
+        if store.isImuUnavailable {
+            let f = WalkPreflightFailure(cause: .imuUnavailable)
+            lastPreflightFailure = f
+            lastRobotEvent = f.userMessage + " (\(preset.label))"
+            logSafetyEvent(
+                kind: .preflightFailure,
+                message: "보행 차단 — IMU unavailable (bus 연결 후 sample 없음)"
+            )
+            return
+        }
+        if store.isImuStale {
+            let f = WalkPreflightFailure(cause: .imuStale)
+            lastPreflightFailure = f
+            lastRobotEvent = f.userMessage + " (\(preset.label))"
+            logSafetyEvent(
+                kind: .preflightFailure,
+                message: "보행 차단 — IMU stale (5초+ 지연)"
+            )
+            return
+        }
+        if store.imuScaleSuspicion == .suspectedLegacy10Bit
+            || store.imuScaleSuspicion == .outOfRange {
+            let f = WalkPreflightFailure(cause: .imuPlausibilityFailed(store.imuScaleSuspicion.rawValue))
+            lastPreflightFailure = f
+            lastRobotEvent = f.userMessage + " (\(preset.label))"
+            logSafetyEvent(
+                kind: .preflightFailure,
+                message: "보행 차단 — IMU plausibility \(store.imuScaleSuspicion.rawValue)"
+            )
             return
         }
         lastPreflightFailure = nil
@@ -1135,6 +1197,11 @@ public final class WalkLabSession: ObservableObject {
                         guard let self else { return false }
                         return await self.isBusAliveSnapshot()
                     },
+                    // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 시 exit phase 스킵.
+                    isHardStopped: { [weak self] in
+                        guard let self else { return true }
+                        return await MainActor.run { self.emergencyStopActive }
+                    },
                     // v1.11.1 MEDIUM-5: bus write 실패 시 ConnectionStore counter 누적.
                     onBusWriteFailure: { [weak self] in
                         self?.store?._bumpBusWriteFailureCount()
@@ -1175,6 +1242,11 @@ public final class WalkLabSession: ObservableObject {
                 isBusAlive: { [weak self] in
                     guard let self else { return false }
                     return await self.isBusAliveSnapshot()
+                },
+                // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 시 walkReady 복귀 스킵.
+                isHardStopped: { [weak self] in
+                    guard let self else { return true }
+                    return await MainActor.run { self.emergencyStopActive }
                 },
                 // v1.11.1 MEDIUM-5: bus write 실패 시 ConnectionStore counter 누적.
                 onBusWriteFailure: { [weak self] in
@@ -1645,8 +1717,10 @@ public final class WalkLabSession: ObservableObject {
         transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil,
         // 2026-05-17 chaos #1 fix: store.bus 가 nil (disconnect) 됐는지 매 step
         // 시작 전 체크. true 면 정상, false 면 즉시 .busDisconnected 로 abort.
-        // 종전 ~5 step (400-800ms) 의 dead bus 송출 latency → 즉시 차단.
         isBusAlive: @Sendable () async -> Bool = { true },
+        // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 진행 시 true. exit phase 스킵.
+        // 토크 OFF 이후 walkReady setPosition race 차단.
+        isHardStopped: @Sendable () async -> Bool = { false },
         // v1.11.1 MEDIUM-5: bus write 실패 callback (ConnectionStore 누적).
         onBusWriteFailure: (@MainActor @Sendable () -> Void)? = nil
     ) async -> WalkCycleResult {
@@ -1697,8 +1771,15 @@ public final class WalkLabSession: ObservableObject {
             }
             // v1.8 setPosition 1회 retry + 10x review Major #1: per-joint consecutive counter.
             // Set count >= 3 (서로 다른 joint 3개 fail) 또는 단일 joint 5회 연속 fail.
+            // **v1.11.22.1 (Codex new HIGH)**: step entry 시 hard-stop check —
+            // emergencyStop 진행 중이면 step 내부 setPosition 전체 skip (torque OFF 후
+            // joint write race 차단).
+            if await isHardStopped() { return previousIn }
             let changed = target.changedJoints(from: previousIn)
             for joint in changed {
+                // **v1.11.22.1**: 각 joint write 직전 cheap Task.isCancelled check —
+                // e-stop 타이밍에 남은 joint write 진행 차단.
+                if Task.isCancelled { break }
                 let rawVal = UInt16(clamping: target.raw(joint))
                 var lastErr: Error?
                 for attempt in 0..<2 {
@@ -1790,6 +1871,19 @@ public final class WalkLabSession: ObservableObject {
         }
 
         // 4. Exit — walkReady 안전 복귀. cancel 후에도 토크 OFF 보다는 복귀가 안전 (낙상 risk).
+        // **v1.11.22.1 (Codex HIGH-1 fix)**: emergencyStop (hard stop) 시 exit phase 스킵.
+        // 이미 bus.emergencyStop()으로 torque OFF 됨 → setPosition 시도 시 motor 무응답
+        // 또는 race. "토크 OFF 이후 명령 없음" 불변식 보존.
+        if await isHardStopped() {
+            return WalkCycleResult(
+                reason: .userCancelled,
+                stepsExecuted: stepsExecuted,
+                speedWriteFailures: speedFailures,
+                positionWriteFailures: positionFailures,
+                lowerBodyPositionFails: Array(lowerBodyPositionFails),
+                sampleError: "emergencyStop — exit phase 스킵 (torque OFF 보호)"
+            )
+        }
         for step in plan.exit {
             let rawTarget = step.toPose()
             // **Stage 4b (v1.1 fall prevention)**: exit phase 도 corrector 적용.
@@ -1853,6 +1947,8 @@ public final class WalkLabSession: ObservableObject {
         transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil,
         // 2026-05-17 chaos #1 fix: bus 끊김 즉시 abort. runContinuousWalk 와 동일.
         isBusAlive: @Sendable () async -> Bool = { true },
+        // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 시 true → exit phase skip.
+        isHardStopped: @Sendable () async -> Bool = { false },
         // v1.11.1 MEDIUM-5: bus write 실패 callback (ConnectionStore 누적).
         onBusWriteFailure: (@MainActor @Sendable () -> Void)? = nil
     ) async -> WalkCycleResult {
@@ -1904,8 +2000,16 @@ public final class WalkLabSession: ObservableObject {
                 if let onPose {
                     await onPose(target)
                 }
+                // **v1.11.22.1 (Codex new HIGH)**: step entry 시 hard-stop check.
+                if await isHardStopped() {
+                    // 외곽 do-while 종료 — endReason 은 cancelledMidStep 으로.
+                    cancelledMidStep = true
+                    break
+                }
                 let changed = target.changedJoints(from: previous)
                 for joint in changed {
+                    // **v1.11.22.1**: 각 joint write 직전 cheap cancel check.
+                    if Task.isCancelled { break }
                     let rawVal = UInt16(clamping: target.raw(joint))
                     var lastErr: Error?
                     for attempt in 0..<2 {
@@ -1958,13 +2062,25 @@ public final class WalkLabSession: ObservableObject {
                 let ns = UInt64(totalMs) * 1_000_000
                 try? await Task.sleep(nanoseconds: ns)
             }
-        } while loop && !Task.isCancelled
+        } while loop && !Task.isCancelled && !cancelledMidStep
+        // v1.11.22.1: cancelledMidStep 가 hard-stop 시 set → 다음 iteration 도 차단.
         if endReason == .completedMaxDuration && (cancelledMidStep || Task.isCancelled) {
             endReason = .userCancelled
         }
 
         // 3. 종료 정리 — walkReady 안전 복귀. 하체 실패 후에도 토크 OFF 보다는
         // walkReady 시도가 안전 (낙상 risk 가 더 큼). 실패해도 결과에 반영.
+        // **v1.11.22.1 (Codex HIGH-1 fix)**: emergencyStop (hard stop) 시 스킵.
+        if await isHardStopped() {
+            return WalkCycleResult(
+                reason: .userCancelled,
+                stepsExecuted: stepsExecuted,
+                speedWriteFailures: speedFailures,
+                positionWriteFailures: positionFailures,
+                lowerBodyPositionFails: Array(lowerBodyPositionFails),
+                sampleError: "emergencyStop — walkReady 복귀 스킵 (torque OFF 보호)"
+            )
+        }
         let walkReady = RobotPose.walkReady
         // Phase G11 — 3D 모델 walkReady 복귀 시각화.
         if let onPose {
@@ -2322,9 +2438,9 @@ public final class WalkLabSession: ObservableObject {
     /// 2026-05-16 Phase C 정정 (Agent 4 발견): 이전엔 Stage 2 의 warning 70% 감속 /
     /// danger 자세 동결이 sim engine 만 영향. 실 motor 경로는 미적용. 이번 정정에서
     /// **transformPose 가 balanceState 별로 pose 변환** 으로 실 motor 에도 적용:
-    /// - `.danger` (28-30°): 마지막 안전 pose (lastSafePose) 반환 = 자세 동결
+    /// - `.danger` (45° 이상): 마지막 안전 pose (lastSafePose) 반환 = 자세 동결
     /// - 그 외: corrector 만 적용 (default false 면 identity)
-    /// `.warning` (22-28°) 의 속도 감속은 pose 변환으로는 표현 불가 → engine 감속만 유지
+    /// `.warning` (35° 이상) 의 속도 감속은 pose 변환으로는 표현 불가 → engine 감속만 유지
     /// (실 motor 의 cycle plan 은 미리 합성됨, 동적 stride 변경은 추후 Sprint).
     ///
     /// 입력 pose 는 보통 보행 cycle 의 phase target. roll/pitch error 는 현재 IMU.
@@ -2951,14 +3067,15 @@ public final class WalkLabSession: ObservableObject {
     }
 
     /// **Stage 2 + Phase C/D (v1.1 fall prevention)**: 다단계 임계 별 자동 mitigation.
+    /// v1.11.19 (2026-05-20) 정합: 25/35/45/50° BalanceState 임계.
     ///
-    /// Warning (22-28°) — sim engine 속도 70% 감속 + 실 motor 는 corrector + 다음
-    /// `runWalkCycle` 재합성 (TODO: 추후 Sprint).
-    /// Danger (28-30°) — sim engine 정지 + 실 motor 는 `transformPose` 가
-    /// lastSafePose 반환 (자세 동결, Phase C 추가).
-    /// Emergency (≥ 30°) — 별도 L3 게이트 (토크 OFF + walkReady).
+    /// Warning (35° 이상) — sim engine 속도 70% 감속 + 3 tick hysteresis 후 실 robot
+    /// `cancelWalkCycle` (안전한 walkReady 복귀, 사용자가 슬라이더 줄이고 재시작 권장).
+    /// Danger (45° 이상) — sim engine 정지 + 3 tick hysteresis 후 cancelWalkCycle
+    /// (`transformPose` 가 lastSafePose 반환, 자세 동결).
+    /// Emergency (≥ 50°) — 별도 L3 hard gate (3 연속 sample → 토크 OFF + walkReady).
     ///
-    /// `autoFallPrevention = false` 면 호출 안 됨 — 기존 30° emergency 만 작동.
+    /// `autoFallPrevention = false` 면 호출 안 됨 — emergency 만 작동.
     ///
     /// **Phase D 정정 (Agent 4 P1)**: normal/caution 복귀 시 engine 명령 복원 —
     /// 이전엔 warning 의 0.7× scale 이 영구 잔존.
@@ -2971,7 +3088,7 @@ public final class WalkLabSession: ObservableObject {
     /// 안전한 새 동작 (Warning 진입 시):
     ///   - sim engine 70% 감속 (기존)
     ///   - 실 robot walkCycle 즉시 정지 (cancelWalkCycle) + walkReady 복귀
-    ///   - lastRobotEvent 로 사용자에게 명확 안내: "기울기 22°+ — 감속 정지"
+    ///   - lastRobotEvent 로 사용자에게 명확 안내: "기울기 35°+ — 감속 정지"
     ///   - 사용자가 직접 stride 줄여서 재시작 (자동 재시작 안 함 = 안전)
     /// 즉시 동적 plan 재합성은 위험 (motor 명령 mid-step 갈아치기 → jerk + 낙상 가능).
     private func applyBalanceMitigation() {
@@ -3089,8 +3206,8 @@ public final class WalkLabSession: ObservableObject {
     /// **Stage 1 (v1.1 fall prevention)**: 실 robot 연결 시 `ConnectionStore.imuFilter`
     /// 의 실 IMU 값 사용 (5Hz polling 자동 갱신). 미연결·stale 시 sim 모델 fallback.
     ///
-    /// L3 자동 정지 게이트 (`|roll/pitch| > 30°`) 는 동일하게 작동 — 실 IMU 가
-    /// 30° 도달하면 즉시 emergency.
+    /// L3 자동 정지 게이트 (`|roll/pitch| > 50°` × 3 연속 sample) 는 동일하게 작동 —
+    /// 실 IMU 가 50° 도달하면 emergency (v1.11.19 정합).
     private func updateImuFromRealOrSim() {
         // 2026-05-17 v1.7 정정 (사용자 보고 "실 데이터 안 보임"): bus 연결됐으면 무조건
         // real 시도. 종전 suspicion 기반 sim fallback (suspectedLegacy10Bit/outOfRange)
@@ -3122,10 +3239,10 @@ public final class WalkLabSession: ObservableObject {
                 )
             }
             // 2026-05-17 chaos audit HIGH #4: stale 진입 시 마지막 값 |≥25°| 면
-            // L3 hard gate (30°) 가 frozen 값으로 잘못 emergency trigger 또는 false sense
-            // of safety 위험. 안전 측에서 보수적으로 0 으로 reset — fall predictor 도
-            // stale gate (직전 commit) 로 차단되므로 정합.
-            // 값 freeze 유지의 이유 (UI 컨텍스트 보존) 와 위험 (frozen 가까운 30° 평가)
+            // L3 hard gate (50°, v1.11.19) 가 frozen 값으로 잘못 emergency trigger 또는
+            // false sense of safety 위험. 안전 측에서 보수적으로 0 으로 reset —
+            // fall predictor 도 stale gate (직전 commit) 로 차단되므로 정합.
+            // 값 freeze 유지의 이유 (UI 컨텍스트 보존) 와 위험 (frozen 가까운 50° 평가)
             // 사이 trade-off 에서 안전 우선.
             if !wasStale {
                 let frozenMax = max(abs(imuRollDeg), abs(imuPitchDeg))

@@ -291,8 +291,10 @@ public struct RobotScene3D: NSViewRepresentable {
         /// - rollDeg → Z 축 회전 (좌우 기울기, robot 의 좌우 = X)
         /// SceneKit eulerAngles 는 radian. CGFloat 인자 (macOS).
         func applyImuTilt(rollDeg: Double, pitchDeg: Double) {
-            let rollRad = CGFloat(rollDeg * .pi / 180.0)
-            let pitchRad = CGFloat(pitchDeg * .pi / 180.0)
+            let safeRoll = ImuAttitudeDisplayMapping.sanitize(rollDeg)
+            let safePitch = ImuAttitudeDisplayMapping.sanitize(pitchDeg)
+            let rollRad = CGFloat(safeRoll * .pi / 180.0)
+            let pitchRad = CGFloat(safePitch * .pi / 180.0)
             tiltNode.eulerAngles = SCNVector3(x: pitchRad, y: 0, z: rollRad)
         }
 

@@ -32,8 +32,8 @@ public struct SceneGyroMiniOverlay: View {
             VStack(alignment: .leading, spacing: DFSpace.xs2) {
                 attitudeIndicator
                 HStack(spacing: DFSpace.xs) {
-                    label("R", session.imuRollDeg, danger: 30)
-                    label("P", session.imuPitchDeg, danger: 30)
+                    label("R", session.displayImuRollDeg, danger: 50)
+                    label("P", session.displayImuPitchDeg, danger: 50)
                     Spacer(minLength: 0)
                     sourceChip
                 }
@@ -57,7 +57,7 @@ public struct SceneGyroMiniOverlay: View {
                     .stroke(sourceColor.opacity(DFOpacity.o30),
                             lineWidth: DFSize.borderHairline)
             )
-            .accessibilityLabel("자이로 미니 인디케이터 — roll \(Int(session.imuRollDeg))도, pitch \(Int(session.imuPitchDeg))도")
+            .accessibilityLabel("IMU 자세 인디케이터 — roll \(Int(session.displayImuRollDeg))도, pitch \(Int(session.displayImuPitchDeg))도")
         }
     }
 
@@ -72,13 +72,13 @@ public struct SceneGyroMiniOverlay: View {
                     startPoint: .top, endPoint: .bottom
                 )
                 // pitch indicator line (horizon offset).
-                let pitchOffset = CGFloat(session.imuPitchDeg / 90.0) * 30
+                let pitchOffset = CGFloat(session.displayImuPitchDeg / 90.0) * 30
                 Rectangle()
                     .fill(Color.white.opacity(0.85))
                     .frame(height: 1)
                     .offset(y: pitchOffset)
             }
-            .rotationEffect(.degrees(session.imuRollDeg), anchor: .center)
+            .rotationEffect(.degrees(session.displayImuRollDeg), anchor: .center)
             .frame(width: 60, height: 60)
             .clipShape(Circle())
             .overlay(Circle().stroke(Color.white.opacity(0.5), lineWidth: 1))
@@ -92,14 +92,23 @@ public struct SceneGyroMiniOverlay: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// BalanceState 5-tier (25/35/45/50°) 정합 — 다른 컴포넌트와 색 일관성.
     private func label(_ axis: String, _ value: Double, danger: Double) -> some View {
-        HStack(spacing: 2) {
+        let absV = abs(value)
+        let color: Color = {
+            if absV >= danger        { return DFColor.danger }                    // 50°
+            if absV >= danger * 0.90 { return DFColor.severe }                    // 45°
+            if absV >= danger * 0.70 { return DFColor.warning }                   // 35°
+            if absV >= danger * 0.50 { return DFColor.warning.opacity(0.7) }      // 25°
+            return DFColor.textPrimary
+        }()
+        return HStack(spacing: 2) {
             Text(axis)
                 .font(DFFont.micro)
                 .foregroundStyle(DFColor.textSecondary)
             Text(String(format: "%+.0f°", value))
                 .font(DFFont.micro.monospacedDigit())
-                .foregroundStyle(abs(value) >= danger ? DFColor.danger : DFColor.textPrimary)
+                .foregroundStyle(color)
         }
     }
 
@@ -241,7 +250,7 @@ public struct SceneWalkGraphOverlay: View {
         // session.elapsedMs 를 phase 추세로 사용 (0~1 normalized).
         let phaseFraction = Double(Int(session.elapsedMs) % Int(session.customPeriodMs)) / session.customPeriodMs
         phaseHistory.append((now, phaseFraction))
-        rollHistory.append((now, session.imuRollDeg))
+        rollHistory.append((now, session.displayImuRollDeg))
         let cutoff = now.addingTimeInterval(-10.0)
         phaseHistory.removeAll { $0.0 < cutoff }
         rollHistory.removeAll { $0.0 < cutoff }

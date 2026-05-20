@@ -27,6 +27,8 @@ import SwiftUI
 public struct WalkDiagnosticsView: View {
     // MARK: - Connection store (live mode IMU source)
     @EnvironmentObject private var store: ConnectionStore
+    // v1.11.21: 워크랩 세션 — 운영 상태 / corrector / fallPrediction 통합 표시용.
+    @EnvironmentObject private var walkLabSession: WalkLabSession
 
     // MARK: - Data source mode
     @State private var source: DiagnosticsSource = .preview
@@ -371,6 +373,8 @@ public struct WalkDiagnosticsView: View {
                     powerCard
                     linkCard
                     imuCard
+                    // v1.11.21: 워크랩에서 업데이트된 운영 / CoM / ankle / 예측 통합.
+                    WalkLabIntegrationCards()
                     motorsCard
                     boardCard
                 }

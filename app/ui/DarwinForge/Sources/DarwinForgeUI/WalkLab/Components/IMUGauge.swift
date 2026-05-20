@@ -2,7 +2,8 @@ import SwiftUI
 
 /// 반원 게이지 — 단일 축 (Roll 또는 Pitch). 음수 = 좌측, 양수 = 우측.
 ///
-/// 임계값: |°| < 15 녹색 / < 25 노랑 / < 30 주황 / ≥ 30 빨강 (자동 emergency).
+/// 임계값: BalanceState 5-tier 정합 (dangerThreshold=50 기준).
+/// |°| < 25 녹색 / < 35 노랑 / < 45 주황 / ≥ 50 빨강 (자동 emergency).
 ///
 /// 2026-05-17 a11y audit HIGH fix (WCAG 1.4.3 + 4.1.2):
 ///   - 시스템 색 (.yellow / .orange / .red) → 디자인 토큰 (DFColor.warning/.severe/.danger)
@@ -28,10 +29,10 @@ struct IMUGauge: View {
                 }
                 .stroke(Color.gray.opacity(DFOpacity.o25), lineWidth: 6)
 
-                // 채워진 호
+                // 채워진 호 — fraction 분모는 dangerThreshold 와 일치.
                 Path { p in
                     let r: CGFloat = 60
-                    let fraction = min(abs(degrees) / 45, 1.0)
+                    let fraction = min(abs(degrees) / dangerThreshold, 1.0)
                     let start = degrees >= 0 ? 270.0 : 270.0 - (180 * fraction)
                     let end = degrees >= 0 ? 270.0 + (180 * fraction) : 270.0
                     p.addArc(center: CGPoint(x: 70, y: 60),
@@ -68,20 +69,23 @@ struct IMUGauge: View {
         .accessibilityLabel("\(axis) 기울기 \(Int(degrees.rounded()))도, \(safetyLevelLabel)")
     }
 
+    /// BalanceState 5-tier 임계 (25/35/45/50°) 정합.
     private var currentColor: Color {
         let abs = Swift.abs(degrees)
-        if abs >= dangerThreshold        { return DFColor.danger }
-        if abs >= dangerThreshold * 0.85 { return DFColor.severe }
-        if abs >= dangerThreshold * 0.5  { return DFColor.warning }
+        if abs >= dangerThreshold        { return DFColor.danger }    // 50°
+        if abs >= dangerThreshold * 0.90 { return DFColor.severe }    // 45°
+        if abs >= dangerThreshold * 0.70 { return DFColor.warning }   // 35°
+        if abs >= dangerThreshold * 0.50 { return DFColor.warning.opacity(0.7) }  // 25°
         return DFColor.success
     }
 
     /// VoiceOver 안전 상태 라벨 — 색 dependency 제거 (WCAG 1.4.1).
     private var safetyLevelLabel: String {
         let abs = Swift.abs(degrees)
-        if abs >= dangerThreshold        { return "위험 — 자동 정지 임계 도달" }
-        if abs >= dangerThreshold * 0.85 { return "심각" }
-        if abs >= dangerThreshold * 0.5  { return "주의" }
+        if abs >= dangerThreshold        { return "위험 — 자동 정지 임계 도달" }   // 50°
+        if abs >= dangerThreshold * 0.90 { return "심각" }                          // 45°
+        if abs >= dangerThreshold * 0.70 { return "경고" }                          // 35°
+        if abs >= dangerThreshold * 0.50 { return "주의" }                          // 25°
         return "안전"
     }
 }

@@ -489,7 +489,9 @@ public struct RootView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: DFSpace.none) {
             // ── ① FIXED TOP — 로고 (브랜드) ────────────────────────────
-            DarwinForgeLogo(variant: .full, density: .standard, showsTagline: true)
+            // v1.11.22.2 (사용자 요청): 헥사곤 마크 제거 → 워드마크 + tagline 만으로
+            // 깔끔한 헤더. wordmarkOnly + density .standard 로 사이드바 폭 정합.
+            DarwinForgeLogo(variant: .wordmarkOnly, density: .standard, showsTagline: true)
                 .padding(.horizontal, DFSpace.md)
                 .padding(.top, DFSpace.md)
                 .padding(.bottom, DFSpace.sm)

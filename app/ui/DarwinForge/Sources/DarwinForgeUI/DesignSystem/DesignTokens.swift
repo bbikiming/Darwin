@@ -74,7 +74,7 @@ public enum DFColor {
     )
 
     /// **2026-05-16**: 5-tier safety state 의 intermediate "심각" 단계.
-    /// warning(노랑) ↔ danger(빨강) 사이 — fall prevention 의 22-30° 등.
+    /// warning(노랑) ↔ danger(빨강) 사이 — fall prevention 의 45-50° 등 (v1.11.19 정합).
     /// macOS `.orange` 와 유사하지만 light/dark + highContrast 명시 제어.
     public static let severe = Color(
         light: "#FF6F00", dark: "#FF9F0A",

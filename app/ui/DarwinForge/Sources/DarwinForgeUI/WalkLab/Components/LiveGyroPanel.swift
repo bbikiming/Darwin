@@ -2,7 +2,7 @@ import SwiftUI
 import Charts
 import ForgeCore
 
-/// **v1.11.17 (2026-05-19)** — 워크랩 진입 즉시 실시간 자이로/IMU 패널.
+/// **v1.11.17 (2026-05-19)** — 워크랩 진입 즉시 IMU 자세/IMU 패널.
 ///
 /// 보행 시작 전부터 표시 — `session.attach(store:)` 호출 후 polling tick 이 시작
 /// 되어 imuRollDeg/imuPitchDeg 가 즉시 갱신. 사용자가 robot 거치 상태에서 IMU
@@ -56,7 +56,7 @@ public struct LiveGyroPanel: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("실시간 자이로: roll \(Int(session.imuRollDeg))도, pitch \(Int(session.imuPitchDeg))도")
+            .accessibilityLabel("IMU 자세: roll \(Int(session.displayImuRollDeg))도, pitch \(Int(session.displayImuPitchDeg))도")
             .onChange(of: context.date) { _, now in
                 appendSample(at: now)
             }
@@ -69,7 +69,7 @@ public struct LiveGyroPanel: View {
         HStack(spacing: DFSpace.xs) {
             Image(systemName: "gyroscope")
                 .foregroundStyle(sourceColor)
-            Text("실시간 자이로")
+            Text("IMU 자세")
                 .font(DFFont.sectionLabel)
                 .foregroundStyle(DFColor.textPrimary)
             sourceChip
@@ -100,8 +100,8 @@ public struct LiveGyroPanel: View {
 
     private var compactRow: some View {
         HStack(spacing: DFSpace.sm) {
-            compactAngleCell(label: "R", value: session.imuRollDeg)
-            compactAngleCell(label: "P", value: session.imuPitchDeg)
+            compactAngleCell(label: "R", value: session.displayImuRollDeg)
+            compactAngleCell(label: "P", value: session.displayImuPitchDeg)
             Spacer()
             if let imu = store.lastImuRaw {
                 Text("ω \(Int(abs(imu.gyroXDps) + abs(imu.gyroYDps)))°/s")
@@ -126,8 +126,8 @@ public struct LiveGyroPanel: View {
 
     private var angleRow: some View {
         HStack(spacing: DFSpace.md) {
-            angleCell(label: "Roll", value: session.imuRollDeg, dangerThreshold: 30)
-            angleCell(label: "Pitch", value: session.imuPitchDeg, dangerThreshold: 30)
+            angleCell(label: "Roll", value: session.displayImuRollDeg, dangerThreshold: 50)
+            angleCell(label: "Pitch", value: session.displayImuPitchDeg, dangerThreshold: 50)
         }
     }
 
@@ -251,10 +251,13 @@ public struct LiveGyroPanel: View {
         }
     }
 
-    private func angleColor(_ value: Double, danger: Double = 30) -> Color {
+    /// BalanceState 5-tier (25/35/45/50°) 정합.
+    private func angleColor(_ value: Double, danger: Double = 50) -> Color {
         let abs = abs(value)
-        if abs >= danger { return DFColor.danger }
-        if abs >= danger * 0.66 { return DFColor.warning }
+        if abs >= danger        { return DFColor.danger }                    // 50°
+        if abs >= danger * 0.90 { return DFColor.severe }                    // 45°
+        if abs >= danger * 0.70 { return DFColor.warning }                   // 35°
+        if abs >= danger * 0.50 { return DFColor.warning.opacity(0.7) }      // 25°
         return DFColor.textPrimary
     }
 
@@ -262,8 +265,8 @@ public struct LiveGyroPanel: View {
 
     /// 0.2s 마다 호출 — 5초 = 25 sample window.
     private func appendSample(at now: Date) {
-        rollHistory.append((now, session.imuRollDeg))
-        pitchHistory.append((now, session.imuPitchDeg))
+        rollHistory.append((now, session.displayImuRollDeg))
+        pitchHistory.append((now, session.displayImuPitchDeg))
         let cutoff = now.addingTimeInterval(-5.0)
         rollHistory.removeAll { $0.0 < cutoff }
         pitchHistory.removeAll { $0.0 < cutoff }

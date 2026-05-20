@@ -12,7 +12,7 @@ import SwiftUI
 /// - L0: ESC / ⌘⇧. emergency stop (이미 RootView 전역)
 /// - L1: cradle confirm 체크박스
 /// - L2: preset safety class (Caution=노랑, HighRisk=빨강)
-/// - L3: live IMU |roll/pitch| > 30° → 자동 stop
+/// - L3: live IMU |roll/pitch| > 50° → 자동 stop
 /// - L4: 모터 max 온도 60°C 도달 → 자동 stop
 public struct WalkLabView: View {
     @EnvironmentObject private var store: ConnectionStore
@@ -390,9 +390,8 @@ public struct WalkLabView: View {
                     RobotScene3D(
                         pose: session.visualPose,
                         footTrace: session.footTrail.map { $0.left },
-                        // v1.11.18: 실시간 IMU 기반 robot 기울기 반영.
-                        imuRollDeg: session.imuRollDeg,
-                        imuPitchDeg: session.imuPitchDeg
+                        imuRollDeg: session.displayImuRollDeg,
+                        imuPitchDeg: session.displayImuPitchDeg
                     )
                     .frame(minHeight: 360, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
@@ -403,6 +402,11 @@ public struct WalkLabView: View {
                     .overlay(alignment: .topLeading) {
                         // v1.11: 빈 영역 시각 채움 — walking phase / elapsed / 보정 Δ.
                         sceneInfoOverlay
+                            .padding(DFSpace.sm)
+                    }
+                    // v1.11.20 사용자 요청 (2026-05-20): 우상단 racing-style speedometer HUD.
+                    .overlay(alignment: .topTrailing) {
+                        SceneSpeedometerOverlay()
                             .padding(DFSpace.sm)
                     }
                     // v1.11.18 사용자 요청: 좌하단 자이로 mini + 우하단 walking 그래프.
@@ -444,8 +448,8 @@ public struct WalkLabView: View {
                                            imuSource: session.imuSource)
                         // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
                         balanceCorrectionCard
-                        IMUGauge(axis: "Roll", degrees: session.imuRollDeg, dangerThreshold: 50)
-                        IMUGauge(axis: "Pitch", degrees: session.imuPitchDeg, dangerThreshold: 50)
+                        IMUGauge(axis: "Roll", degrees: session.displayImuRollDeg, dangerThreshold: 50)
+                        IMUGauge(axis: "Pitch", degrees: session.displayImuPitchDeg, dangerThreshold: 50)
                     }
                     // v1.11 재작업: 고정 280 → 가변 (좁은 화면 260, 와이드 모니터 340 까지).
                     // SwiftUI 가 hero scene 과 사이드 패널 사이 공간 분배 시 자연스러운 호흡.
@@ -708,7 +712,7 @@ public struct WalkLabView: View {
             Toggle("자동 균형 보정", isOn: $session.autoFallPrevention)
                 .toggleStyle(.checkbox)
                 .font(DFFont.label)
-                .help("기울기 임계 도달 시 자동 감속/동결 — OFF 시 30° emergency 만 작동")
+                .help("기울기 임계 도달 시 자동 감속/동결 — OFF 시 50° emergency 만 작동")
         }
         .padding(DFSpace.sm)
         .background(balanceStateColor.opacity(DFOpacity.o10))
@@ -744,9 +748,9 @@ public struct WalkLabView: View {
 
     private var balanceStateMessage: String {
         switch session.balanceState {
-        case .warning:   return "기울기 22°+ — 보행 속도 70% 자동 감속"
-        case .danger:    return "기울기 28°+ — 자세 동결 (보행 일시 정지)"
-        case .emergency: return "기울기 30°+ — 토크 OFF + walkReady 복귀"
+        case .warning:   return "기울기 35°+ — 보행 속도 70% 자동 감속"
+        case .danger:    return "기울기 45°+ — 자세 동결 (보행 일시 정지)"
+        case .emergency: return "기울기 50°+ — 토크 OFF + walkReady 복귀"
         default:         return ""
         }
     }

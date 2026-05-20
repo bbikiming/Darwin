@@ -3,8 +3,10 @@ import ForgeCore
 
 /// v1.1 Stage 5 — fall prediction score + ETA countdown UI.
 ///
-/// 0..100 score 게이지 + 30° 도달 예측 시간 (있을 때만). emergency 권고 시
-/// 빨간 깜박임 + "선제 정지 발동" 표시.
+/// 0..100 score 게이지 + emergency(50°) 도달 예측 시간 (있을 때만). 권고 시 빨간
+/// "위험 임박" 표시. **주의 (2026-05-20)**: 현재 `recommendEmergency` 는 이벤트 로그만
+/// 남기고 실 motor torque-off 를 직접 호출하지 않음. UI 라벨은 사용자에게 사전 경고
+/// 의미로만 사용 — "정지 발동" 이 아닌 "위험 임박".
 ///
 /// **출처 표기 (2026-05-17 Codex audit)**: 단독으로 다른 화면에 박힐 때 점수가 실 IMU
 /// 기반인지 시뮬인지 사용자가 알 수 없는 문제. optional `imuSource` 받으면 작은 칩으로 표시.
@@ -67,10 +69,10 @@ public struct FallPredictionCard: View {
                 }
                 Spacer()
                 if prediction.recommendEmergency {
-                    Image(systemName: "bolt.fill")
+                    Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: DFFontSize.s10))
                         .foregroundStyle(.red)
-                    Text("선제 정지")
+                    Text("위험 임박")
                         .font(.system(size: DFFontSize.s10, weight: .semibold))
                         .foregroundStyle(.red)
                 }
