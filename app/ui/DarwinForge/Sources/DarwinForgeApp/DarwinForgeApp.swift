@@ -38,10 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 첫 실행 시 자동 maximize — 모니터 visibleFrame 가득 채움 (메뉴바/Dock 영역 제외).
-        // 2026-05-16 보강: asyncAfter 0.3s 로 충분한 window-creation 시간 확보 (macOS
-        // Sonoma+ SwiftUI life-cycle 에서 window 가 didFinishLaunching 직후엔 invisible).
+        // v1.11.23 (2026-05-21): DispatchQueue.main.asyncAfter → Task @MainActor.
+        // Swift 6 strict concurrency 정합 + structured cancellation.
         // didBecomeKey observer 와 이중 안전망 — 둘 중 어느 쪽이든 먼저 잡으면 1회 적용.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)  // 0.3s
             guard let self = self, !self.didMaximizeOnLaunch else { return }
             self.maximizeMainWindow(isInitialLaunch: true)
             self.didMaximizeOnLaunch = true
@@ -87,7 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 사용자 명시 호출 (메뉴 / 단축키) 시 skip — 사용자가 0.2s 안에 manual resize
         // 한 경우 덮어쓰는 회귀 방지.
         guard isInitialLaunch else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+        // v1.11.23: asyncAfter → Task @MainActor (Swift 6 정합).
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)  // 0.2s
             // didMaximizeOnLaunch 이미 set 됐어도 사용자가 그 사이 resize 했을 수
             // 있음 → frame == target 일 때만 한 번 더 강제.
             guard self != nil, w.frame != target else { return }

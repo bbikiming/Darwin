@@ -27,7 +27,9 @@ public struct SceneGyroMiniOverlay: View {
     public init() {}
 
     public var body: some View {
-        // 0.2s TimelineView — 부드러운 attitude indicator 갱신.
+        // v1.11.23 (2026-05-21, Codex MED fix): tick 0.1s 유지 — WalkLab tick (50ms=20Hz)
+        // 와 IMU polling 정합. 0.2s 로 늘리면 4 sample/redraw 로 attitude indicator
+        // 부드러움 저하. 시각 hero 인 attitude indicator 는 데이터 갱신 따라 10Hz 유지.
         TimelineView(.periodic(from: .now, by: 0.1)) { _ in
             VStack(alignment: .leading, spacing: DFSpace.xs2) {
                 attitudeIndicator
@@ -151,6 +153,8 @@ public struct SceneWalkGraphOverlay: View {
     public init() {}
 
     public var body: some View {
+        // v1.11.23 (Codex MED fix): tick 0.1s 유지. WalkLab 50ms tick 의 4 sample/redraw
+        // 대신 2 sample/redraw 으로 sparkline 부드러움 보존.
         TimelineView(.periodic(from: .now, by: 0.1)) { context in
             VStack(alignment: .leading, spacing: DFSpace.xs2) {
                 headerRow
