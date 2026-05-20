@@ -57,6 +57,12 @@ public final class ConversationViewModel: ObservableObject {
         guard !text.isEmpty, !isThinking else { return }
         inputText = ""
         messages.append(Message(kind: .user, text: text))
+        // v1.12.0 telemetry — Claude 프롬프트 송신. PII 회피: 본문 X, 길이만.
+        Harness.shared.record(
+            .claudePromptSent, level: .info, actor: .user,
+            data: ["text_length": AnyCodable(text.count),
+                   "turn": AnyCodable(messages.count)]
+        )
         Task { await processUserInput(text) }
     }
 
@@ -92,6 +98,15 @@ public final class ConversationViewModel: ObservableObject {
 
         do {
             let plan = try await commander.plan(userText: text)
+            // **v1.14.2 (2026-05-21)** — Claude 응답 수신 telemetry. PII 회피 — plan
+            // 본문은 X, tool 이름 / refuse 여부 / 확인 필요 여부만.
+            Harness.shared.record(
+                .claudeResponseReceived, level: .info, actor: .claude,
+                data: ["tool": AnyCodable(String(describing: plan.tool)),
+                       "needs_confirmation": AnyCodable(plan.needs_confirmation),
+                       "is_refuse": AnyCodable(plan.tool == .refuse),
+                       "turn": AnyCodable(messages.count)]
+            )
 
             if plan.tool == .refuse {
                 let reason = plan.args["reason"]?.stringValue ?? plan.speak
@@ -109,8 +124,22 @@ public final class ConversationViewModel: ObservableObject {
                 await runPlan(plan)
             }
         } catch let err as ClaudeCommander.CommanderError {
+            // **v1.14.2** — Claude 에러 telemetry. case 만 (메시지 본문 X).
+            Harness.shared.record(
+                .claudeError, level: .error, actor: .claude,
+                data: ["error_case": AnyCodable(String(describing: err)),
+                       "turn": AnyCodable(messages.count)]
+            )
             handleClaudeError(err)
         } catch {
+            let errMsg = error.localizedDescription
+            Harness.shared.record(
+                .claudeError, level: .error, actor: .claude,
+                data: ["error_case": AnyCodable("parseFailed"),
+                       "error_len": AnyCodable(errMsg.count),
+                       "error_hash": AnyCodable(Harness.shortHash(errMsg)),
+                       "turn": AnyCodable(messages.count)]
+            )
             messages.append(Message(kind: .error, text: KoreanUX.Errors.parseFailed.title))
             lastError = KoreanUX.Errors.parseFailed
         }

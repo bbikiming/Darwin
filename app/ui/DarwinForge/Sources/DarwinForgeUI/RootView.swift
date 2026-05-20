@@ -118,8 +118,16 @@ public struct RootView: View {
                 section = s
             }
         }
+        // v1.12.0 telemetry — section 변경 추적 (메뉴/단축키/사이드바 모두 포착).
+        .onChange(of: section) { newValue in
+            Harness.shared.record(
+                .uiSectionChanged, level: .info, actor: .user,
+                data: ["to": AnyCodable(newValue.rawValue)]
+            )
+        }
         .onReceive(NotificationCenter.default.publisher(for: .dfOpenPalette)) { _ in
             paletteOpen = true
+            Harness.shared.record(.uiPaletteOpened, level: .info, actor: .user)
         }
         .onReceive(NotificationCenter.default.publisher(for: .dfAutoConnect)) { _ in
             store.autoConnect()
@@ -857,6 +865,7 @@ public struct RootView: View {
         case .walk:     WalkDiagnosticsView()
         case .walkData: WalkDataView()
         case .strategy: StrategyView()
+        case .harness:  HarnessInspectorView()
         }
     }
 
@@ -1065,7 +1074,7 @@ private enum Section: String, CaseIterable, Hashable {
 }
 
 private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
-    case board, joints, motion, walk, walkData, strategy
+    case board, joints, motion, walk, walkData, strategy, harness
     var id: String { rawValue }
 
     var label: String {
@@ -1076,6 +1085,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .walk:     return "보행 진단"
         case .walkData: return "보행 데이터"
         case .strategy: return "전략 FSM"
+        case .harness:  return "텔레메트리"
         }
     }
     var icon: String {
@@ -1086,6 +1096,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .walk:     return "waveform.path.ecg"
         case .walkData: return "chart.line.uptrend.xyaxis"
         case .strategy: return "brain.head.profile"
+        case .harness:  return "tray.and.arrow.down"
         }
     }
 }

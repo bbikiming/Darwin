@@ -13,6 +13,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        // **v1.12.0 (2026-05-20) — Telemetry Harness 시동.**
+        // 실 로봇 빌드/조작 세션 중 모든 이벤트를 디스크에 기록 (off-by-default 토글로
+        // 사용자가 끌 수 있음). 자세한 설계: docs/harness/telemetry-harness.md
+        Harness.shared.start()
+        Harness.shared.startHeartbeat()
+
+        // **v1.11.25 (2026-05-21) audit log-Q** — app launch 시 WalkLab session retention.
+        // 종전: cleanup 이 autoTuner.record 안에 cleanupEvery 카운터 기반만 → autoTuner
+        // disabled 시 영원히 미실행 → 디스크 무한 누적 (32 jsonl > 30 cap 실측 발생).
+        // 본 호출은 app 시작 시 1회 — 직전 session 의 retention 보장.
+        WalkSessionStore.cleanupOldSessions()
+
         // 앱 아이콘 — SwiftPM 번들 PNG (사용자 지정 자산) 우선, 누락 시 코드 생성 fallback.
         // `.app` bundle 의 AppIcon.icns 가 있으면 macOS 가 우선 사용.
         // 2026-05-16 (재복구): 사용자 명시 — option/ChatGPT Image 10_57_32 (1).png 영구 적용.

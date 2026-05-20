@@ -287,6 +287,15 @@ public struct TeachModeView: View {
             // 사용자 자세 라이브러리에 영구 저장.
             Button {
                 UserPoseLibrary.shared.save(name: s.name, pose: s.pose)
+                // v1.12.2 telemetry — 사용자 라이브러리 저장 (name redacted).
+                Harness.shared.record(
+                    .poseLibrarySaved, level: .notice, actor: .user,
+                    data: ["name_hash": AnyCodable(Harness.shortHash(s.name)),
+                           "name_len": AnyCodable(s.name.count),
+                           "snapshot_id": AnyCodable(s.id.uuidString),
+                           "joint_count": AnyCodable(s.pose.positions.count),
+                           "library_size_after": AnyCodable(UserPoseLibrary.shared.entries.count)]
+                )
             } label: {
                 Image(systemName: "bookmark.fill")
                     .font(.system(size: DFFontSize.s10))

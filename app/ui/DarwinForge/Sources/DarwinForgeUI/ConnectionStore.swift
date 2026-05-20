@@ -92,6 +92,17 @@ public final class ConnectionStore: ObservableObject {
     /// runImuLoop 가 매 polling 마다 갱신. UI 가 자이로 패널에서 직접 read.
     @Published public private(set) var lastImuRaw: ImuRaw? = nil
 
+    /// **v1.11.25 (2026-05-21) audit P0 robot-D** — 좌/우 FSR (foot pressure) 측정값.
+    /// telemetry loop 가 1Hz 로 polling (board read 와 같은 cadence). board 미장착 시 nil.
+    @Published public private(set) var lastFsrLeft: FsrReading? = nil
+    @Published public private(set) var lastFsrRight: FsrReading? = nil
+    /// FSR 마지막 성공 read 시각 — telemetry loop 가 update.
+    @Published public private(set) var lastFsrSuccessAt: Date? = nil
+    /// FSR 연속 실패 카운터 — 3회 도달 시 polling stop (board 미장착으로 간주).
+    @Published public private(set) var fsrConsecutiveFailures: Int = 0
+    /// FSR polling 자동 비활성 — board 미장착 robot 에서 spam 차단.
+    @Published public private(set) var fsrPollingDisabled: Bool = false
+
     /// IMU 가 5초 이상 응답 없으면 stale — UI 가 "IMU 오래됨" 라벨 표시.
     public var isImuStale: Bool {
         guard let at = lastImuSuccessAt else { return imuConsecutiveFailures > 0 }
@@ -238,6 +249,12 @@ public final class ConnectionStore: ObservableObject {
                 self?.emergencyStop()
             }
         }
+
+        // v1.12.0 (2026-05-20) — Harness 에 context provider 등록.
+        // Heartbeat 와 모든 event 가 자동으로 이 store 의 현재 상태 스냅샷을 첨부.
+        Harness.shared.registerContextProvider { [weak self] in
+            self?.harnessContext()
+        }
     }
 
     /// 2026-05-17 concurrency review (agent #1 CRITICAL): pollTask / reconnectTask
@@ -298,6 +315,13 @@ public final class ConnectionStore: ObservableObject {
     public func connect(endpoint: Endpoint) {
         cancelReconnect()
         status = .connecting(endpoint.displayName)
+        // v1.12.2 (Codex P1-3 fix) — telemetry harness: 연결 시도 기록 (redacted).
+        Harness.shared.record(
+            .connectAttempt, level: .info, actor: .user,
+            data: ["endpoint_kind": AnyCodable(HarnessRedaction.endpointKind(endpoint)),
+                   "endpoint": AnyCodable(HarnessRedaction.endpoint(endpoint) ?? "—")],
+            context: harnessContext()
+        )
         Task { @MainActor in
             await performConnect(endpoint: endpoint, maxAttempts: 3)
         }
@@ -326,6 +350,15 @@ public final class ConnectionStore: ObservableObject {
                 self.failureCount = 0
                 self.lastRoundTripMs = rtt
                 startTelemetry(cadence: .light)
+                // v1.12.2 telemetry — 연결 성공 (redacted).
+                Harness.shared.record(
+                    .connectSuccess, level: .notice, actor: .system,
+                    data: ["endpoint": AnyCodable(HarnessRedaction.endpoint(endpoint) ?? "—"),
+                           "endpoint_kind": AnyCodable(HarnessRedaction.endpointKind(endpoint)),
+                           "rtt_ms": AnyCodable(rtt),
+                           "attempt": AnyCodable(attempt)],
+                    context: harnessContext()
+                )
                 return
             } catch {
                 lastError = error
@@ -338,6 +371,16 @@ public final class ConnectionStore: ObservableObject {
         let msg = (lastError as? ForgeError)?.localizedDescription
               ?? lastError?.localizedDescription ?? "원인 불명"
         self.status = .error("연결 실패 (\(maxAttempts)회 시도): \(msg)")
+        // v1.12.2 telemetry — 연결 실패 (endpoint redacted, error msg 도 길이+해시만).
+        Harness.shared.record(
+            .connectFailure, level: .error, actor: .system,
+            data: ["endpoint": AnyCodable(HarnessRedaction.endpoint(endpoint) ?? "—"),
+                   "endpoint_kind": AnyCodable(HarnessRedaction.endpointKind(endpoint)),
+                   "attempts": AnyCodable(maxAttempts),
+                   "error_len": AnyCodable(msg.count),
+                   "error_hash": AnyCodable(Harness.shortHash(msg))],
+            context: harnessContext()
+        )
     }
 
     // MARK: - Auto-reconnect (네트워크 drop 시 백오프 재시도)
@@ -366,6 +409,14 @@ public final class ConnectionStore: ObservableObject {
         guard reconnectTask == nil else { return }
         isReconnecting = true
         let target = endpoint
+        // **v1.14.2 (2026-05-21)** — reconnect cycle 시작 발화.
+        Harness.shared.record(
+            .connectReconnectStart, level: .notice, actor: .system,
+            data: ["endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—"),
+                   "endpoint_kind": AnyCodable(HarnessRedaction.endpointKind(target)),
+                   "max_attempts": AnyCodable(Self.maxReconnectAttempts)],
+            context: harnessContext()
+        )
         reconnectTask = Task { [weak self] in
             for attempt in 1...Self.maxReconnectAttempts {
                 if Task.isCancelled { break }
@@ -374,6 +425,15 @@ public final class ConnectionStore: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
                 if Task.isCancelled { break }
                 guard let self else { break }
+
+                // **v1.14.2** — 매 attempt 발화 — 진단성 위해 어디서 실패했는지 추적.
+                Harness.shared.record(
+                    .connectReconnectAttempt, level: .info, actor: .system,
+                    data: ["attempt": AnyCodable(attempt),
+                           "delay_s": AnyCodable(delaySeconds),
+                           "endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—")],
+                    context: harnessContext()
+                )
 
                 // 빠른 sanity check — 연결 시도.
                 self.status = .connecting("자동 재연결 \(attempt)/\(Self.maxReconnectAttempts)")
@@ -388,6 +448,15 @@ public final class ConnectionStore: ObservableObject {
                     self.isReconnecting = false
                     self.reconnectAttempt = 0
                     self.reconnectTask = nil
+                    // **v1.14.2** — reconnect 성공도 connect_success 와 동일하게.
+                    Harness.shared.record(
+                        .connectSuccess, level: .notice, actor: .system,
+                        data: ["endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—"),
+                               "endpoint_kind": AnyCodable(HarnessRedaction.endpointKind(target)),
+                               "via": AnyCodable("reconnect"),
+                               "attempt": AnyCodable(attempt)],
+                        context: self.harnessContext()
+                    )
                     return
                 } catch {
                     // 다음 attempt — 백오프.
@@ -399,6 +468,14 @@ public final class ConnectionStore: ObservableObject {
             self?.reconnectTask = nil
             self?.status = .error(
                 "자동 재연결 \(Self.maxReconnectAttempts)회 모두 실패. 케이블·네트워크를 확인 후 수동으로 다시 연결해 주세요."
+            )
+            // **v1.14.2** — reconnect 최종 실패 발화 (사용자 개입 필요).
+            Harness.shared.record(
+                .connectFailure, level: .error, actor: .system,
+                data: ["via": AnyCodable("reconnect"),
+                       "attempts": AnyCodable(Self.maxReconnectAttempts),
+                       "endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—")],
+                context: self?.harnessContext()
             )
         }
     }
@@ -431,6 +508,15 @@ public final class ConnectionStore: ObservableObject {
     /// 으로 플래그 안 해제 → `isRecovering=true` 잔류 → 버튼 영구 disabled. disconnect
     /// 가 복구 관련 flag 도 동기 리셋해야 함.
     public func disconnect() {
+        // v1.12.0 telemetry — 사용자 명시 disconnect (uptime 함께 기록).
+        let uptime: Double = connectedAt.map { Date().timeIntervalSince($0) } ?? 0
+        Harness.shared.record(
+            .connectDisconnect, level: .notice, actor: .user,
+            data: ["uptime_s": AnyCodable(uptime),
+                   "success_count": AnyCodable(successCount),
+                   "failure_count": AnyCodable(failureCount)],
+            context: harnessContext()
+        )
         cancelReconnect()
         // 복구 진행 중이면 task 에 cancel 신호 + 플래그 즉시 해제.
         if isRecovering || isInRecoveryPath {
@@ -545,7 +631,73 @@ public final class ConnectionStore: ObservableObject {
     @discardableResult
     public func applyPoseSmoothly(_ target: RobotPose, profile: MotorSpeedProfile? = nil) async -> PoseApplyResult {
         let p = profile ?? motorSpeedProfile
-        guard let bus = bus else { return .notConnected }
+        // v1.12.0 telemetry — pose 적용 시작.
+        let poseStartedAt = Date()
+        Harness.shared.record(
+            .poseApplyStart, level: .info, actor: .system,
+            data: ["joints": AnyCodable(target.positions.count),
+                   "profile": AnyCodable(String(describing: p))],
+            context: harnessContext()
+        )
+        // v1.12.2 (Codex re-review #14 fix) — 모든 종료 경로에서 telemetry 발행.
+        // 결과를 변수에 받아 함수 끝에서 한 번에 처리하면 새 return 가 추가돼도 누락 X.
+        let result = await applyPoseSmoothlyImpl(target: target, profile: p)
+        let elapsedMs = Date().timeIntervalSince(poseStartedAt) * 1000.0
+        recordPoseTerminal(result: result, elapsedMs: elapsedMs)
+        return result
+    }
+
+    private func recordPoseTerminal(result: PoseApplyResult, elapsedMs: Double) {
+        switch result {
+        case .completed:
+            Harness.shared.record(
+                .poseApplyComplete, level: .info, actor: .system,
+                data: ["elapsed_ms": AnyCodable(elapsedMs)])
+        case .notConnected:
+            Harness.shared.record(
+                .poseApplyFailed, level: .warn, actor: .system,
+                data: ["reason": AnyCodable("notConnected"),
+                       "elapsed_ms": AnyCodable(elapsedMs)])
+        case .rejected(let reason):
+            Harness.shared.record(
+                .poseApplyFailed, level: .warn, actor: .system,
+                data: ["reason": AnyCodable("rejected"),
+                       "reason_hash": AnyCodable(Harness.shortHash(reason)),
+                       "elapsed_ms": AnyCodable(elapsedMs)])
+        case .cancelled:
+            Harness.shared.record(
+                .poseApplyCancel, level: .info, actor: .user,
+                data: ["elapsed_ms": AnyCodable(elapsedMs)])
+        case .writeFailed(let pos, let speed, let total, _):
+            Harness.shared.record(
+                .poseApplyFailed, level: .error, actor: .robot,
+                data: ["reason": AnyCodable("writeFailed"),
+                       "position_failed": AnyCodable(pos),
+                       "speed_failed": AnyCodable(speed),
+                       "total_joints": AnyCodable(total),
+                       "elapsed_ms": AnyCodable(elapsedMs)])
+        case .partialFailure(let pos, let speed, let total, _):
+            Harness.shared.record(
+                .poseApplyComplete, level: .warn, actor: .system,
+                data: ["partial": AnyCodable(true),
+                       "position_failed": AnyCodable(pos),
+                       "speed_failed": AnyCodable(speed),
+                       "total_joints": AnyCodable(total),
+                       "elapsed_ms": AnyCodable(elapsedMs)])
+        case .criticalLoad(let joint):
+            Harness.shared.record(
+                .poseApplyFailed, level: .error, actor: .robot,
+                data: ["reason": AnyCodable("criticalLoad"),
+                       "joint": AnyCodable(joint),
+                       "elapsed_ms": AnyCodable(elapsedMs)])
+        }
+    }
+
+    /// Internal implementation — pose 적용 본체. 외부 wrapper 가 결과를 텔레메트리로 발행.
+    private func applyPoseSmoothlyImpl(target: RobotPose, profile p: MotorSpeedProfile) async -> PoseApplyResult {
+        guard let bus = bus else {
+            return .notConnected
+        }
 
         // 1) 현재 자세 read — 안전 검증의 기준.
         var currentPositions: [JointID: Int] = [:]
@@ -727,10 +879,30 @@ public final class ConnectionStore: ObservableObject {
 
     /// 외부 모듈 (StudioView, MotionStudioView 등)에서 bus 호출 throw를 보고하면 카운터 +1.
     /// 임계 도달 시 disconnect + status .error.
-    public func handleBusError(_ error: Error) {
+    ///
+    /// **v1.14.2 (2026-05-21)** — 진단 친화 인자 추가 (둘 다 optional, 기본 호출 site 영향 X).
+    /// `op`: "read" | "write" | "snapshot" 등. `joint`: 어떤 motor 였는지.
+    public func handleBusError(_ error: Error,
+                                 op: String? = nil,
+                                 joint: JointID? = nil) {
         // 안정화 grace 기간엔 카운터를 늘리지 않는다 — 연결 직후 false-positive 방지.
         if let until = stabilityGraceUntil, Date() < until { return }
         consecutiveBusFailures += 1
+        // v1.12.2 telemetry — bus 읽기 실패 (error msg redacted).
+        // v1.14.2 — joint / op 진단 정보 추가 (옵셔널 — 호출 site 가 알면 첨부).
+        let errMsg = error.localizedDescription
+        var payload: [String: AnyCodable] = [
+            "consecutive": AnyCodable(consecutiveBusFailures),
+            "error_len": AnyCodable(errMsg.count),
+            "error_hash": AnyCodable(Harness.shortHash(errMsg))
+        ]
+        if let op = op { payload["op"] = AnyCodable(op) }
+        if let j = joint { payload["joint"] = AnyCodable(String(describing: j)) }
+        Harness.shared.record(
+            .busReadFail, level: .warn, actor: .robot,
+            data: payload,
+            context: harnessContext()
+        )
         if consecutiveBusFailures >= busFailureThreshold {
             let msg: String = {
                 if let ep = activeEndpoint, case .network = ep {
@@ -744,7 +916,17 @@ public final class ConnectionStore: ObservableObject {
 
     /// 폴링 또는 호출 성공 시 카운터 리셋.
     private func resetBusFailureCounter() {
-        if consecutiveBusFailures > 0 { consecutiveBusFailures = 0 }
+        if consecutiveBusFailures > 0 {
+            // **v1.14.2 (2026-05-21)** — bus 일시 실패 → 회복 발화. 실 로봇 시나리오에서
+            // "1-2회 read 실패 후 다시 정상" 패턴 추적 — 일시적 단선 / EMI / power 강하 등.
+            let prior = consecutiveBusFailures
+            consecutiveBusFailures = 0
+            Harness.shared.record(
+                .busRecovered, level: .notice, actor: .robot,
+                data: ["prior_consecutive": AnyCodable(prior)],
+                context: harnessContext()
+            )
+        }
     }
 
     /// 강제 연결 종료 + 에러 상태 설정. e-stop 우선 시도하지만 bus가 이미 죽어 있으면 silently 진행.
@@ -779,10 +961,24 @@ public final class ConnectionStore: ObservableObject {
     /// 응급 e-stop — 모든 관절 토크 OFF.
     public func emergencyStop() {
         guard let bus else { return }
+        // v1.12.0 telemetry — e-stop 발동 (사용자 액션).
+        Harness.shared.record(
+            .busEStop, level: .error, actor: .user,
+            data: ["source": AnyCodable("ConnectionStore.emergencyStop")],
+            context: harnessContext()
+        )
         do {
             try bus.emergencyStop()
         } catch {
             status = .error("e-stop 실패: \(error.localizedDescription)")
+            let errMsg = error.localizedDescription
+            Harness.shared.record(
+                .busWriteFail, level: .error, actor: .robot,
+                data: ["op": AnyCodable("emergencyStop"),
+                       "error_len": AnyCodable(errMsg.count),
+                       "error_hash": AnyCodable(Harness.shortHash(errMsg))],
+                context: harnessContext()
+            )
         }
     }
 
@@ -1179,6 +1375,11 @@ public final class ConnectionStore: ObservableObject {
 
     /// IMU 전용 polling loop. joint/board read 와 분리되어 bus contention 회피.
     private func runImuLoop(periodNs: UInt64) async {
+        // **v1.14.2 (2026-05-21) — IMU 상태 전환 트래킹**.
+        // 매 iter 진입 전 직전 상태를 보고, 전환 발생 시 telemetry 발화.
+        var prevImuUnavailable: Bool = false
+        var prevImuStale: Bool = false
+        var prevScaleSuspicion: ImuScaleSuspicion = .unknown
         while !Task.isCancelled, let bus = self.bus {
             let imuResult: Result<ImuRaw, Error> = await Task.detached(priority: .userInitiated) {
                 do { return .success(try bus.readImu()) }
@@ -1186,27 +1387,77 @@ public final class ConnectionStore: ObservableObject {
             }.value
             switch imuResult {
             case .success(let value):
+                // **v1.14.2** — 회복 검출: 직전 unavailable 또는 stale 이었으면 telemetry.
+                let wasUnavailable = prevImuUnavailable
+                let wasStale = prevImuStale
+                let priorFailures = self.imuConsecutiveFailures
                 self.imuFilter.update(value)
-                // v1.11.17: LiveGyroPanel 용 raw sample 노출 — gyro X/Y/Z dps.
                 self.lastImuRaw = value
                 self.lastImuSuccessAt = Date()
                 self.imuConsecutiveFailures = 0
                 self.lastImuError = nil
-                // §4 wiring: handoff §4 의 imuSequence — Mac-side monotonic counter.
-                // **주의 (Codex review 2026-05-18)**: firmware sequence 아님. 같은 tick
-                // 안에서 값이 안 변하면 "새 IMU read 없음" 검출만 가능 (sensor-level
-                // duplicate 검출은 firmware 노출 후 별도 필요). UInt32 overflow ~49일.
                 self.imuSequenceCount &+= 1
                 self.diagnoseImuScale(value)
-                // lastTelemetry 의 imu 필드도 갱신 (UI 일관성).
                 if let snap = self.lastTelemetry {
                     self.lastTelemetry = TelemetrySnapshot(board: snap.board, joints: snap.joints, imu: value)
                 }
+                // 회복 telemetry — 직전이 unavailable/stale 이었으면.
+                if wasUnavailable {
+                    Harness.shared.record(
+                        .imuRecovered, level: .notice, actor: .robot,
+                        data: ["from_state": AnyCodable("unavailable"),
+                               "prior_failures": AnyCodable(priorFailures)],
+                        context: harnessContext()
+                    )
+                } else if wasStale {
+                    Harness.shared.record(
+                        .imuRecovered, level: .notice, actor: .robot,
+                        data: ["from_state": AnyCodable("stale"),
+                               "prior_failures": AnyCodable(priorFailures)],
+                        context: harnessContext()
+                    )
+                }
+                // Scale suspicion 전환.
+                if imuScaleSuspicion != prevScaleSuspicion, prevScaleSuspicion != .unknown {
+                    Harness.shared.record(
+                        .imuScaleChanged, level: .notice, actor: .robot,
+                        data: ["from": AnyCodable(prevScaleSuspicion.rawValue),
+                               "to": AnyCodable(imuScaleSuspicion.rawValue),
+                               "accelz_mag_avg": AnyCodable(imuAccelZMagnitudeAvg)],
+                        context: harnessContext()
+                    )
+                }
+                prevScaleSuspicion = imuScaleSuspicion
+                prevImuUnavailable = false
+                prevImuStale = false
+
             case .failure(let error):
                 self.imuConsecutiveFailures &+= 1
-                // §4 wiring: busReadFailureCount 누적.
                 self.busReadFailureCount &+= 1
                 self.lastImuError = error.localizedDescription
+                // **v1.14.2** — 상태 전환 검출 (failure 누적이 임계 넘는 첫 순간).
+                let nowUnavailable = isImuUnavailable
+                let nowStale = isImuStale && !nowUnavailable
+                if nowUnavailable, !prevImuUnavailable {
+                    let errMsg = error.localizedDescription
+                    Harness.shared.record(
+                        .imuUnavailable, level: .warn, actor: .robot,
+                        data: ["consecutive_failures": AnyCodable(imuConsecutiveFailures),
+                               "error_len": AnyCodable(errMsg.count),
+                               "error_hash": AnyCodable(Harness.shortHash(errMsg))],
+                        context: harnessContext()
+                    )
+                    prevImuUnavailable = true
+                } else if nowStale, !prevImuStale, !nowUnavailable {
+                    Harness.shared.record(
+                        .imuStale, level: .warn, actor: .robot,
+                        data: ["consecutive_failures": AnyCodable(imuConsecutiveFailures),
+                               "stale_for_s": AnyCodable(
+                                   lastImuSuccessAt.map { Date().timeIntervalSince($0) } ?? 0)],
+                        context: harnessContext()
+                    )
+                    prevImuStale = true
+                }
             }
             try? await Task.sleep(nanoseconds: periodNs)
         }
@@ -1247,6 +1498,46 @@ public final class ConnectionStore: ObservableObject {
                     didFail = true
                     self.failureCount &+= 1
                     handleBusError(error)
+                }
+
+                // v1.11.25 audit P0 robot-D — FSR polling (board read 와 같은 1Hz cadence).
+                // board 미장착 robot 일부에서는 timeout fail — 3회 연속 실패 시 자동 disable
+                // 하여 polling spam 차단. 한 번 disable 되면 다음 connect 까지 재시도 안 함.
+                if !self.fsrPollingDisabled {
+                    let fsrResult: (Result<FsrReading, Error>, Result<FsrReading, Error>) =
+                        await Task.detached(priority: .userInitiated) {
+                            let l: Result<FsrReading, Error> = {
+                                do { return .success(try bus.readFsrLeft()) }
+                                catch { return .failure(error) }
+                            }()
+                            let r: Result<FsrReading, Error> = {
+                                do { return .success(try bus.readFsrRight()) }
+                                catch { return .failure(error) }
+                            }()
+                            return (l, r)
+                        }.value
+                    var fsrOk = false
+                    if case .success(let l) = fsrResult.0 {
+                        self.lastFsrLeft = l; fsrOk = true
+                    }
+                    if case .success(let r) = fsrResult.1 {
+                        self.lastFsrRight = r; fsrOk = true
+                    }
+                    if fsrOk {
+                        self.lastFsrSuccessAt = Date()
+                        self.fsrConsecutiveFailures = 0
+                    } else {
+                        self.fsrConsecutiveFailures &+= 1
+                        if self.fsrConsecutiveFailures >= 3 {
+                            self.fsrPollingDisabled = true
+                            // event tee — Harness 가 trace.
+                            Harness.shared.record(
+                                .telemetrySkip, level: .info, actor: .system,
+                                data: ["reason": AnyCodable("fsr_board_missing"),
+                                       "consecutive_failures": AnyCodable(self.fsrConsecutiveFailures)]
+                            )
+                        }
+                    }
                 }
             }
 

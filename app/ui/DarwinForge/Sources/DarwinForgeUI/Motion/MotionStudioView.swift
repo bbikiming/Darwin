@@ -982,6 +982,13 @@ public struct MotionStudioView: View {
         selectedPageIdx = motion.pages.count - 1
         selectedStep = 0
         markDirty()
+        // v1.12.2 telemetry — 페이지 생성 (name redacted).
+        Harness.shared.record(
+            .motionPageCreated, level: .info, actor: .user,
+            data: ["page_id": AnyCodable(nextId),
+                   "name_hash": AnyCodable(Harness.shortHash(newPage.name)),
+                   "total_pages": AnyCodable(motion.pages.count)]
+        )
     }
 
     // MARK: - Page management (duplicate / rename / delete / export)
@@ -1015,12 +1022,20 @@ public struct MotionStudioView: View {
     /// 페이지 삭제 — 1 개 미만으로 줄지 않도록 보호.
     private func deletePage(at idx: Int) {
         guard motion.pages.count > 1, idx >= 0, idx < motion.pages.count else { return }
+        let removed = motion.pages[idx]
         pushUndoSnapshot()
         motion.pages.remove(at: idx)
         selectedPageIdx = max(0, min(selectedPageIdx, motion.pages.count - 1))
         selectedStep = 0
         markDirty()
         applySelectedStepToPose()
+        // v1.12.2 telemetry — 페이지 삭제 (name redacted).
+        Harness.shared.record(
+            .motionPageDeleted, level: .info, actor: .user,
+            data: ["page_id": AnyCodable(removed.id),
+                   "name_hash": AnyCodable(Harness.shortHash(removed.name)),
+                   "remaining_pages": AnyCodable(motion.pages.count)]
+        )
     }
 
     /// 페이지 이름 변경.
@@ -1028,9 +1043,19 @@ public struct MotionStudioView: View {
         guard idx >= 0, idx < motion.pages.count else { return }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, motion.pages[idx].name != trimmed else { return }
+        let oldName = motion.pages[idx].name
+        let pageId = motion.pages[idx].id
         pushUndoSnapshot()
         motion.pages[idx].name = trimmed
         markDirty()
+        // v1.12.2 telemetry — 페이지 이름 변경 (names redacted to hashes).
+        Harness.shared.record(
+            .motionPageRenamed, level: .info, actor: .user,
+            data: ["page_id": AnyCodable(pageId),
+                   "from_hash": AnyCodable(Harness.shortHash(oldName)),
+                   "to_hash": AnyCodable(Harness.shortHash(trimmed)),
+                   "to_len": AnyCodable(trimmed.count)]
+        )
     }
 
     /// 단일 페이지 .json 으로 내보내기 (NSSavePanel).

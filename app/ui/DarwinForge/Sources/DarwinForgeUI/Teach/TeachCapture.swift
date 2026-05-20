@@ -1,6 +1,7 @@
 import Foundation
 import ForgeCore
 import SwiftUI
+// v1.12.0 — Telemetry harness 통합.
 
 /// 티칭 모드 — 사용자가 손으로 자세를 잡고 소프트웨어가 실시간으로 캡처.
 ///
@@ -86,15 +87,29 @@ public final class TeachCapture: ObservableObject {
         captureTask?.cancel()
         isCapturing = true
         consecutiveFailures = 0
+        // v1.12.0 telemetry — 티칭 캡처 시작.
+        Harness.shared.record(
+            .teachCaptureStart, level: .info, actor: .user,
+            data: ["connected": AnyCodable(store.bus != nil)]
+        )
         captureTask = Task { [weak self] in
             await self?.captureLoop(store: store)
         }
     }
 
     public func stopCapture() {
+        let wasCapturing = isCapturing
         captureTask?.cancel()
         captureTask = nil
         isCapturing = false
+        if wasCapturing {
+            // v1.12.0 telemetry — 티칭 캡처 정지.
+            Harness.shared.record(
+                .teachCaptureStop, level: .info, actor: .user,
+                data: ["snapshot_count": AnyCodable(snapshots.count),
+                       "consec_failures": AnyCodable(consecutiveFailures)]
+            )
+        }
     }
 
     private func captureLoop(store: ConnectionStore) async {
@@ -142,22 +157,53 @@ public final class TeachCapture: ObservableObject {
         let finalName = trimmed.isEmpty
             ? "자세 \(snapshots.count + 1)"
             : trimmed
-        snapshots.insert(
-            PoseSnapshot(name: finalName, pose: livePose, capturedAt: Date()),
-            at: 0
+        let snap = PoseSnapshot(name: finalName, pose: livePose, capturedAt: Date())
+        snapshots.insert(snap, at: 0)
+        // v1.12.2 telemetry — 자세 스냅샷 저장 (사용자 이름은 길이+해시로 redact).
+        Harness.shared.record(
+            .teachSnapshotCaptured, level: .notice, actor: .user,
+            data: ["name_len": AnyCodable(finalName.count),
+                   "name_hash": AnyCodable(Harness.shortHash(finalName)),
+                   "name_was_default": AnyCodable(trimmed.isEmpty),
+                   "joint_count": AnyCodable(livePose.positions.count),
+                   "total_snapshots": AnyCodable(snapshots.count),
+                   "snapshot_id": AnyCodable(snap.id.uuidString)]
         )
     }
 
     public func deleteSnapshot(_ s: PoseSnapshot) {
         snapshots.removeAll { $0.id == s.id }
+        // v1.12.2 telemetry — 스냅샷 삭제 (name redacted).
+        Harness.shared.record(
+            .teachSnapshotDeleted, level: .info, actor: .user,
+            data: ["name_hash": AnyCodable(Harness.shortHash(s.name)),
+                   "snapshot_id": AnyCodable(s.id.uuidString),
+                   "remaining": AnyCodable(snapshots.count)]
+        )
     }
 
     public func clearSnapshots() {
+        let prev = snapshots.count
         snapshots.removeAll()
+        if prev > 0 {
+            // v1.12.0 telemetry — 전체 스냅샷 비움.
+            Harness.shared.record(
+                .teachSnapshotsCleared, level: .info, actor: .user,
+                data: ["count_before": AnyCodable(prev)]
+            )
+        }
     }
 
     /// 저장된 스냅샷을 로봇에 적용 — 토크 ON 상태에서 호출 권장.
     public func applySnapshot(_ s: PoseSnapshot, store: ConnectionStore) {
+        // v1.12.2 telemetry — 자세 적용 (name redacted).
+        Harness.shared.record(
+            .teachSnapshotApplied, level: .notice, actor: .user,
+            data: ["name_hash": AnyCodable(Harness.shortHash(s.name)),
+                   "snapshot_id": AnyCodable(s.id.uuidString),
+                   "joint_count": AnyCodable(s.pose.positions.count),
+                   "bus_connected": AnyCodable(store.bus != nil)]
+        )
         guard let bus = store.bus else { return }
         for (j, raw) in s.pose.positions {
             _ = try? bus.setPosition(j, raw: UInt16(clamping: raw))

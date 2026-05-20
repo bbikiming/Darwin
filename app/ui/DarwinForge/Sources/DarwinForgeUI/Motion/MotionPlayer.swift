@@ -46,14 +46,31 @@ public final class MotionPlayer: ObservableObject {
         self.pose = start
         self.elapsedMs = 0
         self.currentStepIndex = 0
+        // **v1.14.2 (2026-05-21)** — motion 페이지 로드 telemetry.
+        // 사용자가 어떤 motion 을 선택했는지 추적 — play 시작 전 의도 분리.
+        Harness.shared.record(
+            .motionLoad, level: .info, actor: .user,
+            data: ["page_id": AnyCodable(page.id),
+                   "page_name_hash": AnyCodable(Harness.shortHash(page.name)),
+                   "step_count": AnyCodable(page.steps.count),
+                   "duration_ms": AnyCodable(page.totalDurationMs)]
+        )
     }
 
     public func play() {
-        guard page != nil else { return }
+        guard let p = page else { return }
         if mode == .playing { return }
         mode = .playing
         lastTickTime = .now
         timer?.invalidate()
+        // v1.12.2 telemetry — 모션 재생 시작 (page name redacted).
+        Harness.shared.record(
+            .motionPlayStart, level: .info, actor: .user,
+            data: ["page_name_hash": AnyCodable(Harness.shortHash(p.name)),
+                   "page_id": AnyCodable(p.id),
+                   "step_count": AnyCodable(p.steps.count),
+                   "duration_ms": AnyCodable(p.totalDurationMs)]
+        )
         // v1.11.2 (2026-05-18): CI Swift 5.9 호환 — inner Task closure 에 weak self 재캡쳐.
         timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
             Task { @MainActor [weak self] in self?.tick() }
@@ -69,6 +86,9 @@ public final class MotionPlayer: ObservableObject {
     }
 
     public func stop() {
+        let wasPlaying = (mode == .playing)
+        let elapsedForHarness = elapsedMs
+        let pageNameForHarness = page?.name
         timer?.invalidate()
         timer = nil
         mode = .stop
@@ -77,6 +97,13 @@ public final class MotionPlayer: ObservableObject {
         if let p = page {
             pose = startPose
             _ = p
+        }
+        if wasPlaying, let name = pageNameForHarness {
+            Harness.shared.record(
+                .motionPlayAbort, level: .info, actor: .user,
+                data: ["page_name_hash": AnyCodable(Harness.shortHash(name)),
+                       "elapsed_ms": AnyCodable(elapsedForHarness)]
+            )
         }
     }
 
@@ -176,6 +203,17 @@ public final class MotionPlayer: ObservableObject {
             elapsedMs = 0
             // 다음 tick 에서 다시 시작 step 부터 계산.
         } else {
+            // **v1.12.2 (Codex re-review fix)** — 자연 종료 telemetry.
+            // mode == .playing 일 때만 발행. 사용자가 seek(toEnd) 등으로 elapsedMs 를
+            // 끝으로 옮긴 뒤 recompute 호출 시 misfire 안 됨 (mode == .stop / .paused).
+            if mode == .playing {
+                Harness.shared.record(
+                    .motionPlayComplete, level: .info, actor: .system,
+                    data: ["page_name_hash": AnyCodable(Harness.shortHash(page.name)),
+                           "page_id": AnyCodable(page.id),
+                           "elapsed_ms": AnyCodable(elapsedMs)]
+                )
+            }
             mode = .stop
             timer?.invalidate(); timer = nil
         }
