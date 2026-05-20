@@ -17,19 +17,29 @@ public struct RobotScene3D: NSViewRepresentable {
     public let onMeshFallback: ((Bool) -> Void)?
     /// SwiftUI 측에서 ViewCube 등으로 카메라를 조작할 때 사용. nil이면 자체 인터랙션만.
     public let cameraController: CameraController?
+    /// **v1.11.18 (2026-05-19)** — IMU 기반 base orientation tilt.
+    /// 실시간 imuRollDeg/imuPitchDeg 가 robot 전체 root 노드의 eulerAngles 에 적용.
+    /// 사용자 워크랩 진입 시 robot 의 실제 기울기 시각화 (sim/real 무관).
+    /// default 0 — 종전 호출처는 변경 X.
+    public let imuRollDeg: Double
+    public let imuPitchDeg: Double
 
     public init(pose: RobotPose,
                 footTrace: [SIMD3<Double>] = [],
                 highlight: JointID? = nil,
                 showAxes: Bool = true,
                 onMeshFallback: ((Bool) -> Void)? = nil,
-                cameraController: CameraController? = nil) {
+                cameraController: CameraController? = nil,
+                imuRollDeg: Double = 0,
+                imuPitchDeg: Double = 0) {
         self.pose = pose
         self.footTrace = footTrace
         self.highlight = highlight
         self.showAxes = showAxes
         self.onMeshFallback = onMeshFallback
         self.cameraController = cameraController
+        self.imuRollDeg = imuRollDeg
+        self.imuPitchDeg = imuPitchDeg
     }
 
     public func makeNSView(context: Context) -> InteractiveSceneView {
@@ -45,6 +55,7 @@ public struct RobotScene3D: NSViewRepresentable {
         context.coordinator.applyFootTrace(footTrace)
         context.coordinator.applyHighlight(highlight)
         context.coordinator.applyAxesVisible(showAxes)
+        context.coordinator.applyImuTilt(rollDeg: imuRollDeg, pitchDeg: imuPitchDeg)
         // ViewCube/Home 버튼이 카메라를 조작할 수 있도록 controller에 view 등록.
         if let controller = cameraController {
             DispatchQueue.main.async { controller.view = view }
@@ -62,6 +73,7 @@ public struct RobotScene3D: NSViewRepresentable {
         context.coordinator.applyFootTrace(footTrace)
         context.coordinator.applyHighlight(highlight)
         context.coordinator.applyAxesVisible(showAxes)
+        context.coordinator.applyImuTilt(rollDeg: imuRollDeg, pitchDeg: imuPitchDeg)
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -77,6 +89,13 @@ public struct RobotScene3D: NSViewRepresentable {
         private let primitiveRig: DarwinOP2Rig?
         private let traceNode: SCNNode
         private let axesNode: SCNNode
+
+        /// **v1.11.18.1 (2026-05-20)** — IMU tilt 적용용 wrapper 노드.
+        /// 종전 (v1.11.18): root.eulerAngles 직접 set → MeshRig 의 ROS→SceneKit
+        /// 좌표 변환 transform 이 덮어쓰여 robot 이 잘못 보임.
+        /// 신: rig.root 를 tiltNode 안에 add. tiltNode.eulerAngles 만 변경 →
+        /// root 의 좌표 변환 보존 + IMU 기울기 외부 적용.
+        private let tiltNode: SCNNode
 
         /// P0-F: STL mesh 로드에 실패해 primitive fallback rig을 쓴 경우 true.
         /// 호출자(RobotScene3D)가 SwiftUI overlay로 노란 banner를 띄우는 데 사용.
@@ -160,17 +179,20 @@ public struct RobotScene3D: NSViewRepresentable {
 
             // ── 휴머노이드: ROBOTIS-OP2-Common URDF + STL mesh (Apache 2.0).
             //    실패 시 primitive 폴백 rig 사용.
+            // **v1.11.18.1**: tiltNode wrapper 도입 — IMU 기울기 적용을 별도 노드로 분리.
+            tiltNode = SCNNode()
+            scene.rootNode.addChildNode(tiltNode)
             if let mr = try? MeshRig() {
                 meshRig = mr
                 primitiveRig = nil
                 usingMeshFallback = false
-                scene.rootNode.addChildNode(mr.root)
+                tiltNode.addChildNode(mr.root)  // 종전: scene.rootNode 직접
             } else {
                 meshRig = nil
                 let pr = DarwinOP2Rig()
                 primitiveRig = pr
                 usingMeshFallback = true   // P0-F: SwiftUI overlay에서 banner를 띄우게 시그널.
-                scene.rootNode.addChildNode(pr.root)
+                tiltNode.addChildNode(pr.root)  // 종전: scene.rootNode 직접
             }
 
             traceNode = SCNNode()
@@ -257,6 +279,23 @@ public struct RobotScene3D: NSViewRepresentable {
 
         func applyAxesVisible(_ visible: Bool) {
             axesNode.isHidden = !visible
+        }
+
+        /// **v1.11.18 (2026-05-19)**: IMU 기반 robot tilt 적용.
+        /// **v1.11.18.1 (2026-05-20) — bug fix**: tiltNode wrapper 사용. 종전 직접
+        /// root.eulerAngles set → MeshRig 의 ROS→SceneKit 좌표 변환 transform (root)
+        /// 덮어써져서 robot 이 잘못 보였음. tiltNode 는 transform 미설정이라 안전.
+        ///
+        /// 축 매핑 (SceneKit world frame, Y up):
+        /// - pitchDeg → X 축 회전 (전후 기울기, robot 의 forward = -Z)
+        /// - rollDeg → Z 축 회전 (좌우 기울기, robot 의 좌우 = X)
+        /// SceneKit eulerAngles 는 radian. CGFloat 인자 (macOS).
+        func applyImuTilt(rollDeg: Double, pitchDeg: Double) {
+            let safeRoll = ImuAttitudeDisplayMapping.sanitize(rollDeg)
+            let safePitch = ImuAttitudeDisplayMapping.sanitize(pitchDeg)
+            let rollRad = CGFloat(safeRoll * .pi / 180.0)
+            let pitchRad = CGFloat(safePitch * .pi / 180.0)
+            tiltNode.eulerAngles = SCNVector3(x: pitchRad, y: 0, z: rollRad)
         }
 
         // MARK: helpers

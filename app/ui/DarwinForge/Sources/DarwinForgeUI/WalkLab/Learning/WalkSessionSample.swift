@@ -190,6 +190,38 @@ public struct WalkSessionHeader: Codable, Sendable {
     /// A/B 비교 tag — `WalkComparisonTag.arm` "A"/"B" 식별.
     public let comparisonTag: WalkComparisonTag?
 
+    // MARK: - v1.11.10 (2026-05-19) — V2 schema: 8 axis 전부 + tuning + experiment context
+
+    /// `WalkingEngine` rawValue (`macSparseKeyframe` / `robotisOnboard`).
+    public let walkingEngine: String?
+    /// `BalancePitchInputConvention` rawValue (`imuRaw` / `negateForwardIsNegative`).
+    public let pitchInputConvention: String?
+    /// `enableBalanceCorrection` 세션 시작 시점 값.
+    public let enableBalanceCorrectionAtStart: Bool?
+    /// `autoOnboardBrokering` 세션 시작 시점 값 (`.robotisOnboard` 일 때만 의미).
+    public let autoOnboardBrokeringAtStart: Bool?
+    /// `hipPitchOffsetTrimDeg` 세션 시작 시점 값 (0~20°, default 13).
+    public let hipPitchOffsetTrimDegAtStart: Double?
+    /// 6 tuning slider 값 (advanced ON 시 사용자 지정).
+    public let tuningStrideMm: Double?
+    public let tuningSideMm: Double?
+    public let tuningTurnDeg: Double?
+    public let tuningPeriodMs: Double?
+    public let tuningFootHeightMm: Double?
+    public let tuningBalanceGain: Double?
+    /// Custom gain (gainProfile=.custom 일 때만).
+    public let customGainHipRoll: Double?
+    public let customGainKnee: Double?
+    public let customGainAnklePitch: Double?
+    public let customGainAnkleRoll: Double?
+    /// Robot context — 재현성.
+    public let robotModel: String?
+    public let firmwareVersion: String?
+    public let onboardPatchVersion: String?
+    /// A/B 실험 — `WalkLabExperimentLoop` 에서 사용.
+    public let experimentId: String?
+    public let baselineSessionId: String?
+
     public init(
         sessionId: String,
         startTimeIso: String,
@@ -204,7 +236,28 @@ public struct WalkSessionHeader: Codable, Sendable {
         imuSourceAtStart: String? = nil,
         imuScaleSuspicionAtStart: String? = nil,
         operatorNoteAtStart: String? = nil,
-        comparisonTag: WalkComparisonTag? = nil
+        comparisonTag: WalkComparisonTag? = nil,
+        // v1.11.10 V2
+        walkingEngine: String? = nil,
+        pitchInputConvention: String? = nil,
+        enableBalanceCorrectionAtStart: Bool? = nil,
+        autoOnboardBrokeringAtStart: Bool? = nil,
+        hipPitchOffsetTrimDegAtStart: Double? = nil,
+        tuningStrideMm: Double? = nil,
+        tuningSideMm: Double? = nil,
+        tuningTurnDeg: Double? = nil,
+        tuningPeriodMs: Double? = nil,
+        tuningFootHeightMm: Double? = nil,
+        tuningBalanceGain: Double? = nil,
+        customGainHipRoll: Double? = nil,
+        customGainKnee: Double? = nil,
+        customGainAnklePitch: Double? = nil,
+        customGainAnkleRoll: Double? = nil,
+        robotModel: String? = nil,
+        firmwareVersion: String? = nil,
+        onboardPatchVersion: String? = nil,
+        experimentId: String? = nil,
+        baselineSessionId: String? = nil
     ) {
         self.sessionId = sessionId
         self.startTimeIso = startTimeIso
@@ -220,6 +273,78 @@ public struct WalkSessionHeader: Codable, Sendable {
         self.imuScaleSuspicionAtStart = imuScaleSuspicionAtStart
         self.operatorNoteAtStart = operatorNoteAtStart
         self.comparisonTag = comparisonTag
+        self.walkingEngine = walkingEngine
+        self.pitchInputConvention = pitchInputConvention
+        self.enableBalanceCorrectionAtStart = enableBalanceCorrectionAtStart
+        self.autoOnboardBrokeringAtStart = autoOnboardBrokeringAtStart
+        self.hipPitchOffsetTrimDegAtStart = hipPitchOffsetTrimDegAtStart
+        self.tuningStrideMm = tuningStrideMm
+        self.tuningSideMm = tuningSideMm
+        self.tuningTurnDeg = tuningTurnDeg
+        self.tuningPeriodMs = tuningPeriodMs
+        self.tuningFootHeightMm = tuningFootHeightMm
+        self.tuningBalanceGain = tuningBalanceGain
+        self.customGainHipRoll = customGainHipRoll
+        self.customGainKnee = customGainKnee
+        self.customGainAnklePitch = customGainAnklePitch
+        self.customGainAnkleRoll = customGainAnkleRoll
+        self.robotModel = robotModel
+        self.firmwareVersion = firmwareVersion
+        self.onboardPatchVersion = onboardPatchVersion
+        self.experimentId = experimentId
+        self.baselineSessionId = baselineSessionId
+    }
+
+    // MARK: - Backward-compat decode (v1.11.9 이전 jsonl 호환)
+    private enum CodingKeys: String, CodingKey {
+        case sessionId, startTimeIso, preset, intensityLevelAtStart, appVersion, isRealRobot
+        case balanceAlgorithmMode, balanceSignConvention, balanceGainProfile, correctionApplyMode
+        case imuSourceAtStart, imuScaleSuspicionAtStart, operatorNoteAtStart, comparisonTag
+        case walkingEngine, pitchInputConvention, enableBalanceCorrectionAtStart
+        case autoOnboardBrokeringAtStart, hipPitchOffsetTrimDegAtStart
+        case tuningStrideMm, tuningSideMm, tuningTurnDeg, tuningPeriodMs
+        case tuningFootHeightMm, tuningBalanceGain
+        case customGainHipRoll, customGainKnee, customGainAnklePitch, customGainAnkleRoll
+        case robotModel, firmwareVersion, onboardPatchVersion
+        case experimentId, baselineSessionId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.sessionId = try c.decode(String.self, forKey: .sessionId)
+        self.startTimeIso = try c.decode(String.self, forKey: .startTimeIso)
+        self.preset = try c.decode(String.self, forKey: .preset)
+        self.intensityLevelAtStart = try c.decode(Int.self, forKey: .intensityLevelAtStart)
+        self.appVersion = try c.decode(String.self, forKey: .appVersion)
+        self.isRealRobot = try c.decode(Bool.self, forKey: .isRealRobot)
+        self.balanceAlgorithmMode = try c.decodeIfPresent(String.self, forKey: .balanceAlgorithmMode)
+        self.balanceSignConvention = try c.decodeIfPresent(String.self, forKey: .balanceSignConvention)
+        self.balanceGainProfile = try c.decodeIfPresent(String.self, forKey: .balanceGainProfile)
+        self.correctionApplyMode = try c.decodeIfPresent(String.self, forKey: .correctionApplyMode)
+        self.imuSourceAtStart = try c.decodeIfPresent(String.self, forKey: .imuSourceAtStart)
+        self.imuScaleSuspicionAtStart = try c.decodeIfPresent(String.self, forKey: .imuScaleSuspicionAtStart)
+        self.operatorNoteAtStart = try c.decodeIfPresent(String.self, forKey: .operatorNoteAtStart)
+        self.comparisonTag = try c.decodeIfPresent(WalkComparisonTag.self, forKey: .comparisonTag)
+        self.walkingEngine = try c.decodeIfPresent(String.self, forKey: .walkingEngine)
+        self.pitchInputConvention = try c.decodeIfPresent(String.self, forKey: .pitchInputConvention)
+        self.enableBalanceCorrectionAtStart = try c.decodeIfPresent(Bool.self, forKey: .enableBalanceCorrectionAtStart)
+        self.autoOnboardBrokeringAtStart = try c.decodeIfPresent(Bool.self, forKey: .autoOnboardBrokeringAtStart)
+        self.hipPitchOffsetTrimDegAtStart = try c.decodeIfPresent(Double.self, forKey: .hipPitchOffsetTrimDegAtStart)
+        self.tuningStrideMm = try c.decodeIfPresent(Double.self, forKey: .tuningStrideMm)
+        self.tuningSideMm = try c.decodeIfPresent(Double.self, forKey: .tuningSideMm)
+        self.tuningTurnDeg = try c.decodeIfPresent(Double.self, forKey: .tuningTurnDeg)
+        self.tuningPeriodMs = try c.decodeIfPresent(Double.self, forKey: .tuningPeriodMs)
+        self.tuningFootHeightMm = try c.decodeIfPresent(Double.self, forKey: .tuningFootHeightMm)
+        self.tuningBalanceGain = try c.decodeIfPresent(Double.self, forKey: .tuningBalanceGain)
+        self.customGainHipRoll = try c.decodeIfPresent(Double.self, forKey: .customGainHipRoll)
+        self.customGainKnee = try c.decodeIfPresent(Double.self, forKey: .customGainKnee)
+        self.customGainAnklePitch = try c.decodeIfPresent(Double.self, forKey: .customGainAnklePitch)
+        self.customGainAnkleRoll = try c.decodeIfPresent(Double.self, forKey: .customGainAnkleRoll)
+        self.robotModel = try c.decodeIfPresent(String.self, forKey: .robotModel)
+        self.firmwareVersion = try c.decodeIfPresent(String.self, forKey: .firmwareVersion)
+        self.onboardPatchVersion = try c.decodeIfPresent(String.self, forKey: .onboardPatchVersion)
+        self.experimentId = try c.decodeIfPresent(String.self, forKey: .experimentId)
+        self.baselineSessionId = try c.decodeIfPresent(String.self, forKey: .baselineSessionId)
     }
 }
 
@@ -257,4 +382,81 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
 
     /// 권고의 신뢰도 (0..1). 낮으면 sample 부족 / 불확실.
     public let confidence: Double
+
+    // MARK: - v1.11.10 (2026-05-19) — V2 분석 metric
+
+    /// 데이터 품질 보고. nil = legacy summary (v1.11.9 이전).
+    public let dataQuality: DataQualityReport?
+    /// Sagittal (앞기울) 분석 metric. nil = legacy summary.
+    public let sagittal: SagittalMetric?
+    /// Candidate vs applied delta 분리 통계. nil = legacy summary.
+    public let candidateApplied: CandidateAppliedSplit?
+
+    public init(
+        id: String, preset: String, startTimeIso: String,
+        durationSec: Double, sampleCount: Int, intensityLevelUsed: Int,
+        meanAbsRoll: Double, meanAbsPitch: Double,
+        rollStdev: Double, pitchStdev: Double,
+        peakAbsRoll: Double, peakAbsPitch: Double,
+        oscillationScore: Double, correctorEffectivenessScore: Double,
+        recommendedIntensityLevel: Int, recommendationReason: String,
+        confidence: Double,
+        dataQuality: DataQualityReport? = nil,
+        sagittal: SagittalMetric? = nil,
+        candidateApplied: CandidateAppliedSplit? = nil
+    ) {
+        self.id = id
+        self.preset = preset
+        self.startTimeIso = startTimeIso
+        self.durationSec = durationSec
+        self.sampleCount = sampleCount
+        self.intensityLevelUsed = intensityLevelUsed
+        self.meanAbsRoll = meanAbsRoll
+        self.meanAbsPitch = meanAbsPitch
+        self.rollStdev = rollStdev
+        self.pitchStdev = pitchStdev
+        self.peakAbsRoll = peakAbsRoll
+        self.peakAbsPitch = peakAbsPitch
+        self.oscillationScore = oscillationScore
+        self.correctorEffectivenessScore = correctorEffectivenessScore
+        self.recommendedIntensityLevel = recommendedIntensityLevel
+        self.recommendationReason = recommendationReason
+        self.confidence = confidence
+        self.dataQuality = dataQuality
+        self.sagittal = sagittal
+        self.candidateApplied = candidateApplied
+    }
+
+    // MARK: - Backward-compat decode (v1.11.9 이전 .summary.json 호환)
+    private enum CodingKeys: String, CodingKey {
+        case id, preset, startTimeIso, durationSec, sampleCount, intensityLevelUsed
+        case meanAbsRoll, meanAbsPitch, rollStdev, pitchStdev, peakAbsRoll, peakAbsPitch
+        case oscillationScore, correctorEffectivenessScore
+        case recommendedIntensityLevel, recommendationReason, confidence
+        case dataQuality, sagittal, candidateApplied
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.preset = try c.decode(String.self, forKey: .preset)
+        self.startTimeIso = try c.decode(String.self, forKey: .startTimeIso)
+        self.durationSec = try c.decode(Double.self, forKey: .durationSec)
+        self.sampleCount = try c.decode(Int.self, forKey: .sampleCount)
+        self.intensityLevelUsed = try c.decode(Int.self, forKey: .intensityLevelUsed)
+        self.meanAbsRoll = try c.decode(Double.self, forKey: .meanAbsRoll)
+        self.meanAbsPitch = try c.decode(Double.self, forKey: .meanAbsPitch)
+        self.rollStdev = try c.decode(Double.self, forKey: .rollStdev)
+        self.pitchStdev = try c.decode(Double.self, forKey: .pitchStdev)
+        self.peakAbsRoll = try c.decode(Double.self, forKey: .peakAbsRoll)
+        self.peakAbsPitch = try c.decode(Double.self, forKey: .peakAbsPitch)
+        self.oscillationScore = try c.decode(Double.self, forKey: .oscillationScore)
+        self.correctorEffectivenessScore = try c.decode(Double.self, forKey: .correctorEffectivenessScore)
+        self.recommendedIntensityLevel = try c.decode(Int.self, forKey: .recommendedIntensityLevel)
+        self.recommendationReason = try c.decode(String.self, forKey: .recommendationReason)
+        self.confidence = try c.decode(Double.self, forKey: .confidence)
+        self.dataQuality = try c.decodeIfPresent(DataQualityReport.self, forKey: .dataQuality)
+        self.sagittal = try c.decodeIfPresent(SagittalMetric.self, forKey: .sagittal)
+        self.candidateApplied = try c.decodeIfPresent(CandidateAppliedSplit.self, forKey: .candidateApplied)
+    }
 }

@@ -293,6 +293,172 @@ public enum RobotSetupCommand {
     /// 볼 트래킹 종료 = demoStop 의 alias. UI 명령 의도 명확화를 위해 별도 const.
     public static let ballTrackerStop: String = demoStop
 
+    // MARK: - v1.11.5 (2026-05-18) — WalkLab ROBOTIS Onboard mode
+
+    /// **WalkLab Onboard mode 시작 명령** — robot 측 demo-pilot 실행 + WalkLab brokerage 모드.
+    ///
+    /// 흐름:
+    ///   1. 기존 demo / forge-bridge 종료
+    ///   2. `demo-pilot` (patched binary) 탐색 — 없으면 fallback `demo`
+    ///   3. `/tmp/df-pilot-mode` 에 `"walklab"` 작성 (robot-side patch 가 read)
+    ///   4. `/tmp/df-walklab-cmd` 빈 파일 생성 (Mac 측 x/y/a brokering write 경로)
+    ///   5. `nohup` 으로 binary 시작
+    ///
+    /// **robot-side patch 필요** (이번 PR 범위 밖):
+    /// - `df-pilot-mode == "walklab"` 분기 추가
+    /// - `/tmp/df-walklab-cmd` 5Hz polling → `Walking::GetInstance()->X/Y/A_MOVE_AMPLITUDE` set
+    /// - polling 식: `sscanf(line, "%d %f %f %f %f %f", &en, &x, &y, &a, &p, &f)`
+    /// - 미patch 시: `demo-pilot` 가 default SOCCER 모드로 시작 → ball tracker 동작
+    public static let walkLabRobotisStart: String = #"""
+    set +e
+    echo "▶ forge-bridge 종료 (USB bus 해제)"
+    sudo killall socat 2>/dev/null
+    sleep 0.3
+
+    echo "▶ ROBOTIS demo binary 탐색 (patched 우선)"
+    BIN=""
+    PATCHED=0
+    for d in "$HOME/Framework/Linux/project/demo/demo-pilot" \
+             "$HOME/darwin/Linux/project/demo/demo-pilot" \
+             "/darwin/Linux/project/demo/demo-pilot" \
+             "/robotis/Linux/project/demo/demo-pilot"; do
+      if [ -x "$d" ]; then BIN="$d"; PATCHED=1; break; fi
+    done
+    if [ -z "$BIN" ]; then
+      for d in "$HOME/Framework/Linux/project/demo/demo" \
+               "$HOME/darwin/Linux/project/demo/demo" \
+               "/darwin/Linux/project/demo/demo" \
+               "/robotis/Linux/project/demo/demo"; do
+        if [ -x "$d" ]; then BIN="$d"; break; fi
+      done
+    fi
+    if [ -z "$BIN" ]; then
+      echo "demo / demo-pilot binary not found"
+      exit 1
+    fi
+
+    if [ "$PATCHED" = "1" ]; then
+      echo "   patched binary 사용: $BIN"
+      echo "walklab" > /tmp/df-pilot-mode
+      # 빈 명령 파일 생성 — Mac 측이 x/y/a brokering write.
+      : > /tmp/df-walklab-cmd
+      chmod 0666 /tmp/df-walklab-cmd 2>/dev/null
+      echo "▶ /tmp/df-walklab-cmd 생성 — Mac 측 brokering 준비 완료"
+      echo "▶ /tmp/df-pilot-mode = walklab"
+    else
+      echo "   ⚠️  원본 demo 사용 (patched binary 미설치): $BIN"
+      echo "   → WalkLab brokerage 미지원 — SOCCER 기본 모드로 시작됩니다"
+      echo "   robot-side patch 적용 후 재시도 권장"
+      rm -f /tmp/df-pilot-mode 2>/dev/null
+    fi
+
+    echo "▶ 이전 데모 종료"
+    sudo killall demo demo-pilot walk_demo action_editor 2>/dev/null
+    sleep 0.3
+
+    echo "▶ demo 시작 → $BIN"
+    cd "$(dirname "$BIN")" || exit 1
+    sudo nohup "$BIN" >/tmp/df-demo.log 2>&1 &
+    sleep 1
+
+    PROC=$(pgrep -x "$(basename "$BIN")" 2>/dev/null)
+    if [ -n "$PROC" ]; then
+      echo "✅ demo 실행 중 (pid $PROC)"
+      if [ "$PATCHED" = "1" ]; then
+        echo "   WalkLab brokerage 활성 — Mac 측에서 x/y/a 명령 송출"
+      else
+        echo "   ⚠️  patched binary 없음 — SOCCER 기본 모드 동작"
+      fi
+      tail -10 /tmp/df-demo.log 2>/dev/null
+    else
+      echo "✗ demo 시작 실패"
+      tail -30 /tmp/df-demo.log 2>/dev/null
+      exit 1
+    fi
+    """#
+
+    /// **WalkLab Onboard mode 종료 명령** — demo-pilot 정지 + 명령 파일 정리 +
+    /// forge-bridge 복구 (Mac 측 모터 송출 경로 복원).
+    ///
+    /// **v1.11.7 (2026-05-18, GPT HIGH-3 fix)**: 종전엔 killall + rm 만 하고 끝나서
+    /// Mac 측 직접 setPosition 송출 경로가 복구 안 되던 버그. demoStop 패턴 그대로
+    /// forge-bridge 복구 추가.
+    public static let walkLabRobotisStop: String = #"""
+    set +e
+    echo "▶ WalkLab onboard 모드 종료"
+    sudo killall demo demo-pilot 2>/dev/null
+    rm -f /tmp/df-pilot-mode /tmp/df-walklab-cmd 2>/dev/null
+    sleep 0.5
+
+    echo "▶ forge-bridge 복구 (Mac 측 모터 송출용)"
+    if [ -x /etc/init.d/forge-bridge ]; then
+      sudo /etc/init.d/forge-bridge start 2>/dev/null
+      sleep 0.5
+      sudo /etc/init.d/forge-bridge status 2>/dev/null
+    else
+      if command -v socat >/dev/null 2>&1; then
+        sudo bash -c 'stty -F /dev/ttyUSB0 1000000 raw -echo 2>/dev/null
+                      nohup socat tcp-l:5530,reuseaddr,fork,nodelay open:/dev/ttyUSB0,nonblock=0 >/dev/null 2>&1 &'
+        sleep 0.3
+        if ss -lnt 2>/dev/null | grep -q ":5530"; then
+          echo "forge-bridge: running (raw socat, 영구 등록 X)"
+        else
+          echo "forge-bridge: failed — 마스터 셋업이 필요해요"
+        fi
+      else
+        echo "forge-bridge: socat 미설치 — 수동 셋업 필요"
+      fi
+    fi
+    echo "✅ WalkLab onboard 종료 + Mac 직접 송출 경로 복구"
+    """#
+
+    /// **x/y/a brokering 명령 송출** — Mac → robot `/tmp/df-walklab-cmd` atomic write.
+    ///
+    /// shell-quote 안전 (template — caller 가 line 변수 escaping 책임).
+    ///
+    /// **v1.11.7 (2026-05-18, GPT MEDIUM-1 fix)** — atomic write:
+    /// 종전 `printf > /tmp/df-walklab-cmd` 직접 덮어쓰기 → robot C++ polling 이
+    /// write 중간에 read 하면 빈 파일/부분 line 가능. tmp file 에 write 후 mv 로
+    /// atomic 교체. POSIX rename(2) 는 같은 filesystem 안에서 atomic 보장.
+    ///
+    /// 예시 usage (Swift side):
+    /// ```swift
+    /// let line = WalkingEngineCommand(enabled: true, xMm: 28, ...).serializedLine
+    /// let cmd = RobotSetupCommand.walkLabRobotisSendCommand(line: line)
+    /// try await ssh.execute(cmd)
+    /// ```
+    public static func walkLabRobotisSendCommand(line: String, cmdId: String? = nil) -> String {
+        // line 은 `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg` — 숫자만.
+        // 안전성: WalkingEngineCommand.serializedLine 이 %d %.2f format 만 출력 →
+        // shell metacharacters 위험 없음. 추가 guard 로 single-quote 사용.
+        // **v1.11.16.1 (2026-05-19) — ACK 검증**: 명령 write 후 daemon 의 polling
+        // 주기 (200ms) + 안전 margin (50ms) = 250ms sleep 후 ACK 파일 cat.
+        // **v1.11.16.2 (2026-05-19) — Codex CRITICAL 1+MED fix**: cmd_id nonce 추가
+        // 로 stale ACK 검출. deadline polling (1.5s) — sleep 0.25 보다 robust.
+        // - cmd_id 가 line prefix 로 prepend: "{cmd_id} {line}"
+        // - firmware 가 sscanf 첫 token 으로 cmd_id parse → ACK 에 echo
+        // - Mac 의 Bridge 가 result 의 cmd_id 매치 → stale ACK reject
+        //
+        // 응답 형식:
+        //   "OK {ts_ms} {cmd_id} {line}"  — daemon 처리 성공 (firmware ≥ v1.11.16.2)
+        //   "OK {ts_ms} {line}"            — firmware ≥ v1.11.16.1 (cmd_id 없음, backward)
+        //   "NO_ACK"                       — daemon 없음 또는 firmware 미패치
+        let id = cmdId ?? generateCmdId()
+        let fullLine = "\(id) \(line)"
+        // Bash polling loop: 최대 1.5s 대기 + 50ms 단위 check (안전 margin 충분).
+        // 종전 sleep 0.25 는 daemon polling 200ms + 부하 시 부족.
+        let pollLoop = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do sleep 0.05; if [ -s /tmp/df-walklab-ack ]; then cat /tmp/df-walklab-ack; exit 0; fi; done; echo NO_ACK"
+        return "printf '%s\\n' '\(fullLine)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd && (\(pollLoop))"
+    }
+
+    /// **v1.11.16.2 (2026-05-19)**: cmd_id 생성 — UUID prefix 8글자 + millisecond timestamp.
+    /// shell-safe ([a-zA-Z0-9_-]) 만 사용. 길이 < 32.
+    public static func generateCmdId() -> String {
+        let uuid = UUID().uuidString.prefix(8)  // 8 hex chars
+        let ts = Int(Date().timeIntervalSince1970 * 1000) % 1_000_000  // 6 digits
+        return "c\(ts)_\(uuid)"
+    }
+
     /// 현재 demo 활성 상태 — 사용자에게 어떤 모드인지 알려줌.
     ///
     /// **출력 contract** (Mac 앱이 파싱):

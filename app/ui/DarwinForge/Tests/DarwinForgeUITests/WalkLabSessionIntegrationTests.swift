@@ -87,26 +87,26 @@ final class WalkLabSessionIntegrationTests: XCTestCase {
     }
 
     /// **enableBalanceCorrection ON/OFF → safety event 로그** (.correctorOn/.correctorOff).
-    /// v1.7 default ON 기준 — 먼저 OFF, 그 다음 ON 으로 두 이벤트 확인.
+    /// **v1.11.4 (2026-05-18)**: default OFF → ON 먼저, 그 다음 OFF 두 이벤트 확인.
     func testBalanceCorrectionToggleLogsEvent() {
         let session = WalkLabSession()
         let initialCount = session.safetyEvents.count
-        // v1.7: default ON → OFF 로 전환하면 correctorOff event.
-        session.enableBalanceCorrection = false
-        XCTAssertGreaterThan(session.safetyEvents.count, initialCount,
-            "corrector OFF → safety event 추가")
-        XCTAssertTrue(
-            session.safetyEvents.contains { $0.kind == .correctorOff },
-            "correctorOff event 존재"
-        )
-
-        let afterOffCount = session.safetyEvents.count
+        // v1.11.4: default OFF → ON 으로 전환하면 correctorOn event.
         session.enableBalanceCorrection = true
-        XCTAssertGreaterThan(session.safetyEvents.count, afterOffCount,
+        XCTAssertGreaterThan(session.safetyEvents.count, initialCount,
             "corrector ON → safety event 추가")
         XCTAssertTrue(
             session.safetyEvents.contains { $0.kind == .correctorOn },
             "correctorOn event 존재"
+        )
+
+        let afterOnCount = session.safetyEvents.count
+        session.enableBalanceCorrection = false
+        XCTAssertGreaterThan(session.safetyEvents.count, afterOnCount,
+            "corrector OFF → safety event 추가")
+        XCTAssertTrue(
+            session.safetyEvents.contains { $0.kind == .correctorOff },
+            "correctorOff event 존재"
         )
     }
 
@@ -166,11 +166,13 @@ final class WalkLabSessionIntegrationTests: XCTestCase {
 
     /// **WalkLabSession 의 monitoringExpanded 초기 false (UserDefaults clean)**.
     func testMonitoringExpandedInitialState() {
+        // **v1.11.6 (2026-05-18)**: default true 로 변경 (UX 개선).
         let key = "df.walklab.monitoringExpanded"
         UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
         let session = WalkLabSession()
-        XCTAssertFalse(session.monitoringExpanded,
-            "UserDefaults 미설정 — default false")
+        XCTAssertTrue(session.monitoringExpanded,
+            "UserDefaults 미설정 — default true (v1.11.6 UX fix)")
     }
 
     /// **strideMm/sideMm/turnDeg/balanceGain 기본값 정합** (advanced 모드 default).

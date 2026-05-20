@@ -74,7 +74,7 @@ public enum DFColor {
     )
 
     /// **2026-05-16**: 5-tier safety state 의 intermediate "심각" 단계.
-    /// warning(노랑) ↔ danger(빨강) 사이 — fall prevention 의 22-30° 등.
+    /// warning(노랑) ↔ danger(빨강) 사이 — fall prevention 의 45-50° 등 (v1.11.19 정합).
     /// macOS `.orange` 와 유사하지만 light/dark + highContrast 명시 제어.
     public static let severe = Color(
         light: "#FF6F00", dark: "#FF9F0A",
@@ -93,6 +93,70 @@ public enum DFColor {
     public static let focusRing = Color(light: "#0A84FF", dark: "#0A84FF")
     /// 비활성 (disabled) overlay — control 위에 덧씌워 dim 효과.
     public static let disabledOverlay = Color(light: "#FFFFFF", dark: "#000000").opacity(0.4)
+
+    // MARK: - 2026-05-19 v1.11.15: 흰색 플랫 테마 전용 표면 색상
+    //
+    // `DFTheme.lightFlat` 활성 시 canvas/card/elev2/border 를 순백 톤으로 override.
+    // 기본 light variant (canvas = #F2F2F7) 보다 더 흰색에 가까워 "흰색 플랫" 인상 강화.
+    // shadow 는 비활성 (DFThemedShadow modifier 가 처리), 표면 구분은 옅은 보더만.
+    //
+    // **2026-05-19 cycle 2**: 완벽 무채색 (achromatic) 보강 — 모든 RGB 채널 동일값.
+    // 종전 b 채널이 r=g 보다 살짝 컸음 (cool 톤 잔존) → 모든 surface r=g=b 로 통일.
+    // 상태 색상 (forge/danger/success/...) 은 RootView 의 `.saturation(0)` modifier 가
+    // flat 모드에서 자동 desaturate → 전체 GUI 가 진정한 grayscale.
+
+    /// 흰색 플랫 — 윈도우 배경 (순백, r=g=b=1.0).
+    public static let flatCanvas = Color(red: 1.0, green: 1.0, blue: 1.0)
+    /// 흰색 플랫 — 카드 (r=g=b=0.985).
+    public static let flatCard = Color(red: 0.985, green: 0.985, blue: 0.985)
+    /// 흰색 플랫 — nested 카드 elev2 (r=g=b=0.965).
+    public static let flatElev2 = Color(red: 0.965, green: 0.965, blue: 0.965)
+    /// 흰색 플랫 — deepest nested elev3 (r=g=b=0.940).
+    public static let flatElev3 = Color(red: 0.940, green: 0.940, blue: 0.940)
+    /// 흰색 플랫 — 표면 보더 (r=g=b=0.860).
+    public static let flatBorder = Color(red: 0.860, green: 0.860, blue: 0.860)
+    /// 흰색 플랫 — 본문 텍스트 (r=g=b=0.110).
+    public static let flatTextPrimary = Color(red: 0.110, green: 0.110, blue: 0.110)
+    /// 흰색 플랫 — 보조 텍스트 (r=g=b=0.360).
+    public static let flatTextSecondary = Color(red: 0.360, green: 0.360, blue: 0.360)
+
+    // MARK: - 2026-05-19 v1.11.15 cycle 2: 3D 뷰포트 전용 배경
+    //
+    // 흰색 플랫 / 라이트 모드에서도 3D 모델 (회색 mesh) 시인성 보장 위해 어두운 톤 유지.
+    // Apple 자체 도구 (Reality Composer, Xcode SceneKit Editor) 도 어두운 viewport 사용.
+    // 테마 무관 항상 dark — 사용자 명시 요청 (2026-05-19).
+
+    /// 3D 뷰포트 상단 그라데이션 (#2A2A2E — 어두운 회색).
+    public static let scene3DTop = Color(red: 0.165, green: 0.165, blue: 0.180)
+    /// 3D 뷰포트 하단 그라데이션 (#15151A — 거의 검정).
+    public static let scene3DBottom = Color(red: 0.082, green: 0.082, blue: 0.102)
+
+    // MARK: - 테마 인식 accessor (theme: DFTheme)
+    //
+    // flat 모드에서 핵심 표면을 자동 분기. 사용처:
+    //   `.background(DFColor.adaptiveCanvas(theme))`
+    // 의도: 점진적 마이그레이션 — 새 컴포넌트는 adaptive 사용, 기존은 그대로.
+
+    /// 윈도우 배경 — flat 일 때 #FFFFFF, 아니면 light/dark 자동.
+    public static func adaptiveCanvas(_ theme: DFTheme) -> Color {
+        theme.prefersWhiteSurfaces ? flatCanvas : canvas
+    }
+    /// 카드 — flat 일 때 거의 흰색, 아니면 light/dark 자동.
+    public static func adaptiveCard(_ theme: DFTheme) -> Color {
+        theme.prefersWhiteSurfaces ? flatCard : card
+    }
+    /// nested 카드 (elev2) — flat 일 때 옅은 회색, 아니면 light/dark 자동.
+    public static func adaptiveElev2(_ theme: DFTheme) -> Color {
+        theme.prefersWhiteSurfaces ? flatElev2 : elev2
+    }
+    /// nested 카드 (elev3) — flat 일 때 옅은 회색, 아니면 light/dark 자동.
+    public static func adaptiveElev3(_ theme: DFTheme) -> Color {
+        theme.prefersWhiteSurfaces ? flatElev3 : elev3
+    }
+    /// 카드/패널 보더 — flat 일 때 명확한 회색, 아니면 textSecondary subtle.
+    public static func adaptiveBorder(_ theme: DFTheme) -> Color {
+        theme.prefersWhiteSurfaces ? flatBorder : textSecondary.opacity(DFOpacity.subtle)
+    }
 }
 
 /// 타이포 스케일 — Apple HIG Typography 가이드 기반.
@@ -431,6 +495,10 @@ public enum DFSize {
 }
 
 /// Elevation — Material Design 영감 + macOS 톤다운 그림자 단계.
+///
+/// **2026-05-19 v1.11.15 cycle 3**: flat tier 추가 — 흰색 플랫 테마에서 깊이 cue 보장.
+/// 종전 `DFTheme.lightFlat` 은 그림자 0 (no shadow) 이었으나, 사용자 피드백 — 입체감
+/// 부족. 매우 부드러운 (radius 1.5x, opacity 절반) 그림자로 카드 ↔ 배경 구분 강화.
 public enum DFShadow {
     public static let none: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
         (.clear, 0, 0, 0)
@@ -440,6 +508,18 @@ public enum DFShadow {
         (Color.black.opacity(0.12), 16, 0, 4)
     public static let modal: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
         (Color.black.opacity(0.24), 28, 0, 8)
+
+    // MARK: - Flat tier (v1.11.15 cycle 3 — 무채색 테마 전용 깊이 cue)
+
+    /// 흰색 플랫 — 카드 그림자 (부드럽고 차분).
+    public static let flatCard: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
+        (Color.black.opacity(0.05), 10, 0, 2)
+    /// 흰색 플랫 — popover/dropdown 그림자.
+    public static let flatPopover: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
+        (Color.black.opacity(0.08), 20, 0, 5)
+    /// 흰색 플랫 — modal / sheet 그림자.
+    public static let flatModal: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) =
+        (Color.black.opacity(0.14), 36, 0, 10)
 }
 
 /// 애니메이션 — 표준 timing + semantic alias.
@@ -589,6 +669,10 @@ public enum DFOpacity {
 public extension View {
     /// **카드 표준 modifier** — corner + border + shadow.
     ///
+    /// **2026-05-19 v1.11.15 cycle 3**: 흰색 플랫 테마에서 자동 부드러운 그림자 적용.
+    /// `shadow: false` (default) 라도 flat 모드면 `DFShadow.flatCard` 자동. 카드 ↔ 배경
+    /// 구분이 명확해져 무채색 GUI 도 입체감 유지.
+    ///
     /// # 사용 vs DFPanel
     ///
     /// | 사용 | 컴포넌트 |
@@ -600,25 +684,14 @@ public extension View {
     /// # 예시
     /// ```swift
     /// VStack { ... }
-    ///     .dfCard()                          // 표준 (md radius, no shadow)
+    ///     .dfCard()                          // 표준 (flat 모드 자동 부드러운 그림자)
     ///     .dfCard(radius: DFRadius.card)     // 명시 (= sm 8pt)
-    ///     .dfCard(shadow: true)              // shadow 추가
+    ///     .dfCard(shadow: true)              // 모든 테마에서 그림자 강제
     ///     .dfCard(padded: false)             // padding 없이 chrome 만
     /// ```
     func dfCard(radius: CGFloat = DFRadius.md, padded: Bool = true,
                 shadow: Bool = false) -> some View {
-        self
-            .padding(padded ? DFSpace.md : 0)
-            .background(DFColor.card)
-            .clipShape(RoundedRectangle(cornerRadius: radius))
-            .overlay(
-                RoundedRectangle(cornerRadius: radius)
-                    .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: 0.5)
-            )
-            .shadow(color: shadow ? DFShadow.card.color : .clear,
-                    radius: shadow ? DFShadow.card.radius : 0,
-                    x: shadow ? DFShadow.card.x : 0,
-                    y: shadow ? DFShadow.card.y : 0)
+        modifier(DFCardModifier(radius: radius, padded: padded, explicitShadow: shadow))
     }
 
     /// 디스에이블 시 자연스러운 dim 처리.
@@ -691,6 +764,8 @@ public extension View {
     /// **Reduce Transparency 대응 material** — Apple HIG + WCAG.
     /// 시스템 Reduce Transparency 시: solid `card` 배경.
     /// 그 외: `material` (`.regularMaterial` / `.thickMaterial` 등).
+    /// **2026-05-19 v1.11.15**: `DFTheme.lightFlat` 도 fallback 강제 — 플랫 모드는
+    /// blur 효과 없이 solid 카드 색상 사용.
     ///
     /// 사용:
     /// ```swift
@@ -700,17 +775,122 @@ public extension View {
                     fallback: Color = DFColor.card) -> some View {
         self.modifier(DFMaterialBackground(material: material, fallback: fallback))
     }
+
+    /// **2026-05-19 v1.11.15**: 테마 인식 그림자.
+    ///
+    /// `DFTheme.lightFlat` (flat 모드) 일 때 shadow 비활성화 — 평평한 시각 효과.
+    /// 그 외 테마는 일반 `.shadow(...)` 와 동일.
+    ///
+    /// 사용:
+    /// ```swift
+    /// myCard.dfThemedShadow(DFShadow.card)
+    /// myCard.dfThemedShadow(color: .black.opacity(0.1), radius: 8, y: 2)
+    /// ```
+    func dfThemedShadow(_ shadow: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat)) -> some View {
+        modifier(DFThemedShadowModifier(color: shadow.color, radius: shadow.radius,
+                                        x: shadow.x, y: shadow.y))
+    }
+
+    /// 명시 파라미터 변형 — DFShadow 토큰 없이 임시 그림자 적용.
+    func dfThemedShadow(color: Color, radius: CGFloat, x: CGFloat = 0, y: CGFloat = 0) -> some View {
+        modifier(DFThemedShadowModifier(color: color, radius: radius, x: x, y: y))
+    }
+
+    /// **2026-05-19 v1.11.15 cycle 2**: 그래프/시각화 영역의 색 보존.
+    ///
+    /// `lightFlat` 테마에서 RootView 가 `.saturation(0)` 으로 전체 GUI 를 무채색화하지만,
+    /// 차트/그래프 같은 데이터 시각화는 색이 인사이트 표현의 핵심. 본 modifier 는
+    /// `.saturation(1.0)` 강제 적용하여 부모의 desaturate 를 무력화 — 차트 색이 살아남.
+    ///
+    /// 사용 사례:
+    /// - `TelemetrySparkline`, `TimeSeriesStripChart`, `SafetySparkline`
+    /// - 임의 `Chart { ... }` SwiftUI Charts 컨테이너
+    /// - PoseInspector 의 joint delta bar 등
+    ///
+    /// 차트의 default tint 가 `DFColor.forge` (푸른색 메인 컬러) 이면 무채색 GUI 안에서
+    /// 푸른 강조로 표시되어 시각적 위계 명확.
+    ///
+    /// 사용:
+    /// ```swift
+    /// TelemetrySparkline(samples: data, range: r, label: "Roll").dfChartAccent()
+    /// ```
+    func dfChartAccent() -> some View {
+        self.saturation(1.0)
+    }
+}
+
+/// **v1.11.15 cycle 3**: 카드 chrome — flat 모드 자동 부드러운 그림자 인식.
+private struct DFCardModifier: ViewModifier {
+    let radius: CGFloat
+    let padded: Bool
+    let explicitShadow: Bool
+
+    @Environment(\.dfTheme) private var theme: DFTheme
+
+    func body(content: Content) -> some View {
+        let shadowSpec = resolveShadow()
+        content
+            .padding(padded ? DFSpace.md : 0)
+            .background(DFColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: radius))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius)
+                    .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: 0.5)
+            )
+            .shadow(color: shadowSpec.color, radius: shadowSpec.radius,
+                    x: shadowSpec.x, y: shadowSpec.y)
+    }
+
+    private func resolveShadow() -> (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) {
+        if explicitShadow {
+            // 명시 호출자 — flat 모드면 flatCard (부드러움), 그 외 일반 card 그림자.
+            return theme.isFlat ? DFShadow.flatCard : DFShadow.card
+        }
+        if theme.isFlat {
+            // flat 모드 자동 — 사용자 명시 X 라도 부드러운 그림자 (사용자 피드백).
+            return DFShadow.flatCard
+        }
+        // 비 flat + 명시 X — 그림자 없음 (기존 동작 보존, visual regression 차단).
+        return DFShadow.none
+    }
+}
+
+/// 테마 인식 그림자 modifier.
+///
+/// **2026-05-19 v1.11.15 cycle 3 (사용자 피드백 반영)**: 종전 flat 모드 = no-op 으로
+/// 그림자 제거했으나 카드 ↔ 배경 구분이 약해진다는 피드백. 이제 flat 모드에서도
+/// 부드러운 (radius 1.4x, color 그대로) 그림자 적용 — 호출자 color hint 보존.
+private struct DFThemedShadowModifier: ViewModifier {
+    let color: Color
+    let radius: CGFloat
+    let x: CGFloat
+    let y: CGFloat
+
+    @Environment(\.dfTheme) private var theme: DFTheme
+
+    func body(content: Content) -> some View {
+        if theme.isFlat {
+            // flat 모드: 더 큰 radius, 그러나 호출자 color (대개 black low-opacity 또는
+            // tint low-opacity) 그대로. saturation(0) 가 hue 를 자동 grayscale 처리.
+            content.shadow(color: color, radius: radius * 1.4, x: x, y: max(y, 1))
+        } else {
+            content.shadow(color: color, radius: radius, x: x, y: y)
+        }
+    }
 }
 
 /// Reduce Transparency 대응 material background.
 /// 시스템 설정 → 손쉬운 사용 → 디스플레이 → 투명도 줄이기 ON → solid color.
+/// **2026-05-19 v1.11.15**: `DFTheme.lightFlat` 도 같은 fallback 사용 — 플랫 모드는
+/// blur 효과 없이 평평한 표면 유지.
 private struct DFMaterialBackground: ViewModifier {
     let material: Material
     let fallback: Color
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dfTheme) private var theme: DFTheme
 
     func body(content: Content) -> some View {
-        if reduceTransparency {
+        if reduceTransparency || theme.isFlat {
             content.background(fallback)
         } else {
             content.background(material)

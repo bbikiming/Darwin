@@ -53,6 +53,8 @@ public struct TimeSeriesStripChart: View {
                         .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: 0.5)
                 )
         }
+        // v1.11.15 cycle 2: 무채색 GUI 에서 strip chart 색 보존.
+        .dfChartAccent()
     }
 
     private var header: some View {

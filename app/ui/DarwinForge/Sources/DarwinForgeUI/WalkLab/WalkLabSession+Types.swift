@@ -202,6 +202,10 @@ extension WalkLabSession {
             /// 은 정적 plan + IMU balance 미활성 시 실 robot 낙상 위험. balanceCorrection
             /// 활성화 요구.
             case balanceCorrectorRequiredForCautionPreset(presetLabel: String)
+            // v1.11.22.1 (Codex LOW fix): IMU 차단 사유별 명세화 — 사후 진단 의미 보존.
+            case imuUnavailable
+            case imuStale
+            case imuPlausibilityFailed(String)
         }
         public let cause: Cause
         public var userMessage: String {
@@ -219,6 +223,12 @@ extension WalkLabSession {
                 return "🛑 보행 시작 차단 — 상체 토크 \(f)/\(t) 실패. 통신 점검"
             case .balanceCorrectorRequiredForCautionPreset(let label):
                 return "🛑 '\(label)' 시작 차단 — '자세 보정' 토글을 먼저 켜주세요 (IMU 기반 균형 보정 없이 실행 시 낙상 위험)"
+            case .imuUnavailable:
+                return "🛑 IMU 응답 없음 — 자세 보정/낙상 감지 chain 불가. 연결/플라이트 확인 후 재시도"
+            case .imuStale:
+                return "🛑 IMU 지연 5초+ — outdated 데이터로 보정 시 fall 위험. 연결 확인 후 재시도"
+            case .imuPlausibilityFailed(let detail):
+                return "🛑 IMU plausibility 실패 (\(detail)) — 1g 중력 감지 안 됨. chip 확인 후 재시도"
             }
         }
     }

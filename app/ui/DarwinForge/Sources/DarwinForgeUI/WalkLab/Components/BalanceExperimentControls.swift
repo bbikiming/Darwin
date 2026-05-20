@@ -30,7 +30,26 @@ public struct BalanceExperimentControls: View {
     ///
     /// fix: 모든 진입점이 본 helper 거치게 통일. 새 config 가 isRiskyToApply 면
     /// 무조건 sheet (이전 config 가 risky 였든 안 했든 — 매 변경마다 의도 재확인).
+    ///
+    /// **v1.11.3 (2026-05-18)** — `.blocked` 케이스는 confirmation sheet 도 띄우지 않고
+    /// 바로 `applyToRobot=false` 로 강등. 이유: blocked = 실 데이터로 입증된 위험 조합
+    /// 이므로 "사용자가 확인하면 적용" 패턴 자체가 부적절. session.didSet / startWalkCycle
+    /// 진입 가드가 이중 안전망이지만 UI 단에서도 명시 거부하여 사용자 의도 오해 차단.
     private func requestConfigChange(_ newConfig: BalanceExperimentConfig) {
+        if case .blocked = newConfig.safetyVerdict {
+            // 사용자 의도 (algorithm/sign/gain/pitchInputConvention 변경) 는 보존하되
+            // applyToRobot 만 강제 OFF. **v1.11.4 (2026-05-18) fix**: pitchInputConvention
+            // 보존 필수 — 종전엔 누락되어 default `.imuRaw` 로 reset 되었음.
+            let downgraded = BalanceExperimentConfig(
+                algorithmMode: newConfig.algorithmMode,
+                signConvention: newConfig.signConvention,
+                gainProfile: newConfig.gainProfile,
+                applyToRobot: false,
+                pitchInputConvention: newConfig.pitchInputConvention
+            )
+            session.balanceExperimentConfig = downgraded
+            return
+        }
         if newConfig.isRiskyToApply {
             pendingRiskyApply = newConfig
         } else {
@@ -46,6 +65,13 @@ public struct BalanceExperimentControls: View {
             // 2) Profile picker — 한 줄로 자주 쓰는 4개 프로파일.
             profileRow
 
+            // **v1.11.8 (2026-05-18) — HIGH-1 fix**: .robotisOnboard 모드에선 Mac
+            // corrector path 자체가 우회되므로 5축 토글 (algorithm/sign/gain/pitchInput
+            // + applyToRobot) 변경이 무효. 사용자 혼동 차단 — 안내 배너 + 토글 disabled.
+            if session.walkingEngine == .robotisOnboard {
+                onboardModeNotice
+            }
+
             // 3) Expert disclosure — 4축 개별 세그먼티드 컨트롤.
             DisclosureGroup(isExpanded: $showExpert) {
                 VStack(alignment: .leading, spacing: DFSpace.xs2) {
@@ -55,11 +81,13 @@ public struct BalanceExperimentControls: View {
                         selection: Binding(
                             get: { session.balanceExperimentConfig.algorithmMode },
                             set: { newMode in
+                                // **v1.11.4 fix**: pitchInputConvention 보존 (종전 누락).
                                 requestConfigChange(BalanceExperimentConfig(
                                     algorithmMode: newMode,
                                     signConvention: session.balanceExperimentConfig.signConvention,
                                     gainProfile: session.balanceExperimentConfig.gainProfile,
-                                    applyToRobot: session.balanceExperimentConfig.applyToRobot
+                                    applyToRobot: session.balanceExperimentConfig.applyToRobot,
+                                    pitchInputConvention: session.balanceExperimentConfig.pitchInputConvention
                                 ))
                             }
                         )
@@ -75,7 +103,28 @@ public struct BalanceExperimentControls: View {
                                     algorithmMode: session.balanceExperimentConfig.algorithmMode,
                                     signConvention: newSign,
                                     gainProfile: session.balanceExperimentConfig.gainProfile,
-                                    applyToRobot: session.balanceExperimentConfig.applyToRobot
+                                    applyToRobot: session.balanceExperimentConfig.applyToRobot,
+                                    pitchInputConvention: session.balanceExperimentConfig.pitchInputConvention
+                                ))
+                            }
+                        )
+                    )
+
+                    // **v1.11.4 (2026-05-18) — 신규 axis**: Pitch 부호 정규화 (P1.1 인프라).
+                    // 실 robot 에서 앞기울 = imuPitch 음수 인 케이스 (2026-05-18 데이터로 입증)
+                    // 에서 사용자가 `.negateForwardIsNegative` 로 정규화 가능.
+                    axisControl(
+                        title: "Pitch 입력",
+                        icon: "arrow.up.and.down.righttriangle.up.righttriangle.down",
+                        selection: Binding(
+                            get: { session.balanceExperimentConfig.pitchInputConvention },
+                            set: { newConv in
+                                requestConfigChange(BalanceExperimentConfig(
+                                    algorithmMode: session.balanceExperimentConfig.algorithmMode,
+                                    signConvention: session.balanceExperimentConfig.signConvention,
+                                    gainProfile: session.balanceExperimentConfig.gainProfile,
+                                    applyToRobot: session.balanceExperimentConfig.applyToRobot,
+                                    pitchInputConvention: newConv
                                 ))
                             }
                         )
@@ -91,7 +140,8 @@ public struct BalanceExperimentControls: View {
                                     algorithmMode: session.balanceExperimentConfig.algorithmMode,
                                     signConvention: session.balanceExperimentConfig.signConvention,
                                     gainProfile: newGain,
-                                    applyToRobot: session.balanceExperimentConfig.applyToRobot
+                                    applyToRobot: session.balanceExperimentConfig.applyToRobot,
+                                    pitchInputConvention: session.balanceExperimentConfig.pitchInputConvention
                                 ))
                             }
                         )
@@ -104,7 +154,8 @@ public struct BalanceExperimentControls: View {
                                 algorithmMode: session.balanceExperimentConfig.algorithmMode,
                                 signConvention: session.balanceExperimentConfig.signConvention,
                                 gainProfile: session.balanceExperimentConfig.gainProfile,
-                                applyToRobot: newApply
+                                applyToRobot: newApply,
+                                pitchInputConvention: session.balanceExperimentConfig.pitchInputConvention
                             ))
                         }
                     )) {
@@ -126,8 +177,18 @@ public struct BalanceExperimentControls: View {
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .disabled(safetyDisablesApply)
+
+                    // **v1.11.6 (2026-05-18)** — .custom gainProfile 선택 시만 노출.
+                    // 4개 gain slider — 사용자가 직접 hipRoll/knee/anklePitch/ankleRoll 조절.
+                    // 종전 .custom 은 robotisOriginal fallback 뿐 — UI 라벨과 실 동작 불일치.
+                    if session.balanceExperimentConfig.gainProfile == .custom {
+                        customGainSliders
+                    }
                 }
                 .padding(.top, DFSpace.xs2)
+                // **v1.11.8 HIGH-1**: .robotisOnboard 시 5축 무효 → disabled.
+                .disabled(fiveAxisDisabledForOnboard)
+                .opacity(fiveAxisDisabledForOnboard ? 0.5 : 1.0)
             } label: {
                 HStack(spacing: DFSpace.xs2) {
                     Image(systemName: showExpert ? "chevron.down.circle.fill" : "chevron.right.circle")
@@ -264,6 +325,33 @@ public struct BalanceExperimentControls: View {
             Text(text).font(.system(size: 12))
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: - Onboard mode notice (v1.11.8)
+
+    /// **v1.11.8 (2026-05-18) — HIGH-1 fix**: .robotisOnboard 모드에선 Mac corrector
+    /// path 가 우회되므로 5축 토글이 무효임을 명시. expert disclosure 내 토글들도
+    /// 자동 disabled 처리.
+    @ViewBuilder
+    private var onboardModeNotice: some View {
+        HStack(alignment: .top, spacing: DFSpace.xs2) {
+            Image(systemName: "info.circle.fill")
+                .font(DFFont.label)
+                .foregroundStyle(DFColor.info)
+            Text("ROBOTIS Onboard 모드에선 Mac balance corrector 가 우회됩니다. 아래 5축 토글은 robot-side Walking 엔진에 영향 없음 (record 만).")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(DFSpace.xs2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DFColor.info.opacity(DFOpacity.o10))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+    }
+
+    /// **v1.11.8**: .robotisOnboard 시 5축 토글 disabled 헬퍼.
+    private var fiveAxisDisabledForOnboard: Bool {
+        session.walkingEngine == .robotisOnboard
     }
 
     // MARK: - Safety banner
@@ -405,6 +493,42 @@ public struct BalanceExperimentControls: View {
 
     // MARK: - Axis control helper
 
+    /// **v1.11.6 (2026-05-18)** — .custom gainProfile 의 4 gain slider.
+    @ViewBuilder
+    private var customGainSliders: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.warning)
+                Text(".custom gain (4축 사용자 지정)")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+            customGainSlider("hipRoll", value: $session.customHipRollGain, range: 0...2)
+            customGainSlider("knee", value: $session.customKneeGain, range: 0...2)
+            customGainSlider("anklePitch", value: $session.customAnklePitchGain, range: 0...2)
+            customGainSlider("ankleRoll", value: $session.customAnkleRollGain, range: 0...2)
+        }
+        .padding(.top, DFSpace.xs2)
+    }
+
+    @ViewBuilder
+    private func customGainSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        HStack(spacing: DFSpace.xs2) {
+            Text(label)
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .frame(width: 70, alignment: .leading)
+            Slider(value: value, in: range)
+                .controlSize(.mini)
+            Text(String(format: "%.2f", value.wrappedValue))
+                .font(DFFont.monoLabel)
+                .foregroundStyle(DFColor.textSecondary)
+                .frame(width: 40, alignment: .trailing)
+        }
+    }
+
     private func axisControl<Mode: CaseIterable & Hashable & RawRepresentable & Identifiable>(
         title: String,
         icon: String,
@@ -434,6 +558,7 @@ public struct BalanceExperimentControls: View {
         if let m = mode as? BalanceAlgorithmMode { return m.label }
         if let m = mode as? BalanceSignConvention { return m.label }
         if let m = mode as? BalanceGainProfile { return m.label }
+        if let m = mode as? BalancePitchInputConvention { return m.label }
         return mode.rawValue
     }
 

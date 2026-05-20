@@ -87,6 +87,11 @@ public final class ConnectionStore: ObservableObject {
     /// 5Hz IMU polling × tau=0.5s — alpha ≈ 0.71. 정적 tilt 보다 약간 개선.
     @Published public private(set) var imuFilter: ImuFilter = ImuFilter()
 
+    /// **v1.11.17 (2026-05-19) — LiveGyroPanel 용**: 최신 raw IMU sample.
+    /// 종전: imuFilter 만 expose 라 gyro 각속도 (X/Y/Z dps) UI 노출 불가.
+    /// runImuLoop 가 매 polling 마다 갱신. UI 가 자이로 패널에서 직접 read.
+    @Published public private(set) var lastImuRaw: ImuRaw? = nil
+
     /// IMU 가 5초 이상 응답 없으면 stale — UI 가 "IMU 오래됨" 라벨 표시.
     public var isImuStale: Bool {
         guard let at = lastImuSuccessAt else { return imuConsecutiveFailures > 0 }
@@ -1179,6 +1184,8 @@ public final class ConnectionStore: ObservableObject {
             switch imuResult {
             case .success(let value):
                 self.imuFilter.update(value)
+                // v1.11.17: LiveGyroPanel 용 raw sample 노출 — gyro X/Y/Z dps.
+                self.lastImuRaw = value
                 self.lastImuSuccessAt = Date()
                 self.imuConsecutiveFailures = 0
                 self.lastImuError = nil

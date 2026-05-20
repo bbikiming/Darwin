@@ -112,12 +112,13 @@ final class WalkLabFallPreventionTests: XCTestCase {
     }
 
     /// 1 sample — rate=variance=0 → score 는 tilt 기여만.
+    /// v1.11.19: 분모 30→50 정합. tiltContrib = 25/50*60 = 30 (이전 25/30*60 = 50).
     func testFallPredictorSingleSample() {
         let now = Date()
-        let sample = FallPredictor.Sample(timestamp: now, rollDeg: 15, pitchDeg: 0,
+        let sample = FallPredictor.Sample(timestamp: now, rollDeg: 25, pitchDeg: 0,
                                           gyroXDps: 0, gyroYDps: 0)
         let pred = FallPredictor.predict(samples: [sample], now: now)
-        // tiltContrib = 15/30*60 = 30. 다른 기여 0.
+        // tiltContrib = 25/50*60 = 30. 다른 기여 0.
         XCTAssertEqual(pred.score, 30, accuracy: 0.1)
         XCTAssertNil(pred.etaMs, "rate=0 이면 ETA 안 나옴")
     }
@@ -143,45 +144,72 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "정상 보행에서 emergency 권고 = false positive")
     }
 
-    /// **정량 시나리오 — 빠른 기울기 fall**: 0°→20° in 500ms (rate 40 deg/s).
-    /// score 50+ 기대. etaMs 약 250ms (남은 10° / 40 dps).
+    /// **v1.11.22 (2026-05-20)** — 50° 임계 모델 재활성화 가능성 검증.
+    /// 종전 30° 모델은 score 60 임계가 5-15° 흔들림에서도 자주 trigger 됨 (사용자 보고).
+    /// v1.11.19 에서 50° 로 변경 → 정상 보행 흔들림 범위에서 score < 80 (emergency 임계).
+    /// 본 테스트: ±15° 한계 흔들림 + 적당한 gyro rate 에서도 emergency 안 trigger.
+    func testFallPredictor50DegModelNoFalsePositiveOnAggressiveSwing() {
+        let base = Date()
+        // 5 sample, 200ms 간격. ±15° 큰 흔들림 (정상 보행의 상한 가정).
+        // gyro = 15 * cos × (2π/0.6) ≈ 157 dps peak — 정상 보행의 한계.
+        let samples: [FallPredictor.Sample] = (0..<5).map { i in
+            let t = base.addingTimeInterval(Double(i) * 0.2)
+            let phase = Double(i) * 0.2 * 2.0 * .pi / 0.6
+            let roll = 15.0 * sin(phase)
+            let gyroX = 15.0 * cos(phase) * (2.0 * .pi / 0.6)
+            return FallPredictor.Sample(timestamp: t, rollDeg: roll, pitchDeg: 0,
+                                        gyroXDps: gyroX, gyroYDps: 0)
+        }
+        let pred = FallPredictor.predict(samples: samples, now: base.addingTimeInterval(0.8))
+        // 50° 모델: tilt 15° → 15/50 × 60 = 18점. rate 157 cap 30점 → ~48점.
+        // ≪ 80 emergency 임계 — 50° 모델에서는 정상 보행 한계도 false positive 안 됨.
+        XCTAssertLessThan(pred.score, 80,
+            "±15° 큰 흔들림에서도 50° 모델 score \(pred.score) < 80 — emergency 권고 안 됨")
+        XCTAssertFalse(pred.recommendEmergency,
+            "v1.11.19 50° 모델: 정상 보행 한계 흔들림에서 false positive 0")
+    }
+
+    /// **정량 시나리오 — 빠른 기울기 fall**: 0°→32° in 400ms (rate 80 deg/s).
+    /// v1.11.19: 50° 임계 정합. score 50+ 기대. etaMs 약 225ms (남은 18° / 80 dps).
     func testFallPredictorFastTiltSpike() {
         let base = Date()
         let samples: [FallPredictor.Sample] = (0..<5).map { i in
             let t = base.addingTimeInterval(Double(i) * 0.1)
-            let roll = Double(i) * 5.0  // 0, 5, 10, 15, 20
+            let roll = Double(i) * 8.0  // 0, 8, 16, 24, 32
             return FallPredictor.Sample(timestamp: t, rollDeg: roll, pitchDeg: 0,
-                                        gyroXDps: 50, gyroYDps: 5)
+                                        gyroXDps: 80, gyroYDps: 5)
         }
         let pred = FallPredictor.predict(samples: samples, now: base.addingTimeInterval(0.4))
-        // tilt 20° → tiltContrib 40, rate 50 deg/s → rateContrib 25.
+        // tilt 32° → tiltContrib 32/50*60 ≈ 38.4, rate 80 deg/s → rateContrib 30 (cap).
+        // total ≈ 68.4 (var ~0).
         XCTAssertGreaterThan(pred.score, 50,
-            "20° fast tilt 에서 score \(pred.score) ≤ 50 → 예측 둔감")
-        XCTAssertNotNil(pred.etaMs, "rate 50 dps > 5 dps 라 ETA 계산되어야 함")
+            "32° fast tilt 에서 score \(pred.score) ≤ 50 → 예측 둔감")
+        XCTAssertNotNil(pred.etaMs, "rate 80 dps > 5 dps 라 ETA 계산되어야 함")
         if let eta = pred.etaMs {
-            // 30° 도달 = 10° / 50 dps = 200ms.
+            // 50° 도달 = 18° / 80 dps = 225ms.
             XCTAssertLessThan(eta, 400,
                 "ETA \(eta)ms 가 emergency 임계 400ms 초과")
         }
     }
 
-    /// **정량 시나리오 — imminent fall**: 25° + rate 80 dps + 큰 variance.
-    /// score 80+ 또는 ETA < 400ms 로 emergency 권고.
+    /// **정량 시나리오 — imminent fall**: 45° + rate 50 dps.
+    /// v1.11.19: 50° 임계 정합. score 75+ 또는 ETA < 400ms 로 emergency 권고.
     func testFallPredictorImminentFallTriggersEmergency() {
         let base = Date()
-        // 3 sample. rate = (28-22)/0.4 = 15 dps … 너무 작음. 더 가파르게.
+        // 3 sample. tiltMax 25 → 35 → 45 (가파르게 50° 임계 접근).
         let samples: [FallPredictor.Sample] = [
-            .init(timestamp: base,                       rollDeg: 10, pitchDeg: 5,
+            .init(timestamp: base,                       rollDeg: 25, pitchDeg: 5,
                   gyroXDps: 80, gyroYDps: 40),
-            .init(timestamp: base.addingTimeInterval(0.2), rollDeg: 18, pitchDeg: 8,
+            .init(timestamp: base.addingTimeInterval(0.2), rollDeg: 35, pitchDeg: 8,
                   gyroXDps: 90, gyroYDps: 30),
-            .init(timestamp: base.addingTimeInterval(0.4), rollDeg: 28, pitchDeg: 12,
+            .init(timestamp: base.addingTimeInterval(0.4), rollDeg: 45, pitchDeg: 12,
                   gyroXDps: 95, gyroYDps: 50),
         ]
         let pred = FallPredictor.predict(samples: samples, now: base.addingTimeInterval(0.5))
-        // tiltMax 28 → tiltContrib 56. rate (28-10)/0.4 = 45 → rateContrib 22.5.
+        // tiltMax 45 → tiltContrib 45/50*60 = 54. rate (45-25)/0.4 = 50 dps → rateContrib 25.
         // variance: gyroX 평균 88, 분산 ≈ 38 → 작음. gyroY 평균 40, 분산 ≈ 66.
-        // total ≈ 56+22.5+1 ≈ 80. emergency 임계.
+        // total ≈ 54+25+1 ≈ 80. emergency 임계.
+        // ETA = (50-45) / 50 = 100ms < 400ms → emergency 자동.
         XCTAssertGreaterThanOrEqual(pred.score, 75,
             "imminent fall 에서 score \(pred.score) < 75 → 예측 부족")
         XCTAssertTrue(pred.recommendEmergency,
@@ -235,22 +263,23 @@ final class WalkLabFallPreventionTests: XCTestCase {
     }
 
     /// **Emergency 임계 정량 — score ≥ 80** 면 emergency 권고.
+    /// v1.11.19: 50° 임계 정합. tilt 50° (=60점) + rate 60 dps (=30점) = 90점.
     func testEmergencyThresholdConsistent() {
         let base = Date()
-        // score = 60 (tilt 30°) + 20 (rate 40 dps) = 80 정확.
         let samples: [FallPredictor.Sample] = [
-            .init(timestamp: base, rollDeg: 22, pitchDeg: 0,
-                  gyroXDps: 40, gyroYDps: 0),
-            .init(timestamp: base.addingTimeInterval(0.2), rollDeg: 30, pitchDeg: 0,
-                  gyroXDps: 40, gyroYDps: 0),
+            .init(timestamp: base, rollDeg: 38, pitchDeg: 0,
+                  gyroXDps: 60, gyroYDps: 0),
+            .init(timestamp: base.addingTimeInterval(0.2), rollDeg: 50, pitchDeg: 0,
+                  gyroXDps: 60, gyroYDps: 0),
         ]
         let pred = FallPredictor.predict(samples: samples, now: base.addingTimeInterval(0.3))
         XCTAssertGreaterThanOrEqual(pred.score, 75,
-            "30° + 40 dps rate 에서 score \(pred.score) 너무 낮음")
+            "50° + 60 dps rate 에서 score \(pred.score) 너무 낮음")
         XCTAssertTrue(pred.recommendEmergency)
     }
 
-    /// **ETA 단위 sanity** — rate 50 dps + tilt 10° → ETA = (30-10)/50*1000 = 400ms.
+    /// **ETA 단위 sanity** — rate 50 dps + tilt 10° → ETA = (50-10)/50*1000 = 800ms.
+    /// v1.11.19: 임계 30°→50° 정합 — ETA 분자도 50 기준.
     func testEtaMsUnitsCorrect() {
         let base = Date()
         let samples: [FallPredictor.Sample] = [
@@ -260,10 +289,10 @@ final class WalkLabFallPreventionTests: XCTestCase {
                   gyroXDps: 50, gyroYDps: 0),
         ]
         let pred = FallPredictor.predict(samples: samples, now: base.addingTimeInterval(0.3))
-        // rate = (10-0)/0.2 = 50 dps. ETA = (30-10)/50*1000 = 400ms.
+        // rate = (10-0)/0.2 = 50 dps. ETA = (50-10)/50*1000 = 800ms.
         if let eta = pred.etaMs {
-            XCTAssertEqual(eta, 400, accuracy: 50,
-                "ETA \(eta) ms 기대 400 ms 차이 큼 — 단위 정합성 의심")
+            XCTAssertEqual(eta, 800, accuracy: 50,
+                "ETA \(eta) ms 기대 800 ms 차이 큼 — 단위 정합성 의심")
         } else {
             XCTFail("rate 50 dps 에서 ETA nil")
         }
@@ -398,16 +427,16 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "v1.11: ankleRoll gain 1.0 → ±3.0° 가 max")
     }
 
-    /// **v1.7 (2026-05-17): WalkLabSession enableBalanceCorrection default ON**.
-    /// 사용자 보고 "목각인형처럼 뻣뻣" — cm.rs/lib.rs IMU 정정 후 active balance 자동 활성.
-    /// ROBOTIS-OP Walking.cpp 의 BALANCE_HIP_ROLL_GAIN=0.5 등 자동 적용.
-    func testBalanceCorrectionDefaultOn() {
+    /// **v1.11.4 (2026-05-18) — default OFF**: 2026-05-18 실 robot 데이터에서 raw
+    /// gait 자체에 mean pitch -13° 앞기울 bias 발견 → corrector 적용 여부보다 raw gait
+    /// 진단이 먼저. default OFF 로 전환, 사용자가 명시 ON 후 검증.
+    /// 종전 (v1.7~v1.11.3): default ON.
+    func testBalanceCorrectionDefaultOff() {
         let session = WalkLabSession()
-        XCTAssertTrue(session.enableBalanceCorrection,
-            "v1.7 default ON — IMU active balance 자동 적용")
-        // didSet 으로 toggle 이벤트 발생 (true → true: 이벤트 없음).
-        XCTAssertNotNil(session.rampProgress,
-            "default ON 이면 ramp 시작 시점 기록됨")
+        XCTAssertFalse(session.enableBalanceCorrection,
+            "v1.11.4 default OFF — raw gait 진단 우선, 사용자 명시 ON 필요")
+        XCTAssertNil(session.rampProgress,
+            "default OFF 면 ramp 시작 시점 없음")
     }
 
     /// **applyBalanceCorrectionIfEnabled — disabled 시 identity.**
@@ -693,30 +722,33 @@ final class WalkLabFallPreventionTests: XCTestCase {
 
     /// 초기 상태 — 시계열 비어 있음, 이벤트 비어 있음, 펼침 OFF.
     func testMonitoringInitialState() {
+        // **v1.11.6 (2026-05-18)**: UserDefaults 명시 false 후 검증 (default 가 true 이라).
+        UserDefaults.standard.set(false, forKey: "df.walklab.monitoringExpanded")
+        defer { UserDefaults.standard.removeObject(forKey: "df.walklab.monitoringExpanded") }
         let session = WalkLabSession()
         XCTAssertTrue(session.safetyTimeline.isEmpty,
             "초기 시계열 buffer 가 비어 있어야 함")
         XCTAssertTrue(session.safetyEvents.isEmpty,
             "초기 이벤트 로그가 비어 있어야 함")
         XCTAssertFalse(session.monitoringExpanded,
-            "기본 펼침 OFF — progressive disclosure (NN/g)")
+            "UserDefaults 명시 false 면 false 유지 (사용자 선택 보존)")
     }
 
-    /// **Corrector 토글 — 이벤트 로그 발행** (v1.7 default ON 기준).
-    /// ON→OFF / OFF→ON 각각 이벤트 1건씩.
+    /// **Corrector 토글 — 이벤트 로그 발행** (v1.11.4 default OFF 기준).
+    /// OFF→ON / ON→OFF 각각 이벤트 1건씩.
     func testCorrectorToggleLogsEvents() {
         let session = WalkLabSession()
-        // v1.7 default ON → 먼저 OFF 로 전환.
+        // v1.11.4 default OFF → OFF→ON 부터 검증.
         let initialCount = session.safetyEvents.count
-        session.enableBalanceCorrection = false
-        XCTAssertEqual(session.safetyEvents.count, initialCount + 1,
-            "ON→OFF 시 이벤트 1건 발행")
-        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff,
-            "마지막 이벤트가 correctorOff 이어야 함")
         session.enableBalanceCorrection = true
+        XCTAssertEqual(session.safetyEvents.count, initialCount + 1,
+            "OFF→ON 시 이벤트 1건 발행")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOn,
+            "마지막 이벤트가 correctorOn 이어야 함")
+        session.enableBalanceCorrection = false
         XCTAssertEqual(session.safetyEvents.count, initialCount + 2,
-            "OFF→ON 시 추가 이벤트 1건")
-        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOn)
+            "ON→OFF 시 추가 이벤트 1건")
+        XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff)
     }
 
     /// **clearSafetyEvents — 이벤트 비움**.
@@ -745,24 +777,22 @@ final class WalkLabFallPreventionTests: XCTestCase {
         XCTAssertEqual(session.safetyEvents.last?.kind, .correctorOff)
     }
 
-    /// **rampProgress** — v1.7 default ON 이라 새 session 은 progress != nil.
-    /// 토글 OFF 시 nil, 재 ON 직후 ≈ 0.
+    /// **rampProgress** — v1.11.4 default OFF 이라 새 session 은 progress == nil.
+    /// ON 토글 시 non-nil + ≈ 0, OFF 후 nil.
     func testRampProgressMatchesToggleState() {
         let session = WalkLabSession()
-        // v1.7: default ON → rampProgress 는 non-nil 시작.
-        XCTAssertNotNil(session.rampProgress, "v1.7 default ON — rampProgress 존재")
-        session.enableBalanceCorrection = false
-        XCTAssertNil(session.rampProgress, "OFF 후 nil")
+        // v1.11.4: default OFF → rampProgress nil 시작.
+        XCTAssertNil(session.rampProgress, "v1.11.4 default OFF — rampProgress nil")
         session.enableBalanceCorrection = true
         if let p = session.rampProgress {
             XCTAssertLessThan(p, 0.5,
-                "재 ON 직후 progress 가 너무 큼 — \(p)")
+                "ON 직후 progress 가 너무 큼 — \(p)")
             XCTAssertGreaterThanOrEqual(p, 0)
         } else {
-            XCTFail("재 ON 시 rampProgress 가 nil")
+            XCTFail("ON 시 rampProgress 가 nil")
         }
         session.enableBalanceCorrection = false
-        XCTAssertNil(session.rampProgress, "다시 OFF 후 nil")
+        XCTAssertNil(session.rampProgress, "OFF 후 nil")
     }
 
     /// **SafetySample 필드 정합** — 모든 필드가 Equatable.
@@ -806,8 +836,11 @@ final class WalkLabFallPreventionTests: XCTestCase {
 
     /// **모니터링 펼침 토글** — 외부 코드에서 변경 가능 (@Published).
     func testMonitoringExpandedTogglable() {
+        // **v1.11.6 (2026-05-18)**: default true 로 변경 (UX 개선). 명시 false 후엔 false 유지.
+        UserDefaults.standard.set(false, forKey: "df.walklab.monitoringExpanded")
+        defer { UserDefaults.standard.removeObject(forKey: "df.walklab.monitoringExpanded") }
         let session = WalkLabSession()
-        XCTAssertFalse(session.monitoringExpanded, "default 닫힘")
+        XCTAssertFalse(session.monitoringExpanded, "UserDefaults false 면 false 유지")
         session.monitoringExpanded = true
         XCTAssertTrue(session.monitoringExpanded)
         session.monitoringExpanded = false
@@ -891,10 +924,17 @@ final class WalkLabFallPreventionTests: XCTestCase {
     func testMonitoringExpandedPersistsToUserDefaults() {
         let key = "df.walklab.monitoringExpanded"
         UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
 
         let session = WalkLabSession()
-        XCTAssertFalse(session.monitoringExpanded,
-            "초기 — UserDefaults 에 키 없으면 false")
+        // **v1.11.6 (2026-05-18)**: UserDefaults 미설정 시 default true (UX fix).
+        XCTAssertTrue(session.monitoringExpanded,
+            "초기 — UserDefaults 미설정 시 default true (v1.11.6 UX fix)")
+
+        // false 로 명시 설정 후 persist 검증.
+        session.monitoringExpanded = false
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: key),
+            "false 설정 — UserDefaults persist")
 
         session.monitoringExpanded = true
         XCTAssertTrue(UserDefaults.standard.bool(forKey: key),

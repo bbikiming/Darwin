@@ -4,8 +4,14 @@ import ForgeCore
 /// v1.1 Stage 3 — IMU 시계열 기반 선제 fall 예측.
 ///
 /// `WalkLabSession.tick()` 가 매 50ms 마다 호출. 5Hz IMU polling (200ms 간격) 의
-/// ring buffer 와 결합해 `~0.3-0.5s 후 30° 도달` 을 예측 → emergency 가 도달
-/// **전에** 발동. 기존 L3 (30°) 보다 0.3-0.5s 빨라짐.
+/// ring buffer 와 결합해 `~0.3-0.5s 후 BalanceState.emergency (50°) 도달` 을 예측
+/// → emergency 가 도달 **전에** 발동. **v1.11.19 (2026-05-20)**: 임계 30° → 50°
+/// 으로 정합 (BalanceState.emergency 와 동일). 이전 30° 는 v1.1 초기 안전 한계였음.
+///
+/// **주의**: 현재 `recommend_emergency = true` 는 `predictorRecommend` 이벤트
+/// 로그만 남기고 실 motor torque-off 를 직접 호출하지 않음. UI 표기는 "위험 임박"
+/// — 사전 경고 의미. 실 정지 trigger 는 별도 layer (autoFallPrevention 토글 + L3
+/// 임계 도달 시) 에서 처리.
 ///
 /// # 알고리즘
 ///
@@ -13,12 +19,12 @@ import ForgeCore
 /// 2. **`tilt_rate`** = `(tilt_max_now - tilt_max_oldest) / dt_sec` (deg/s).
 ///    Ring buffer 의 첫 sample 과 마지막 sample 비교. dt < 0.05s 면 신뢰도 ↓.
 /// 3. **`gyro_var`** = recent gyro_x, gyro_y 의 분산 (dps²). 비정상 흔들림 검출.
-/// 4. **`predicted_eta_ms`** = `(30 - tilt_max_now) / tilt_rate * 1000` —
+/// 4. **`predicted_eta_ms`** = `(50 - tilt_max_now) / tilt_rate * 1000` —
 ///    tilt_rate > 5 deg/s 일 때만 의미. 그 외 nil.
-/// 5. **`score`** (0..100) = tilt 60점 + rate 30점 + variance 10점 합.
+/// 5. **`score`** (0..100) = tilt 60점 (max @ 50°) + rate 30점 + variance 10점 합.
 /// 6. **`recommend_emergency`** =
 ///    - `score >= 80` (강한 fall 임박) **또는**
-///    - `etaMs.map { $0 < 400 } ?? false` (0.4s 내 30° 도달 예측)
+///    - `etaMs.map { $0 < 400 } ?? false` (0.4s 내 50° 도달 예측)
 ///
 /// # 임계 근거 (정량)
 ///
@@ -63,7 +69,7 @@ public struct FallPredictor {
     public struct Prediction: Equatable, Sendable {
         /// 0..100. 100 = imminent fall.
         public let score: Double
-        /// 30° 도달까지 예측 시간 (ms). rate 가 작으면 nil.
+        /// BalanceState.emergency (50°) 도달까지 예측 시간 (ms). rate 가 작으면 nil.
         public let etaMs: Double?
         /// emergency stop 발동 권장 여부 (autoFallPrevention=true 시 즉시 emergency).
         public let recommendEmergency: Bool
@@ -109,9 +115,10 @@ public struct FallPredictor {
         }
 
         // 4. ETA — tilt_rate > 5 deg/s 일 때만 의미. 음수 (회복 중) 면 nil.
+        //    v1.11.19: 임계 30° → 50° (BalanceState.emergency 정합).
         let etaMs: Double?
-        if tiltRate > 5.0, tiltNow < 30 {
-            let remainDeg = 30.0 - tiltNow
+        if tiltRate > 5.0, tiltNow < 50 {
+            let remainDeg = 50.0 - tiltNow
             let etaSec = remainDeg / tiltRate
             etaMs = etaSec * 1000.0
         } else {
@@ -119,10 +126,10 @@ public struct FallPredictor {
         }
 
         // 5. Score 계산 (0..100).
-        // - tilt 기여 60점 max: tiltNow / 30 * 60.
+        // - tilt 기여 60점 max: tiltNow / 50 * 60 (v1.11.19: 30→50 정합).
         // - rate 기여 30점 max: clamp(tiltRate / 60 * 30, 0, 30).
         // - variance 기여 10점 max: clamp(gyroVar / 1000 * 10, 0, 10).
-        let tiltContrib = min(60, max(0, tiltNow / 30.0 * 60.0))
+        let tiltContrib = min(60, max(0, tiltNow / 50.0 * 60.0))
         let rateContrib = min(30, max(0, tiltRate / 60.0 * 30.0))
         let varContrib  = min(10, max(0, gyroVar / 1000.0 * 10.0))
         let scoreRaw = tiltContrib + rateContrib + varContrib

@@ -118,15 +118,47 @@ final class WalkLabV111BalanceTests: XCTestCase {
             "observeOnly 는 pose 변경 안 함 → 항상 safe")
     }
 
-    /// hybridBA + applyToRobot 는 caution (실 미검증 경고).
-    func testHybridApplyIsCaution() {
-        let c = BalanceExperimentConfig.v110Apply
-        if case .caution(let msg) = c.safetyVerdict {
-            XCTAssertTrue(msg.contains("Hybrid B+A") || msg.contains("미검증"),
-                "메시지에 위험 명시")
+    /// **v1.11.3 (2026-05-18)** — hybridBA + applyToRobot 는 실 fall 데이터 입증 후
+    /// blocked 격상. v110Apply preset 자체는 applyToRobot=false 로 강등되었으므로
+    /// 직접 위험 config 를 만들어 검증.
+    func testHybridApplyIsBlocked() {
+        let c = BalanceExperimentConfig(
+            algorithmMode: .hybridBA,
+            signConvention: .robotisWalkingCpp,
+            gainProfile: .robotisOriginal,
+            applyToRobot: true
+        )
+        if case .blocked(let msg) = c.safetyVerdict {
+            XCTAssertTrue(msg.contains("Hybrid") || msg.contains("fall") || msg.contains("적용 차단"),
+                "메시지에 실 데이터 근거 명시: \(msg)")
         } else {
-            XCTFail("hybridBA + applyToRobot 는 caution 이어야: \(c.safetyVerdict)")
+            XCTFail("hybridBA + applyToRobot 는 blocked 이어야: \(c.safetyVerdict)")
         }
+    }
+
+    /// **v1.11.3 (2026-05-18)** — v110Experimental gain + applyToRobot 도 blocked.
+    func testV110ExperimentalApplyIsBlocked() {
+        let c = BalanceExperimentConfig(
+            algorithmMode: .robotisPControl,  // P-control 이어도 v110 gain 은 위험
+            signConvention: .robotisWalkingCpp,
+            gainProfile: .v110Experimental,
+            applyToRobot: true
+        )
+        if case .blocked(let msg) = c.safetyVerdict {
+            XCTAssertTrue(msg.contains("v1.10") || msg.contains("gain") || msg.contains("적용 차단"),
+                "메시지에 실 데이터 근거 명시: \(msg)")
+        } else {
+            XCTFail("v110Experimental + applyToRobot 는 blocked 이어야: \(c.safetyVerdict)")
+        }
+    }
+
+    /// **v1.11.3 (2026-05-18)** — v110Apply preset 은 강등되어 applyToRobot=false + safe.
+    func testV110ApplyPresetDowngraded() {
+        let c = BalanceExperimentConfig.v110Apply
+        XCTAssertFalse(c.applyToRobot,
+            "v110Apply 는 2026-05-18 실 fall 데이터 입증으로 applyToRobot=false 강등")
+        XCTAssertEqual(c.safetyVerdict, .safe,
+            "applyToRobot=false 강등 후엔 safe (Hybrid 계산만 수행, pose 변경 X)")
     }
 
     // MARK: - 3. WalkLabSession config didSet
@@ -191,6 +223,43 @@ final class WalkLabV111BalanceTests: XCTestCase {
             "blocked 조합 → 자동으로 applyToRobot=false 로 강제 전환")
     }
 
+    /// **v1.11.3 (2026-05-18)** — hybridBA + applyToRobot=true 도 강제 강등.
+    func testHybridApplyAutoDowngrades() {
+        let s = WalkLabSession()
+        s.balanceExperimentConfig = BalanceExperimentConfig(
+            algorithmMode: .hybridBA,
+            signConvention: .robotisWalkingCpp,
+            gainProfile: .v110Experimental,
+            applyToRobot: true
+        )
+        XCTAssertFalse(s.balanceExperimentConfig.applyToRobot,
+            "hybridBA + v110Experimental + applyToRobot=true → didSet 자동 OFF (실 fall 데이터 입증)")
+    }
+
+    /// **v1.11.3 (2026-05-18) — startWalkCycle 진입 가드**: 위험 config 가 didSet
+    /// 우회로 살아남아도 보행 시작 시점에 다시 한 번 확인. session.start() 가 cradle
+    /// 미확인 / bus 미연결 등으로 일찍 return 해도 가드 자체는 호출 가능해야 함.
+    func testStartWalkCycleBlockedConfigDowngrades() {
+        let s = WalkLabSession()
+        // 정상 경로로 위험 config 시도 → didSet 가 즉시 강등.
+        s.balanceExperimentConfig = BalanceExperimentConfig(
+            algorithmMode: .hybridBA,
+            signConvention: .robotisWalkingCpp,
+            gainProfile: .v110Experimental,
+            applyToRobot: true
+        )
+        // didSet 가 이미 강등.
+        XCTAssertFalse(s.balanceExperimentConfig.applyToRobot,
+            "didSet 가 즉시 강등 — startWalkCycle 가드는 우회 케이스 방어 추가 layer")
+
+        // 보행 시작 시도 — cradle 미확인 / bus 미연결 이라 일찍 return 하지만 config 는
+        // 이미 강등 상태 유지.
+        s.start(.march)
+        XCTAssertFalse(s.balanceExperimentConfig.applyToRobot,
+            "start() 호출 후에도 applyToRobot=false 유지")
+        s.stop()
+    }
+
     // MARK: - 4. applyBalanceCorrectionIfEnabled 분기
 
     /// algorithmMode=.off → pose 그대로 + lastCorrections nil + lastCorrectionApplied=false.
@@ -213,6 +282,9 @@ final class WalkLabV111BalanceTests: XCTestCase {
     /// algorithmMode=.observeOnly → corrections 계산하지만 pose 적용 X.
     func testObserveOnlyComputesButDoesNotApply() {
         let s = WalkLabSession()
+        // **v1.11.4 (2026-05-18)**: enableBalanceCorrection default OFF 로 전환됨 →
+        // observeOnly 동작 검증을 위해 명시 ON.
+        s.enableBalanceCorrection = true
         // observeOnly 면 corrections 계산하되 pose 미변경.
         // applyToRobot 는 무시 (observeOnly 가 우선).
         s.balanceExperimentConfig = BalanceExperimentConfig(
@@ -405,9 +477,16 @@ final class WalkLabV111BalanceTests: XCTestCase {
         XCTAssertFalse(BalanceExperimentConfig.defaultRobotis.isRiskyToApply,
             "defaultRobotis = robotisPControl + robotisOriginal + applyToRobot → 안전")
 
-        // 위험: applyToRobot=true + (hybridBA 또는 v110 또는 alternate).
-        XCTAssertTrue(BalanceExperimentConfig.v110Apply.isRiskyToApply,
-            "v110Apply = hybridBA + v110Experimental + applyToRobot → 위험")
+        // **v1.11.3 (2026-05-18)** — v110Apply preset 은 applyToRobot=false 강등 →
+        // isRiskyToApply=false. 위험 조합 검증은 직접 config 생성으로.
+        XCTAssertFalse(BalanceExperimentConfig.v110Apply.isRiskyToApply,
+            "v110Apply 는 강등되어 더 이상 위험 X (applyToRobot=false)")
+        XCTAssertTrue(BalanceExperimentConfig(
+            algorithmMode: .hybridBA,
+            signConvention: .robotisWalkingCpp,
+            gainProfile: .v110Experimental,
+            applyToRobot: true
+        ).isRiskyToApply, "직접 위험 조합 (hybridBA+v110+apply) 은 여전히 risky")
         XCTAssertTrue(BalanceExperimentConfig(
             algorithmMode: .robotisPControl,
             signConvention: .robotisWalkingCpp,

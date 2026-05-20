@@ -61,12 +61,17 @@ public struct Robot3DViewport<TopLeading: View, BottomLeading: View>: View {
                 onMeshFallback: onMeshFallback,
                 cameraController: camera
             )
+            // v1.11.15 cycle 2 (2026-05-19): 3D 뷰포트는 항상 어두운 배경.
+            // 회색 mesh 모델 시인성 + Apple Reality Composer / Xcode SceneKit Editor
+            // 표준 패턴. 흰색 플랫 / 라이트 / 다크 모드 모두 동일 어두운 톤 유지.
             .background(
                 LinearGradient(
-                    colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
+                    colors: [DFColor.scene3DTop, DFColor.scene3DBottom],
                     startPoint: .top, endPoint: .bottom
                 )
             )
+            // 무채색 GUI 안에서도 어두운 톤이 흐려지지 않도록 saturation 보존.
+            .dfChartAccent()
 
             // 2. 상단 좌측 — 페이지별 meta badge slot.
             topLeading()

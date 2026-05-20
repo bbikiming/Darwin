@@ -72,7 +72,12 @@ let package = Package(
         .testTarget(
             name: "DarwinForgeUITests",
             dependencies: ["DarwinForgeUI"],
-            path: "Tests/DarwinForgeUITests"
+            path: "Tests/DarwinForgeUITests",
+            // v1.11.14 (2026-05-19): fake-claude.sh integration test fixture.
+            // SwiftPM 가 .sh 파일을 default 처리 못 함 → resources 명시.
+            resources: [
+                .copy("fixtures/fake-claude.sh")
+            ]
         )
     ]
 )

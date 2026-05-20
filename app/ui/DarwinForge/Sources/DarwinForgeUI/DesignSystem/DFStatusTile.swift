@@ -19,7 +19,7 @@ import SwiftUI
 ///     icon: "gyroscope",
 ///     valueLabel: "5.2",
 ///     unit: "°",
-///     thresholdLabel: "15/22/28/30° 5단계",
+///     thresholdLabel: "25/35/45/50° 5단계",
 ///     tint: DFColor.success,
 ///     sourcePill: DFSourcePill(label: "실 IMU", tint: DFColor.success)
 /// )
@@ -107,7 +107,7 @@ struct DFStatusTile_Previews: PreviewProvider {
                 icon: "gyroscope",
                 valueLabel: "5.2",
                 unit: "°",
-                thresholdLabel: "15/22/28/30° 5단계",
+                thresholdLabel: "25/35/45/50° 5단계",
                 tint: DFColor.success,
                 sourcePill: { DFSourcePill(label: "실 IMU", tint: DFColor.success) }
             )

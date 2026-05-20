@@ -341,6 +341,8 @@ public struct DFPanel<Content: View, Trailing: View, Footer: View>: View {
     }
 
     @Environment(\.dfDensity) private var envDensity: DFDensity
+    // v1.11.15 cycle 3: 테마 인식 그림자 — flat 모드에서 자동 부드러운 lift.
+    @Environment(\.dfTheme) private var dfTheme: DFTheme
 
     private var resolvedDensity: DFDensity { density ?? envDensity }
 
@@ -352,6 +354,21 @@ public struct DFPanel<Content: View, Trailing: View, Footer: View>: View {
         }
     }
     private var hasShadow: Bool { variant == .modal }
+
+    /// v1.11.15 cycle 3: 패널 그림자 spec — variant + 테마 조합.
+    /// - modal: 항상 그림자 (modal 또는 flatModal).
+    /// - regular/metric: flat 모드에서만 부드러운 그림자.
+    /// - inline: 그림자 없음 (list cell 내부라 noise 회피).
+    private var shadowSpec: (color: Color, radius: CGFloat, x: CGFloat, y: CGFloat) {
+        switch variant {
+        case .modal:
+            return dfTheme.isFlat ? DFShadow.flatModal : DFShadow.modal
+        case .regular, .metric:
+            return dfTheme.isFlat ? DFShadow.flatCard : DFShadow.none
+        case .inline:
+            return DFShadow.none
+        }
+    }
     private var innerSpacing: CGFloat {
         switch variant {
         case .inline: return DFSpace.xs2
@@ -384,10 +401,10 @@ public struct DFPanel<Content: View, Trailing: View, Footer: View>: View {
                         lineWidth: prominent ? 0.8 : 0.5)
         )
         .shadow(
-            color: hasShadow ? DFShadow.modal.color : .clear,
-            radius: hasShadow ? DFShadow.modal.radius : 0,
-            x: hasShadow ? DFShadow.modal.x : 0,
-            y: hasShadow ? DFShadow.modal.y : 0
+            color: shadowSpec.color,
+            radius: shadowSpec.radius,
+            x: shadowSpec.x,
+            y: shadowSpec.y
         )
     }
 

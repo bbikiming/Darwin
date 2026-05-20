@@ -69,6 +69,25 @@ pub struct DetectResult {
 ///
 /// **Tilt 근사**: roll = atan2(ax_centered, ‖(ay,az)‖), pitch = atan2(ay_centered, ‖(ax,az)‖).
 /// atan2 비율은 LSB scale 에 무관 → centered 값으로 그대로 사용 가능.
+///
+/// # 부호 컨벤션 주의 (v1.11.3, 2026-05-18)
+///
+/// `pitch_degrees()` / `roll_degrees()` 의 단위 테스트는 가공된 raw 값 (예: `accel_y=612,
+/// accel_z=685`) 으로 "+30° = 앞기울" 을 가정 (cm.rs line 426~449). 그러나 **실 robot
+/// 의 IMU 마운트 방향 / firmware ADC 변환 / Swift 측 polling 단계**에서 부호가 반대로
+/// 나올 수 있음.
+///
+/// **2026-05-18 실 robot 데이터 (Swift `imuPitchDeg`)**: 앞기울 자세에서 `imuPitchDeg`
+/// 가 100% 음수로 관찰됨 (`-10°` 안정, `-31°` fall 시도). 즉 Swift 단에서 보는 부호는
+/// "음수 = 앞기울" — 본 Rust 단위 테스트의 컨벤션 (`+30°` = 앞기울) 과 반대.
+///
+/// **정합 책임**: Rust 단계의 부호 변환 (있다면) 또는 Swift 단계의 정규화 변수
+/// (`BalancePitchInputConvention.negateForwardIsNegative`) 둘 중 한 곳에서 정합 시킴.
+/// 현재 (v1.11.3) 는 Swift 측 opt-in 정규화 — `BalanceExperimentConfig.pitchInputConvention`
+/// 으로 사용자가 P1.0 정적 캘리브레이션 결과 보고 명시 선택.
+///
+/// **본 단위 테스트 (line 426~449) 는 raw axis convention 의 기준점 유지용**이고,
+/// 실 robot 보정의 부호 정합 책임은 Swift 측에 있음.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImuRaw {
     /// Gyro X 10-bit ADC raw (0..1023, center 512). RL_GYRO (roll-rate).

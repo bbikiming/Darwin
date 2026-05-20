@@ -21,8 +21,8 @@ struct FallPreventionMonitor_VisualPreview: View {
 
     enum Scenario: String, CaseIterable, Identifiable {
         case normal       = "정상 상태"
-        case warning      = "경고 (22°+)"
-        case danger       = "위험 (28°+)"
+        case warning      = "경고 (35°+)"
+        case danger       = "위험 (45°+)"
         case correctorOn  = "Corrector ON"
         case eventsLog    = "이벤트 로그"
         var id: String { rawValue }
@@ -45,10 +45,10 @@ struct FallPreventionMonitor_VisualPreview: View {
             session.imuRollDeg = 2.1
             session.imuPitchDeg = 1.3
         case .warning:
-            session.imuRollDeg = 23.5
+            session.imuRollDeg = 36.5
             session.imuPitchDeg = -5.2
         case .danger:
-            session.imuRollDeg = 28.8
+            session.imuRollDeg = 46.8
             session.imuPitchDeg = 4.1
         case .correctorOn:
             session.imuRollDeg = 8.5

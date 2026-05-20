@@ -104,6 +104,8 @@ struct SafetySparkline: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(combinedAccessibilityLabel)
+        // v1.11.15 cycle 2: 무채색 GUI 에서 safety sparkline 색 보존 — 임계 zone 시인성.
+        .dfChartAccent()
     }
 
     // MARK: - 시인성 helpers (2026-05-16)

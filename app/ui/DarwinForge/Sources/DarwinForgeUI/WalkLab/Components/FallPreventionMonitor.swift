@@ -14,7 +14,7 @@ import ForgeCore
 ///    - §6.7 — alarm event log: 시간 + 우선순위 + 메시지 + 처치 컬럼. 본 이벤트
 ///      로그가 동일 구조.
 /// 2. **NASA Ames *Primary Flight Display Design Guidelines* NASA-TM-104781 (1993)**
-///    - §3.2.1 — attitude indicator: 임계 zone 음영. 본 sparkline 의 22°/28°/30°
+///    - §3.2.1 — attitude indicator: 임계 zone 음영. 본 sparkline 의 25°/35°/50°
 ///      stripe 가 동일.
 ///    - §4.1 — EICAS (Engine Indication & Crew Alert System) 패턴: 6 systems
 ///      tile grid. 본 dashboard 의 6-Layer status grid 가 동일.
@@ -49,6 +49,10 @@ import ForgeCore
 /// 5. **Event log** — 시간역순 이벤트 로그.
 struct FallPreventionMonitor: View {
     @ObservedObject var session: WalkLabSession
+    /// **v1.11.5.1 (2026-05-18) — ROBOTIS onboard 모드 brokering 채널**.
+    /// `WalkingEnginePicker` 의 시작/종료 버튼이 이 RemoteShell 을 통해 SSH 명령 send.
+    /// 종전 (v1.11.5): callback 미전달 → 버튼 disabled 상태. 이번 fix.
+    @EnvironmentObject private var remoteShell: RemoteShell
     /// **2026-05-16 a11y 정정**: `repeatForever` animation 은 SwiftUI 가
     /// 자동 disable 안 함. 명시적 @Environment 가드 필요.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -112,12 +116,10 @@ struct FallPreventionMonitor: View {
     /// resize 가 콘텐츠까지 도달하도록. minWidth 280 로 GyroMeter 직경 (160) +
     /// padding 보장.
     private var gyroMeterBlock: some View {
-        let safeRoll = session.imuRollDeg.isFinite ? session.imuRollDeg : 0
-        let safePitch = session.imuPitchDeg.isFinite ? session.imuPitchDeg : 0
         return VStack(alignment: .leading, spacing: DFSpace.xs2) {
             CircularGyroMeter(
-                rollDeg: safeRoll,
-                pitchDeg: safePitch,
+                rollDeg: session.displayImuRollDeg,
+                pitchDeg: session.displayImuPitchDeg,
                 dangerThreshold: 50.0,
                 sourceLabel: gyroSourceWithCorrection,
                 sourceColor: imuSourceColor,
@@ -125,7 +127,34 @@ struct FallPreventionMonitor: View {
             )
             .frame(maxWidth: .infinity, alignment: .center)
             CorrectorIntensityCard(session: session)
+            // **v1.11.5.1 (2026-05-18)** — 보행 엔진 선택 (Mac sparse vs ROBOTIS onboard).
+            // 시작/종료 버튼이 RemoteShell.send 로 SSH 명령 송출. 종전 v1.11.5 는
+            // callback 미전달로 disabled — 이번 fix.
+            WalkingEnginePicker(
+                session: session,
+                onStartOnboard: { [remoteShell] in
+                    Task { @MainActor in
+                        await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
+                    }
+                },
+                onStopOnboard: { [remoteShell] in
+                    Task { @MainActor in
+                        await remoteShell.send(RobotSetupCommand.walkLabRobotisStop)
+                    }
+                },
+                onSendCommand: { [remoteShell] cmd in
+                    Task { @MainActor in
+                        let line = cmd.serializedLine
+                        await remoteShell.send(
+                            RobotSetupCommand.walkLabRobotisSendCommand(line: line)
+                        )
+                    }
+                }
+            )
             BalanceExperimentControls(session: session)   // v1.11: 4축 분리 패널
+            // **v1.11.4 (2026-05-18)** — 정적 IMU 캘리브레이션 (5축 손 캡처 + 부호 진단).
+            // 부호 컨벤션 검증 후 BalanceExperimentControls 의 pitchInputConvention 토글로 적용.
+            StaticTiltCalibrationPanel(session: session)
             AutoTunerCard(tuner: session.autoTuner, session: session)
         }
         .padding(.horizontal, DFSpace.xs2)
@@ -151,10 +180,12 @@ struct FallPreventionMonitor: View {
         let state = session.balanceState
         let color = stateColor(state)
         let icon = stateIcon(state)
-        // **2026-05-16 방어**: NaN/Inf 가드 — 잘못된 sensor 데이터 시 0 fallback.
-        let safeRoll = session.imuRollDeg.isFinite ? session.imuRollDeg : 0
-        let safePitch = session.imuPitchDeg.isFinite ? session.imuPitchDeg : 0
-        let tiltMax = max(abs(safeRoll), abs(safePitch))
+        let normalized = ImuAttitudeDisplayMapping.normalizeConvention(
+            rawRoll: session.imuRollDeg,
+            rawPitch: session.imuPitchDeg,
+            convention: session.balanceExperimentConfig.pitchInputConvention
+        )
+        let tiltMax = max(abs(normalized.roll), abs(normalized.pitch))
         return HStack(spacing: DFSpace.sm3) {
             Image(systemName: icon)
                 .font(DFIcon.hero)
@@ -374,23 +405,26 @@ struct FallPreventionMonitor: View {
             dataSourceColor: nil
         )
         // L3 — IMU tilt (max|roll/pitch|). data = imuSource.
-        let tiltMax = max(abs(session.imuRollDeg), abs(session.imuPitchDeg))
+        // unclamped convention — 진단 숫자에 ±50° clamp 적용 X (정보 손실 방지).
+        let l3Norm = ImuAttitudeDisplayMapping.normalizeConvention(
+            rawRoll: session.imuRollDeg,
+            rawPitch: session.imuPitchDeg,
+            convention: session.balanceExperimentConfig.pitchInputConvention
+        )
+        let tiltMax = max(abs(l3Norm.roll), abs(l3Norm.pitch))
         let tiltColor: Color = {
-            // **이슈 정정 (2026-05-16)**: 이전 `>= 30 / >= 28` 둘 다 danger,
-            // `>= 22 / >= 15` 둘 다 warning — 5단계 의도였으나 3단계 표현.
-            // 정정: BalanceState 의 5-tier 와 정합:
-            // normal < 15 < caution < 22 < warning(severe) < 28 < danger
-            if tiltMax >= 28 { return DFColor.danger }
-            if tiltMax >= 22 { return DFColor.severe }
-            if tiltMax >= 15 { return DFColor.warning }
+            if tiltMax >= 50 { return DFColor.danger }
+            if tiltMax >= 45 { return DFColor.severe }
+            if tiltMax >= 35 { return DFColor.warning }
+            if tiltMax >= 25 { return DFColor.warning.opacity(0.7) }
             return DFColor.success
         }()
         let l3 = LayerStatus(
-            id: "L3", name: "L3 자이로 기울기",
+            id: "L3", name: "L3 IMU 자세",
             icon: "gyroscope",
             valueLabel: String(format: "%.1f", tiltMax),
             unit: "°",
-            thresholdLabel: "15/22/28/30° 5단계",
+            thresholdLabel: "25/35/45/50° 5단계",
             color: tiltColor,
             dataSourceLabel: session.imuSource.label,
             dataSourceColor: imuSourceColor
@@ -412,7 +446,7 @@ struct FallPreventionMonitor: View {
             unit: "/100",
             thresholdLabel: session.fallPrediction.etaMs.map {
                 String(format: "ETA %.0fms", $0)
-            } ?? "≥ 80 = 선제 정지",
+            } ?? "≥ 80 = 위험 임박 (이벤트 로그)",
             color: scoreColor,
             dataSourceLabel: session.imuSource.label,
             dataSourceColor: imuSourceColor
@@ -467,7 +501,7 @@ struct FallPreventionMonitor: View {
     // MARK: - 3. Time-series row (Tufte small multiples)
 
     /// **Tufte "small multiples" 패턴**: 같은 시간축 3 sparkline. 일관 비교.
-    /// **NASA Ames §3.2.1**: 임계 zone stripe (-30..-22 / 22..30 음영).
+    /// **NASA Ames §3.2.1**: 임계 zone stripe (25/35/50° 음영).
     ///
     /// **반응형 (Apple HIG Adaptive Layout)**: `ViewThatFits` 사용 —
     /// 충분한 폭 (각 sparkline ≥ 130pt) 시 horizontal 3 column,
@@ -476,8 +510,11 @@ struct FallPreventionMonitor: View {
     private var timeSeriesRow: some View {
         // **2026-05-16 최적화**: 이전엔 timeline 을 4번 iterate (filter + 3× map).
         // 정정: 단일 pass 로 3 array 동시 build — 50ms tick 마다 O(N) × 4 → O(N) × 1.
+        // **v1.11.19 (2026-05-20)**: safetyTimeline 은 raw 값 저장 — display 표시 전
+        // convention 정규화 + NaN guard (unclamped) 적용. currentLabel 과 부호 일치.
         let now = Date()
         let cutoff = now.addingTimeInterval(-10)
+        let convention = session.balanceExperimentConfig.pitchInputConvention
         var rollSamples: [(Date, Double)] = []
         var pitchSamples: [(Date, Double)] = []
         var scoreSamples: [(Date, Double)] = []
@@ -485,22 +522,36 @@ struct FallPreventionMonitor: View {
         pitchSamples.reserveCapacity(session.safetyTimeline.count)
         scoreSamples.reserveCapacity(session.safetyTimeline.count)
         for sample in session.safetyTimeline where sample.timestamp >= cutoff {
-            rollSamples.append((sample.timestamp, sample.rollDeg))
-            pitchSamples.append((sample.timestamp, sample.pitchDeg))
+            let mapped = ImuAttitudeDisplayMapping.normalizeConvention(
+                rawRoll: sample.rollDeg,
+                rawPitch: sample.pitchDeg,
+                convention: convention
+            )
+            rollSamples.append((sample.timestamp, mapped.roll))
+            pitchSamples.append((sample.timestamp, mapped.pitch))
             scoreSamples.append((sample.timestamp, sample.predictionScore))
         }
+        // currentLabel + tiltLineColor 도 unclamped normalizeConvention 으로 — 차트 trace
+        // 와 부호/스케일 일치. raw 70° 가 들어와도 label 이 ±50 clamp 되지 않음.
+        let nowDisplay = ImuAttitudeDisplayMapping.normalizeConvention(
+            rawRoll: session.imuRollDeg,
+            rawPitch: session.imuPitchDeg,
+            convention: convention
+        )
+        // valueRange ±60: emergency 50° + 10° 헤드룸. 60° 이상은 saturated cliff
+        // (out-of-range 시각적 명시). 일상 보행 ±4° 가독성 유지.
         let rollSp = makeSparkline(
             samples: rollSamples,
-            valueRange: -35...35,
-            tiltLineColor: sparklineColor(forTilt: session.imuRollDeg),
-            currentLabel: String(format: "%+.1f°", session.imuRollDeg),
+            valueRange: -60...60,
+            tiltLineColor: sparklineColor(forTilt: nowDisplay.roll),
+            currentLabel: String(format: "%+.1f°", nowDisplay.roll),
             title: "옆 기울기", isTiltAxis: true
         )
         let pitchSp = makeSparkline(
             samples: pitchSamples,
-            valueRange: -35...35,
-            tiltLineColor: sparklineColor(forTilt: session.imuPitchDeg),
-            currentLabel: String(format: "%+.1f°", session.imuPitchDeg),
+            valueRange: -60...60,
+            tiltLineColor: sparklineColor(forTilt: nowDisplay.pitch),
+            currentLabel: String(format: "%+.1f°", nowDisplay.pitch),
             title: "앞뒤 기울기", isTiltAxis: true
         )
         let scoreSp = makeSparkline(
@@ -537,8 +588,8 @@ struct FallPreventionMonitor: View {
     /// 가 인지 가능한 최소 (10 sample × 10pt 간격 + padding).
     private static let sparklineMinW: CGFloat = 130
     /// Sparkline horizontal 모드 높이 — 2026-05-17 56pt 에서 라벨 겹침 결함.
-    /// 수직 라벨 분포 수학: tilt valueRange ±35 + 3 thresholds (15/22/30) 면
-    /// 최소 delta = 7° → (7/70)·H ≥ 12pt 필요 → H ≥ 120pt.
+    /// 수직 라벨 분포 수학: tilt valueRange ±55 + 3 thresholds (25/35/50) 면
+    /// 최소 delta = 10° → (10/110)·H ≥ 12pt 필요 → H ≥ 132pt → 120pt 유지.
     /// 차트 너비 (~100pt) 와 1:1 box 형태가 되지만 6개 라벨 가독성 확보 우선.
     private static let sparklineWideH: CGFloat = 120
     /// Sparkline vertical 모드 높이 — 좁은 폭에서 컨텍스트 손실 최소화 + 가독성.
@@ -546,7 +597,7 @@ struct FallPreventionMonitor: View {
     private static let sparklineNarrowH: CGFloat = 90
 
     /// Sparkline factory — wide/narrow ViewThatFits 모두 동일 구성으로 생성.
-    /// `isTiltAxis = true` 시 IMU tilt 임계 (15/22/30°), false 시 score 임계 (30/60/80).
+    /// `isTiltAxis = true` 시 IMU tilt 임계 (25/35/50°), false 시 score 임계 (30/60/80).
     private func makeSparkline(
         samples: [(Date, Double)],
         valueRange: ClosedRange<Double>,
@@ -557,9 +608,9 @@ struct FallPreventionMonitor: View {
     ) -> SafetySparkline {
         let thresholds: [SafetySparkline.Threshold] = isTiltAxis
             ? [
-                .init(value: 15, color: DFColor.warning),
-                .init(value: 22, color: DFColor.severe),
-                .init(value: 30, color: DFColor.danger),
+                .init(value: 25, color: DFColor.warning),
+                .init(value: 35, color: DFColor.severe),
+                .init(value: 50, color: DFColor.danger),
               ]
             : [
                 .init(value: 30, color: DFColor.warning),
@@ -1033,18 +1084,18 @@ struct FallPreventionMonitor: View {
     private func stateMessage(_ s: WalkLabSession.BalanceState) -> String {
         switch s {
         case .normal:    return "임계 미초과 — 정상 보행"
-        case .caution:   return "기울기 15°+ — 모니터링 강화"
-        case .warning:   return "기울기 22°+ — 보행 속도 70% 자동 감속"
-        case .danger:    return "기울기 28°+ — 자세 동결 (lastSafePose 유지)"
-        case .emergency: return "기울기 30°+ — 토크 OFF + walkReady 복귀"
+        case .caution:   return "기울기 25°+ — 모니터링 강화"
+        case .warning:   return "기울기 35°+ — 보행 속도 70% 자동 감속"
+        case .danger:    return "기울기 45°+ — 자세 동결 (lastSafePose 유지)"
+        case .emergency: return "기울기 50°+ — 토크 OFF + walkReady 복귀"
         }
     }
 
     private func sparklineColor(forTilt deg: Double) -> Color {
         let abs = Swift.abs(deg)
-        if abs >= 30 { return DFColor.danger }
-        if abs >= 22 { return DFColor.severe }
-        if abs >= 15 { return DFColor.warning }
+        if abs >= 50 { return DFColor.danger }
+        if abs >= 35 { return DFColor.severe }
+        if abs >= 25 { return DFColor.warning }
         return DFColor.accent
     }
 

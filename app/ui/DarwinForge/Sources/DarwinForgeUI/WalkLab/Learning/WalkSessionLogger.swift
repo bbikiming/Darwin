@@ -45,7 +45,28 @@ public final class WalkSessionLogger {
                 imuSourceAtStart: String? = nil,
                 imuScaleSuspicionAtStart: String? = nil,
                 operatorNoteAtStart: String? = nil,
-                comparisonTag: WalkComparisonTag? = nil) throws {
+                comparisonTag: WalkComparisonTag? = nil,
+                // v1.11.10 V2 — 8 axis + tuning + experiment context
+                walkingEngine: String? = nil,
+                pitchInputConvention: String? = nil,
+                enableBalanceCorrectionAtStart: Bool? = nil,
+                autoOnboardBrokeringAtStart: Bool? = nil,
+                hipPitchOffsetTrimDegAtStart: Double? = nil,
+                tuningStrideMm: Double? = nil,
+                tuningSideMm: Double? = nil,
+                tuningTurnDeg: Double? = nil,
+                tuningPeriodMs: Double? = nil,
+                tuningFootHeightMm: Double? = nil,
+                tuningBalanceGain: Double? = nil,
+                customGainHipRoll: Double? = nil,
+                customGainKnee: Double? = nil,
+                customGainAnklePitch: Double? = nil,
+                customGainAnkleRoll: Double? = nil,
+                robotModel: String? = nil,
+                firmwareVersion: String? = nil,
+                onboardPatchVersion: String? = nil,
+                experimentId: String? = nil,
+                baselineSessionId: String? = nil) throws {
         let fm = FileManager.default
         let baseDir = try fm.url(for: .applicationSupportDirectory,
                                  in: .userDomainMask,
@@ -80,7 +101,27 @@ public final class WalkSessionLogger {
             imuSourceAtStart: imuSourceAtStart,
             imuScaleSuspicionAtStart: imuScaleSuspicionAtStart,
             operatorNoteAtStart: operatorNoteAtStart,
-            comparisonTag: comparisonTag
+            comparisonTag: comparisonTag,
+            walkingEngine: walkingEngine,
+            pitchInputConvention: pitchInputConvention,
+            enableBalanceCorrectionAtStart: enableBalanceCorrectionAtStart,
+            autoOnboardBrokeringAtStart: autoOnboardBrokeringAtStart,
+            hipPitchOffsetTrimDegAtStart: hipPitchOffsetTrimDegAtStart,
+            tuningStrideMm: tuningStrideMm,
+            tuningSideMm: tuningSideMm,
+            tuningTurnDeg: tuningTurnDeg,
+            tuningPeriodMs: tuningPeriodMs,
+            tuningFootHeightMm: tuningFootHeightMm,
+            tuningBalanceGain: tuningBalanceGain,
+            customGainHipRoll: customGainHipRoll,
+            customGainKnee: customGainKnee,
+            customGainAnklePitch: customGainAnklePitch,
+            customGainAnkleRoll: customGainAnkleRoll,
+            robotModel: robotModel,
+            firmwareVersion: firmwareVersion,
+            onboardPatchVersion: onboardPatchVersion,
+            experimentId: experimentId,
+            baselineSessionId: baselineSessionId
         )
 
         self.encoder = JSONEncoder()

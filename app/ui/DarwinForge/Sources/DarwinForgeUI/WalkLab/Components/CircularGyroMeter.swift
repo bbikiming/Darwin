@@ -5,7 +5,7 @@ import SwiftUI
 /// Roll/Pitch 를 한 평면 위 좌표로 표시. 중심 = 직립 (0°, 0°). dot 위치 = 현재 기울기.
 ///
 /// **시각 디자인** (ISA-101 EICAS 색 정책 + 차량 g-meter 직관):
-///   - 동심원 = 안전 등급 임계 (15°/22°/28°/30°)
+///   - 동심원 = 안전 등급 임계 (25°/35°/45°/50°)
 ///   - 십자선 = roll(x)/pitch(y) 축
 ///   - dot = 현재 기울기, 색 = state-based
 ///   - 하단 라벨 = 수치 + 안전 등급
@@ -20,7 +20,7 @@ public struct CircularGyroMeter: View {
     public let rollDeg: Double
     /// Pitch (degrees) — 앞뒤 기울기. -30..+30 expected.
     public let pitchDeg: Double
-    /// Auto E-stop 임계 (기본 30°). dot 가 이 거리에 도달하면 위험 표시.
+    /// Auto E-stop 임계 (기본 50° = BalanceState.emergency). dot 가 이 거리에 도달하면 위험 표시.
     public let dangerThreshold: Double
     /// 데이터 source 표시 (실 / sim / stale). nil 이면 라벨 없음.
     public let sourceLabel: String?
@@ -52,13 +52,14 @@ public struct CircularGyroMeter: View {
                 .fill(DFColor.elev2)
                 .strokeBorder(DFColor.textSecondary.opacity(DFOpacity.o25), lineWidth: 1)
 
-            // 동심 격자 — 안전 등급 임계 (15°/22°/28°/30°)
+            // 동심 격자 — 안전 등급 임계 (25°/35°/45°/50°). 최외곽 = dangerThreshold solid.
             ForEach(thresholdRings, id: \.deg) { ring in
+                let isMain = ring.deg >= dangerThreshold
                 Circle()
                     .strokeBorder(
                         ring.color.opacity(DFOpacity.o35),
-                        style: StrokeStyle(lineWidth: ring.deg == 30 ? 1.0 : 0.5,
-                                           dash: ring.deg == 30 ? [] : [2, 2])
+                        style: StrokeStyle(lineWidth: isMain ? 1.0 : 0.5,
+                                           dash: isMain ? [] : [2, 2])
                     )
                     .frame(width: diameter * CGFloat(ring.deg / dangerThreshold) * 0.92,
                            height: diameter * CGFloat(ring.deg / dangerThreshold) * 0.92)
@@ -68,7 +69,7 @@ public struct CircularGyroMeter: View {
             crosshair
 
             // 현재 tilt 위치 dot (roll, pitch → x, y 좌표 변환)
-            let maxR: CGFloat = diameter * 0.46  // 반경의 92% = 30°
+            let maxR: CGFloat = diameter * 0.46  // 반경의 92% = dangerThreshold (50°)
             let rollPx = (clampedRoll / dangerThreshold) * maxR
             // pitch positive (앞으로 기울임) = 위쪽 (음수 y offset in SwiftUI)
             let pitchPx = -(clampedPitch / dangerThreshold) * maxR
@@ -111,6 +112,14 @@ public struct CircularGyroMeter: View {
             axisLabels
         }
         .frame(width: diameter, height: diameter)
+        // v1.11.15 cycle 3 (2026-05-19): 자이로 시각화 외곽에 forge blue 강조 ring +
+        // 무채색 GUI 에서도 색 보존. 자동차 g-meter 처럼 차트 자체가 시각 hero 요소.
+        .overlay(
+            Circle()
+                .stroke(DFColor.forge.opacity(DFOpacity.o30), lineWidth: 1.5)
+        )
+        .dfThemedShadow(color: DFColor.forge.opacity(0.15), radius: 8, y: 2)
+        .dfChartAccent()
         .accessibilityElement(children: .combine)
         .accessibilityLabel("자이로 기울기")
         .accessibilityValue("Roll \(Int(rollDeg.rounded()))도, Pitch \(Int(pitchDeg.rounded()))도, \(safetyLabel)")
@@ -163,22 +172,22 @@ public struct CircularGyroMeter: View {
         max(-dangerThreshold, min(dangerThreshold, pitchDeg.isFinite ? pitchDeg : 0))
     }
 
-    /// 현재 가장 큰 기울기 기반 안전 색.
+    /// 현재 가장 큰 기울기 기반 안전 색. BalanceState 5-tier 임계 (25/35/45/50°) 정합.
     private var currentColor: Color {
         let m = max(abs(clampedRoll), abs(clampedPitch))
-        if m >= dangerThreshold       { return DFColor.danger }
-        if m >= dangerThreshold * 0.93 { return DFColor.severe }   // 28°
-        if m >= dangerThreshold * 0.73 { return DFColor.warning }  // 22°
-        if m >= dangerThreshold * 0.50 { return DFColor.warning.opacity(0.7) }  // 15°
+        if m >= dangerThreshold        { return DFColor.danger }                  // 50°
+        if m >= dangerThreshold * 0.90 { return DFColor.severe }                  // 45°
+        if m >= dangerThreshold * 0.70 { return DFColor.warning }                 // 35°
+        if m >= dangerThreshold * 0.50 { return DFColor.warning.opacity(0.7) }    // 25°
         return DFColor.success
     }
 
     private var safetyLabel: String {
         let m = max(abs(clampedRoll), abs(clampedPitch))
-        if m >= dangerThreshold        { return "위험 — 자동 정지 임계" }
-        if m >= dangerThreshold * 0.93 { return "심각" }
-        if m >= dangerThreshold * 0.73 { return "경고" }
-        if m >= dangerThreshold * 0.50 { return "주의" }
+        if m >= dangerThreshold        { return "위험 — 자동 정지 임계" }   // 50°
+        if m >= dangerThreshold * 0.90 { return "심각" }                    // 45°
+        if m >= dangerThreshold * 0.70 { return "경고" }                    // 35°
+        if m >= dangerThreshold * 0.50 { return "주의" }                    // 25°
         return "안전"
     }
 
