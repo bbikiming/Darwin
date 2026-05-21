@@ -293,6 +293,44 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(bridge.isActive, "1 event > 0.5 threshold → active")
     }
 
+    // MARK: - Cycle 24: Tello state forwarding
+
+    /// **v1.20.18 사이클 24** — updateTelloState 가 lastTelloState 에 저장.
+    func testUpdateTelloStateStoresLastMessage() {
+        XCTAssertNil(bridge.lastTelloState, "사전: nil")
+        let msg = makeTelloState(battery: 75, height: 100)
+        bridge.updateTelloState(msg)
+        XCTAssertEqual(bridge.lastTelloState?.batteryPct, 75)
+        XCTAssertEqual(bridge.lastTelloState?.heightCm, 100)
+    }
+
+    /// **v1.20.18 사이클 24** — 배터리 low (< 20%) → safety message.
+    func testUpdateTelloStateLowBatteryWarning() {
+        let msg = makeTelloState(battery: 10, height: 50)
+        bridge.updateTelloState(msg)
+        XCTAssertNotNil(bridge.safetyMessage)
+        XCTAssertTrue(bridge.safetyMessage?.contains("배터리") ?? false,
+                      "low battery safety 메시지")
+    }
+
+    /// **v1.20.18 사이클 24** — 정상 배터리는 safetyMessage 갱신 안 함.
+    func testUpdateTelloStateNormalBatteryNoWarning() {
+        let msg = makeTelloState(battery: 80, height: 0)
+        bridge.updateTelloState(msg)
+        XCTAssertNil(bridge.safetyMessage, "normal battery — message 없음")
+    }
+
+    private func makeTelloState(battery: Int, height: Double) -> TelloStateMessage {
+        TelloStateMessage(
+            pitchDeg: 0, rollDeg: 0, yawDeg: 0,
+            vgx: 0, vgy: 0, vgz: 0,
+            templ: 50, temph: 55, tofCm: nil,
+            heightCm: height, batteryPct: battery, baroPa: nil,
+            agx: 0, agy: 0, agz: -1000,
+            receivedAt: Date()
+        )
+    }
+
     // MARK: - Cycle 18: emergency recovery
 
     /// **v1.20.12 사이클 18** — handleRecovery 이 emergencyStopActive flag 만 clear, walking 미시작.
