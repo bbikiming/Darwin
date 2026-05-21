@@ -317,6 +317,20 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
+    /// **v1.20.31 사이클 39** — bridge.enabled=false 토글 시 stride hard-zero.
+    func testBridgeDisableHardZerosAmplitude() {
+        session.pilotBridge = bridge
+        session.start(.march)
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        XCTAssertEqual(session.strideMm, 40, accuracy: 1e-9, "사전: amplitude 적용")
+
+        bridge.enabled = false
+
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9,
+                       "disable → hard-zero (안전 invariant)")
+        XCTAssertNotNil(bridge.safetyMessage)
+    }
+
     // MARK: - Cycle 33: End-to-end happy path
 
     /// **v1.20.27 사이클 33** — 사용자 시뮬: 전 cycle 의 piece 가 통합 작동.

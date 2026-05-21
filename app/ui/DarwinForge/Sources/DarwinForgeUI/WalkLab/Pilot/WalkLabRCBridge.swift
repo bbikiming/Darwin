@@ -74,7 +74,19 @@ public final class WalkLabRCBridge {
     // MARK: - Settings
 
     /// `false` 면 stick 입력 무시 (정지 + emergency 만 허용). 사용자 명시 토글.
-    public var enabled: Bool = true
+    public var enabled: Bool = true {
+        didSet {
+            // **v1.20.31 사이클 39** — 비활성 전환 시 release-all 발화 (안전 invariant).
+            // 종전: 사용자가 enabled=false 토글해도 마지막 amplitude 가 session 에 남음.
+            // 신규: 비활성 시 hardstop. emergency 와 별도 — robot 부드러운 정지.
+            if oldValue == true && enabled == false {
+                if let session = session {
+                    applyAmplitude(.stop, in: session, applyHardZero: true)
+                }
+                safetyMessage = "Bridge 비활성 — emergency 만 허용"
+            }
+        }
+    }
     /// stick 변환 scale — 사용자 sensitivity 조정.
     public var scale: TelloRCMapper.Scale = .default
     /// **v1.20.3 (2026-05-22) 사이클 9** — idle 상태에서 첫 pilot 입력 시 자동 시작할 preset.
