@@ -170,19 +170,45 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertEqual(session.strideMm, 35, accuracy: 1e-9, "0.5 × 40 + 0.5 × 30 = 35")
     }
 
-    /// **v1.20.14 사이클 20** — release 시 smoothing 이 부드러운 ramp-down 적용.
-    func testSmoothingRampsDownGracefully() {
+    /// **v1.20.14 사이클 20 + 20-fix LOW** — ramp-up 후 .stop 명시 호출 시 hard-zero 도달.
+    /// **사이클 20-fix HIGH 1**: deadzone (.stop) 은 EMA 우회 — 진정한 0.
+    func testSmoothingRampUpThenStopHardZeros() {
         bridge.smoothingFactor = 0.5
         session.start(.march)
-        // 먼저 fully ramp up.
+        // 5 ramp = 0 → 38.75 (코덱스 정확 수치).
         for _ in 0..<5 {
             bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
         }
-        XCTAssertGreaterThan(session.strideMm, 35, "ramp 완료")
-        // Release — deadzone (cmd = stop) 이지만 smooth 라 한 번에 0 아님.
+        XCTAssertEqual(session.strideMm, 38.75, accuracy: 0.01, "5 EMA ramp")
+        // deadzone → .stop intent → hard-zero (사이클 20-fix HIGH 1).
         bridge.handleTelloStick(lr: 0, fb: 0, ud: 0, yaw: 0)
-        XCTAssertLessThan(session.strideMm, 35, "감소 시작")
-        XCTAssertGreaterThan(session.strideMm, 5, "한 번에 0 아님 (graceful)")
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "stop hard-zero")
+    }
+
+    /// **v1.20.14.1 사이클 20-fix HIGH 2 (코덱스)** — emergencyStop 이 strideMm 등 zero.
+    func testEmergencyStopZerosAmplitudeFields() {
+        bridge.smoothingFactor = 0.5
+        session.start(.march)
+        for _ in 0..<5 {
+            bridge.handleTelloStick(lr: 25, fb: 100, ud: 0, yaw: 50)
+        }
+        XCTAssertGreaterThan(session.strideMm, 10, "사전: amplitude 잔재")
+
+        bridge.handleEmergency(from: .ui)
+
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "emergency 후 stride 0")
+        XCTAssertEqual(session.sideMm, 0, accuracy: 1e-9, "emergency 후 side 0")
+        XCTAssertEqual(session.turnDeg, 0, accuracy: 1e-9, "emergency 후 turn 0")
+    }
+
+    /// **v1.20.14.1 사이클 20-fix CRITICAL (코덱스)** — applyAmplitude 가 advanced=true 자동 활성.
+    /// 종전: bridge 가 strideMm 만 수정, advanced=false 면 walking engine preset default 사용.
+    /// 신규: 첫 move intent 시 session.advanced=true 활성 → 실 walking 에 반영.
+    func testApplyAmplitudeAutoEnablesAdvanced() {
+        XCTAssertFalse(session.advanced, "사전: advanced=false")
+        session.start(.march)
+        bridge.handleTelloStick(lr: 0, fb: 50, ud: 0, yaw: 0)
+        XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
     // MARK: - Cycle 14/15: activityRate + isActive

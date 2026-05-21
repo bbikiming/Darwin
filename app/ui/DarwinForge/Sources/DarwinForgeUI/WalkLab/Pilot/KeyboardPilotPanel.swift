@@ -35,6 +35,9 @@ public struct KeyboardPilotPanel: View {
     /// pressedKeys.removeAll() (emergency 시) 이 호출되어도 Space 가 물리적으로 held 면 true.
     /// R 키 입력 시 검사 → Space held 동안 recovery 차단 (의도된 "press to hold" emergency UX).
     @State private var spaceKeyHeld: Bool = false
+    /// **v1.20.14.1 사이클 20-fix MEDIUM (코덱스)** — onAppear 진입 전 smoothingFactor 백업.
+    /// onDisappear 시 원복 → Tello 등 다른 source 의 backward-compat (즉시 반응) 보존.
+    @State private var savedSmoothingFactor: Double?
     /// **v1.20.6 사이클 12** — overlay 열자마자 키 입력 활성. 게임 UX: 즉시 응답.
     private let autoFocusOnAppear: Bool
     /// **v1.20.11 사이클 17** — 사용자 sensitivity multiplier (0.5x~2x).
@@ -87,13 +90,21 @@ public struct KeyboardPilotPanel: View {
             }
             // **v1.20.14 사이클 20** — 게임 UX: 키보드 입력은 EMA smoothing 적용
             // (0.5 = stride 가 0 → 40 까지 ~3 call 에 걸쳐 ramp). 키 release 시 jarring stop 완화.
-            session.pilotBridge?.smoothingFactor = 0.5
+            // **사이클 20-fix MEDIUM (코덱스)**: onDisappear 원복 위해 백업.
+            if let bridge = session.pilotBridge {
+                savedSmoothingFactor = bridge.smoothingFactor
+                bridge.smoothingFactor = 0.5
+            }
         }
         // **v1.20.2.1 사이클 8-fix HIGH (코덱스)** — overlay 제거 / 뷰 dismount 시 release.
         // WalkLabView 가 `showingPilotOverlay = false` 처리할 때 view 가 즉시 사라짐 →
         // 그 시점에 .up 이 발화 안 했다면 마지막 amplitude 가 남음. onDisappear 가 보장.
         .onDisappear {
             releaseAll()
+            // **사이클 20-fix MEDIUM (코덱스)** — smoothingFactor 원복 (Tello backward-compat).
+            if let saved = savedSmoothingFactor {
+                session.pilotBridge?.smoothingFactor = saved
+            }
         }
         // **v1.20.2.1 사이클 8-fix HIGH (코덱스)** — alt-tab / 백그라운드 진입 시 자동 release.
         // scenePhase: .active → .inactive / .background 변화 = 사용자가 다른 앱으로 이동.

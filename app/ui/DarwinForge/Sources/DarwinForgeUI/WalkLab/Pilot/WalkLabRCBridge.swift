@@ -264,7 +264,7 @@ public final class WalkLabRCBridge {
             applyAmplitude(cmd, in: session)
             safetyMessage = nil
         case .stop:
-            applyAmplitude(.stop, in: session)
+            applyAmplitude(.stop, in: session, applyHardZero: true)
             safetyMessage = nil
         case .motion(let id):
             // **v1.18.0.2 사이클 2**: motion intent 활성화 — Phase 3 의 MotionBlender 통합.
@@ -314,16 +314,31 @@ public final class WalkLabRCBridge {
     /// 보행 중 변경 시 `walkTuningRestartTask` 가 220ms debounce 후 cycle 재시작 (Mac sparse)
     /// 또는 `WalkLabOnboardBridge` 가 300ms debounce 후 SSH 송출 (Onboard) — 기존 채널 활용.
     ///
-    /// **v1.20.14 사이클 20** — EMA smoothing. `smoothingFactor` (0..1) 만큼 새 값 blend.
-    /// 0 = 무한 smooth (변화 없음), 1 = 즉시 (smoothing 없음, 종전 동작). default 0.5 = 적당히 부드러움.
-    /// 게임 캐릭터 ramp-up/down 효과: 키 release 시 strideMm 한 번에 0 되지 않고 점진적 감속.
-    /// 다음 applyAmplitude 호출 시 blend 가 누적 → 진정한 stop 위해 키 release 후에도
-    /// "한 번 더" call 필요 — 호출자 (KeyboardPilotPanel) 가 release 시 명시 stop 호출하면 충분.
-    private func applyAmplitude(_ cmd: WalkingCommand, in session: WalkLabSession) {
-        let α = smoothingFactor
-        session.strideMm = α * cmd.strideMm + (1 - α) * session.strideMm
-        session.sideMm   = α * cmd.sideMm   + (1 - α) * session.sideMm
-        session.turnDeg  = α * cmd.turnDeg  + (1 - α) * session.turnDeg
+    /// **v1.20.14 사이클 20 + 20-fix (코덱스)** — EMA smoothing + engine sync + hard-stop.
+    /// - `applyHardZero=true`: bypass EMA, 진정한 0 도달 (release/stop path).
+    /// - `applyHardZero=false`: EMA blend (game ramp UX).
+    /// - **CRITICAL fix**: advanced=true 자동 활성 + syncCommandToEngine 호출 → 실 walking 에 반영.
+    private func applyAmplitude(_ cmd: WalkingCommand, in session: WalkLabSession,
+                                 applyHardZero: Bool = false) {
+        // **사이클 20-fix CRITICAL (코덱스)** — advanced=true 자동 활성 (amplitude 쓰기 전에!).
+        // 이유: `advanced` didSet 가 `loadPresetDefaultsToSliders(current)` 호출 →
+        // 기존 strideMm 0 으로 reset. 따라서 amplitude 적용 BEFORE 가 아닌 advanced AFTER 면
+        // 우리 값이 즉시 덮임. 순서: advanced first, then write amplitude.
+        if !session.advanced {
+            session.advanced = true
+        }
+        if applyHardZero {
+            // **사이클 20-fix HIGH 1 (코덱스)** — .stop path 의 hard-zero.
+            session.strideMm = cmd.strideMm
+            session.sideMm   = cmd.sideMm
+            session.turnDeg  = cmd.turnDeg
+        } else {
+            let α = max(0, min(1, smoothingFactor))  // clamp 0..1 (safety)
+            session.strideMm = α * cmd.strideMm + (1 - α) * session.strideMm
+            session.sideMm   = α * cmd.sideMm   + (1 - α) * session.sideMm
+            session.turnDeg  = α * cmd.turnDeg  + (1 - α) * session.turnDeg
+        }
+        session.syncCommandToEngine()
         // 사용자 안내 — 어떤 source 가 명령했는지.
         if let source = lastIntent?.source {
             session.lastRobotEvent = "🕹 \(source.label) → stride=\(Int(session.strideMm)) side=\(Int(session.sideMm)) turn=\(Int(session.turnDeg))"

@@ -1242,6 +1242,12 @@ public final class WalkLabSession {
         simTimer?.invalidate()
         simTimer = nil
         engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
+        // **v1.20.14.1 사이클 20-fix HIGH 2 (코덱스)** — pilot EMA 잔재 hard-zero.
+        // 종전: emergencyStop 후 engine.setCommand(0,...) 만 zero, session.strideMm 잔재 →
+        // 차후 syncCommandToEngine 가 stale 값 재송출 가능.
+        strideMm = 0
+        sideMm = 0
+        turnDeg = 0
         startTime = nil
         let tilt = max(abs(imuRollDeg), abs(imuPitchDeg))
         logSafetyEvent(
