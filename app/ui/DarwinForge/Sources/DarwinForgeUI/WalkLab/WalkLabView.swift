@@ -25,6 +25,9 @@ public struct WalkLabView: View {
     @State private var pendingHighRiskPreset: WalkLabPreset?
     /// **v1.15.0 (2026-05-21) Phase 1**: trial library sheet 표시 토글.
     @State private var showingTrialLibrary: Bool = false
+    /// **v1.20.2 (2026-05-22) 사이클 8**: 조종 panel (keyboard + Tello HUD) overlay 표시.
+    /// 기본 off — 사용자가 명시 활성화 시 좌하단 overlay 노출.
+    @State private var showingPilotOverlay: Bool = false
 
     /// **v1.11 (2026-05-17 사용자 요청)**: Fall Prevention 패널 너비 — 사용자 drag
     /// 으로 조절 + 다음 실행 시 복원. UserDefaults key `df.walklab.fallPanelWidth`.
@@ -61,6 +64,15 @@ public struct WalkLabView: View {
         .overlay(alignment: .bottomTrailing) {
             ActiveExperimentBanner()
                 .padding(DFSpace.md)
+        }
+        // **v1.20.2 (2026-05-22) 사이클 8** — Pilot overlay (Keyboard + Tello HUD).
+        // 사용자가 sidebar header 의 🎮 버튼으로 toggle. 좌하단 floating panel.
+        .overlay(alignment: .bottomLeading) {
+            if showingPilotOverlay {
+                pilotOverlay
+                    .padding(DFSpace.md)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
         }
         .sheet(isPresented: $showingRiskConfirm) {
             riskConfirmSheet
@@ -188,6 +200,16 @@ public struct WalkLabView: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
             Spacer()
+            // **v1.20.2 (2026-05-22) 사이클 8**: Pilot overlay 토글 — keyboard + Tello HUD.
+            Button(action: {
+                withAnimation(DFAnimation.toggle) { showingPilotOverlay.toggle() }
+            }) {
+                Image(systemName: showingPilotOverlay ? "gamecontroller.fill" : "gamecontroller")
+                    .font(DFFont.body)
+                    .foregroundStyle(showingPilotOverlay ? DFColor.accent : DFColor.textPrimary)
+            }
+            .buttonStyle(.borderless)
+            .help("키보드 / Tello 조종 panel 표시 (WASD/QE/Space)")
             // **v1.15.0 (2026-05-21) Phase 1**: trial library 진입점.
             // 저장된 모든 walk trial 검색/탐색/라벨링 sheet 표시.
             Button(action: { showingTrialLibrary = true }) {
@@ -199,6 +221,44 @@ public struct WalkLabView: View {
         }
         .padding(.horizontal, DFSpace.md)
         .padding(.vertical, DFSpace.sm3)
+    }
+
+    // MARK: - Pilot overlay (Cycle 8)
+
+    /// **v1.20.2 사이클 8** — keyboard + Tello HUD 좌하단 overlay.
+    /// `session.pilotBridge` 가 nil 이면 안내 메시지 만 표시.
+    @ViewBuilder
+    private var pilotOverlay: some View {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
+            HStack(spacing: 4) {
+                Image(systemName: "gamecontroller.fill")
+                    .font(.caption)
+                    .foregroundStyle(DFColor.accent)
+                Text("Pilot 조종")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Button(action: {
+                    withAnimation(DFAnimation.toggle) { showingPilotOverlay = false }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+                .buttonStyle(.borderless)
+                .help("닫기")
+            }
+            if let bridge = session.pilotBridge {
+                KeyboardPilotPanel()
+                TelloPilotHud(bridge: bridge)
+            } else {
+                Text("Pilot bridge 미연결 — RootView onAppear 가 wiring 못함")
+                    .font(.caption2)
+                    .foregroundStyle(DFColor.textSecondary)
+                    .padding(8)
+                    .background(DFColor.warning.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+        }
     }
 
     // 고급 슬라이더 패널은 AdvancedSlidersPanel 로 분리 (Components/AdvancedSlidersPanel.swift).
