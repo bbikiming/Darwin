@@ -31,8 +31,12 @@ public struct KeyboardPilotPanel: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var pressedKeys: Set<PilotKey> = []
     @FocusState private var isFocused: Bool
+    /// **v1.20.6 사이클 12** — overlay 열자마자 키 입력 활성. 게임 UX: 즉시 응답.
+    private let autoFocusOnAppear: Bool
 
-    public init() {}
+    public init(autoFocusOnAppear: Bool = true) {
+        self.autoFocusOnAppear = autoFocusOnAppear
+    }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -61,6 +65,16 @@ public struct KeyboardPilotPanel: View {
             // focus 잃으면 모든 키 release — 멈춤.
             if !newValue {
                 releaseAll()
+            }
+        }
+        // **v1.20.6 사이클 12** — overlay 열림 직후 자동 focus → 게임 UX 즉시 응답.
+        .onAppear {
+            if autoFocusOnAppear {
+                // 짧은 지연 후 focus — SwiftUI view lifecycle 안정화 대기.
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    isFocused = true
+                }
             }
         }
         // **v1.20.2.1 사이클 8-fix HIGH (코덱스)** — overlay 제거 / 뷰 dismount 시 release.
