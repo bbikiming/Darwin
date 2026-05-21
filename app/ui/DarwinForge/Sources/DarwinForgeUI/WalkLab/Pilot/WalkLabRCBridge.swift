@@ -176,6 +176,14 @@ public final class WalkLabRCBridge {
             }
             return
         }
+        // **v1.20.20 사이클 26** — 같은 preset 재입력 idempotent (no-op).
+        // 종전: alreadyWalking preflight 차단 + "march 진행 중" safety 메시지 — 게임 UX 거슬림.
+        // 신규: 동일 preset 재입력 시 silent no-op (사용자 의도: 변경 없음).
+        // 단 emergencyStopActive 체크는 위에서 이미 통과한 상태.
+        if session.current == preset {
+            safetyMessage = nil  // 기존 메시지 clear (clean state).
+            return
+        }
         // **v1.20.4.1 사이클 10-fix HIGH (코덱스)** — same-preset retry 의 false-positive 차단.
         // 종전: session.start 후 `current == preset` true 면 성공 처리 → 활성 .march 에 1 재입력
         // 시 preflight 가 alreadyWalking 으로 차단해도 current 변화 없어 성공 메시지 + nil safety.

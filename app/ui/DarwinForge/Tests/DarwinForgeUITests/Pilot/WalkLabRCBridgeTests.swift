@@ -414,19 +414,19 @@ final class WalkLabRCBridgeTests: XCTestCase {
                       "emergency 안전 메시지")
     }
 
-    /// **v1.20.4.1 사이클 10-fix HIGH (코덱스)** — 같은 preset 재입력 시 success false-positive 차단.
-    /// 종전: walking 중 같은 preset 누르면 current == preset 그대로 → 성공 메시지. 신규: preflight
-    /// alreadyWalking 차단을 정확히 감지.
-    func testHandlePresetSamePresetBlockedAsAlreadyWalking() {
+    /// **v1.20.20 사이클 26** — 같은 preset 재입력 시 idempotent no-op (사이클 10-fix HIGH 진화).
+    /// 종전 (사이클 10-fix HIGH): "march 진행 중" 차단 메시지 노출.
+    /// 신규 (사이클 26): silent no-op — 게임 UX. 사용자가 1 번 키 두 번 눌러도 자연스럽게 동작.
+    /// false-positive 성공 우려는 별도 — current 변화 자체가 success 신호 (변하지 않음 = no-op).
+    func testHandlePresetSamePresetIsIdempotentNoOp() {
         session.start(.march)
         XCTAssertEqual(session.current, .march)
 
-        bridge.handlePreset(.march, from: .keyboard)  // 같은 preset 재입력.
+        bridge.handlePreset(.march, from: .keyboard)
 
-        XCTAssertEqual(session.current, .march, "current 여전히 march")
-        // 핵심: safetyMessage 가 차단 사유 (alreadyWalking) 보이게.
-        XCTAssertNotNil(bridge.safetyMessage,
-                        "재입력 차단 메시지 — false-positive 성공 차단")
+        XCTAssertEqual(session.current, .march, "current 변화 없음")
+        XCTAssertNil(bridge.safetyMessage,
+                     "no-op — 차단 메시지 없음 (게임 UX silent)")
     }
 
     // **참고 (사이클 10-fix MEDIUM 2)**: "walking 중 다른 preset 전환 차단" 테스트는 sim 모드에서
