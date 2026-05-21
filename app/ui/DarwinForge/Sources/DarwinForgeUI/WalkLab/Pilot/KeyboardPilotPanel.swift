@@ -88,7 +88,13 @@ public struct KeyboardPilotPanel: View {
             Text("Keyboard Pilot")
                 .font(.callout.weight(.semibold))
             Spacer()
-            if isFocused {
+            // **v1.20.5 사이클 11** — bridge.enabled=false 시 명시 "비활성" 배지.
+            // 사용자가 키 입력 거부 사유 (TelloPilotHud 의 "활성" 토글 OFF) 를 사전 인지.
+            if let bridge = session.pilotBridge, !bridge.enabled {
+                Text("⚠️ Bridge 비활성")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DFColor.warning)
+            } else if isFocused {
                 Text("● 활성")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(DFColor.accent)
