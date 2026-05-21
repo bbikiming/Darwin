@@ -247,21 +247,51 @@ public struct TelloPilotHud: View {
     // MARK: - Controls row
 
     private var controlsRow: some View {
-        HStack(spacing: 8) {
-            Toggle("활성", isOn: $bridge.enabled)
-                .toggleStyle(.button)
-                .controlSize(.small)
-                .font(.caption)
-            Spacer()
-            Button(role: .destructive) {
-                bridge.handleEmergency(from: .ui)
-            } label: {
-                Label("긴급정지", systemImage: "exclamationmark.octagon.fill")
-                    .font(.caption.weight(.semibold))
+        VStack(spacing: 4) {
+            // **v1.20.15 사이클 21** — 현재 settings 표시 (감도 + smoothing).
+            HStack(spacing: 6) {
+                settingChip(icon: "speedometer",
+                            label: String(format: "감도 %.1fx", currentSensitivity))
+                settingChip(icon: "waveform.path",
+                            label: String(format: "smooth %.1f", bridge.smoothingFactor))
+                Spacer()
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .keyboardShortcut(.escape, modifiers: [])
+            HStack(spacing: 8) {
+                Toggle("활성", isOn: $bridge.enabled)
+                    .toggleStyle(.button)
+                    .controlSize(.small)
+                    .font(.caption)
+                Spacer()
+                Button(role: .destructive) {
+                    bridge.handleEmergency(from: .ui)
+                } label: {
+                    Label("긴급정지", systemImage: "exclamationmark.octagon.fill")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .keyboardShortcut(.escape, modifiers: [])
+            }
         }
+    }
+
+    /// **v1.20.15 사이클 21** — 현재 sensitivity = bridge.scale.fb / default.fb.
+    /// default = 0.4. 1.0x = default. 0.5x = slow. 2.0x = fast.
+    private var currentSensitivity: Double {
+        bridge.scale.fb / TelloRCMapper.Scale.default.fb
+    }
+
+    private func settingChip(icon: String, label: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.caption2)
+            Text(label)
+                .font(.caption2.monospacedDigit())
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(DFColor.textSecondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .foregroundStyle(DFColor.textSecondary)
     }
 }
