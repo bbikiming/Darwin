@@ -1,8 +1,22 @@
 import Combine
 import ForgeCore
+import Observation
 import SwiftUI
 
-/// Walk Lab 의 ObservableObject — 현재 프리셋 / 고급 슬라이더 / 시뮬 결과 / 안전 상태.
+/// Walk Lab 의 observable model — 현재 프리셋 / 고급 슬라이더 / 시뮬 결과 / 안전 상태.
+/// **v1.14.9 (2026-05-21) Fix #7 — @Observable 마이그레이션**:
+/// 종전: ObservableObject + 76 @Published. tick 마다 ~12-15 @Published mutate →
+///       모든 @ObservedObject/@EnvironmentObject subscriber 의 body 재평가 (blanket
+///       invalidation). 변화와 무관한 view 도 dirty mark.
+/// 신규: @Observable 매크로 (Swift 5.9+, macOS 14+) — property-level tracking.
+///       View 가 실제로 read 한 property 만 dependency 로 등록 → 무관 property 변화 시
+///       body 재평가 skip. 73 @Published cascade 의 근본 원인 해소.
+/// View 측 변경:
+///   - @EnvironmentObject var session: WalkLabSession → @Environment(WalkLabSession.self) var session
+///   - @ObservedObject var session: WalkLabSession → var session: WalkLabSession
+///   - @StateObject var session = WalkLabSession() → @State var session = WalkLabSession()
+///   - $session.foo (Binding) → @Bindable var session = session; $session.foo
+///   - .environmentObject(session) → .environment(session)
 ///
 /// 시뮬 vs 실 송출 (Sprint 16+):
 ///   - **프리셋 보행 cycle 실 송출 활성**: `WalkMotionLibrary.page(for:tuning:)` 로 합성한
@@ -14,11 +28,12 @@ import SwiftUI
 ///   - `attach(store:)` 호출 전이면 송출 skip (테스트 / preview / 연결 전).
 ///   - emergencyStop / 균형 손실 / 온도 임계 시 walkCycleTask 즉시 cancel + walkReady 복귀.
 @MainActor
-public final class WalkLabSession: ObservableObject {
+@Observable
+public final class WalkLabSession {
     // MARK: - 사용자 입력
-    @Published public var current: WalkLabPreset = .idle
+    public var current: WalkLabPreset = .idle
     /// v1.11.25 audit log-F — silent toggle 차단. didSet 으로 SE/Harness 발화.
-    @Published public var cradleConfirmed: Bool = false {
+    public var cradleConfirmed: Bool = false {
         didSet {
             guard cradleConfirmed != oldValue else { return }
             logSafetyEvent(
@@ -34,7 +49,7 @@ public final class WalkLabSession: ObservableObject {
     }
     /// v1.11.25 audit log-F + audit-I — advanced 토글 silent 차단 + ON 시 현재 preset
     /// 기본값 자동 load (사용자 혼란 "왜 안 움직이지" 차단).
-    @Published public var advanced: Bool = false {
+    public var advanced: Bool = false {
         didSet {
             guard advanced != oldValue else { return }
             logSafetyEvent(
@@ -54,19 +69,19 @@ public final class WalkLabSession: ObservableObject {
         }
     }
     /// 보폭 (앞, mm/cycle). 0..50. WalkEngine 의 x (m) 와 매핑: x_m = strideMm / 1000.
-    @Published public var strideMm: Double = 0
+    public var strideMm: Double = 0
     /// 측면 보폭 (mm/cycle). -25..25. y_m = sideMm / 1000.
-    @Published public var sideMm: Double = 0
+    public var sideMm: Double = 0
     /// 회전 (°/cycle). -20..20. a_rad = turnDeg * π/180.
-    @Published public var turnDeg: Double = 0
-    @Published public var customPeriodMs: Double = 600
+    public var turnDeg: Double = 0
+    public var customPeriodMs: Double = 600
     /// 발 들기 높이 (mm). sim 영향 — 엔진 미반영 (BLOCKER C3 까지).
-    @Published public var footHeightMm: Double = 40
+    public var footHeightMm: Double = 40
     /// 균형 게인 (NimbRo lean_fb_gain 등가). sim 영향 — 엔진 미반영.
-    @Published public var balanceGain: Double = 1.0
+    public var balanceGain: Double = 1.0
     /// 사용자 명시적 안전 한도 해제. Smart-clamp 무시, 단 critical 점수는 여전히 차단.
     /// v1.11.25 audit log-F — 안전 우회는 영구 기록 필수 (warn level + SE).
-    @Published public var forceOverrideSafety: Bool = false {
+    public var forceOverrideSafety: Bool = false {
         didSet {
             guard forceOverrideSafety != oldValue else { return }
             logSafetyEvent(
@@ -83,7 +98,7 @@ public final class WalkLabSession: ObservableObject {
             )
         }
     }
-    @Published public var riskAcknowledged: Bool = false
+    public var riskAcknowledged: Bool = false
 
     // MARK: - 레거시 호환 (기존 코드 경로 보존)
     /// `customX`/`customY`/`customA` 는 strideMm/sideMm/turnDeg 의 m 단위 view.
@@ -102,15 +117,42 @@ public final class WalkLabSession: ObservableObject {
     }
 
     // MARK: - 시뮬 / 실시간 상태
-    @Published public var elapsedMs: UInt32 = 0
-    @Published public var phaseLabel: String = "PHASE0"
-    @Published public var leftFoot: SIMD3<Double> = .zero
-    @Published public var rightFoot: SIMD3<Double> = .zero
-    @Published public var footTrail: [FootTrailPoint] = []
-    @Published public var imuRollDeg: Double = 0
-    @Published public var imuPitchDeg: Double = 0
+    public var elapsedMs: UInt32 = 0
+    public var phaseLabel: String = "PHASE0"
+    public var leftFoot: SIMD3<Double> = .zero
+    public var rightFoot: SIMD3<Double> = .zero
+    public var footTrail: [FootTrailPoint] = []
+
+    // MARK: - v1.15.0 (2026-05-21) Phase 1 — Trial 통합 hook
+    //
+    // 신규 책임 (라벨 sheet 트리거 + start 시점 capture) 2개 stored property 만 추가.
+    // 나머지 로직은 `WalkLabSession+Trials.swift` extension — god object 확장 금지 원칙.
+
+    /// trial 종료 시 라벨링 sheet 표시 트리거. RootView/WalkLabView 가 `.sheet(item:)` 으로 listen.
+    /// `nil` = sheet 닫힘 (또는 trial 없음).
+    public var pendingLabelTrial: WalkTrial?
+
+    /// trial start 시점 ephemeral capture. finalize 시 outcome 계산에 사용.
+    /// internal 가시성 — same module extension 에서만 접근.
+    var trialStartCapture: TrialStartCapture?
+
+    /// **v1.15.5 (2026-05-21) — Phase 1.5**: ApplyScope warning 영구 채널.
+    /// 종전 `lastRobotEvent` 가 18+ callers 가 overwrite 하는 single string 이라 badge
+    /// message 가 즉시 사라짐 (critic MAJOR finding). 별도 property 로 scope 경고 (예:
+    /// "balanceGain 은 Onboard 모드에서 송신 안 됨") 영구 표시 — 3D 뷰 하단 또는 sidebar.
+    /// nil = 경고 없음. 사용자가 dismiss 시 nil 로 reset.
+    public var lastScopeWarning: String?
+
+    /// **v1.14.8.1 (2026-05-21) perf — perf-engineer HIGH fix**: footTrail.lefts 캐시.
+    /// 종전 WalkLabView 가 body 마다 `session.footTrail.map { $0.left }` → 200-element
+    /// 새 SIMD3 배열 alloc + RobotScene3D struct 가 매번 다른 배열 → updateNSView
+    /// 강제 호출. Fix #4 의 SceneKit fps 30 절감 일부 무효화.
+    /// 신규: tick() 에서 footTrail 과 parallel update → view 는 캐시 read.
+    public private(set) var footTrailLefts: [SIMD3<Double>] = []
+    public var imuRollDeg: Double = 0
+    public var imuPitchDeg: Double = 0
     /// **Stage 1 (v1.1 fall prevention)**: IMU 출처 표시 — UI 가 sim/real/stale 구분.
-    @Published public private(set) var imuSource: ImuSource = .sim
+    public private(set) var imuSource: ImuSource = .sim
 
     /// **v1.11.19**: display-only roll (NaN/Inf guard + ±50° clamp). UI 전용.
     public var displayImuRollDeg: Double {
@@ -124,19 +166,19 @@ public final class WalkLabSession: ObservableObject {
             convention: balanceExperimentConfig.pitchInputConvention
         ).pitch
     }
-    @Published public private(set) var maxMotorTemp: Double = 35.0
+    public private(set) var maxMotorTemp: Double = 35.0
     /// **2026-05-16**: 모터 온도 출처 — sim/real/stale. 이전 버그: 실 robot 연결 시에도
     /// `updateSimThermal()` 만 호출 → dashboard 가 항상 가짜 온도 표시.
     /// 정정: `updateMotorTempFromRealOrSim()` 가 `lastTelemetry?.joints` 의
     /// `presentTemperature` 중 max 사용 (실), 미연결 시 sim model fallback.
-    @Published public private(set) var motorTempSource: MotorTempSource = .sim
-    @Published public var balanceLost: Bool = false
-    @Published public var thermalAlarm: Bool = false
+    public private(set) var motorTempSource: MotorTempSource = .sim
+    public var balanceLost: Bool = false
+    public var thermalAlarm: Bool = false
     /// **v1.11.22.1 (Codex HIGH-1 fix)** — emergencyStop 진행 중/완료 표시.
     /// runWalkCycle/runContinuousWalk 의 exit phase (walkReady 복귀 setPosition) 가
     /// 토크 OFF 이후 호출되는 race 차단용. emergency 시 true → exit 자체 skip.
     /// start/reset 시 false 리셋.
-    @Published public private(set) var emergencyStopActive: Bool = false
+    public private(set) var emergencyStopActive: Bool = false
 
     // 2026-05-17 T3.1 partial split: MotorTempSource / ImuSource enum 정의는
     // WalkLabSession+Types.swift 로 이동. type identity 그대로 (extension nested).
@@ -144,9 +186,9 @@ public final class WalkLabSession: ObservableObject {
     // MARK: - Stage 2 (v1.1 fall prevention): 다단계 임계
 
     /// 현재 IMU 기반 안전 상태. tick() 마다 갱신.
-    @Published public private(set) var balanceState: BalanceState = .normal
+    public private(set) var balanceState: BalanceState = .normal
     /// 자동 fall prevention 토글. false 면 emergency (50°) 만 작동. default true.
-    @Published public var autoFallPrevention: Bool = true
+    public var autoFallPrevention: Bool = true
 
     // MARK: - Stage 3 (v1.1 fall prevention): 예측 fall detection
 
@@ -156,7 +198,7 @@ public final class WalkLabSession: ObservableObject {
     private var lastBufferPushAt: Date?
 
     /// 예측 결과 — UI 게이지·countdown 용.
-    @Published public private(set) var fallPrediction: FallPredictor.Prediction = .zero
+    public private(set) var fallPrediction: FallPredictor.Prediction = .zero
 
     // MARK: - Stage 4 (v1.1 fall prevention): 실 balance feedback
 
@@ -184,7 +226,7 @@ public final class WalkLabSession: ObservableObject {
     /// → 둘 다 identity 반환. **master 가 OFF 면 mode 무관하게 비활성**. UI 가 두 토글
     /// 모두 노출 — 사용자는 master (이 토글) 만 사용 권장. expert disclosure 의 algorithmMode
     /// 는 master ON 상태에서 algorithm 선택 (off 포함) 용도.
-    @Published public var enableBalanceCorrection: Bool = false {
+    public var enableBalanceCorrection: Bool = false {
         didSet {
             if enableBalanceCorrection != oldValue {
                 // v1.11.24 audit iter2-G — caution preset 보행 중 보정 OFF 차단.
@@ -239,7 +281,7 @@ public final class WalkLabSession: ObservableObject {
     /// 보정 활성 시 0~1초 ramp 시작 시점. nil 이면 ramp 미시작.
     private var correctionEnabledAt: Date?
     /// 최근 산정 보정 delta (UI 표시·디버그 용).
-    @Published public private(set) var lastCorrections: BalanceCorrector.Corrections?
+    public private(set) var lastCorrections: BalanceCorrector.Corrections?
     /// **Phase C (2026-05-16)**: balanceState .danger 시 동결 기준 pose. nil 이면 walkReady fallback.
     private var lastSafePose: RobotPose?
     /// Corrector 인스턴스 — `WalkParams.default()` gain 정합. v1.8 정정: intensity 가
@@ -250,7 +292,7 @@ public final class WalkLabSession: ObservableObject {
     /// **v1.11 (2026-05-17)**: 자이로 보정 4축 통합 설정.
     /// algorithmMode / signConvention / gainProfile / applyToRobot 을 한 곳에서 관리.
     /// 사용자 prompt 의 4-axis UI 모델. didSet 으로 corrector 인스턴스 swap + 안전 gate 적용.
-    @Published public var balanceExperimentConfig: BalanceExperimentConfig = .defaultRobotis {
+    public var balanceExperimentConfig: BalanceExperimentConfig = .defaultRobotis {
         didSet {
             guard balanceExperimentConfig != oldValue else { return }
             // gainProfile 또는 algorithmMode 변경 → corrector 인스턴스 재생성.
@@ -316,6 +358,31 @@ public final class WalkLabSession: ObservableObject {
                        + "\(balanceExperimentConfig.gainProfile.label)"
                        + (balanceExperimentConfig.applyToRobot ? " (실 적용)" : " (관찰)")
             )
+            // **v1.14.8 (2026-05-21) perf #6**: pitchInputConvention 변경 시 캐시 무효화 + 재계산.
+            // 종전 raw safetyTimeline 은 그대로지만 normalized 가 stale 한 convention 으로
+            // 계산되어 있음. 사용자가 convention 토글 후 monitor 보면 잠시 잘못된 부호.
+            if balanceExperimentConfig.pitchInputConvention != oldValue.pitchInputConvention {
+                rebuildNormalizedSafetyTimeline()
+            }
+        }
+    }
+
+    /// **v1.14.8 (2026-05-21) perf #6** — convention 변경 시 normalized cache 재계산.
+    /// O(N) 1회만 발생 (사용자가 toggle 할 때) — 매 tick O(1) amortize 의 대가.
+    private func rebuildNormalizedSafetyTimeline() {
+        let convention = balanceExperimentConfig.pitchInputConvention
+        normalizedSafetyTimeline = safetyTimeline.map { sample in
+            let mapped = ImuAttitudeDisplayMapping.normalizeConvention(
+                rawRoll: sample.rollDeg,
+                rawPitch: sample.pitchDeg,
+                convention: convention
+            )
+            return NormalizedSafetySample(
+                timestamp: sample.timestamp,
+                rollDeg: mapped.roll,
+                pitchDeg: mapped.pitch,
+                predictionScore: sample.predictionScore
+            )
         }
     }
 
@@ -365,9 +432,9 @@ public final class WalkLabSession: ObservableObject {
     /// session start 시점의 IMU scale 의심 ("normal"/"saturated"/"unknown" 등).
     public private(set) var imuScaleSuspicionAtStart: String = "unknown"
     /// 운영자 메모 — UI 에서 1줄 입력. v2 header 에 그대로 기록.
-    @Published public var operatorNote: String? = nil
+    public var operatorNote: String? = nil
     /// A/B 비교 tag — `WalkComparisonTag.arm` 으로 "A"/"B" 구분. nil 이면 비교 의도 없음.
-    @Published public var comparisonTag: WalkComparisonTag? = nil
+    public var comparisonTag: WalkComparisonTag? = nil
 
     /// **v1.8 (2026-05-17 사용자 요청)**: 자이로 기반 자세 보정의 개입 강도 5단계.
     /// 사용자가 슬라이더로 조절. multiplier 매핑:
@@ -376,7 +443,7 @@ public final class WalkLabSession: ObservableObject {
     ///   - 2: 표준 (intensity 1.0 = ROBOTIS default — 권장)
     ///   - 3: 적극적 (intensity 1.5 = ROBOTIS 1.5배)
     ///   - 4: 최대 (intensity 2.0 = ROBOTIS 2배, 안전 clamp ±15° 유지)
-    @Published public var correctorIntensityLevel: Int = 2 {
+    public var correctorIntensityLevel: Int = 2 {
         didSet {
             let clamped = max(0, min(4, correctorIntensityLevel))
             if clamped != correctorIntensityLevel {
@@ -502,16 +569,22 @@ public final class WalkLabSession: ObservableObject {
     /// 보행 중 매 step 갱신 (`runContinuousWalk` / `runWalkCycle` 에서 송출 직전 publish).
     /// sim mode (실 로봇 미연결) 도 50ms tick 마다 phase pose 합성해서 갱신 →
     /// `WalkLabView` 의 `RobotScene3D(pose: session.visualPose)` 가 받아서 모델 동작.
-    @Published public var visualPose: RobotPose = .walkReady
+    public var visualPose: RobotPose = .walkReady
 
     // MARK: - Monitoring Dashboard (2026-05-16): 시계열 안전 상태 + 이벤트 로그
 
     // 2026-05-17 T3.1 partial split: SafetySample / SafetyEvent → WalkLabSession+Types.swift.
 
-    /// 시계열 안전 sample buffer — 최근 10초 (50ms tick × 200).
-    @Published public private(set) var safetyTimeline: [SafetySample] = []
+    /// 시계열 안전 sample buffer — 최근 10초 (10Hz tick × 100, max 250).
+    public private(set) var safetyTimeline: [SafetySample] = []
+    /// **v1.14.8 (2026-05-21) perf #6**: 정규화 캐시.
+    /// FallPreventionMonitor.timeSeriesRow 가 body 마다 250×3 = 750 atan/asin 호출
+    /// 하던 비용을 sample 추가 시 1회로 amortize. View 는 directly read.
+    /// balanceExperimentConfig.pitchInputConvention 변경 시 rebuildNormalizedTimeline()
+    /// 호출로 일관성 유지.
+    public private(set) var normalizedSafetyTimeline: [NormalizedSafetySample] = []
     /// 안전 이벤트 로그 — 최근 50건 (가장 최신이 last). 별도 보존 — start() reset 시에도 유지.
-    @Published public private(set) var safetyEvents: [SafetyEvent] = []
+    public private(set) var safetyEvents: [SafetyEvent] = []
     /// 모니터링 대시보드 펼침 상태 — UI 토글. 앱 재시작 후에도 유지 (UserDefaults).
     /// 키: `df.walklab.monitoringExpanded`. UI 가 @AppStorage 로 binding 추천.
     ///
@@ -520,7 +593,7 @@ public final class WalkLabSession: ObservableObject {
     /// FallPreventionMonitor + WalkingEnginePicker + BalanceExperimentControls +
     /// StaticTiltCalibrationPanel 모두 보임. UX 누락.
     /// 이제 UserDefaults 미설정 시 true 로 초기화. 사용자가 명시 OFF 후엔 OFF 유지.
-    @Published public var monitoringExpanded: Bool = {
+    public var monitoringExpanded: Bool = {
         let key = "df.walklab.monitoringExpanded"
         if UserDefaults.standard.object(forKey: key) == nil {
             // 첫 실행 — default true (모든 패널 노출).
@@ -557,11 +630,13 @@ public final class WalkLabSession: ObservableObject {
     }
 
     // MARK: - 세션 기록
-    @Published public var history: [WalkLabRecord] = []
+    public var history: [WalkLabRecord] = []
 
     // MARK: - 실 로봇 연결 (optional)
     /// 환경에서 주입되는 연결 store. nil 이면 sim only.
-    private weak var store: ConnectionStore?
+    /// **v1.15.0 (2026-05-21) Phase 1**: private → internal — `WalkLabSession+Trials.swift`
+    /// extension 이 isRealRobot 판정 (`store?.bus != nil`) 위해 read 필요.
+    weak var store: ConnectionStore?
 
     /// 2026-05-17 사용자 보고 critical: IMU scale 진단 결과 noop passthrough.
     /// FallPreventionMonitor 가 session 만 알기 때문에 session 통해 expose.
@@ -699,14 +774,14 @@ public final class WalkLabSession: ObservableObject {
         return PreflightStatus(checks: checks)
     }
     /// 마지막 송출 상태 — UI 토스트용.
-    @Published public private(set) var lastRobotEvent: String?
+    public private(set) var lastRobotEvent: String?
     /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
-    @Published public private(set) var isRobotWalking: Bool = false
+    public private(set) var isRobotWalking: Bool = false
 
     /// Codex P0 fix (2026-05-13 3차): preflight 결과 + cycle 종료 후 결과 집계.
     /// 이전 v1.0 은 모든 write 를 `_ = try?` 로 silently swallow → "정상 종료" 처럼 보였음.
-    @Published public private(set) var lastCycleResult: WalkCycleResult?
-    @Published public private(set) var lastPreflightFailure: WalkPreflightFailure?
+    public private(set) var lastCycleResult: WalkCycleResult?
+    public private(set) var lastPreflightFailure: WalkPreflightFailure?
 
     // MARK: - v1.11.24 audit (2026-05-20): 상태 분리
     //
@@ -726,26 +801,26 @@ public final class WalkLabSession: ObservableObject {
     /// 실 motor task 가 진행 중인 preset. nil = walkCycleTask 없음 + onboardWalkingActive=false.
     /// **로거의 sample.preset 은 이 값을 우선 사용** — 사용자가 다른 preset 을 클릭해도 실 task
     /// 가 안 바뀌면 로그는 변경 전 preset 유지 (mixed-preset session 문제 차단).
-    @Published public private(set) var activeRobotPreset: WalkLabPreset?
+    public private(set) var activeRobotPreset: WalkLabPreset?
 
     /// 마지막 `start(_:)` 가 시도한 preset (preflight 실패 포함). UI 의 "마지막 요청"
     /// 표시 및 로거 header 의 `requestedPreset` 필드에 기록.
-    @Published public private(set) var requestedPreset: WalkLabPreset?
+    public private(set) var requestedPreset: WalkLabPreset?
 
     /// preflight 차단 사유 — `WalkPreflightFailure.diagnosticCode`. 로거 header 의
     /// `startBlockedReason` 필드. nil = preflight 통과 (성공 또는 미시도).
-    @Published public private(set) var startBlockedReason: String?
+    public private(set) var startBlockedReason: String?
 
     /// 첫 setPosition 성공 시 true. 실제 명령이 motor 까지 도달했는지 회고적 진단용.
     /// `runWalkCycle` / `runContinuousWalk` 의 onBusWriteFailure callback 의 역.
-    @Published public private(set) var motorWriteStarted: Bool = false
+    public private(set) var motorWriteStarted: Bool = false
 
     /// 실 motor write 누적 step 수. 로거 header / 자체 진단 dashboard 용.
-    @Published public private(set) var motorWriteStepCount: Int = 0
+    public private(set) var motorWriteStepCount: Int = 0
 
     /// ROBOTIS Onboard ACK 상태 — "ok" / "no_ack" / "timeout" / "error: ..." 또는 nil.
     /// `WalkLabOnboardBridge` 가 ACK 수신 시 update.
-    @Published public private(set) var onboardAckStatus: String?
+    public private(set) var onboardAckStatus: String?
 
     /// `isRobotWalking || onboardWalkingActive` — UI 가 preset 버튼 disable 시 사용.
     /// `walkCycleTask != nil` 은 private 이므로 view 에서 직접 못 보므로 published 두 값의 합.
@@ -794,8 +869,15 @@ public final class WalkLabSession: ObservableObject {
     /// 고급 슬라이더 연속 drag 중 실 보행 page 재합성을 debounce.
     private var walkTuningRestartTask: Task<Void, Never>?
 
-    /// Sim 한 tick 의 dt (s). 50 ms.
-    private let tickDtSec: Double = 0.05
+    /// Sim 한 tick 의 dt (s).
+    /// **v1.14.8 (2026-05-21) perf #2**: 50ms → 100ms (20Hz → 10Hz).
+    /// 종전: 매 50ms tick 마다 12~15 @Published 갱신 (leftFoot, rightFoot, elapsedMs,
+    ///       phaseLabel, footTrail, visualPose, imuRollDeg, imuPitchDeg, ...) →
+    ///       main actor SwiftUI invalidation 폭증 → 모든 reactive view 가 50ms 마다
+    ///       body 재평가 → 클릭 응답 지연.
+    /// 신규: 100ms (10Hz). 사람 눈에 부드러움 충분 (cinema 24fps 보다 빠름).
+    ///       dt 도 같이 0.1 — 시뮬 위상/온도/swayPhase 가 자동으로 real-time 보조.
+    private let tickDtSec: Double = 0.1
     /// 모터 발열율 — 워킹 중 (°C/s). 약 6°C/min, 무거운 부하 가정.
     private let motorHeatRate: Double = 0.10
     /// 모터 자연 냉각율 — idle 중 (°C/s).
@@ -830,11 +912,19 @@ public final class WalkLabSession: ObservableObject {
     /// 2026-05-17 concurrency review (agent #1 CRITICAL): Timer / Task 누수 차단.
     /// stop() 호출 안 한 채 session deallocation 시 RunLoop 가 simTimer 를 strong
     /// retain → tick block 의 Task 가 영구 스케줄링. walkCycleTask / walkTuningRestartTask
-    /// 도 동일. View 전환 / @StateObject reinit 시 발생 가능.
+    /// 도 동일. View 전환 / @State reinit 시 발생 가능.
+    ///
+    /// **v1.14.9 (2026-05-21) Fix #7 / Swift 6 대비**:
+    /// @Observable + Swift 5.9+ 에서 deinit 은 nonisolated. main-actor-isolated
+    /// stored property 접근 → compile error. MainActor.assumeIsolated 로 안전 보장
+    /// (SwiftUI @State 의 deinit 은 main thread 에서 호출 — assumption 항상 참).
+    /// Timer.invalidate() / Task.cancel() 둘 다 thread-safe atomic 이라 의미상 안전.
     deinit {
-        simTimer?.invalidate()
-        walkCycleTask?.cancel()
-        walkTuningRestartTask?.cancel()
+        MainActor.assumeIsolated {
+            simTimer?.invalidate()
+            walkCycleTask?.cancel()
+            walkTuningRestartTask?.cancel()
+        }
     }
 
     /// 현재 효과적인 command — advanced 모드면 custom, 아니면 preset.
@@ -930,11 +1020,15 @@ public final class WalkLabSession: ObservableObject {
         }()
         imuScaleSuspicionAtStart = (store?.imuScaleSuspicion ?? .unknown).rawValue
 
+        // **v1.15.0 (2026-05-21) Phase 1**: Trial 시작 capture — finalize 시 outcome 계산용.
+        captureTrialStart(preset: preset)
+
         current = preset
         let cmd = effectiveCommand
         engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
         engine.setPeriodMs(effectivePeriodMs)
         footTrail.removeAll()
+        footTrailLefts.removeAll()  // v1.14.8.1 parallel cache reset
         simSwayPhase = 0
         balanceLost = false
         thermalAlarm = false
@@ -968,6 +1062,8 @@ public final class WalkLabSession: ObservableObject {
         // **Monitoring dashboard reset**: 시계열 buffer / 이전 상태 reset.
         // safetyEvents 는 유지 — 사용자가 이전 세션의 이벤트 확인 가능.
         safetyTimeline.removeAll()
+        // **v1.14.8 (2026-05-21) perf #6**: normalized 캐시도 동기 reset.
+        normalizedSafetyTimeline.removeAll()
         previousBalanceState = .normal
         previousImuSource = .sim
         previousMotorTempSource = .sim
@@ -1018,6 +1114,10 @@ public final class WalkLabSession: ObservableObject {
 
     /// 정지 — 시뮬 멈춤, 기록 누적, 실 보행 cycle cancel + walkReady 복귀.
     public func stop() {
+        // **v1.15.0 (2026-05-21) Phase 1**: Trial 종료 hook — capture → Analyzer → Store → label sheet.
+        // simTimer invalidate 전에 호출 — sessionLogger 가 아직 살아있을 때 file path 추출.
+        finalizeTrialIfPending(endReason: .userStop)
+
         let wasRunningForHarness = startTime != nil
         let durationForHarness: Double = startTime.map { Date().timeIntervalSince($0) } ?? 0
         simTimer?.invalidate()
@@ -1087,6 +1187,12 @@ public final class WalkLabSession: ObservableObject {
     /// actor=.user → 자동 trigger (balance lost / thermal / voltage) 와 사용자 클릭
     /// 구분 불가. 발생률 통계 추출 막힘.
     public func emergencyStop(trigger: EmergencyTrigger = .userClick) {
+        // **v1.15.0 (2026-05-21) Phase 1**: Trial 종료 hook — capture → Analyzer → Store → label sheet.
+        // trigger 가 fallPredictorRecommend 면 .fallPredictorTriggered, 그 외는 .emergencyStop.
+        let trialEndReason: EndReason = (trigger == .fallPredictorRecommend)
+            ? .fallPredictorTriggered : .emergencyStop
+        finalizeTrialIfPending(endReason: trialEndReason)
+
         // v1.12.0 telemetry — WalkLab 비상 정지.
         let tiltForHarness = max(abs(imuRollDeg), abs(imuPitchDeg))
         Harness.shared.record(
@@ -1643,13 +1749,13 @@ public final class WalkLabSession: ObservableObject {
     /// **v1.11.4 (2026-05-18)** — hipPitchOffset trim slider 값 (UI 노출).
     /// 0~20°, default 13° (ROBOTIS Walking.cpp 원본).
     /// 사용자가 cradle 캘리브레이션 중 0/5/13° 비교해서 mean pitch bias 측정 가능.
-    @Published public var hipPitchOffsetTrimDeg: Double = 13.0
+    public var hipPitchOffsetTrimDeg: Double = 13.0
 
     /// **v1.11.6 (2026-05-18)** — `.robotisOnboard` 모드의 자동 brokering 토글.
     /// true 면 preset / tuning 변경 시 `WalkLabOnboardBridge` 가 300ms debounce 후
     /// 자동으로 RemoteShell.send 호출. default OFF — 안전상 사용자가 명시 ON.
     /// v1.11.25 audit log-F — toggle 변경 시점 영구 기록.
-    @Published public var autoOnboardBrokering: Bool = false {
+    public var autoOnboardBrokering: Bool = false {
         didSet {
             guard autoOnboardBrokering != oldValue else { return }
             logSafetyEvent(
@@ -1666,8 +1772,8 @@ public final class WalkLabSession: ObservableObject {
 
     /// **v1.11.14 (2026-05-19)** — A/B 실험 컨텍스트 (사용자 명시 승인 후 set).
     /// `nil` = 일반 보행 (실험 X). Logger header 의 experimentId/baselineSessionId 로 기록.
-    @Published public var activeExperimentId: String? = nil
-    @Published public var activeBaselineSessionId: String? = nil
+    public var activeExperimentId: String? = nil
+    public var activeBaselineSessionId: String? = nil
 
     /// **v1.11.14**: ExperimentLoopController weak ref — 세션 종료 시 자동 폐루프.
     /// RootView 가 setExperimentLoop(_:) 로 inject. weak 라 actor lifecycle 의존성 없음.
@@ -1748,7 +1854,7 @@ public final class WalkLabSession: ObservableObject {
 
     /// rollback 용 snapshot. applyExperimentChange 가 set, rollbackExperiment 또는
     /// clearExperimentContext 가 clear.
-    @Published public private(set) var rollbackSnapshot: ExperimentSnapshot? = nil
+    public private(set) var rollbackSnapshot: ExperimentSnapshot? = nil
 
     /// **v1.11.14**: ExperimentApprovalUI 가 사용자 승인 후 호출. axis 한 개만 변경.
     /// **v1.11.14.1**: deltas struct 도입 — tuning slider + customGain* axis 통합.
@@ -1938,30 +2044,30 @@ public final class WalkLabSession: ObservableObject {
     /// startWalkCycle 진입 시 onboard 분기에서 true, stop / cancelWalkCycle 시 false.
     /// UI 가 이 값으로 "robot 측에서 보행 중" 표시 가능.
     /// Mac sparse 의 walkCycleTask 와 별개 — onboard 는 SSH brokering 으로만 동작.
-    @Published public private(set) var onboardWalkingActive: Bool = false
+    public private(set) var onboardWalkingActive: Bool = false
 
     /// **v1.11.16.1 (2026-05-19)** — Onboard health indicator state.
     /// Bridge 가 send/ping 결과를 set. UI (OnboardHealthIndicator) 가 시각 표시.
-    @Published public internal(set) var onboardLastAckAt: Date? = nil
-    @Published public internal(set) var onboardLastError: String? = nil
-    @Published public internal(set) var onboardConsecutiveFailures: Int = 0
+    public internal(set) var onboardLastAckAt: Date? = nil
+    public internal(set) var onboardLastError: String? = nil
+    public internal(set) var onboardConsecutiveFailures: Int = 0
     /// daemon 응답이 "NO_ACK" 이면 firmware 미패치 가능성.
-    @Published public internal(set) var onboardDaemonMissing: Bool = false
+    public internal(set) var onboardDaemonMissing: Bool = false
 
     /// **v1.11.6 (2026-05-18)** — `.custom` gainProfile 의 사용자 지정 gain 값.
     /// gainProfile == .custom 일 때만 makeCorrector 가 이 값들을 적용.
     /// 종전 (v1.11.5.2 이하) `.custom` 은 robotisOriginal fallback — UI 라벨과 동작 불일치.
     /// default: robotisOriginal 값 (사용자가 명시 변경해야 effect).
-    @Published public var customHipRollGain: Double = 0.5 {
+    public var customHipRollGain: Double = 0.5 {
         didSet { rebuildCorrectorIfCustomChanged() }
     }
-    @Published public var customKneeGain: Double = 0.3 {
+    public var customKneeGain: Double = 0.3 {
         didSet { rebuildCorrectorIfCustomChanged() }
     }
-    @Published public var customAnklePitchGain: Double = 0.9 {
+    public var customAnklePitchGain: Double = 0.9 {
         didSet { rebuildCorrectorIfCustomChanged() }
     }
-    @Published public var customAnkleRollGain: Double = 1.0 {
+    public var customAnkleRollGain: Double = 1.0 {
         didSet { rebuildCorrectorIfCustomChanged() }
     }
 
@@ -1990,7 +2096,7 @@ public final class WalkLabSession: ObservableObject {
     /// **v1.11.5 (2026-05-18)** — 보행 엔진 선택 axis.
     /// `.macSparseKeyframe` (default) = 기존 6 phase 합성 + setPosition 순차.
     /// `.robotisOnboard` = robot-side `Walking::GetInstance()` 사용 (안정 보행, patch 필요).
-    @Published public var walkingEngine: WalkingEngine = .macSparseKeyframe {
+    public var walkingEngine: WalkingEngine = .macSparseKeyframe {
         didSet {
             guard walkingEngine != oldValue else { return }
             // **v1.11.8 (2026-05-18) — HIGH-2 fix**: 엔진 전환 시 onboardWalkingActive
@@ -2674,7 +2780,12 @@ public final class WalkLabSession: ObservableObject {
         }
         lastSeenBusConnected = currentlyConnected
 
-        let foot = engine.tick(dtMs: 50)
+        // **v1.14.8.2 (2026-05-21) — 2차 code-reviewer CRITICAL fix**:
+        // 종전 hard-coded 50ms. v1.14.8 Fix #2 가 tickDtSec 50→100ms 로 바꾼 후에도
+        // 이 값이 그대로 남아 engine 내부 phase 가 wall-clock 의 절반 속도로 진행 →
+        // 모든 preset 의 시각 보행 cadence 50% slow 회귀.
+        // 신규: tickDtSec 와 정합 — 단일 source of truth.
+        let foot = engine.tick(dtMs: UInt32(tickDtSec * 1000))
         leftFoot = foot.leftXYZ
         rightFoot = foot.rightXYZ
         elapsedMs = UInt32(foot.elapsedMs)
@@ -2687,6 +2798,10 @@ public final class WalkLabSession: ObservableObject {
             right: foot.rightXYZ
         ))
         if footTrail.count > 200 { footTrail.removeFirst(footTrail.count - 200) }
+        // **v1.14.8.1 (2026-05-21) perf**: lefts 캐시 parallel update.
+        // RobotScene3D 가 직접 read — body 마다 .map alloc 차단.
+        footTrailLefts.append(foot.leftXYZ)
+        if footTrailLefts.count > 200 { footTrailLefts.removeFirst(footTrailLefts.count - 200) }
 
         // **Phase G11 (2026-05-15)**: sim mode 에서도 3D 모델 보행 시각화.
         //
@@ -2862,6 +2977,37 @@ public final class WalkLabSession: ObservableObject {
             newTimeline.removeFirst(newTimeline.count - Self.safetyTimelineMaxSamples)
         }
         safetyTimeline = newTimeline
+
+        // **v1.14.8 (2026-05-21) perf #6** — normalized 캐시도 parallel batch.
+        // raw 와 동일한 prune 정책 (시간 + cap). 새 sample 만 normalizeConvention
+        // 1회 호출 → O(1) per tick (vs FallPreventionMonitor 의 O(N) per body redraw).
+        let convention = balanceExperimentConfig.pitchInputConvention
+        let mapped = ImuAttitudeDisplayMapping.normalizeConvention(
+            rawRoll: sample.rollDeg,
+            rawPitch: sample.pitchDeg,
+            convention: convention
+        )
+        let normalized = NormalizedSafetySample(
+            timestamp: sample.timestamp,
+            rollDeg: mapped.roll,
+            pitchDeg: mapped.pitch,
+            predictionScore: sample.predictionScore
+        )
+        var newNormalized = normalizedSafetyTimeline
+        newNormalized.append(normalized)
+        if firstValidIdx > 0 && firstValidIdx <= newNormalized.count {
+            newNormalized.removeFirst(firstValidIdx)
+        }
+        if newNormalized.count > Self.safetyTimelineMaxSamples {
+            newNormalized.removeFirst(newNormalized.count - Self.safetyTimelineMaxSamples)
+        }
+        normalizedSafetyTimeline = newNormalized
+        // **v1.14.8.1 (2026-05-21) — code-reviewer HIGH fix**: raw vs normalized 동기 invariant.
+        // 두 배열은 동일 prune 정책 (시간/cap) + 동일 reset 지점 (start) 으로 항상 동일 길이
+        // 유지. 미래 외부 mutation 시 mismatch 차단용 defensive assert. Release 빌드에선
+        // no-op (assert) — perf 영향 없음.
+        assert(safetyTimeline.count == normalizedSafetyTimeline.count,
+               "safetyTimeline / normalizedSafetyTimeline 길이 동기 invariant 위반")
 
         // 이벤트 — balanceState 전환.
         if balanceState != previousBalanceState {
@@ -3230,7 +3376,7 @@ public final class WalkLabSession: ObservableObject {
 
     /// v1.11: 마지막 tick 에서 corrections 가 실제 pose 에 적용됐는지 (observe-only / applyToRobot=false 면 false).
     /// Logging + UI status indicator 용.
-    @Published public private(set) var lastCorrectionApplied: Bool = false
+    public private(set) var lastCorrectionApplied: Bool = false
 
     /// **v1.11 (Codex review 2026-05-18 HIGH-1)**: ramp 적용 **전** 의 raw candidate corrections.
     /// handoff §4 의 `candidateDeltas` 정확한 의미 — corrector.corrections() 결과 그대로.
@@ -3292,7 +3438,9 @@ public final class WalkLabSession: ObservableObject {
     // MARK: - v1.9 Learning system (사용자 요청: 데이터 저장 + 자동 튜닝)
 
     /// 활성 session 의 logger. nil = 보행 중 아님 또는 logging OFF.
-    private var sessionLogger: WalkSessionLogger?
+    /// **v1.15.0 (2026-05-21) Phase 1**: private → internal — `WalkLabSession+Trials.swift`
+    /// extension 이 finalize 시 sessionId / filePath / sampleCount 추출 위해 read 필요.
+    var sessionLogger: WalkSessionLogger?
     /// session 시작 시각 — sample timestamp 계산.
     private var sessionStartedAt: Date?
 
@@ -3310,10 +3458,10 @@ public final class WalkLabSession: ObservableObject {
 
     /// **자동 튜닝 시스템** — 매 session 종료 시 분석 + 권고 산출 + (옵션) 자동 적용.
     /// UI 에서 토글 가능.
-    @Published public var autoTuner: WalkSessionAutoTuner = WalkSessionAutoTuner()
+    public var autoTuner: WalkSessionAutoTuner = WalkSessionAutoTuner()
 
     /// **session logging ON/OFF** — 사용자가 disable 시 디스크 쓰기 안 함 (privacy / disk).
-    @Published public var enableSessionLogging: Bool = true
+    public var enableSessionLogging: Bool = true
 
     /// 보행 중 매 tick 호출 — sample 한 줄 logger 에 append.
     /// **v1.11 (2026-05-17 handoff §4 wiring + Codex 2026-05-18 HIGH-1 fix)**:
@@ -4037,7 +4185,7 @@ public final class WalkLabSession: ObservableObject {
     // MARK: - v1.11.3 (2026-05-18) — P1.0 정적 IMU 캘리브레이션
 
     /// 5축 캡처 보관소 — 앱 세션 중에만 유지. Disk 저장은 별도 helper.
-    @Published public private(set) var calibrationCaptures: [StaticTiltCalibration.Capture] = []
+    public private(set) var calibrationCaptures: [StaticTiltCalibration.Capture] = []
 
     /// 단일 자세의 IMU 캡처. 사용자가 robot 을 손으로 자세 잡고 호출.
     /// **주의**: 보행 중 (`walkCycleTask != nil`) 호출 시 보행 데이터와 간섭 가능 — 거부.
@@ -4112,16 +4260,16 @@ public final class WalkLabSession: ObservableObject {
     // MARK: - v1.11.9 (2026-05-19) — Claude CLI 보행 분석
 
     /// 마지막 Claude 분석 결과 markdown.
-    @Published public private(set) var claudeAnalysisMarkdown: String? = nil
+    public private(set) var claudeAnalysisMarkdown: String? = nil
 
     /// 분석 진행 중 여부 — UI 의 progress indicator.
-    @Published public private(set) var claudeAnalysisInProgress: Bool = false
+    public private(set) var claudeAnalysisInProgress: Bool = false
 
     /// 마지막 분석 에러 메시지 — nil 이면 정상.
-    @Published public private(set) var claudeAnalysisError: String? = nil
+    public private(set) var claudeAnalysisError: String? = nil
 
     /// 사용자 자연어 보고 — UI binding.
-    @Published public var claudeUserReport: String = ""
+    public var claudeUserReport: String = ""
 
     /// **최근 N 세션 + 사용자 보고 → Claude CLI 분석 invoke**.
     ///

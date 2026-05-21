@@ -25,7 +25,7 @@ public struct RootView: View {
     // 종전 WalkLabView 내 @StateObject — WalkDataView 의 실험 승인 흐름이 같은
     // session 인스턴스 (현재 config) 를 읽고 변경하도록 RootView 로 hoist.
     // 라이프사이클: 앱 전체. 메뉴/탭 전환 시 보존.
-    @StateObject private var walkLabSession = WalkLabSession()
+    @State private var walkLabSession = WalkLabSession()
     // **v1.11.15 (2026-05-19)** — 테마 매니저. DarwinForgeApp 이 environmentObject 로 주입.
     @EnvironmentObject private var themeManager: DFThemeManager
     private let commander: ClaudeCommander
@@ -157,7 +157,8 @@ public struct RootView: View {
         .environmentObject(remoteShell)
         .environmentObject(claudeCritic)
         .environmentObject(experimentLoop)
-        .environmentObject(walkLabSession)
+        // **v1.14.9 (2026-05-21) Fix #7** — @Observable 은 .environment(_:) 로 주입.
+        .environment(walkLabSession)
         // 글로벌 단축키 (메뉴와 같은 단축키 — 메뉴 enabled 일 때 메뉴가 우선 처리)
         .background(globalShortcuts)
     }

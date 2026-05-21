@@ -12,7 +12,7 @@ import SwiftUI
 /// 4. **알고리즘 / 부호 분리** — 종전 v1.10 에서 Hybrid B+A 와 ROBOTIS 부호가
 ///    한 묶음으로 묶여 "어느 차원이 효과를 냈는지" 분리 검증 불가했던 문제 해결.
 public struct BalanceExperimentControls: View {
-    @ObservedObject var session: WalkLabSession
+    @Bindable var session: WalkLabSession  // $session.foo binding 사용 → @Bindable
     @State private var showExpert: Bool = false
     /// **v1.11.1 (2026-05-18 사용자 review MEDIUM-6)**: hybridBA + applyToRobot 또는
     /// v110Experimental gain + applyToRobot 토글 시 명시 확인 sheet.
@@ -64,6 +64,18 @@ public struct BalanceExperimentControls: View {
 
             // 2) Profile picker — 한 줄로 자주 쓰는 4개 프로파일.
             profileRow
+
+            // **v1.15.5 (2026-05-21) Phase 1.5 — ApplyScope badge**.
+            // verification §4.2 — balanceExperimentConfig 가 Onboard 모드에서 미송신.
+            // observeOnly algorithm 은 pose 변경 X → .previewOnly 자동 선택.
+            // engine 별 + algorithm 별 정확한 scope 표시.
+            WalkLabApplyScopeBadge(
+                scope: WalkLabApplyScopeResolver.scopeForBalanceConfig(
+                    engine: session.walkingEngine,
+                    algorithmMode: session.balanceExperimentConfig.algorithmMode
+                ),
+                style: .full
+            )
 
             // **v1.11.8 (2026-05-18) — HIGH-1 fix**: .robotisOnboard 모드에선 Mac
             // corrector path 자체가 우회되므로 5축 토글 (algorithm/sign/gain/pitchInput

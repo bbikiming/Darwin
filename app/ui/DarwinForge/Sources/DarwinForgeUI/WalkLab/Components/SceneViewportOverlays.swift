@@ -20,47 +20,48 @@ import ForgeCore
 
 /// **v1.11.18**: 좌측 하단 attitude indicator overlay.
 public struct SceneGyroMiniOverlay: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @EnvironmentObject private var store: ConnectionStore
     @Environment(\.dfTheme) private var theme: DFTheme
 
     public init() {}
 
     public var body: some View {
-        // v1.11.23 (2026-05-21, Codex MED fix): tick 0.1s 유지 — WalkLab tick (50ms=20Hz)
-        // 와 IMU polling 정합. 0.2s 로 늘리면 4 sample/redraw 로 attitude indicator
-        // 부드러움 저하. 시각 hero 인 attitude indicator 는 데이터 갱신 따라 10Hz 유지.
-        TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-            VStack(alignment: .leading, spacing: DFSpace.xs2) {
-                attitudeIndicator
-                HStack(spacing: DFSpace.xs) {
-                    label("R", session.displayImuRollDeg, danger: 50)
-                    label("P", session.displayImuPitchDeg, danger: 50)
-                    Spacer(minLength: 0)
-                    sourceChip
-                }
-                if let imu = store.lastImuRaw {
-                    HStack(spacing: 6) {
-                        Text("ω")
-                            .font(DFFont.micro)
-                            .foregroundStyle(DFColor.textSecondary)
-                        Text(String(format: "%d°/s", Int(abs(imu.gyroXDps) + abs(imu.gyroYDps))))
-                            .font(DFFont.micro.monospacedDigit())
-                            .foregroundStyle(DFColor.textPrimary)
-                    }
+        // **v1.14.8 (2026-05-21) perf #3**: TimelineView(.periodic, by: 0.1) 제거.
+        // 종전: 10Hz 독립 redraw (시뮬 tick 20Hz 와 별개 clock) → attitude indicator
+        //       매 100ms 강제 재합성 (rotationEffect + clipShape + .regularMaterial
+        //       blur GPU 비용 누적). 사용자가 IMU 정체 시에도 반복 redraw.
+        // 신규: session.imuRollDeg / imuPitchDeg @Published 가 IMU update 마다 발화.
+        //       SwiftUI 가 reactive 하게 attitude indicator 갱신 — 정체 시 redraw X.
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            attitudeIndicator
+            HStack(spacing: DFSpace.xs) {
+                label("R", session.displayImuRollDeg, danger: 50)
+                label("P", session.displayImuPitchDeg, danger: 50)
+                Spacer(minLength: 0)
+                sourceChip
+            }
+            if let imu = store.lastImuRaw {
+                HStack(spacing: 6) {
+                    Text("ω")
+                        .font(DFFont.micro)
+                        .foregroundStyle(DFColor.textSecondary)
+                    Text(String(format: "%d°/s", Int(abs(imu.gyroXDps) + abs(imu.gyroYDps))))
+                        .font(DFFont.micro.monospacedDigit())
+                        .foregroundStyle(DFColor.textPrimary)
                 }
             }
-            .padding(DFSpace.xs2)
-            .frame(width: 120)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-            .overlay(
-                RoundedRectangle(cornerRadius: DFRadius.xs2)
-                    .stroke(sourceColor.opacity(DFOpacity.o30),
-                            lineWidth: DFSize.borderHairline)
-            )
-            .accessibilityLabel("IMU 자세 인디케이터 — roll \(Int(session.displayImuRollDeg))도, pitch \(Int(session.displayImuPitchDeg))도")
         }
+        .padding(DFSpace.xs2)
+        .frame(width: 120)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .stroke(sourceColor.opacity(DFOpacity.o30),
+                        lineWidth: DFSize.borderHairline)
+        )
+        .accessibilityLabel("IMU 자세 인디케이터 — roll \(Int(session.displayImuRollDeg))도, pitch \(Int(session.displayImuPitchDeg))도")
     }
 
     /// Artificial horizon style — roll 로 회전, pitch 로 horizon line 위/아래.
@@ -143,7 +144,7 @@ public struct SceneGyroMiniOverlay: View {
 
 /// **v1.11.18**: 우측 하단 walking 그래프 overlay.
 public struct SceneWalkGraphOverlay: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @Environment(\.dfTheme) private var theme: DFTheme
 
     /// 10초 sparkline 용 sample buffer.
@@ -153,29 +154,30 @@ public struct SceneWalkGraphOverlay: View {
     public init() {}
 
     public var body: some View {
-        // v1.11.23 (Codex MED fix): tick 0.1s 유지. WalkLab 50ms tick 의 4 sample/redraw
-        // 대신 2 sample/redraw 으로 sparkline 부드러움 보존.
-        TimelineView(.periodic(from: .now, by: 0.1)) { context in
-            VStack(alignment: .leading, spacing: DFSpace.xs2) {
-                headerRow
-                if !phaseHistory.isEmpty {
-                    sparkline
-                }
-                statsRow
+        // **v1.14.8 (2026-05-21) perf #3**: TimelineView(.periodic, by: 0.1) 제거.
+        // 종전: 10Hz 독립 redraw + .regularMaterial blur + Chart 재합성 → 좌측 overlay 와
+        //       합산 20Hz GPU 부담.
+        // 신규: session.elapsedMs (tick 마다 @Published) 변화로 appendSample 호출.
+        //       walking idle 시엔 elapsedMs 정체 → sparkline 자연스럽게 freeze.
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            headerRow
+            if !phaseHistory.isEmpty {
+                sparkline
             }
-            .padding(DFSpace.xs2)
-            .frame(width: 180)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-            .overlay(
-                RoundedRectangle(cornerRadius: DFRadius.xs2)
-                    .stroke(DFColor.accent.opacity(DFOpacity.o30),
-                            lineWidth: DFSize.borderHairline)
-            )
-            .accessibilityLabel("보행 그래프 — phase \(session.phaseLabel)")
-            .onChange(of: context.date) { _, now in
-                appendSample(at: now)
-            }
+            statsRow
+        }
+        .padding(DFSpace.xs2)
+        .frame(width: 180)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .stroke(DFColor.accent.opacity(DFOpacity.o30),
+                        lineWidth: DFSize.borderHairline)
+        )
+        .accessibilityLabel("보행 그래프 — phase \(session.phaseLabel)")
+        .onChange(of: session.elapsedMs) { _, _ in
+            appendSample(at: Date())
         }
     }
 

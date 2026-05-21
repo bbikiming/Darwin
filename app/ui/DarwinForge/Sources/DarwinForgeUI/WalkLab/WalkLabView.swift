@@ -20,9 +20,11 @@ public struct WalkLabView: View {
     // 동일 인스턴스를 변경하도록 EnvironmentObject 로 변경. 종전 @StateObject 시
     // WalkDataView 가 별도 session 인스턴스를 못 봐 applyExperimentChange 의 부작용
     // 단절. 라이프사이클은 RootView 가 관리.
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @State private var showingRiskConfirm: Bool = false
     @State private var pendingHighRiskPreset: WalkLabPreset?
+    /// **v1.15.0 (2026-05-21) Phase 1**: trial library sheet 표시 토글.
+    @State private var showingTrialLibrary: Bool = false
 
     /// **v1.11 (2026-05-17 사용자 요청)**: Fall Prevention 패널 너비 — 사용자 drag
     /// 으로 조절 + 다음 실행 시 복원. UserDefaults key `df.walklab.fallPanelWidth`.
@@ -63,6 +65,33 @@ public struct WalkLabView: View {
         .sheet(isPresented: $showingRiskConfirm) {
             riskConfirmSheet
         }
+        // **v1.15.0 (2026-05-21) Phase 1**: Trial 종료 시 라벨 sheet 자동 표시.
+        // WalkLabSession.pendingLabelTrial 이 nil 이 아니면 sheet open.
+        // 사용자가 별점 + tag + free text 입력 후 저장 또는 건너뛰기.
+        .sheet(item: Binding(
+            get: { session.pendingLabelTrial },
+            set: { session.pendingLabelTrial = $0 }
+        )) { trial in
+            WalkTrialLabelSheet(
+                trial: trial,
+                onSave: { label in
+                    WalkTrialStore.shared.updateLabel(id: trial.id, label: label)
+                },
+                onSkip: nil
+            )
+        }
+        // **v1.15.0 (2026-05-21) Phase 1**: 저장된 trial 탐색 sheet.
+        .sheet(isPresented: $showingTrialLibrary) {
+            NavigationStack {
+                WalkTrialLibraryView()
+                    .frame(minWidth: 800, minHeight: 600)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("닫기") { showingTrialLibrary = false }
+                        }
+                    }
+            }
+        }
         .background(DFColor.canvas)
         .onAppear { session.attach(store: store) }
         // **2026-05-16**: 메뉴바 "보기 → Fall Prevention 모니터링" (⌘⇧M) 수신.
@@ -76,7 +105,9 @@ public struct WalkLabView: View {
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: DFSpace.none) {
+        // **v1.14.9 (2026-05-21) Fix #7**: @Observable session — local @Bindable re-bind 으로 $session.foo 활성화.
+        @Bindable var session = session
+        return VStack(alignment: .leading, spacing: DFSpace.none) {
             header
 
             Toggle(isOn: $session.cradleConfirmed) {
@@ -153,6 +184,14 @@ public struct WalkLabView: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
             Spacer()
+            // **v1.15.0 (2026-05-21) Phase 1**: trial library 진입점.
+            // 저장된 모든 walk trial 검색/탐색/라벨링 sheet 표시.
+            Button(action: { showingTrialLibrary = true }) {
+                Image(systemName: "books.vertical.fill")
+                    .font(DFFont.body)
+            }
+            .buttonStyle(.borderless)
+            .help("저장된 보행 기록 보기 (Trial Library)")
         }
         .padding(.horizontal, DFSpace.md)
         .padding(.vertical, DFSpace.sm3)
@@ -405,7 +444,9 @@ public struct WalkLabView: View {
                     // footTrace 는 좌측 발 자취 (2D 캔버스와 동일 source).
                     RobotScene3D(
                         pose: session.visualPose,
-                        footTrace: session.footTrail.map { $0.left },
+                        // **v1.14.8.1 (2026-05-21) perf**: session.footTrailLefts 캐시 직접 read.
+                        // 종전 .map { $0.left } 가 body 마다 200-element 배열 alloc.
+                        footTrace: session.footTrailLefts,
                         imuRollDeg: session.displayImuRollDeg,
                         imuPitchDeg: session.displayImuPitchDeg
                     )
@@ -714,7 +755,9 @@ public struct WalkLabView: View {
     /// **Stage 2 (v1.1 fall prevention)**: 안전 상태 카드 + 자동 보정 토글.
     /// 2026-05-16: design system 토큰화 완료 (raw 4/6/8/0.10/0.4/0.5 → DFSpace/DFOpacity/DFSize).
     private var balanceStateCard: some View {
-        VStack(alignment: .leading, spacing: DFSpace.xs) {
+        // **v1.14.9 (2026-05-21) Fix #7**: @Observable session — local @Bindable.
+        @Bindable var session = session
+        return VStack(alignment: .leading, spacing: DFSpace.xs) {
             HStack(spacing: DFSpace.xs2) {
                 Image(systemName: balanceStateIcon)
                     .font(DFFont.bodySmall)
@@ -781,7 +824,20 @@ public struct WalkLabView: View {
     /// **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
     /// 2026-05-16: design system 토큰화 완료.
     private var balanceCorrectionCard: some View {
-        VStack(alignment: .leading, spacing: DFSpace.xs) {
+        // **v1.14.9 (2026-05-21) Fix #7**: @Observable session — local @Bindable.
+        @Bindable var session = session
+        return VStack(alignment: .leading, spacing: DFSpace.xs) {
+            // **v1.15.5 (2026-05-21) Phase 1.5**: enableBalanceCorrection 의 apply scope.
+            // Onboard 모드에선 .macSparseOnly — 펌웨어 자체 보정 알고리즘 사용 (Mac 토글 무의미).
+            HStack {
+                Spacer()
+                WalkLabApplyScopeBadge(
+                    scope: WalkLabApplyScopeResolver.scope(
+                        for: .enableBalanceCorrection, engine: session.walkingEngine
+                    ),
+                    style: .compact
+                )
+            }
             HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "figure.balanced")
                     .font(DFFont.bodySmall)
@@ -918,7 +974,9 @@ public struct WalkLabView: View {
     // MARK: - Risk confirm sheet
 
     private var riskConfirmSheet: some View {
-        VStack(alignment: .leading, spacing: DFSpace.md - 2) {
+        // **v1.14.9 (2026-05-21) Fix #7**: @Observable session — local @Bindable.
+        @Bindable var session = session
+        return VStack(alignment: .leading, spacing: DFSpace.md - 2) {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(DFFont.modalHeader)

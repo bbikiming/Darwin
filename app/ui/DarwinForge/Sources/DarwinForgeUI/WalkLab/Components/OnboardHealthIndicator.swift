@@ -11,7 +11,7 @@ import SwiftUI
 /// WalkLabView 의 toolbar 또는 sidebar 에 표시.
 /// 사용자가 자동 fallback toggle 도 여기서 조정.
 public struct OnboardHealthIndicator: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @Environment(\.dfTheme) private var theme: DFTheme
     @AppStorage("df.walklab.autoOnboardFallback") private var autoFallback: Bool = false
 
@@ -20,9 +20,10 @@ public struct OnboardHealthIndicator: View {
     public var body: some View {
         // .robotisOnboard 모드일 때만 표시 — 다른 모드면 invisible.
         if session.walkingEngine == .robotisOnboard {
-            // **v1.11.16.2 — Codex HIGH 4 fix**: TimelineView 로 1초마다 redraw.
-            // 종전: stale 판정 (lastAckAt > 5s) 이 onChange 만 — UI 가 자동 갱신 X.
-            // TimelineView(.periodic) 으로 1s 마다 body 재평가 → 시간 경과 즉시 반영.
+            // **v1.14.8 (2026-05-21) perf cleanup**: TimelineView(.periodic, by: 1.0) 유지.
+            // 1Hz redraw 는 stale 판정 (>5s 경과) 의 정확성에 필요. 종전과 동일.
+            // 비교: session @Published 변화만 봐서는 시간 경과 자체를 감지 못 함 → stale
+            // 표시 X. 1Hz 는 cost 가 미미 (단순 HStack 4 요소 재합성).
             TimelineView(.periodic(from: .now, by: 1.0)) { _ in
                 HStack(spacing: DFSpace.xs) {
                     statusIcon

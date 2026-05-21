@@ -17,7 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 실 로봇 빌드/조작 세션 중 모든 이벤트를 디스크에 기록 (off-by-default 토글로
         // 사용자가 끌 수 있음). 자세한 설계: docs/harness/telemetry-harness.md
         Harness.shared.start()
-        Harness.shared.startHeartbeat()
+        // **v1.14.8 (2026-05-21) perf #5**: heartbeat 는 ConnectionStore.status
+        // didSet 에서 connected 전환 시 start, disconnect/error 전환 시 stop.
+        // 종전 always-on → 미연결 idle 상태에서도 매 1s Timer 발화 + record() 호출
+        // (v1.14.4 guard 가 막아도 timer wake-up 자체는 발생) → 불필요한 main actor wake.
 
         // **v1.11.25 (2026-05-21) audit log-Q** — app launch 시 WalkLab session retention.
         // 종전: cleanup 이 autoTuner.record 안에 cleanupEvery 카운터 기반만 → autoTuner

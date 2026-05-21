@@ -48,41 +48,45 @@ import ForgeCore
 /// IMU `sim` 모드 또는 보행 idle 상태 시 일부 메트릭이 의미가 약해짐
 /// (sim sin pattern 만 표시 등). 이런 메트릭은 dim opacity + (SIM) badge 로 명시.
 public struct SceneSpeedometerOverlay: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @EnvironmentObject private var store: ConnectionStore
     @Environment(\.dfTheme) private var theme: DFTheme
 
     public init() {}
 
     public var body: some View {
-        // 0.2s tick — link lag 갱신 + 부드러운 HUD 느낌.
-        TimelineView(.periodic(from: .now, by: 0.2)) { context in
-            let now = context.date
-            VStack(alignment: .leading, spacing: 0) {
-                titleBar
-                hudDivider
-                stabilitySection
-                hudDivider
-                attitudeAndComSection
-                hudDivider
-                ankleAndCtrlSection
-                hudDivider
-                linkSection(now: now)
-                hudDivider
-                statsSection
-                hudDivider
-                statusBar
-            }
-            .frame(width: 220)
-            .background(Color.black.opacity(0.82))
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
-            .overlay(
-                RoundedRectangle(cornerRadius: DFRadius.sm)
-                    .stroke(DFColor.forge.opacity(0.40), lineWidth: 0.8)
-            )
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(accessibilitySummary)
+        // **v1.14.8 (2026-05-21) perf #3**: TimelineView(.periodic, by: 0.2) 제거.
+        // 종전: 별도 0.2s 독립 SwiftUI redraw clock → session @Published 가 이미 10Hz
+        //       tick 마다 발화하는데 그것과 무관하게 추가로 5Hz body 재평가 → HUD
+        //       전체 (titleBar, stability, attitude, ankle, link, stats, statusBar)
+        //       redraw 가 두 clock 의 LCM 보다 자주 일어남.
+        // 신규: now = Date() 한 번만 read. body 재평가는 session @Published 갱신 시.
+        //       linkSection 의 lag 표시는 session.lastImuSuccessAt 변화에 자동 follow.
+        let now = Date()
+        VStack(alignment: .leading, spacing: 0) {
+            titleBar
+            hudDivider
+            stabilitySection
+            hudDivider
+            attitudeAndComSection
+            hudDivider
+            ankleAndCtrlSection
+            hudDivider
+            linkSection(now: now)
+            hudDivider
+            statsSection
+            hudDivider
+            statusBar
         }
+        .frame(width: 220)
+        .background(Color.black.opacity(0.82))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .stroke(DFColor.forge.opacity(0.40), lineWidth: 0.8)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
     }
 
     // MARK: - 1. Title bar
@@ -806,7 +810,7 @@ private func previewBackground() -> some View {
     let session = WalkLabSession()
     let store = ConnectionStore()
     return SceneSpeedometerOverlay()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .environmentObject(store)
         .padding()
         .background(previewBackground())
@@ -821,7 +825,7 @@ private func previewBackground() -> some View {
     session.imuPitchDeg = 4
     let store = ConnectionStore()
     return SceneSpeedometerOverlay()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .environmentObject(store)
         .padding()
         .background(previewBackground())
@@ -836,7 +840,7 @@ private func previewBackground() -> some View {
     session.imuPitchDeg = 12
     let store = ConnectionStore()
     return SceneSpeedometerOverlay()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .environmentObject(store)
         .padding()
         .background(previewBackground())
@@ -852,7 +856,7 @@ private func previewBackground() -> some View {
     session.enableBalanceCorrection = true
     let store = ConnectionStore()
     return SceneSpeedometerOverlay()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .environmentObject(store)
         .padding()
         .background(previewBackground())

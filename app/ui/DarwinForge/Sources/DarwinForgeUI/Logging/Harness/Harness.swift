@@ -301,11 +301,18 @@ public final class Harness {
     // MARK: Heartbeat
 
     /// 시작 — 1 Hz heartbeat. ConnectionStore 가 등록되어 있어야 의미 있음.
+    /// **v1.14.8 (2026-05-21) perf #5**:
+    ///  - Task { @MainActor } 제거 → MainActor.assumeIsolated.
+    ///    Timer 콜백은 RunLoop.main `.common` 으로 add 되어 이미 MainActor 컨텍스트
+    ///    이지만, Swift 6 isolation 검사상 Task 로 hop 필요했음. assumeIsolated 로
+    ///    actor hop 비용 (~50µs/tick) 제거.
+    ///  - ConnectionStore 의 connected 전환에서 start, disconnect 에서 stop 으로
+    ///    이동 (DarwinForgeApp 의 always-on 제거). 미연결 시 disk I/O / AsyncStream
+    ///    push 자체를 차단.
     public func startHeartbeat(intervalSeconds: TimeInterval = 1.0) {
         stopHeartbeat()
         let timer = Timer.scheduledTimer(withTimeInterval: intervalSeconds, repeats: true) { [weak self] _ in
-            // Timer fires on main run loop — MainActor.
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.emitHeartbeat()
             }
         }

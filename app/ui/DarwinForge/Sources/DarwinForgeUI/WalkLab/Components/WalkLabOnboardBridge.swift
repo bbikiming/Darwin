@@ -10,7 +10,7 @@ import Combine
 /// - auto fallback 시 walking stop ACK 확인 후 engine 변경 (robot 보행 잔존 차단)
 /// - deadline polling 1.5s (sleep 0.25 보다 robust)
 struct WalkLabOnboardBridge: View {
-    @ObservedObject var session: WalkLabSession
+    var session: WalkLabSession
     @EnvironmentObject private var remoteShell: RemoteShell
 
     /// debounce 타이머 — slider drag 중 마지막 값만 1회 send.

@@ -12,7 +12,7 @@ import SwiftUI
 /// 4. 5축 모두 캡처되면 진단 결과 (양수=앞기울 일치/반대) 표시
 /// 5. 진단 결과 반대일 경우 → `pitchInputConvention = .negateForwardIsNegative` opt-in 권고
 struct StaticTiltCalibrationPanel: View {
-    @ObservedObject var session: WalkLabSession
+    var session: WalkLabSession
     @State private var activeAxis: StaticTiltCalibration.Axis? = nil
     @State private var captureProgress: Double = 0
     @State private var captureTask: Task<Void, Never>? = nil

@@ -292,7 +292,44 @@ public final class InteractiveSceneView: SCNView {
     /// 60Hz tick 가 source of truth — 강력한 보장).
     private var lastAppliedAutoFitWidth: CGFloat = -1
 
+    /// **v1.14.8.1 (2026-05-21) — critic HIGH fix**: idle early-return.
+    /// 종전: 60Hz Timer 가 view init 시 무조건 시작 → 미연결/정지 상태에서도
+    ///       60 wake-ups/s × applyCameraInternal (SCNTransaction begin/commit) 실행.
+    ///       app-wide idle CPU floor 의 가장 큰 원인.
+    /// 신규: 모든 velocity 0 + applied==desired + auto-fit width 동일 = "변화 없음" →
+    ///       tick body 전체 skip. Timer.fire wake 자체는 남지만 (~5µs/tick) CPU 작업
+    ///       (~50-100µs/tick) 의 95%+ 절감. 사용자가 drag / scroll 시 즉시 복귀.
+    /// **v1.14.8.2 (2026-05-21) — 2차 code-reviewer HIGH fix**: epsilon 비교.
+    /// 종전 `==` 는 smoothing snap (line 336-358 cutoff 0.0008 → 직접 assign) 덕분에
+    /// 작동했으나 fragile — cutoff 변경 또는 외부 desired-set 시 영구 non-idle 위험.
+    /// 신규: epsilon = cutoff (0.0008) 와 일관. 동일 효과 + 방어적.
+    private static let idleEpsilon: CGFloat = 0.0008
+    private var isFullyIdle: Bool {
+        guard !isDragging else { return false }
+        guard abs(azVelocity) < Self.idleEpsilon,
+              abs(elVelocity) < Self.idleEpsilon,
+              abs(distVelocity) < Self.idleEpsilon else { return false }
+        guard abs(panVelocity.x) < Self.idleEpsilon,
+              abs(panVelocity.y) < Self.idleEpsilon,
+              abs(panVelocity.z) < Self.idleEpsilon else { return false }
+        guard abs(azimuth - desiredAzimuth) < Self.idleEpsilon,
+              abs(elevation - desiredElevation) < Self.idleEpsilon,
+              abs(distance - desiredDistance) < Self.idleEpsilon else { return false }
+        guard abs(target.x - desiredTarget.x) < Self.idleEpsilon,
+              abs(target.y - desiredTarget.y) < Self.idleEpsilon,
+              abs(target.z - desiredTarget.z) < Self.idleEpsilon else { return false }
+        // auto-fit: bounds width 변경 5pt 이내면 idle 로 간주 (변경 임계 line 299와 정합).
+        if !hasUserAdjustedZoom {
+            let w = bounds.width
+            if w > 10 && abs(w - lastAppliedAutoFitWidth) > 5 { return false }
+        }
+        return true
+    }
+
     private func tick() {
+        // **v1.14.8.1 (2026-05-21) perf — critic HIGH fix**: idle 시 작업 skip.
+        if isFullyIdle { return }
+
         // 0) **v1.11 frame-adaptive zoom** — manual override 없을 때만, 매 tick frame 감지.
         if !hasUserAdjustedZoom {
             let w = bounds.width

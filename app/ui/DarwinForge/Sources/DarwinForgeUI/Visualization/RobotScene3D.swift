@@ -48,7 +48,12 @@ public struct RobotScene3D: NSViewRepresentable {
         view.backgroundColor = .clear
         view.autoenablesDefaultLighting = false
         view.antialiasingMode = .multisampling4X
-        view.preferredFramesPerSecond = 60
+        // **v1.14.8 (2026-05-21) perf #4**: 60fps → 30fps.
+        // 종전: 60fps continuous render. WalkLab 진입 시 SCNView 가 main thread
+        //       에서 60Hz 로 frame 합성 → main actor saturation 의 절반 차지.
+        // 신규: 30fps. 워크/포즈 변화가 빠르지 않아 인지적 차이 거의 없음.
+        //       updateNSView 도 SwiftUI body 갱신 (10Hz tick) 따라 호출됨.
+        view.preferredFramesPerSecond = 30
         view.pointOfView = context.coordinator.cameraNode
         view.applyCamera()                         // orbit state → 카메라 적용
         context.coordinator.applyPose(pose)

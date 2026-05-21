@@ -24,7 +24,7 @@ import ForgeCore
 /// - LIVE: BalanceState, lastCorrections, rampProgress, fallPrediction, displayImu*
 /// - EST (모델 추정): CoM offset, ankle residual — HUDMetrics 사용, EST badge 표시
 public struct WalkLabIntegrationCards: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
 
     public init() {}
 
@@ -353,7 +353,7 @@ public struct WalkLabIntegrationCards: View {
 #Preview("Idle (no walking)") {
     let session = WalkLabSession()
     return WalkLabIntegrationCards()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .frame(width: 360)
         .padding()
         .background(DFColor.canvas)
@@ -368,7 +368,7 @@ public struct WalkLabIntegrationCards: View {
     session.imuPitchDeg = -8
     session.enableBalanceCorrection = true
     return WalkLabIntegrationCards()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .frame(width: 360)
         .padding()
         .background(DFColor.canvas)
@@ -382,7 +382,7 @@ public struct WalkLabIntegrationCards: View {
     session.imuRollDeg = 47
     session.imuPitchDeg = 15
     return WalkLabIntegrationCards()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .frame(width: 360)
         .padding()
         .background(DFColor.canvas)

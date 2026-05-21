@@ -48,7 +48,7 @@ import ForgeCore
 /// 4. **Corrector deltas + ramp** — 8 관절 delta bar + ramp progress.
 /// 5. **Event log** — 시간역순 이벤트 로그.
 struct FallPreventionMonitor: View {
-    @ObservedObject var session: WalkLabSession
+    var session: WalkLabSession
     /// **v1.11.5.1 (2026-05-18) — ROBOTIS onboard 모드 brokering 채널**.
     /// `WalkingEnginePicker` 의 시작/종료 버튼이 이 RemoteShell 을 통해 SSH 명령 send.
     /// 종전 (v1.11.5): callback 미전달 → 버튼 disabled 상태. 이번 fix.
@@ -508,35 +508,35 @@ struct FallPreventionMonitor: View {
     /// 그 외 vertical stack (각 차트 full-width). HSplitView detail
     /// minWidth 480 - sidebar 240 = 240pt 일 때도 vertical 로 사용 가능.
     private var timeSeriesRow: some View {
-        // **2026-05-16 최적화**: 이전엔 timeline 을 4번 iterate (filter + 3× map).
-        // 정정: 단일 pass 로 3 array 동시 build — 50ms tick 마다 O(N) × 4 → O(N) × 1.
-        // **v1.11.19 (2026-05-20)**: safetyTimeline 은 raw 값 저장 — display 표시 전
-        // convention 정규화 + NaN guard (unclamped) 적용. currentLabel 과 부호 일치.
-        let now = Date()
-        let cutoff = now.addingTimeInterval(-10)
-        let convention = session.balanceExperimentConfig.pitchInputConvention
+        // **v1.14.8 (2026-05-21) perf #6**: timeline 정규화를 session 에서 pre-compute.
+        // 종전: body 재평가 마다 250 sample 을 loop 돌며 normalizeConvention 호출
+        //       (750+ atan/asin per body × 10Hz tick = 7,500+ 회/초).
+        // 신규: session.normalizedSafetyTimeline 이 이미 정규화된 cache. View 는
+        //       단순히 enumerate 만. nowDisplay 도 displayImuRollDeg/PitchDeg 활용
+        //       (session 의 computed property 가 동일 정규화 1회만 수행).
+        let cutoff = Date().addingTimeInterval(-10)
+        let normalized = session.normalizedSafetyTimeline
         var rollSamples: [(Date, Double)] = []
         var pitchSamples: [(Date, Double)] = []
         var scoreSamples: [(Date, Double)] = []
-        rollSamples.reserveCapacity(session.safetyTimeline.count)
-        pitchSamples.reserveCapacity(session.safetyTimeline.count)
-        scoreSamples.reserveCapacity(session.safetyTimeline.count)
-        for sample in session.safetyTimeline where sample.timestamp >= cutoff {
-            let mapped = ImuAttitudeDisplayMapping.normalizeConvention(
-                rawRoll: sample.rollDeg,
-                rawPitch: sample.pitchDeg,
-                convention: convention
-            )
-            rollSamples.append((sample.timestamp, mapped.roll))
-            pitchSamples.append((sample.timestamp, mapped.pitch))
+        rollSamples.reserveCapacity(normalized.count)
+        pitchSamples.reserveCapacity(normalized.count)
+        scoreSamples.reserveCapacity(normalized.count)
+        for sample in normalized where sample.timestamp >= cutoff {
+            rollSamples.append((sample.timestamp, sample.rollDeg))
+            pitchSamples.append((sample.timestamp, sample.pitchDeg))
             scoreSamples.append((sample.timestamp, sample.predictionScore))
         }
-        // currentLabel + tiltLineColor 도 unclamped normalizeConvention 으로 — 차트 trace
-        // 와 부호/스케일 일치. raw 70° 가 들어와도 label 이 ±50 clamp 되지 않음.
+        // **v1.14.8.1 (2026-05-21) — code-reviewer CRITICAL fix**:
+        // displayImuRollDeg / displayImuPitchDeg 는 sanitize/map 가 ±50° clamp 적용.
+        // 종전 nowDisplay 는 `normalizeConvention` (unclamped) 사용 — fall 진단의
+        // emergency 자세 (50°+) 표시가 saturated 되지 않는 invariant 였음.
+        // 차트 trace (normalized cache 가 unclamped) 와 currentLabel 부호/스케일 일치
+        // 보장을 위해 normalizeConvention 직접 호출로 복원.
         let nowDisplay = ImuAttitudeDisplayMapping.normalizeConvention(
             rawRoll: session.imuRollDeg,
             rawPitch: session.imuPitchDeg,
-            convention: convention
+            convention: session.balanceExperimentConfig.pitchInputConvention
         )
         // valueRange ±60: emergency 50° + 10° 헤드룸. 60° 이상은 saturated cliff
         // (out-of-range 시각적 명시). 일상 보행 ±4° 가독성 유지.

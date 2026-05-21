@@ -145,6 +145,22 @@ extension WalkLabSession {
         public let correctorMaxDelta: Double
     }
 
+    /// **v1.14.8 (2026-05-21) perf #6**: 정규화 (convention 적용) 된 sample.
+    /// 종전: FallPreventionMonitor.timeSeriesRow 가 매 body 재평가 마다 250 sample 을
+    ///       loop 돌며 ImuAttitudeDisplayMapping.normalizeConvention 호출 (750+ atan/asin).
+    ///       SwiftUI body 가 10Hz tick 마다 재평가되면 7,500+ 회/초 → main actor 부담.
+    /// 신규: session 안에서 sample append 시 1회 정규화 → 캐시. View 는 read only.
+    public struct NormalizedSafetySample: Equatable, Sendable, Identifiable {
+        public let timestamp: Date
+        /// convention 정규화 + NaN/Inf guard 적용된 roll (deg).
+        public let rollDeg: Double
+        /// convention 정규화 + NaN/Inf guard 적용된 pitch (deg).
+        public let pitchDeg: Double
+        public let predictionScore: Double
+
+        public var id: Date { timestamp }
+    }
+
     /// 안전 이벤트 한 건 — 이벤트 로그 row.
     public struct SafetyEvent: Identifiable, Equatable, Sendable {
         public enum Kind: String, Equatable, Sendable {

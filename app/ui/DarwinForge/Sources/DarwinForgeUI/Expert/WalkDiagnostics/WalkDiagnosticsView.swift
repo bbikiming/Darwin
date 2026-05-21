@@ -28,7 +28,7 @@ public struct WalkDiagnosticsView: View {
     // MARK: - Connection store (live mode IMU source)
     @EnvironmentObject private var store: ConnectionStore
     // v1.11.21: 워크랩 세션 — 운영 상태 / corrector / fallPrediction 통합 표시용.
-    @EnvironmentObject private var walkLabSession: WalkLabSession
+    @Environment(WalkLabSession.self) private var walkLabSession
 
     // MARK: - Data source mode
     @State private var source: DiagnosticsSource = .preview

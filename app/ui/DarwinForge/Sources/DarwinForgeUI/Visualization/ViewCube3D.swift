@@ -150,7 +150,9 @@ public final class ViewCube3D: NSView {
         scnView.allowsCameraControl = false
         scnView.autoenablesDefaultLighting = false
         scnView.antialiasingMode = .multisampling4X
-        scnView.preferredFramesPerSecond = 60
+        // **v1.14.8.1 (2026-05-21) — critic open question fix**: RobotScene3D 와 일관성.
+        // 60 → 30 fps. ViewCube 는 auxiliary nav widget (60×60pt) — 30fps 충분.
+        scnView.preferredFramesPerSecond = 30
         scnView.pointOfView = camNode
     }
 
@@ -165,7 +167,25 @@ public final class ViewCube3D: NSView {
         tickTimer = t
     }
 
+    /// **v1.14.8.1 (2026-05-21) — critic HIGH fix**: idle early-return.
+    /// 종전: InteractiveSceneView 와 동일 — 60Hz Timer 무조건 시작.
+    /// 신규: dragLastPos == nil + velocity 0 + applied == desired = idle skip.
+    /// **v1.14.8.2 (2026-05-21) — 2차 code-reviewer HIGH fix**: epsilon 비교.
+    /// InteractiveSceneView 와 동일 패턴 + 동일 epsilon (smoothing cutoff 0.0008 정합).
+    private static let idleEpsilon: CGFloat = 0.0008
+    private var isFullyIdle: Bool {
+        guard dragLastPos == nil else { return false }
+        guard abs(ryVelocity) < Self.idleEpsilon,
+              abs(rxVelocity) < Self.idleEpsilon else { return false }
+        guard abs(ry - desiredRy) < Self.idleEpsilon,
+              abs(rx - desiredRx) < Self.idleEpsilon else { return false }
+        return true
+    }
+
     private func tick() {
+        // **v1.14.8.1 (2026-05-21) perf — critic HIGH fix**: idle 시 작업 skip.
+        if isFullyIdle { return }
+
         // Inertia (드래그 중이 아니면).
         if dragLastPos == nil {
             desiredRy += ryVelocity

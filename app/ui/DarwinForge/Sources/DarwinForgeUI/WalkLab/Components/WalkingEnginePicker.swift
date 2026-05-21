@@ -13,7 +13,7 @@ import SwiftUI
 /// 4. WalkLab preset 시작 → Mac sparse 합성 우회, robot 측 Walking::GetInstance() 사용
 /// 5. 사용자가 종료 시 "ROBOTIS 측 종료" 버튼 → walkLabRobotisStop send
 public struct WalkingEnginePicker: View {
-    @ObservedObject var session: WalkLabSession
+    @Bindable var session: WalkLabSession  // $session.foo binding 사용 → @Bindable
     /// RemoteShell 명령 전송 callback — 부모 view 가 inject. nil 이면 버튼 disabled.
     public var onStartOnboard: (() -> Void)? = nil
     public var onStopOnboard: (() -> Void)? = nil

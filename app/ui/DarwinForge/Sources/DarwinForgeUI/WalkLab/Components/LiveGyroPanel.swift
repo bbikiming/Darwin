@@ -17,7 +17,7 @@ import ForgeCore
 ///
 /// 위치: WalkLabView 의 detail 영역 상단 — preset 선택 전에도 항상 보임.
 public struct LiveGyroPanel: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @EnvironmentObject private var store: ConnectionStore
     @Environment(\.dfTheme) private var theme: DFTheme
 
@@ -30,36 +30,44 @@ public struct LiveGyroPanel: View {
     public init() {}
 
     public var body: some View {
-        // 1Hz timeline 으로 sparkline 갱신 + stale 판정 timer.
-        TimelineView(.periodic(from: .now, by: 0.2)) { context in
-            VStack(alignment: .leading, spacing: DFSpace.xs) {
-                headerRow
-                if expanded {
+        // **v1.14.8 (2026-05-21) perf #3**: TimelineView(.periodic, by: 0.2) 제거.
+        // 종전: 5Hz 독립 redraw → 전체 view tree (header, angle, gyro, sparkline)
+        //       재평가가 IMU 값 변화와 무관하게 발화.
+        // 신규: session.imuRollDeg/imuPitchDeg 가 @Published 라 IMU update 발생 시
+        //       body 자동 재평가 + appendSample 도 onChange 로 trigger. IMU 값이
+        //       바뀔 때만 sparkline 에 sample 추가 — 정체 구간엔 chart 갱신 X.
+        VStack(alignment: .leading, spacing: DFSpace.xs) {
+            headerRow
+            if expanded {
+                Divider()
+                angleRow
+                if let imu = store.lastImuRaw {
                     Divider()
-                    angleRow
-                    if let imu = store.lastImuRaw {
-                        Divider()
-                        gyroRow(imu: imu)
-                    }
-                    Divider()
-                    sparklineChart
-                } else {
-                    compactRow
+                    gyroRow(imu: imu)
                 }
+                Divider()
+                sparklineChart
+            } else {
+                compactRow
             }
-            .padding(DFSpace.sm)
-            .background(DFColor.adaptiveCard(theme))
-            .overlay(
-                RoundedRectangle(cornerRadius: DFRadius.sm)
-                    .stroke(sourceColor.opacity(DFOpacity.o30),
-                            lineWidth: DFSize.borderHairline)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("IMU 자세: roll \(Int(session.displayImuRollDeg))도, pitch \(Int(session.displayImuPitchDeg))도")
-            .onChange(of: context.date) { _, now in
-                appendSample(at: now)
-            }
+        }
+        .padding(DFSpace.sm)
+        .background(DFColor.adaptiveCard(theme))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .stroke(sourceColor.opacity(DFOpacity.o30),
+                        lineWidth: DFSize.borderHairline)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("IMU 자세: roll \(Int(session.displayImuRollDeg))도, pitch \(Int(session.displayImuPitchDeg))도")
+        // **v1.14.8.1 (2026-05-21) — code-reviewer HIGH fix**: 단일 onChange.
+        // 종전: roll + pitch 각각 onChange → IMU tick 마다 보통 두 값 모두 변경 →
+        //       appendSample 2회 호출 → 동일 timestamp 쌍 2개 (sparkline 점 밀도 2배 + memory 2배).
+        // 신규: roll 만 trigger. 실 IMU 노이즈 (수치 precision) 로 매 update 마다 roll 변경 ⇒
+        //       sparkline 정상 갱신. pitch-only 변화는 매우 드물고 다음 roll 변화 시 catch.
+        .onChange(of: session.imuRollDeg) { _, _ in
+            appendSample(at: Date())
         }
     }
 

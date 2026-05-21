@@ -22,7 +22,27 @@ public final class ConnectionStore: ObservableObject {
 
     @Published public var availablePorts: [String] = []
     @Published public var selectedPort: String?
-    @Published public var status: Status = .disconnected
+    /// **v1.14.8 (2026-05-21) perf #5**: status 전환 시 Harness heartbeat start/stop.
+    /// 종전: DarwinForgeApp 가 launch 시 always-on startHeartbeat → 미연결 idle 에서
+    ///       매 1s Timer wake-up + record() 호출 (v1.14.4 guard 안에서 즉시 return 하지만
+    ///       wake-up 자체가 main actor 부담).
+    /// 신규: connected 전환 시만 heartbeat. disconnected/error/connecting 으로
+    ///       복귀하면 Timer 자체를 invalidate. didSet 은 동일 case 라도 발화하므로
+    ///       wasConnected vs isConnected boolean transition 으로 idempotent.
+    @Published public var status: Status = .disconnected {
+        didSet {
+            let wasConnected: Bool
+            if case .connected = oldValue { wasConnected = true } else { wasConnected = false }
+            let isConnected: Bool
+            if case .connected = status { isConnected = true } else { isConnected = false }
+            guard wasConnected != isConnected else { return }
+            if isConnected {
+                Harness.shared.startHeartbeat()
+            } else {
+                Harness.shared.stopHeartbeat()
+            }
+        }
+    }
     @Published public var bus: Bus?
     @Published public var jointStates: [JointID: JointState] = [:]
 
@@ -263,6 +283,10 @@ public final class ConnectionStore: ObservableObject {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         pollTask?.cancel()
         reconnectTask?.cancel()
+        // **v1.14.8 (2026-05-21) perf #1**: imuPollTask 누수 차단.
+        // 종전: deinit 누락 → ConnectionStore 해제 후에도 IMU loop 가
+        //       weak self 가 nil 되기까지 (다음 iter) 살아있을 수 있음.
+        imuPollTask?.cancel()
     }
 
     /// 마지막 성공 endpoint 영구 저장 — 다음 앱 실행 시 자동 재연결의 후보.
@@ -1357,8 +1381,15 @@ public final class ConnectionStore: ObservableObject {
         //       → bus contention + 200ms duty → WalkLab tick (50ms) 에서 89.8% duplicate.
         // 신규: IMU 전용 50ms Task → WalkLab 과 1:1 sync. Bus 는 internal mutex 보호
         //       (Dynamixel SDK 패턴) 가정 — packet collision 없음.
+        // **v1.14.8 (2026-05-21) perf #1**: 20Hz → 5Hz.
+        // 종전: 50ms = 20Hz IMU polling. 매 iteration 마다 Task.detached
+        //       + actor hop + @Published mutate → main actor 부하 + bus contention.
+        // 신규: 200ms = 5Hz. WalkLab 의 SwiftUI redraw 와 fall detection (1Hz) 에
+        //       충분. IMU sensor 자체는 200-500Hz 출력이지만 SwiftUI 표시는
+        //       5Hz 면 사람 눈으로 부드러움. fall risk 는 별도 board IMU 직접
+        //       read 로 보완 (telemetryLoop 안에서).
         imuPollTask = Task { [weak self] in
-            await self?.runImuLoop(periodNs: 50_000_000)  // 50ms = 20Hz
+            await self?.runImuLoop(periodNs: 200_000_000)  // 200ms = 5Hz (perf v1.14.8)
         }
     }
 

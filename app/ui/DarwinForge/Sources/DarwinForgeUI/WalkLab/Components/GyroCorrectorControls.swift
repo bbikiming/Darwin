@@ -14,7 +14,7 @@ import SwiftUI
 // MARK: - CorrectorIntensityCard
 
 public struct CorrectorIntensityCard: View {
-    @ObservedObject var session: WalkLabSession
+    var session: WalkLabSession
 
     public init(session: WalkLabSession) {
         self.session = session
@@ -29,6 +29,13 @@ public struct CorrectorIntensityCard: View {
                 Text("자이로 보정 강도")
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
+                // **v1.15.5 (2026-05-21) Phase 1.5**: Onboard 모드에선 Mac corrector 전용 안내.
+                WalkLabApplyScopeBadge(
+                    scope: WalkLabApplyScopeResolver.scope(
+                        for: .correctorIntensityLevel, engine: session.walkingEngine
+                    ),
+                    style: .compact
+                )
                 Spacer()
                 Text(WalkLabSession.intensityLabel(level: session.correctorIntensityLevel))
                     .font(DFFont.monoLabel)
@@ -108,7 +115,7 @@ public struct CorrectorIntensityCard: View {
 /// `@ObservedObject var tuner` 로 직접 구독 — toggle 변경이 즉시 view update.
 public struct AutoTunerCard: View {
     @ObservedObject var tuner: WalkSessionAutoTuner
-    @ObservedObject var session: WalkLabSession
+    var session: WalkLabSession
 
     public init(tuner: WalkSessionAutoTuner, session: WalkLabSession) {
         self.tuner = tuner
