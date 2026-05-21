@@ -254,6 +254,25 @@ final class MotionBlenderTests: XCTestCase {
         XCTAssertNil(blender.upper, "rejected → state 변경 X")
     }
 
+    /// **v1.20.30.1 사이클 36-fix HIGH 2 (코덱스)** — requireConfirm 도 차단.
+    /// highRisk page 가 riskAcknowledged=false 시 rejectedSafety.
+    func testSafetyContextRejectsRequireConfirm() {
+        let blender = MotionBlender()
+        let highRiskPage = makeTestPage(slot: 12, bodyParts: [.rightArm], safety: .highRisk)
+        let ctx = SafetyContext(
+            balanceState: .normal,
+            robotConnected: false,
+            riskAcknowledged: false  // 위험 동의 안 함.
+        )
+        let result = blender.play(.page(highRiskPage), safetyContext: ctx)
+        if case .rejectedSafety(let reason) = result {
+            XCTAssertTrue(reason.contains("위험 동의"), "reason 에 위험 동의 메시지")
+        } else {
+            XCTFail("requireConfirm → rejectedSafety 기대, 실제: \(result)")
+        }
+        XCTAssertNil(blender.upper, "rejected → state 미변경")
+    }
+
     /// safety context 없으면 검증 skip (sim mode).
     func testNoSafetyContextSkipsValidation() {
         let blender = MotionBlender()
