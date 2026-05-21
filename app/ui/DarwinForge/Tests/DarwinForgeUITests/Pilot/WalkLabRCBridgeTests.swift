@@ -430,4 +430,71 @@ final class PilotIntentTests: XCTestCase {
         XCTAssertEqual(s.avgAbsTurnDeg, 6, accuracy: 1e-9, "(|-3|+|9|)/2 = 6")
         XCTAssertEqual(s.peakStrideMm, 30, accuracy: 1e-9, "양수 peak")
     }
+
+    // MARK: - Cycle 13: event rate metric
+
+    /// **v1.20.7 사이클 13** — 마지막 1초 동안의 event count = events/sec.
+    func testEventsPerSecondBasic() {
+        let acc = PilotInputAccumulator()
+        let now = Date()
+        // 5 events within last 1 sec.
+        for i in 0..<5 {
+            let intent = PilotIntent(
+                kind: .move(WalkingCommand(strideMm: 10, sideMm: 0, turnDeg: 0)),
+                source: .keyboard,
+                timestamp: now.addingTimeInterval(-Double(i) * 0.1)
+            )
+            acc.record(intent)
+        }
+        let rate = acc.eventsPerSecond(window: 1.0, now: now)
+        XCTAssertEqual(rate, 5.0, accuracy: 0.01, "5 events in 1s window")
+    }
+
+    /// **v1.20.7 사이클 13** — window 밖 event 는 제외.
+    func testEventsPerSecondExcludesOldEvents() {
+        let acc = PilotInputAccumulator()
+        let now = Date()
+        // 3 recent + 2 old (5초 전).
+        for i in 0..<3 {
+            let intent = PilotIntent(
+                kind: .stop, source: .keyboard,
+                timestamp: now.addingTimeInterval(-Double(i) * 0.2)
+            )
+            acc.record(intent)
+        }
+        for _ in 0..<2 {
+            let intent = PilotIntent(
+                kind: .stop, source: .keyboard,
+                timestamp: now.addingTimeInterval(-5.0)
+            )
+            acc.record(intent)
+        }
+        XCTAssertEqual(acc.eventsPerSecond(window: 1.0, now: now), 3.0, accuracy: 0.01,
+                       "old events (5s ago) 제외")
+    }
+
+    /// **v1.20.7 사이클 13** — reset 후 rate 0.
+    func testEventsPerSecondAfterReset() {
+        let acc = PilotInputAccumulator()
+        acc.record(.move(WalkingCommand(strideMm: 10, sideMm: 0, turnDeg: 0), from: .keyboard))
+        acc.reset()
+        XCTAssertEqual(acc.eventsPerSecond(), 0, accuracy: 0.01)
+    }
+
+    /// **v1.20.7 사이클 13** — 큰 window 도 capacity 64 로 cap.
+    func testEventsPerSecondCapacityCap() {
+        let acc = PilotInputAccumulator()
+        let now = Date()
+        // 100 events injected — capacity 64 라 64만 keep.
+        for i in 0..<100 {
+            let intent = PilotIntent(
+                kind: .stop, source: .keyboard,
+                timestamp: now.addingTimeInterval(-Double(i) * 0.01)
+            )
+            acc.record(intent)
+        }
+        // 1 second window 에 64 entries 가 모두 들어옴 (0.64s 까지의 이력).
+        let rate = acc.eventsPerSecond(window: 1.0, now: now)
+        XCTAssertLessThanOrEqual(rate, 64.0, "capacity cap")
+    }
 }

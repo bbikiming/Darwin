@@ -159,12 +159,20 @@ public final class PilotInputAccumulator {
     private var peakTurn: Double = 0
     private var moveCount: Int = 0
     private var emergencyTriggered: Bool = false
+    /// **v1.20.7 사이클 13** — live event rate 계산용 ring buffer (최근 N event 타임스탬프).
+    /// 메모리 제한: 최대 64 entry. 더 오래된 건 drop.
+    private var recentTimestamps: [Date] = []
+    private let recentTimestampsCapacity: Int = 64
 
     public init() {}
 
     public func record(_ intent: PilotIntent) {
         sources.insert(intent.source)
         totalEvents += 1
+        recentTimestamps.append(intent.timestamp)
+        if recentTimestamps.count > recentTimestampsCapacity {
+            recentTimestamps.removeFirst(recentTimestamps.count - recentTimestampsCapacity)
+        }
         switch intent.kind {
         case .move(let cmd):
             moveCount += 1
@@ -188,6 +196,17 @@ public final class PilotInputAccumulator {
         peakStride = 0; peakSide = 0; peakTurn = 0
         moveCount = 0
         emergencyTriggered = false
+        recentTimestamps.removeAll()
+    }
+
+    /// **v1.20.7 사이클 13** — 마지막 `window` 초 동안의 event rate (events / sec).
+    /// `now` 기준 — caller 가 명시 (테스트 deterministic). 기본 Date().
+    /// window=1.0 일 때: 최근 1초 안의 event 개수 = 즉시 활동 강도.
+    public func eventsPerSecond(window: TimeInterval = 1.0, now: Date = Date()) -> Double {
+        guard window > 0 else { return 0 }
+        let cutoff = now.addingTimeInterval(-window)
+        let recentCount = recentTimestamps.filter { $0 >= cutoff }.count
+        return Double(recentCount) / window
     }
 
     public func summarize() -> PilotInputSummary {
