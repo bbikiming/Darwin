@@ -23,6 +23,7 @@ public struct TelloPilotHud: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             stickBars
+            telloStateRow
             statusRow
             controlsRow
         }
@@ -115,6 +116,86 @@ public struct TelloPilotHud: View {
                 .foregroundStyle(value == 0 ? DFColor.textSecondary : color)
                 .frame(width: 32, alignment: .trailing)
         }
+    }
+
+    // MARK: - Tello state (battery / altitude / temp)
+
+    @ViewBuilder
+    private var telloStateRow: some View {
+        if let s = bridge.lastTelloState {
+            HStack(spacing: 8) {
+                batteryChip(s)
+                altitudeChip(s)
+                tempChip(s)
+                Spacer(minLength: 0)
+                Text(stateAgeLabel(s))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .background(DFColor.textSecondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        } else {
+            Text("Tello state 미수신 (UDP 8890)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(.vertical, 2)
+        }
+    }
+
+    private func batteryChip(_ s: TelloStateMessage) -> some View {
+        let color: Color = {
+            switch s.batteryLevel {
+            case .good:    return DFColor.success
+            case .medium:  return DFColor.warning
+            case .low:     return DFColor.danger
+            }
+        }()
+        return HStack(spacing: 2) {
+            Image(systemName: batteryIcon(s.batteryPct))
+                .font(.caption2)
+            Text("\(s.batteryPct)%")
+                .font(.caption.monospacedDigit())
+        }
+        .foregroundStyle(color)
+    }
+
+    private func batteryIcon(_ pct: Int) -> String {
+        if pct >= 75 { return "battery.100" }
+        if pct >= 50 { return "battery.75" }
+        if pct >= 25 { return "battery.50" }
+        if pct >= 10 { return "battery.25" }
+        return "battery.0"
+    }
+
+    private func altitudeChip(_ s: TelloStateMessage) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: "arrow.up.to.line.compact")
+                .font(.caption2)
+            Text("\(Int(s.heightCm))cm")
+                .font(.caption.monospacedDigit())
+        }
+        .foregroundStyle(DFColor.textSecondary)
+    }
+
+    private func tempChip(_ s: TelloStateMessage) -> some View {
+        let avgTemp = (s.templ + s.temph) / 2
+        let color: Color = avgTemp >= 80 ? DFColor.danger : DFColor.textSecondary
+        return HStack(spacing: 2) {
+            Image(systemName: "thermometer.medium")
+                .font(.caption2)
+            Text("\(Int(avgTemp))°C")
+                .font(.caption.monospacedDigit())
+        }
+        .foregroundStyle(color)
+    }
+
+    private func stateAgeLabel(_ s: TelloStateMessage) -> String {
+        let age = Date().timeIntervalSince(s.receivedAt)
+        if age < 1 { return "방금" }
+        if age < 60 { return String(format: "%.0fs", age) }
+        return String(format: "%.0fm", age / 60)
     }
 
     // MARK: - Status row

@@ -41,6 +41,20 @@ public final class WalkLabRCBridge {
     /// PilotIntent.motion 발화 시 blender.play() 호출 + SafetyContext 전달.
     public let motionBlender = MotionBlender()
 
+    /// **v1.20.0 (사이클 5/6)** — Tello state port (UDP 8890) 의 가장 최근 메시지.
+    /// nil = 미수신 또는 Tello 미연결. NWListener integration 은 별도 phase.
+    /// 테스트 / view 가 수동 setter 호출 가능 (debug / 사용자 시각화).
+    public var lastTelloState: TelloStateMessage?
+
+    /// 외부 (NWListener 또는 mock) 가 호출 — state 갱신 + 안전 검증.
+    public func updateTelloState(_ msg: TelloStateMessage) {
+        lastTelloState = msg
+        // battery low warning — 사용자 안내.
+        if msg.batteryLevel == .low {
+            safetyMessage = "⚠️ Tello 배터리 \(msg.batteryPct)% — 충전 권장"
+        }
+    }
+
     // MARK: - 관찰 가능 상태
 
     /// 가장 최근 처리한 intent. nil = 미수신.
