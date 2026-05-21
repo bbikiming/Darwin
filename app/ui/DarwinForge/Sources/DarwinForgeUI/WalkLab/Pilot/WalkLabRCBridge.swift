@@ -145,6 +145,8 @@ public final class WalkLabRCBridge {
             safetyMessage = "WalkLabSession 미연결 — bridge.session 설정 필요"
             return
         }
+        // **v1.20.16 사이클 22** — accumulator 에 preset 전환 기록 (telemetry).
+        accumulator.recordPresetChange(source: source)
         if !enabled {
             safetyMessage = "Bridge 비활성 — preset 단축키 무시 (emergency 만 허용)"
             return

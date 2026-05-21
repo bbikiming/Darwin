@@ -139,6 +139,16 @@ final class WalkLabRCBridgeTests: XCTestCase {
                       "highRiskNotAcknowledged userMessage 노출 (\"위험 동의 필요\")")
     }
 
+    /// **v1.20.16 사이클 22** — handlePreset 호출이 accumulator.presetChangeCount 증가.
+    func testHandlePresetIncrementsPresetChangeCount() {
+        XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 0)
+        bridge.handlePreset(.march, from: .keyboard)
+        XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 1)
+        bridge.handlePreset(.slowWalk, from: .keyboard)
+        XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 2)
+        XCTAssertTrue(bridge.accumulator.summarize().sourcesUsed.contains(.keyboard))
+    }
+
     /// **v1.20.4 사이클 10** — bridge 비활성 시 preset 단축키 무시.
     func testHandlePresetIgnoredWhenDisabled() {
         bridge.enabled = false

@@ -118,6 +118,9 @@ public struct PilotInputSummary: Codable, Sendable, Equatable {
     public let peakNegTurnDeg: Double
     /// emergency intent 가 발생했는가 (1회라도) — 사용자가 비상 정지를 발화한 trial.
     public let emergencyTriggered: Bool
+    /// **v1.20.16 사이클 22** — handlePreset 호출 횟수.
+    /// 사용자가 trial 중 preset 단축키 (0-7) 로 전환한 횟수. 높을수록 "사용자가 적극 조작" 신호.
+    public let presetChangeCount: Int
 
     public init(
         sourcesUsed: [InputSource],
@@ -132,7 +135,8 @@ public struct PilotInputSummary: Codable, Sendable, Equatable {
         peakNegStrideMm: Double = 0,
         peakNegSideMm: Double = 0,
         peakNegTurnDeg: Double = 0,
-        emergencyTriggered: Bool
+        emergencyTriggered: Bool,
+        presetChangeCount: Int = 0
     ) {
         self.sourcesUsed = sourcesUsed
         self.totalEvents = totalEvents
@@ -147,6 +151,7 @@ public struct PilotInputSummary: Codable, Sendable, Equatable {
         self.peakNegSideMm = peakNegSideMm
         self.peakNegTurnDeg = peakNegTurnDeg
         self.emergencyTriggered = emergencyTriggered
+        self.presetChangeCount = presetChangeCount
     }
 
     /// **v1.20.10 사이클 16-fix HIGH 2 (코덱스)** — 양수/음수 양쪽 합산 max abs.
@@ -161,7 +166,8 @@ public struct PilotInputSummary: Codable, Sendable, Equatable {
         avgAbsStrideMm: 0, avgAbsSideMm: 0, avgAbsTurnDeg: 0,
         peakStrideMm: 0, peakSideMm: 0, peakTurnDeg: 0,
         peakNegStrideMm: 0, peakNegSideMm: 0, peakNegTurnDeg: 0,
-        emergencyTriggered: false
+        emergencyTriggered: false,
+        presetChangeCount: 0
     )
 
     public var hasData: Bool { totalEvents > 0 }
@@ -186,6 +192,8 @@ public final class PilotInputAccumulator {
     private var peakNegTurn: Double = 0
     private var moveCount: Int = 0
     private var emergencyTriggered: Bool = false
+    /// **v1.20.16 사이클 22** — handlePreset 호출 횟수.
+    private var presetChangeCount: Int = 0
     /// **v1.20.7 사이클 13** — live event rate 계산용 ring buffer (최근 N event 타임스탬프).
     /// 메모리 제한: 최대 64 entry. 더 오래된 건 drop.
     private var recentTimestamps: [Date] = []
@@ -220,6 +228,13 @@ public final class PilotInputAccumulator {
         }
     }
 
+    /// **v1.20.16 사이클 22** — preset 단축키 (0-7) 호출 발화.
+    /// totalEvents 와 별도 — preset 전환은 stop/move/emergency 와 다른 의도.
+    public func recordPresetChange(source: InputSource) {
+        sources.insert(source)
+        presetChangeCount += 1
+    }
+
     public func reset() {
         sources.removeAll()
         totalEvents = 0
@@ -228,6 +243,7 @@ public final class PilotInputAccumulator {
         peakNegStride = 0; peakNegSide = 0; peakNegTurn = 0
         moveCount = 0
         emergencyTriggered = false
+        presetChangeCount = 0
         recentTimestamps.removeAll()
     }
 
@@ -256,7 +272,8 @@ public final class PilotInputAccumulator {
             peakNegStrideMm: peakNegStride,
             peakNegSideMm: peakNegSide,
             peakNegTurnDeg: peakNegTurn,
-            emergencyTriggered: emergencyTriggered
+            emergencyTriggered: emergencyTriggered,
+            presetChangeCount: presetChangeCount
         )
     }
 }
