@@ -1,9 +1,10 @@
 # DJI 조종기 통합 — Deferred Plan
 
 - **작성일**: 2026-05-21
-- **상태**: Deferred (추후 구현)
-- **선행 작업**: Phase 1 (WalkTrial), Phase 1.5 (Apply-Scope Badge), Phase 2 (Recommender) 완료 후
-- **트리거**: 사용자 요청 — "원격 조종은 DJI 조종기로"
+- **갱신일**: 2026-05-21 v2 (research-analyst 조사 + Tello SDK prototype 시작)
+- **상태**: **Phase 4 첫 단계 시작됨** (Tello UDP prototype) — 실 hardware 없이 mock 으로 진행 가능
+- **선행 작업**: Phase 1 (WalkTrial) ✅, Phase 1.5 (Apply-Scope Badge) ✅, Phase 2 (Recommender) ✅ — 모두 완료
+- **트리거**: 사용자 요청 — "원격 조종은 DJI 조종기로" → "DJI 시뮬레이터 코드 조사 후 조종"
 
 ---
 
@@ -85,3 +86,83 @@ WalkLab/Pilot/
 - DJI Mobile SDK: https://developer.dji.com/mobile-sdk/
 - DJI Onboard SDK: https://developer.dji.com/onboard-sdk/ (Linux only)
 - macOS GameController.framework: 일반 HID 게임패드는 통합 — DJI HID 호환성 미검증
+
+---
+
+## 9. research-analyst 조사 결과 (2026-05-21 v2)
+
+5 옵션 매트릭스 (macOS 호환성):
+
+| 옵션 | macOS 호환 | 시뮬 지원 | 코드 채널 | Swift | 신뢰도 |
+|---|---|---|---|---|---|
+| **(A) Tello SDK** | ✅ Native | ⚠️ Hardware 필요 (mock 자체 작성 가능) | UDP text 8889 | ⭐⭐⭐⭐⭐ Network.framework | **확정 ← 선택** |
+| (B) DJI Mobile SDK | ❌ iOS/Android | ✅ DJISimulator class | iOS bridge | ⭐⭐ | 확정 |
+| (C) DJI Onboard SDK | ❌ Linux | ❌ | CAN/Serial | ⭐ | 확정 |
+| (D) DJI Assistant 2 | ⚠️ macOS 빌드 | ✅ USB | 미공개 protocol | ❌ | 추정 |
+| (E) DJI RC USB HID | ⚠️ 일부 RC | ❌ | IOKit HIDManager | ⭐⭐⭐ 미문서 | 추정 |
+
+**선택 이유**: macOS native + 외부 SDK 의존 0 + Tello EDU hardware 저렴 (~₩150k) + Phase 1+2 시스템과 깔끔하게 통합 가능.
+
+## 10. Tello SDK 명령 프로토콜
+
+- **Command port**: UDP `192.168.10.1:8889` (Tello = AP)
+- **State port**: UDP `0.0.0.0:8890` (Tello → host, 100ms 주기)
+- **Text 명령 (ASCII)**:
+  - `command` — SDK 모드 진입 (모든 명령 전 1회)
+  - `takeoff` / `land` (드론 전용, robot 무관)
+  - `rc <lr> <fb> <ud> <yaw>` — stick 4채널, 각 `-100..100`
+  - `emergency` — 즉시 모터 정지
+
+## 11. 매핑 설계 (Tello stick → DARwIn-OP2)
+
+| Tello | DARwIn | scale (default) | 한도 |
+|---|---|---|---|
+| `fb` 전후 | `X_MOVE_AMPLITUDE` (strideMm) | 0.4 | ±40 mm |
+| `lr` 좌우 | `Y_MOVE_AMPLITUDE` (sideMm) | 0.3 | ±25 mm |
+| `yaw` 회전 | `A_MOVE_AMPLITUDE` (turnDeg) | 0.2 | ±20° |
+| `ud` 상하 | ❌ 무시 (drone 전용) | — | — |
+| deadzone | `|stick| < 5` → 0 (drift 차단) | — | — |
+
+## 12. 구현 진행 상황 (2026-05-21)
+
+**Phase 4 첫 단계 — 4 신규 파일**:
+- `Sources/DarwinForgeUI/WalkLab/Pilot/Tello/TelloLink.swift` — UDP NWConnection 구현 + `TelloLinkProtocol` 추상화
+- `Sources/DarwinForgeUI/WalkLab/Pilot/Tello/MockTelloLink.swift` — XCTest 용 in-memory mock (UDP socket 없음)
+- `Sources/DarwinForgeUI/WalkLab/Pilot/Tello/TelloRCMapper.swift` — 순수 함수 매핑 + clamp + deadzone
+- `Tests/DarwinForgeUITests/Pilot/TelloRCMapperTests.swift` — 13 tests (mapper 9 + mock 4)
+
+**테스트 통과**: 867/867 (854 기존 + 13 신규)
+
+## 13. 다음 단계 (구현 우선순위)
+
+1. **WalkLabRCBridge.swift** — Tello stick → Walking module amplitude 송출 (Bus.setPosition 또는 onboard daemon 명령)
+2. **PilotIntent 통합** — keyboard/Tello 모두 `PilotIntent` 정규화 (verification §7.1)
+3. **Pilot HUD 확장** — Tello signal 강도 + lastRC stick 표시 + emergency 버튼
+4. **WalkTrialStore 연계** — Tello stick 입력 자체를 trial parameter 로 기록 → Recommender 가 "사용자 선호 amplitude" 학습
+5. **Mock E2E test** — MockTelloLink 로 stick → robot 명령 → trial 저장 end-to-end (실 hardware 없이)
+6. **실 hardware 검증** — Tello EDU 구매 후 30분 prototype
+
+## 14. 사용자 결정 항목
+
+| 결정 | 옵션 | 권장 |
+|---|---|---|
+| Hardware | Tello / Tello EDU / 다른 DJI RC | **Tello EDU (~₩150k)** — SDK 안정 + swarm 지원 |
+| 시뮬 우선? | Mock UDP / 실 hardware | **Mock 먼저** (이미 구현됨) — Phase 1+ 통합 검증 후 hardware |
+| iOS bridge? | DJI 정식 RC 시 필수 | **불필요** (Tello 선택) |
+| DJI 계정? | Mobile SDK 시 필요 | **불필요** (Tello 선택) |
+
+## 15. 예상 latency
+
+- Mock UDP localhost: <1ms
+- 실 Tello Wi-Fi: 20-50ms
+- Walking module amplitude 적용: 10ms
+- **합계 30-60ms** — 사용자 조작 감지 한계 (100ms) 이내
+
+## 16. 검증 출처 (research-analyst)
+
+- https://www.ryzerobotics.com/tello/downloads (Tello SDK 2.0 PDF)
+- https://github.com/dji-sdk/Tello-Python (공식 Python sample)
+- https://github.com/damiafuentes/DJITelloPy (커뮤니티 wrapper)
+- https://developer.dji.com/mobile-sdk/documentation/ (참고)
+- https://developer.apple.com/documentation/network/nwconnection (Swift Network.framework)
+

@@ -774,7 +774,12 @@ public final class WalkLabSession {
         return PreflightStatus(checks: checks)
     }
     /// 마지막 송출 상태 — UI 토스트용.
-    public private(set) var lastRobotEvent: String?
+    /// **v1.16.0 (2026-05-21) Phase 2**: private(set) → internal(set).
+    /// **v1.16.0.1 fix (code-reviewer H1)**: 종전 `public var` 는 너무 광범위 — preview/test
+    /// 등 외부 mutation 허용. `public internal(set)` 으로 좁히면 same-module extension
+    /// (예: `WalkLabSession+Recommender.swift`) 이 write 가능하면서 외부 (다른 module 의
+    /// public API consumer) 는 read-only.
+    public internal(set) var lastRobotEvent: String?
     /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
     public private(set) var isRobotWalking: Bool = false
 

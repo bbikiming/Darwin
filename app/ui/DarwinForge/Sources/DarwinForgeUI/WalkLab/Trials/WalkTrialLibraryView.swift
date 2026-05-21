@@ -284,7 +284,14 @@ private struct TrialDetailView: View {
     let onRelabel: () -> Void
     let onDelete: () -> Void
 
+    @Environment(WalkLabSession.self) private var session
     @State private var showingDeleteConfirm = false
+
+    /// **v1.16.0 (2026-05-21) Phase 2**: 같은 preset 의 추천.
+    /// **v1.16.0.1 fix (code-reviewer H2 + critic Minor #1)**: 종전 computed property 였으나
+    /// 매 body 재평가 시 `store.query` × 2 (rule + coord) + `store.load` 디스크 I/O 반복.
+    /// @State 로 캐시 + `onAppear` / trial 변경 시만 refresh.
+    @State private var recommendations: [WalkTrialRecommendation] = []
 
     var body: some View {
         ScrollView {
@@ -298,11 +305,21 @@ private struct TrialDetailView: View {
                 outcomeDetailSection
                 Divider()
                 labelSection
+                if !recommendations.isEmpty {
+                    Divider()
+                    recommenderSection
+                }
                 Divider()
                 actionsSection
             }
             .padding(20)
         }
+        .onAppear { refreshRecommendations() }
+        .onChange(of: trial.id) { _, _ in refreshRecommendations() }
+    }
+
+    private func refreshRecommendations() {
+        recommendations = WalkTrialRecommender.shared.recommend(for: trial.config.preset)
     }
 
     private var header: some View {
@@ -529,6 +546,25 @@ private struct TrialDetailView: View {
                 Button("취소", role: .cancel) {}
             }
         }
+    }
+
+    /// **v1.16.0 (2026-05-21) Phase 2**: 추천 카드 (각 strategy 별).
+    private var recommenderSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("같은 preset (\(trial.config.preset)) 추천")
+                .font(.headline)
+            ForEach(recommendations) { rec in
+                WalkTrialRecommenderCard(
+                    recommendation: rec,
+                    onApply: { applyRecommendation(rec) }
+                )
+            }
+        }
+    }
+
+    /// Recommender 의 config 를 session 에 inject — 사용자가 다음 보행에서 자동 사용.
+    private func applyRecommendation(_ rec: WalkTrialRecommendation) {
+        session.applyRecommendation(rec)
     }
 
     private func formatDate(_ iso: String) -> String {

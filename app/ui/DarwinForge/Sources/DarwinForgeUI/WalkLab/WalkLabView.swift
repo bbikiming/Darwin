@@ -81,9 +81,13 @@ public struct WalkLabView: View {
             )
         }
         // **v1.15.0 (2026-05-21) Phase 1**: 저장된 trial 탐색 sheet.
+        // **v1.16.0.1 (2026-05-21) Phase 2 C1 fix (code-reviewer CRITICAL)**:
+        // SwiftUI sheet 는 parent 의 @Environment(WalkLabSession.self) 자동 inject 안 함.
+        // TrialDetailView 가 applyRecommendation 시 session env 필요 → runtime trap 차단.
         .sheet(isPresented: $showingTrialLibrary) {
             NavigationStack {
                 WalkTrialLibraryView()
+                    .environment(session)  // C1 fix — sheet 에 session 명시 inject.
                     .frame(minWidth: 800, minHeight: 600)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
