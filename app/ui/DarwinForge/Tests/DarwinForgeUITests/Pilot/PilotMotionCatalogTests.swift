@@ -110,6 +110,13 @@ final class PilotMotionCatalogTests: XCTestCase {
         XCTAssertNil(catalog.resolve("page.unknown_name_xyz"))
     }
 
+    /// **v1.20.30.2 사이클 38 — 코덱스 LOW** — slot 0 edge case.
+    /// motion_4096 의 1-based slot (1..255) → 0 무효.
+    func testPageBackedRejectsSlot0() {
+        let catalog = PageBackedPilotMotionCatalog()
+        XCTAssertNil(catalog.resolve("page.0"), "slot 0 → reject (1-based spec)")
+    }
+
     func testPageBackedRejectsNonPagePrefix() {
         let catalog = PageBackedPilotMotionCatalog()
         XCTAssertNil(catalog.resolve("preset.march"))
