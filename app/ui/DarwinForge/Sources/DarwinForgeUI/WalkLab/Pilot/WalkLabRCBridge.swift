@@ -123,6 +123,13 @@ public final class WalkLabRCBridge {
             safetyMessage = "Bridge 비활성 — preset 단축키 무시 (emergency 만 허용)"
             return
         }
+        // **v1.20.4.1 사이클 10-fix CRITICAL (코덱스)** — emergency 상태에서 preset 재시작 차단.
+        // 종전: Space (emergency) → 1 (preset) 순서로 입력 시 즉시 재시작 가능 (큰 안전 hole).
+        // 신규: emergencyStopActive 동안 사용자 명시 recovery 전까지 preset 무시. emergency 만 통과.
+        if session.emergencyStopActive {
+            safetyMessage = "긴급 정지 상태 — preset 단축키 차단 (recovery 필요)"
+            return
+        }
         if preset == .idle {
             // .idle == 정지. 현재 보행 중일 때만 의미 있음.
             if session.current != .idle {
@@ -134,14 +141,29 @@ public final class WalkLabRCBridge {
             }
             return
         }
-        // 정상 preset — session.start 가 preflight 수행.
+        // **v1.20.4.1 사이클 10-fix HIGH (코덱스)** — same-preset retry 의 false-positive 차단.
+        // 종전: session.start 후 `current == preset` true 면 성공 처리 → 활성 .march 에 1 재입력
+        // 시 preflight 가 alreadyWalking 으로 차단해도 current 변화 없어 성공 메시지 + nil safety.
+        //
+        // 신규 판정: `current 가 실제로 바뀌었고 preset 으로 도착`. 사이드 채널:
+        // - sim mode: current 변경 후 startWalkCycle 의 noConnection 차단 — 성공 판정 (current 변함)
+        // - real success: current = preset, lastPreflightFailure = nil — 성공
+        // - alreadyWalking retry: quickPreflight 가 current 변경 전에 return → 변화 없음 → 차단
+        // - 다른 preset switch 중 alreadyWalking: 동일 — current 변화 없음 → 차단
+        let currentBefore = session.current
+        let preflightBefore = session.lastPreflightFailure
         session.start(preset)
-        if session.current == preset {
+
+        if session.current == preset && session.current != currentBefore {
+            // 실 진입 (sim 정보성 noConnection 포함). 성공 처리.
             session.lastRobotEvent = "🎮 \(source.label) → preset \(preset.rawValue) 시작"
             safetyMessage = nil
+        } else if let failure = session.lastPreflightFailure, failure != preflightBefore {
+            // **사이클 10-fix MEDIUM 1 (코덱스)** — 진단 코드 대신 사용자 메시지 노출.
+            safetyMessage = failure.userMessage
         } else {
-            // session.start 가 preflight 실패 → current 변화 없음 (또는 다른 preset).
-            safetyMessage = "Preset \(preset.rawValue) 시작 차단 — \(session.startBlockedReason ?? "안전 검사 미통과")"
+            // 기타 차단 (예: startWalkCycle 내부 추가 guard, race).
+            safetyMessage = "Preset \(preset.rawValue) 시작 차단 — \(session.startBlockedReason ?? "알 수 없음")"
         }
     }
 

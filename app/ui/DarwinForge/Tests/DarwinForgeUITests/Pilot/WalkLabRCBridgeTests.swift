@@ -129,12 +129,14 @@ final class WalkLabRCBridgeTests: XCTestCase {
     }
 
     /// **v1.20.4 사이클 10** — preflight 실패 시 (jog + risk 미동의) safety message.
+    /// **사이클 10-fix MEDIUM 1**: 진단 코드 → userMessage. .jog 의 highRisk userMessage 에 "위험" 포함.
     func testHandlePresetBlockedByPreflight() {
         XCTAssertFalse(session.riskAcknowledged)
         bridge.handlePreset(.jog, from: .keyboard)
         XCTAssertEqual(session.current, .idle, "preflight 차단 → idle 유지")
         XCTAssertNotNil(bridge.safetyMessage)
-        XCTAssertTrue(bridge.safetyMessage?.contains("차단") ?? false)
+        XCTAssertTrue(bridge.safetyMessage?.contains("위험") ?? false,
+                      "highRiskNotAcknowledged userMessage 노출 (\"위험 동의 필요\")")
     }
 
     /// **v1.20.4 사이클 10** — bridge 비활성 시 preset 단축키 무시.
@@ -144,6 +146,41 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertEqual(session.current, .idle, "disabled bridge → preset 무시")
         XCTAssertTrue(bridge.safetyMessage?.contains("비활성") ?? false)
     }
+
+    /// **v1.20.4.1 사이클 10-fix CRITICAL (코덱스)** — emergency 후 즉시 preset 재시작 차단.
+    /// Space + 1 race scenario: emergency 발화 후 1 (march) 입력해도 차단되어야 함.
+    func testHandlePresetBlockedDuringEmergency() {
+        session.start(.march)
+        bridge.handleEmergency(from: .keyboard)
+        // emergencyStop 후 emergencyStopActive = true.
+        XCTAssertTrue(session.emergencyStopActive, "emergency 후 active flag")
+
+        bridge.handlePreset(.march, from: .keyboard)
+
+        XCTAssertEqual(session.current, .idle, "emergency 동안 preset 재시작 차단")
+        XCTAssertTrue(bridge.safetyMessage?.contains("긴급 정지") ?? false,
+                      "emergency 안전 메시지")
+    }
+
+    /// **v1.20.4.1 사이클 10-fix HIGH (코덱스)** — 같은 preset 재입력 시 success false-positive 차단.
+    /// 종전: walking 중 같은 preset 누르면 current == preset 그대로 → 성공 메시지. 신규: preflight
+    /// alreadyWalking 차단을 정확히 감지.
+    func testHandlePresetSamePresetBlockedAsAlreadyWalking() {
+        session.start(.march)
+        XCTAssertEqual(session.current, .march)
+
+        bridge.handlePreset(.march, from: .keyboard)  // 같은 preset 재입력.
+
+        XCTAssertEqual(session.current, .march, "current 여전히 march")
+        // 핵심: safetyMessage 가 차단 사유 (alreadyWalking) 보이게.
+        XCTAssertNotNil(bridge.safetyMessage,
+                        "재입력 차단 메시지 — false-positive 성공 차단")
+    }
+
+    // **참고 (사이클 10-fix MEDIUM 2)**: "walking 중 다른 preset 전환 차단" 테스트는 sim 모드에서
+    // `isRobotWalking` 이 false 라 quickPreflight 가 isWalkActive 차단을 fire 안 함 (sim 한계).
+    // 실 로봇 bus 가 있는 환경에서만 검증 가능 — 본 unit test suite 범위 밖. 코덱스 검수 응답:
+    // sim 모드에서 switch 가 작동하는 건 buggy 가 아니라 "preview 모드" 의도된 동작.
 
     /// **v1.20.3 사이클 9** — auto-start 가 stop intent 에는 발화 안 함.
     func testAutoStartDoesNotFireOnStopIntent() {
