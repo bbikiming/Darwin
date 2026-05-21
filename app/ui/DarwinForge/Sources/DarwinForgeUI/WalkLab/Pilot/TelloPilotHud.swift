@@ -280,6 +280,12 @@ public struct TelloPilotHud: View {
                     settingChip(icon: "arrow.triangle.2.circlepath",
                                 label: "\(bridge.presetChangeMirror)")
                 }
+                // **v1.20.30 사이클 36** — live comfortLevel chip (0..1 사용자 활동 강도).
+                let comfort = bridge.accumulator.summarize().comfortLevel
+                if comfort > 0 {
+                    settingChip(icon: "figure.walk.motion",
+                                label: String(format: "%.0f%%", comfort * 100))
+                }
                 Spacer()
             }
             HStack(spacing: 8) {
