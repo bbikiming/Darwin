@@ -124,4 +124,45 @@ final class PilotMotionCatalogTests: XCTestCase {
         // 두 catalog 의 knownIds 합 = 2x WalkLabPreset count.
         XCTAssertEqual(composite.knownIds.count, WalkLabPreset.allCases.count * 2)
     }
+
+    // MARK: - Cycle 32: ordering + bridge composite default
+
+    /// **v1.20.26 사이클 32** — Composite 가 첫 hit 반환 (chain of responsibility).
+    func testCompositeReturnsFirstHit() {
+        // 두 catalog 가 같은 id 를 다르게 resolve 한다면 첫 번째가 winning.
+        struct CatalogA: PilotMotionCatalog {
+            func resolve(_ id: String) -> MotionDescriptor? {
+                guard id == "shared" else { return nil }
+                return .walk(.march)
+            }
+            var knownIds: [String] { ["shared"] }
+        }
+        struct CatalogB: PilotMotionCatalog {
+            func resolve(_ id: String) -> MotionDescriptor? {
+                guard id == "shared" else { return nil }
+                return .walk(.jog)
+            }
+            var knownIds: [String] { ["shared"] }
+        }
+        let composite = CompositePilotMotionCatalog([CatalogA(), CatalogB()])
+        let result = composite.resolve("shared")
+        if case .walk(let preset) = result {
+            XCTAssertEqual(preset, .march, "첫 catalog (A) 가 winning")
+        } else {
+            XCTFail("expected .walk(.march)")
+        }
+    }
+
+    /// **v1.20.26 사이클 32** — bridge default catalog 가 preset + page 양쪽 resolve.
+    @MainActor
+    func testBridgeDefaultCatalogResolvesPresetAndPage() {
+        let mock = MockTelloLink()
+        let bridge = WalkLabRCBridge(tello: mock)
+        // default = Composite([PresetBacked, PageBacked]).
+        XCTAssertNotNil(bridge.pilotMotionCatalog.resolve("preset.march"),
+                        "preset.march resolve")
+        XCTAssertNotNil(bridge.pilotMotionCatalog.resolve("page.1"),
+                        "page.1 resolve (motion_4096)")
+        XCTAssertNil(bridge.pilotMotionCatalog.resolve("unknown_xyz"))
+    }
 }
