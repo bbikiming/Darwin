@@ -52,8 +52,8 @@ public struct TelloPilotHud: View {
 
     private var sourceChip: some View {
         let source = bridge.lastIntent?.source
-        // **v1.20.8 사이클 14** — bridge.isActive (rate > 0.5/s) 시 success 강조 + dot pulse.
         let isActive = bridge.isActive
+        let age = bridge.lastInputAge
         return HStack(spacing: 3) {
             if isActive {
                 Circle()
@@ -64,6 +64,12 @@ public struct TelloPilotHud: View {
                 .font(.caption2)
             Text(source?.label ?? "대기")
                 .font(.caption.weight(.medium))
+            // **v1.20.36 사이클 46** — lastInputAge 표시 (n초 전).
+            if let age = age, age > 1.5 {
+                Text("·\(Int(age))s")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
