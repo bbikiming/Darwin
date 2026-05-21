@@ -183,64 +183,75 @@ public final class WalkTrialRecommender {
 
     // MARK: - Strategy 3: Pilot-biased (Cycle 16)
 
-    /// **v1.20.9 (2026-05-22) 사이클 16** — pilot stick 입력의 peak amplitude 를 사용자
-    /// comfort zone 으로 해석. trial.config.pilotInputs (Cycle 7) 가 set 된 trial 만 사용.
+    /// **v1.20.9 (2026-05-22) 사이클 16 + 사이클 16-fix (코덱스)** — pilot stick 입력의 peak abs
+    /// amplitude 를 사용자 comfort zone 으로 해석. trial.config.pilotInputs (Cycle 7) + advanced
+    /// 모드에서만 신뢰 가능 (CRITICAL fix).
     ///
     /// # 비유
     ///
-    /// 사용자가 자전거 타며 "이 정도 속도가 편하다" 라고 결정하는 것과 같음. 본 strategy 는
-    /// "사용자가 stick 으로 최대 35mm 까지 밀고 좋은 결과 (overall > 0.7) 가 나왔다면 35mm 가
-    /// 그들의 selector sweet spot" 으로 추론.
+    /// 사용자가 자전거 타며 "이 정도 속도가 편하다" 라고 결정하는 것과 같음. 단, 자전거 페달과
+    /// 바퀴 연결이 풀려있으면 (advanced=false) 페달 밟은 양은 속도 신뢰 신호 못 됨 → 제외.
     ///
-    /// # 필터
+    /// # 필터 (사이클 16-fix 코덱스 검수 반영)
     ///
     /// - preset 일치
-    /// - pilotInputs != nil (Cycle 7 이후 trial 만)
-    /// - pilotInputs.totalEvents >= 10 (substantial 조종 활동)
-    /// - outcome.overallScore >= 0.7 (mild success threshold — 평균 stride 안전성 보장)
+    /// - pilotInputs != nil (Cycle 7 이후 trial)
+    /// - **wasAdvancedMode == true** (CRITICAL — slider/pilot 이 실제 walking 에 반영된 trial 만)
+    /// - **moveEventCount >= 10** (HIGH 1 — stop/emergency 제외 실 move 입력)
+    /// - **!emergencyTriggered** (HIGH 1 — 비상 정지 trial 제외)
+    /// - overall >= 0.75 (상향 — 0.7 → 0.75, noise 차단)
+    /// - minStability >= 0.7
     /// - falls == 0
     ///
-    /// trial 부족 (< 2 개) 시 nil.
+    /// trial 부족 (< 3 개) 시 nil (상향 — 2 → 3).
     public func pilotBiased(for preset: String) -> WalkTrialRecommendation? {
-        // Trial 목록을 직접 load — pilotInputs filter 가 store query 의 필드에 없음 (in-memory filter).
-        let filter = TrialFilter(preset: preset, minOverallScore: 0.7, noFallsOnly: true)
+        let filter = TrialFilter(preset: preset, minOverallScore: 0.75,
+                                  minStabilityScore: 0.7, noFallsOnly: true)
         let allEntries = store.query(filter: filter, sort: .overallDesc)
-        let pilotedTrials: [WalkTrial] = allEntries.prefix(10).compactMap { entry in
+        // **MEDIUM 1 fix**: filter 먼저, prefix 나중 — non-pilot trial 이 top 10 점유 시 손실 차단.
+        // **LOW 2 fix**: tuple (trial, pilot) 으로 force unwrap 제거.
+        let candidates: [(trial: WalkTrial, pilot: PilotInputSummary)] = allEntries.compactMap { entry in
             guard let trial = store.load(id: entry.id),
                   let pilot = trial.config.pilotInputs,
-                  pilot.totalEvents >= 10 else { return nil }
-            return trial
+                  trial.config.wasAdvancedMode,                  // CRITICAL fix
+                  pilot.moveEventCount >= 10,                    // HIGH 1
+                  !pilot.emergencyTriggered                      // HIGH 1
+            else { return nil }
+            return (trial, pilot)
         }
-        guard pilotedTrials.count >= 2 else { return nil }
+        let topPiloted = Array(candidates.prefix(10))
+        guard topPiloted.count >= 3 else { return nil }          // 상향 2→3
 
-        let n = Double(pilotedTrials.count)
-        let avgPeakStride = pilotedTrials.map { $0.config.pilotInputs!.peakStrideMm }.reduce(0, +) / n
-        let avgPeakSide   = pilotedTrials.map { $0.config.pilotInputs!.peakSideMm   }.reduce(0, +) / n
-        let avgPeakTurn   = pilotedTrials.map { $0.config.pilotInputs!.peakTurnDeg  }.reduce(0, +) / n
+        let n = Double(topPiloted.count)
+        // **HIGH 2 fix**: peakAbs* — 음수 방향 입력도 신뢰 (왼쪽/시계/후진).
+        let avgAbsPeakStride = topPiloted.map { $0.pilot.peakAbsStrideMm }.reduce(0, +) / n
+        let avgAbsPeakSide   = topPiloted.map { $0.pilot.peakAbsSideMm   }.reduce(0, +) / n
+        let avgAbsPeakTurn   = topPiloted.map { $0.pilot.peakAbsTurnDeg  }.reduce(0, +) / n
         // 다른 tuning 축은 trial 의 평균 (slider 가 결정).
-        let baseTuning = averageTuning(pilotedTrials.map { $0.config.tuning })
-        // peak amplitude 를 stride/side/turn 에 적용 (사용자 comfort zone).
+        let baseTuning = averageTuning(topPiloted.map { $0.trial.config.tuning })
         let pilotTuning = TuningSnapshot(
-            strideMm: avgPeakStride,
-            sideMm: avgPeakSide,
-            turnDeg: avgPeakTurn,
+            strideMm: avgAbsPeakStride,
+            sideMm: avgAbsPeakSide,
+            turnDeg: avgAbsPeakTurn,
             periodMs: baseTuning.periodMs,
             footHeightMm: baseTuning.footHeightMm,
             balanceGain: baseTuning.balanceGain
         )
-        let intensitySum = pilotedTrials.map { $0.config.intensityLevel }.reduce(0, +)
+        let intensitySum = topPiloted.map { $0.trial.config.intensityLevel }.reduce(0, +)
         let avgIntensity = Int((Double(intensitySum) / n).rounded())
-        let totalEventsSum = pilotedTrials.map { $0.config.pilotInputs!.totalEvents }.reduce(0, +)
+        let totalMoveSum = topPiloted.map { $0.pilot.moveEventCount }.reduce(0, +)
 
         return WalkTrialRecommendation(
             strategy: .pilotBiased,
             preset: preset,
             tuning: pilotTuning,
             intensityLevel: avgIntensity,
-            balanceConfig: pilotedTrials.first?.config.balanceConfig ?? .defaultRobotis,
-            dataMaturity: min(1.0, n / 5.0),
-            rationale: "\(Int(n))개 piloted trial — peak avg: stride \(Int(avgPeakStride))mm / side \(Int(avgPeakSide))mm / turn \(Int(avgPeakTurn))° (총 \(totalEventsSum) events)",
-            sourceSampleIds: pilotedTrials.map { $0.id }
+            // **LOW 1 partial fix**: top-score piloted trial 의 config — 향후 group-by 가능.
+            balanceConfig: topPiloted.first?.trial.config.balanceConfig ?? .defaultRobotis,
+            // **MEDIUM 2 fix**: dataMaturity cap 상향 (5→10), pilot noisy 라 더 보수적.
+            dataMaturity: min(1.0, n / 10.0),
+            rationale: "\(Int(n))개 advanced+piloted trial — abs peak avg: stride \(Int(avgAbsPeakStride))mm / side \(Int(avgAbsPeakSide))mm / turn \(Int(avgAbsPeakTurn))° (총 \(totalMoveSum) move events)",
+            sourceSampleIds: topPiloted.map { $0.trial.id }
         )
     }
 

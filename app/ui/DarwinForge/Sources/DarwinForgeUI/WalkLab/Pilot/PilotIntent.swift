@@ -96,8 +96,11 @@ public enum InputSource: String, Sendable, Equatable, Hashable, CaseIterable, Co
 public struct PilotInputSummary: Codable, Sendable, Equatable {
     /// 본 trial 에서 사용된 모든 input source (중복 제거).
     public let sourcesUsed: [InputSource]
-    /// 총 stick event 수 (move intent + stop intent).
+    /// 총 stick event 수 (move + stop + emergency + motion).
     public let totalEvents: Int
+    /// **v1.20.10 사이클 16-fix HIGH 1 (코덱스)** — move intent 만 별도 카운트.
+    /// Recommender 가 "실제 조종 강도" 신호로 사용. stop/emergency/motion 분리.
+    public let moveEventCount: Int
     /// move intent 의 strideMm 평균 (절대값) — 사용자 의도 amplitude.
     public let avgAbsStrideMm: Double
     /// 평균 sideMm (절댓값).
@@ -108,36 +111,56 @@ public struct PilotInputSummary: Codable, Sendable, Equatable {
     public let peakStrideMm: Double
     public let peakSideMm: Double
     public let peakTurnDeg: Double
+    /// **v1.20.10 사이클 16-fix HIGH 2 (코덱스)** — 음수 방향 peak (절댓값).
+    /// 왼쪽 strafe / 시계 회전 / 후진을 캡쳐. 종전: peak* 가 양수만 → 후진 입력은 0 으로 유지.
+    public let peakNegStrideMm: Double
+    public let peakNegSideMm: Double
+    public let peakNegTurnDeg: Double
     /// emergency intent 가 발생했는가 (1회라도) — 사용자가 비상 정지를 발화한 trial.
     public let emergencyTriggered: Bool
 
     public init(
         sourcesUsed: [InputSource],
         totalEvents: Int,
+        moveEventCount: Int = 0,
         avgAbsStrideMm: Double,
         avgAbsSideMm: Double,
         avgAbsTurnDeg: Double,
         peakStrideMm: Double,
         peakSideMm: Double,
         peakTurnDeg: Double,
+        peakNegStrideMm: Double = 0,
+        peakNegSideMm: Double = 0,
+        peakNegTurnDeg: Double = 0,
         emergencyTriggered: Bool
     ) {
         self.sourcesUsed = sourcesUsed
         self.totalEvents = totalEvents
+        self.moveEventCount = moveEventCount
         self.avgAbsStrideMm = avgAbsStrideMm
         self.avgAbsSideMm = avgAbsSideMm
         self.avgAbsTurnDeg = avgAbsTurnDeg
         self.peakStrideMm = peakStrideMm
         self.peakSideMm = peakSideMm
         self.peakTurnDeg = peakTurnDeg
+        self.peakNegStrideMm = peakNegStrideMm
+        self.peakNegSideMm = peakNegSideMm
+        self.peakNegTurnDeg = peakNegTurnDeg
         self.emergencyTriggered = emergencyTriggered
     }
 
+    /// **v1.20.10 사이클 16-fix HIGH 2 (코덱스)** — 양수/음수 양쪽 합산 max abs.
+    /// 추천에 사용: 사용자가 한쪽 방향만 밀어도 max 신뢰 가능.
+    public var peakAbsStrideMm: Double { max(peakStrideMm, peakNegStrideMm) }
+    public var peakAbsSideMm: Double   { max(peakSideMm,   peakNegSideMm)   }
+    public var peakAbsTurnDeg: Double  { max(peakTurnDeg,  peakNegTurnDeg)  }
+
     /// pilot input 없음 — 사용자가 UI preset 만 사용한 trial.
     public static let empty = PilotInputSummary(
-        sourcesUsed: [], totalEvents: 0,
+        sourcesUsed: [], totalEvents: 0, moveEventCount: 0,
         avgAbsStrideMm: 0, avgAbsSideMm: 0, avgAbsTurnDeg: 0,
         peakStrideMm: 0, peakSideMm: 0, peakTurnDeg: 0,
+        peakNegStrideMm: 0, peakNegSideMm: 0, peakNegTurnDeg: 0,
         emergencyTriggered: false
     )
 
@@ -157,6 +180,10 @@ public final class PilotInputAccumulator {
     private var peakStride: Double = 0
     private var peakSide: Double = 0
     private var peakTurn: Double = 0
+    /// **v1.20.10 사이클 16-fix HIGH 2 (코덱스)** — 음수 방향 peak (값은 양수로 저장 — abs).
+    private var peakNegStride: Double = 0
+    private var peakNegSide: Double = 0
+    private var peakNegTurn: Double = 0
     private var moveCount: Int = 0
     private var emergencyTriggered: Bool = false
     /// **v1.20.7 사이클 13** — live event rate 계산용 ring buffer (최근 N event 타임스탬프).
@@ -179,9 +206,13 @@ public final class PilotInputAccumulator {
             sumAbsStride += abs(cmd.strideMm)
             sumAbsSide += abs(cmd.sideMm)
             sumAbsTurn += abs(cmd.turnDeg)
+            // **v1.20.10 사이클 16-fix HIGH 2 (코덱스)** — 양수/음수 양쪽 peak 추적.
             if cmd.strideMm > peakStride { peakStride = cmd.strideMm }
-            if cmd.sideMm > peakSide { peakSide = cmd.sideMm }
-            if cmd.turnDeg > peakTurn { peakTurn = cmd.turnDeg }
+            if cmd.sideMm   > peakSide   { peakSide   = cmd.sideMm   }
+            if cmd.turnDeg  > peakTurn   { peakTurn   = cmd.turnDeg  }
+            if -cmd.strideMm > peakNegStride { peakNegStride = -cmd.strideMm }
+            if -cmd.sideMm   > peakNegSide   { peakNegSide   = -cmd.sideMm   }
+            if -cmd.turnDeg  > peakNegTurn   { peakNegTurn   = -cmd.turnDeg  }
         case .emergency:
             emergencyTriggered = true
         case .stop, .motion:
@@ -194,6 +225,7 @@ public final class PilotInputAccumulator {
         totalEvents = 0
         sumAbsStride = 0; sumAbsSide = 0; sumAbsTurn = 0
         peakStride = 0; peakSide = 0; peakTurn = 0
+        peakNegStride = 0; peakNegSide = 0; peakNegTurn = 0
         moveCount = 0
         emergencyTriggered = false
         recentTimestamps.removeAll()
@@ -214,12 +246,16 @@ public final class PilotInputAccumulator {
         return PilotInputSummary(
             sourcesUsed: Array(sources).sorted { $0.rawValue < $1.rawValue },
             totalEvents: totalEvents,
+            moveEventCount: moveCount,
             avgAbsStrideMm: sumAbsStride / Double(n),
             avgAbsSideMm: sumAbsSide / Double(n),
             avgAbsTurnDeg: sumAbsTurn / Double(n),
             peakStrideMm: peakStride,
             peakSideMm: peakSide,
             peakTurnDeg: peakTurn,
+            peakNegStrideMm: peakNegStride,
+            peakNegSideMm: peakNegSide,
+            peakNegTurnDeg: peakNegTurn,
             emergencyTriggered: emergencyTriggered
         )
     }

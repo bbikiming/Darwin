@@ -142,17 +142,16 @@ final class WalkTrialRecommenderTests: XCTestCase {
 
     // MARK: - Cycle 16: pilot-biased strategy
 
-    /// **v1.20.9 사이클 16** — pilotInputs 가 있는 2+ trial 이 있으면 pilot-biased 추천 발화.
+    /// **v1.20.9 사이클 16 + 16-fix** — pilotInputs+advanced+10moves+!emergency 3 trial 이면 추천.
     func testPilotBiasedReturnsRecommendationWhenEnoughPilotedTrials() {
-        // pilotInputs 가 set 된 trial 3개 추가 (overall > 0.7, 10+ events).
         store.append(makeTrial(id: "p1", preset: "march", score: 0.85, falls: 0,
-                                pilotPeakStride: 30, pilotEvents: 15))
+                                pilotPeakStride: 30, pilotEvents: 15, advanced: true))
         store.append(makeTrial(id: "p2", preset: "march", score: 0.9, falls: 0,
-                                pilotPeakStride: 35, pilotEvents: 25))
+                                pilotPeakStride: 35, pilotEvents: 25, advanced: true))
         store.append(makeTrial(id: "p3", preset: "march", score: 0.8, falls: 0,
-                                pilotPeakStride: 25, pilotEvents: 20))
+                                pilotPeakStride: 25, pilotEvents: 20, advanced: true))
         let rec = recommender.pilotBiased(for: "march")
-        XCTAssertNotNil(rec, "3 piloted trials → 추천")
+        XCTAssertNotNil(rec, "3 advanced+piloted trials → 추천")
         XCTAssertEqual(rec?.strategy, .pilotBiased)
         XCTAssertEqual(rec?.tuning.strideMm ?? 0, 30, accuracy: 1e-9, "(30+35+25)/3 = 30")
         XCTAssertEqual(rec?.sourceSampleIds.count, 3)
@@ -160,34 +159,80 @@ final class WalkTrialRecommenderTests: XCTestCase {
 
     /// **v1.20.9 사이클 16** — pilotInputs 가 없는 trial 은 제외.
     func testPilotBiasedExcludesTrialsWithoutPilotInputs() {
-        // pilotInputs nil — 제외.
         store.append(makeTrial(id: "n1", preset: "march", score: 0.85, falls: 0))
         store.append(makeTrial(id: "n2", preset: "march", score: 0.9, falls: 0))
         let rec = recommender.pilotBiased(for: "march")
         XCTAssertNil(rec, "pilotInputs nil 인 trial 만 있을 때 nil")
     }
 
-    /// **v1.20.9 사이클 16** — totalEvents < 10 인 trial 은 제외.
+    /// **v1.20.9 사이클 16** — moveEventCount < 10 인 trial 은 제외.
     func testPilotBiasedExcludesLowActivityPilots() {
         store.append(makeTrial(id: "low1", preset: "march", score: 0.85, falls: 0,
-                                pilotPeakStride: 30, pilotEvents: 5))  // 미달
+                                pilotPeakStride: 30, pilotEvents: 5, advanced: true))
         store.append(makeTrial(id: "low2", preset: "march", score: 0.85, falls: 0,
-                                pilotPeakStride: 30, pilotEvents: 8))  // 미달
+                                pilotPeakStride: 30, pilotEvents: 8, advanced: true))
         let rec = recommender.pilotBiased(for: "march")
-        XCTAssertNil(rec, "totalEvents < 10 trial 제외 → 2개 안 채워짐")
+        XCTAssertNil(rec, "moveEventCount < 10 trial 제외")
+    }
+
+    /// **v1.20.10 사이클 16-fix CRITICAL (코덱스)** — wasAdvancedMode=false 인 trial 제외.
+    /// advanced 가 꺼져 있으면 walking 이 preset default 만 사용 → pilot peak 가 outcome 과
+    /// 상관없음. 본 trial 들은 noise — recommender 에서 무시.
+    func testPilotBiasedExcludesNonAdvancedTrials() {
+        for i in 0..<5 {
+            store.append(makeTrial(id: "na\(i)", preset: "march", score: 0.85, falls: 0,
+                                    pilotPeakStride: 30, pilotEvents: 20, advanced: false))
+        }
+        let rec = recommender.pilotBiased(for: "march")
+        XCTAssertNil(rec, "advanced=false trial 만 있을 때 nil (CRITICAL fix)")
+    }
+
+    /// **v1.20.10 사이클 16-fix HIGH 1 (코덱스)** — emergencyTriggered 인 trial 제외.
+    func testPilotBiasedExcludesEmergencyTrials() {
+        store.append(makeTrial(id: "em1", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 30, pilotEvents: 20, advanced: true,
+                                emergency: true))
+        store.append(makeTrial(id: "em2", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 30, pilotEvents: 20, advanced: true,
+                                emergency: true))
+        store.append(makeTrial(id: "em3", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 30, pilotEvents: 20, advanced: true,
+                                emergency: true))
+        let rec = recommender.pilotBiased(for: "march")
+        XCTAssertNil(rec, "emergencyTriggered trial 만 → nil")
+    }
+
+    /// **v1.20.10 사이클 16-fix HIGH 2 (코덱스)** — 음수 방향 peak 도 추천에 반영.
+    /// 종전: peakStrideMm 만 → 후진 입력 (negative) 시 peak=0 → 추천이 0 stride 제안.
+    /// 신규: peakAbsStrideMm = max(peakPos, peakNeg) → 음수 입력도 amplitude 신뢰.
+    func testPilotBiasedUsesPeakAbsForNegativeDirection() {
+        // 모두 negative direction 만 push (peakNegStrideMm = 25).
+        store.append(makeTrial(id: "n1", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 0, pilotPeakNegStride: 25,
+                                pilotEvents: 20, advanced: true))
+        store.append(makeTrial(id: "n2", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 0, pilotPeakNegStride: 25,
+                                pilotEvents: 20, advanced: true))
+        store.append(makeTrial(id: "n3", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 0, pilotPeakNegStride: 25,
+                                pilotEvents: 20, advanced: true))
+        let rec = recommender.pilotBiased(for: "march")
+        XCTAssertNotNil(rec, "음수 peak 만 있어도 추천 발화")
+        XCTAssertEqual(rec?.tuning.strideMm ?? 0, 25, accuracy: 1e-9,
+                       "peakAbs = max(0, 25) = 25 (HIGH 2 fix)")
     }
 
     /// **v1.20.9 사이클 16** — recommend() 가 pilot-biased 포함.
     func testRecommendIncludesPilotBiased() {
-        // ruleBased + pilotBiased 모두 활성화: 3+ piloted trial + 충분한 overall.
         for i in 0..<5 {
             store.append(makeTrial(id: "g\(i)", preset: "march", score: 0.85, falls: 0,
-                                    pilotPeakStride: 28 + Double(i), pilotEvents: 12 + i))
+                                    pilotPeakStride: 28 + Double(i), pilotEvents: 12 + i,
+                                    advanced: true))
         }
         let recs = recommender.recommend(for: "march")
         let strategies = Set(recs.map { $0.strategy })
         XCTAssertTrue(strategies.contains(.pilotBiased),
-                      "충분한 piloted trial 시 pilotBiased 활성")
+                      "충분한 advanced+piloted trial 시 pilotBiased 활성")
     }
 
     // MARK: - Fixtures
@@ -195,24 +240,30 @@ final class WalkTrialRecommenderTests: XCTestCase {
     private func makeTrial(
         id: String, preset: String, score: Double, falls: Int,
         stride: Double = 20, periodMs: Double = 600,
-        pilotPeakStride: Double? = nil, pilotEvents: Int = 0
+        pilotPeakStride: Double? = nil, pilotPeakNegStride: Double = 0,
+        pilotEvents: Int = 0,
+        advanced: Bool = false, emergency: Bool = false
     ) -> WalkTrial {
         let pilotInputs: PilotInputSummary? = {
             guard let peak = pilotPeakStride else { return nil }
             return PilotInputSummary(
                 sourcesUsed: [.keyboard], totalEvents: pilotEvents,
+                moveEventCount: pilotEvents,  // 사이클 16-fix: stop 없는 가정 — move only.
                 avgAbsStrideMm: peak * 0.5, avgAbsSideMm: 0, avgAbsTurnDeg: 0,
                 peakStrideMm: peak, peakSideMm: 0, peakTurnDeg: 0,
-                emergencyTriggered: false
+                peakNegStrideMm: pilotPeakNegStride, peakNegSideMm: 0, peakNegTurnDeg: 0,
+                emergencyTriggered: emergency
             )
         }()
         return _makeTrialCore(id: id, preset: preset, score: score, falls: falls,
-                              stride: stride, periodMs: periodMs, pilotInputs: pilotInputs)
+                              stride: stride, periodMs: periodMs,
+                              pilotInputs: pilotInputs, advanced: advanced)
     }
 
     private func _makeTrialCore(
         id: String, preset: String, score: Double, falls: Int,
-        stride: Double, periodMs: Double, pilotInputs: PilotInputSummary?
+        stride: Double, periodMs: Double, pilotInputs: PilotInputSummary?,
+        advanced: Bool = false
     ) -> WalkTrial {
         WalkTrial(
             id: id,
@@ -228,7 +279,8 @@ final class WalkTrialRecommenderTests: XCTestCase {
                                        periodMs: periodMs, footHeightMm: 40, balanceGain: 1.0),
                 walkingEngine: "macSparseKeyframe",
                 isRealRobot: false,
-                pilotInputs: pilotInputs
+                pilotInputs: pilotInputs,
+                wasAdvancedMode: advanced
             ),
             outcome: TrialOutcome(
                 stabilityScore: score, smoothnessScore: score, energyScore: score,

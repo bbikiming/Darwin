@@ -170,6 +170,11 @@ public struct TrialConfig: Codable, Sendable, Equatable {
     /// nil = pilot bridge 미연결 (UI preset 만 사용한 trial).
     /// Recommender 가 "사용자 선호 amplitude" 학습 신호로 활용 + Codable backward-compat.
     public let pilotInputs: PilotInputSummary?
+    /// **v1.20.10 사이클 16-fix CRITICAL (코덱스)** — capture 시점 `session.advanced` 값.
+    /// false 면 walking module 이 preset 의 default command 사용 → slider/pilot 변경 무효.
+    /// Recommender 가 pilot-biased 추천 시 본 필드 true 인 trial 만 사용 → 사용자 의도와
+    /// 실제 walking 출력의 연결 보장. Codable backward-compat: 기본값 false (legacy trial).
+    public let wasAdvancedMode: Bool
 
     public init(
         preset: String,
@@ -181,7 +186,8 @@ public struct TrialConfig: Codable, Sendable, Equatable {
         customGain: CustomGainSnapshot? = nil,
         walkingEngine: String,
         isRealRobot: Bool,
-        pilotInputs: PilotInputSummary? = nil
+        pilotInputs: PilotInputSummary? = nil,
+        wasAdvancedMode: Bool = false
     ) {
         self.preset = preset
         self.presetSafety = presetSafety
@@ -193,6 +199,29 @@ public struct TrialConfig: Codable, Sendable, Equatable {
         self.walkingEngine = walkingEngine
         self.isRealRobot = isRealRobot
         self.pilotInputs = pilotInputs
+        self.wasAdvancedMode = wasAdvancedMode
+    }
+
+    // **v1.20.10 사이클 16-fix CRITICAL** — Codable backward-compat: 기존 trial json
+    // (wasAdvancedMode 필드 없음) 디코딩 시 false 로 fallback.
+    enum CodingKeys: String, CodingKey {
+        case preset, presetSafety, intensityLevel, balanceConfig, enableBalanceCorrection,
+             tuning, customGain, walkingEngine, isRealRobot, pilotInputs, wasAdvancedMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        preset = try c.decode(String.self, forKey: .preset)
+        presetSafety = try c.decode(String.self, forKey: .presetSafety)
+        intensityLevel = try c.decode(Int.self, forKey: .intensityLevel)
+        balanceConfig = try c.decode(BalanceExperimentConfig.self, forKey: .balanceConfig)
+        enableBalanceCorrection = try c.decode(Bool.self, forKey: .enableBalanceCorrection)
+        tuning = try c.decode(TuningSnapshot.self, forKey: .tuning)
+        customGain = try c.decodeIfPresent(CustomGainSnapshot.self, forKey: .customGain)
+        walkingEngine = try c.decode(String.self, forKey: .walkingEngine)
+        isRealRobot = try c.decode(Bool.self, forKey: .isRealRobot)
+        pilotInputs = try c.decodeIfPresent(PilotInputSummary.self, forKey: .pilotInputs)
+        wasAdvancedMode = try c.decodeIfPresent(Bool.self, forKey: .wasAdvancedMode) ?? false
     }
 }
 

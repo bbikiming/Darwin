@@ -61,7 +61,11 @@ extension WalkLabSession {
             customGain: customGain,
             walkingEngine: walkingEngine.rawValue,
             isRealRobot: isReal,
-            pilotInputs: nil
+            pilotInputs: nil,
+            // **v1.20.10 사이클 16-fix CRITICAL (코덱스)** — advanced 여부 capture.
+            // false 면 pilot/slider 가 walking 출력에 영향 안 줌 (preset default 만 사용) →
+            // Recommender 가 본 trial 의 pilot.peak 를 comfort signal 로 신뢰 못 함.
+            wasAdvancedMode: advanced
         )
         // pilot bridge 의 누적 통계 reset — 신규 trial 의 깨끗한 시작.
         pilotBridge?.accumulator.reset()
@@ -137,7 +141,8 @@ extension WalkLabSession {
                 customGain: cap.config.customGain,
                 walkingEngine: cap.config.walkingEngine,
                 isRealRobot: cap.config.isRealRobot,
-                pilotInputs: pilotSummary
+                pilotInputs: pilotSummary,
+                wasAdvancedMode: cap.config.wasAdvancedMode
             )
             let trial = WalkTrial(
                 id: trialId,
