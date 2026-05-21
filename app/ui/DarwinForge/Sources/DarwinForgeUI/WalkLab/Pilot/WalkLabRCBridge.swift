@@ -115,19 +115,24 @@ public final class WalkLabRCBridge {
 
     private func process(_ intent: PilotIntent) {
         lastIntent = intent
-        accumulator.record(intent)
+        // **v1.20.3.1 사이클 9-fix MEDIUM 2 (코덱스)** — accumulator.record 는 각 path 에서
+        // 정확히 1회. 종전: 진입 즉시 record + auto-start 후 재 record → session.pilotBridge nil
+        // (production wiring 실패) 시 reset 안 돼 double-count. 신규: path 별 1회 record.
 
         // SafetyGate — bridge 자체 disable 또는 session 가 보행 시작 안 했으면 차단.
         guard let session else {
+            accumulator.record(intent)  // session 없어도 사용자 의도 기록 (telemetry).
             safetyMessage = "WalkLabSession 미연결 — bridge.session 설정 필요"
             return
         }
         if !enabled && intent.kind != .emergency {
+            accumulator.record(intent)  // disabled 라도 사용자 의도 기록.
             safetyMessage = "Bridge 비활성 — emergency 만 허용"
             return
         }
         // emergency 는 무조건 통과.
         if intent.kind == .emergency {
+            accumulator.record(intent)
             emergencyCount += 1
             session.emergencyStop(trigger: .externalEStop)
             Task { [tello] in await tello.emergency() }
@@ -139,23 +144,36 @@ public final class WalkLabRCBridge {
             // **v1.20.3 사이클 9** — 게임 캐릭터 idle 응답: 사용자가 keyboard/Tello move 입력 시
             // 자동으로 preset 시작. preflight 검사 (cradle/bus/IMU) 는 session.start 가 그대로 수행 →
             // 안전 우회 아님. .stop / .motion 같이 amplitude 없는 intent 는 skip.
+            //
+            // **scope 설계 (사이클 9-fix MEDIUM 1 코덱스 검수 응답)**:
+            // 본 path 는 keyboard / Tello / 미래 game pad / DJI controller 등 **모든 move source**
+            // 에 발화. 의도: 사용자가 stick/W 누르는 순간 → 즉시 robot 반응 (게임 UX). source 별
+            // 차별 없는 일관 행동. 비활성 원하면 `pilotAutoStartPreset = nil`.
             guard let autoStartPreset = pilotAutoStartPreset,
                   case .move(let cmd) = intent.kind,
                   !cmd.isStop else {
+                accumulator.record(intent)
                 safetyMessage = "보행 시작 후 stick 입력 가능 — preset 먼저 선택"
                 return
             }
             session.start(autoStartPreset)
             // session.start 가 실패한 경우 (preflight 차단) 여전히 idle → 종료.
             if session.current == .idle {
+                accumulator.record(intent)
                 safetyMessage = "Auto-start (\(autoStartPreset.rawValue)) 차단 — 안전 검사 미통과"
                 return
             }
             // 성공 → 아래 일반 처리로 fall-through.
             // **주의**: session.start 가 captureTrialStart 호출 → bridge.accumulator.reset() 발생.
-            // 본 intent 는 새 trial 의 첫 입력이므로 다시 record (위 record 는 reset 으로 무효화됨).
+            // 본 intent 는 새 trial 의 첫 입력 — reset 후 record. session.pilotBridge nil 시 reset
+            // 발생 안 함 → 단일 record (이전 record 가 진입 즉시 발화 안 했으므로 OK).
             accumulator.record(intent)
-            session.lastRobotEvent = "🎮 \(intent.source.label) → auto-start \(autoStartPreset.rawValue)"
+            // **사이클 9-fix LOW 1 (코덱스)** — lastRobotEvent overwrite 차단 위해 set 제거.
+            // 종전: "🎮 ... auto-start" → applyAmplitude 즉시 "🕹 ... stride" 로 덮임 → 사용자 못 봄.
+            // 사용자는 session.current 변화 (idle → march) 와 amplitude 메시지로 충분히 인지.
+        } else {
+            // 일반 (이미 walking 중) path — record.
+            accumulator.record(intent)
         }
 
         // 정상 처리 — Walking module amplitude 갱신.

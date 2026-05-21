@@ -90,6 +90,26 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertEqual(summary.totalEvents, 1, "auto-start triggering intent 가 새 trial 의 첫 event")
     }
 
+    /// **v1.20.3.1 사이클 9-fix LOW 2 (코덱스)** — auto-start 가 preflight 실패 시 idle 유지 + 안전 메시지.
+    /// .jog 는 highRisk preset → riskAcknowledged=false 면 preflight 차단.
+    func testAutoStartBlockedByPreflightFailure() {
+        session.pilotBridge = bridge
+        // riskAcknowledged 기본 false. .jog auto-start → preflight 차단 예상.
+        bridge.pilotAutoStartPreset = .jog
+        XCTAssertFalse(session.riskAcknowledged, "사전: risk 미동의")
+
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+
+        XCTAssertEqual(session.current, .idle, "preflight 차단 → idle 유지")
+        XCTAssertNotNil(bridge.safetyMessage)
+        XCTAssertTrue(bridge.safetyMessage?.contains("Auto-start") ?? false,
+                      "auto-start 차단 안전 메시지")
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "amplitude 미적용")
+        // accumulator: 본 차단 path 에서 1회 record (사용자 의도 telemetry).
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 1,
+                       "차단 path 도 사용자 입력 1회 기록")
+    }
+
     /// **v1.20.3 사이클 9** — auto-start 가 stop intent 에는 발화 안 함.
     func testAutoStartDoesNotFireOnStopIntent() {
         // deadzone (|stick| < 5) → mapper 가 .stop intent 생성.
