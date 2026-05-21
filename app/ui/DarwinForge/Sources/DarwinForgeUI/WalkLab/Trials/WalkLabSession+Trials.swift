@@ -49,6 +49,8 @@ extension WalkLabSession {
                 ankleRoll: customAnkleRollGain
             )
             : nil
+        // **v1.20.1 (사이클 7)**: capture 시점엔 pilotInputs nil — finalize 시 bridge 의
+        // accumulator snapshot 추가. start 시점 pilot 사용 통계는 새 trial 시점에서 reset.
         let config = TrialConfig(
             preset: preset.rawValue,
             presetSafety: preset.safety.rawValue,
@@ -58,8 +60,11 @@ extension WalkLabSession {
             tuning: tuning,
             customGain: customGain,
             walkingEngine: walkingEngine.rawValue,
-            isRealRobot: isReal
+            isRealRobot: isReal,
+            pilotInputs: nil
         )
+        // pilot bridge 의 누적 통계 reset — 신규 trial 의 깨끗한 시작.
+        pilotBridge?.accumulator.reset()
         trialStartCapture = TrialStartCapture(
             startedAt: Date(),
             preset: preset,
@@ -103,7 +108,10 @@ extension WalkLabSession {
         let busFails = self.store?.busWriteFailureCount ?? 0
         let trialId = timeseries.map { _ in cap.startedAt.iso8601 + "-" + cap.preset.rawValue }
             ?? UUID().uuidString
-        Task { [weak self, cap, endedAt, duration, timeseries, endReason, stepsExec, busFails, trialId] in
+        // **v1.20.1 (사이클 7)** — pilot bridge 의 누적 통계 snapshot + reset.
+        // bridge / finalize 모두 @MainActor 라 hop 불필요. nil = pilot 미연결 (UI preset 전용 trial).
+        let pilotSummary = pilotBridge?.snapshotAndReset()
+        Task { [weak self, cap, endedAt, duration, timeseries, endReason, stepsExec, busFails, trialId, pilotSummary] in
             // file I/O — background hop. WalkTrialStore 는 nonisolated 라 안전.
             let samples: [WalkSessionSample] = await Task.detached(priority: .utility) {
                 guard let ref = timeseries else { return [] }
@@ -117,13 +125,27 @@ extension WalkLabSession {
                 stepsExecuted: stepsExec,
                 busWriteFailures: busFails
             )
+            // **v1.20.1 (사이클 7)** — capture 시점 nil 이던 pilotInputs 를 종료 시 첨부.
+            // 불변성 규칙 준수: `cap.config` 는 수정 안 하고 새 TrialConfig 생성.
+            let finalConfig = TrialConfig(
+                preset: cap.config.preset,
+                presetSafety: cap.config.presetSafety,
+                intensityLevel: cap.config.intensityLevel,
+                balanceConfig: cap.config.balanceConfig,
+                enableBalanceCorrection: cap.config.enableBalanceCorrection,
+                tuning: cap.config.tuning,
+                customGain: cap.config.customGain,
+                walkingEngine: cap.config.walkingEngine,
+                isRealRobot: cap.config.isRealRobot,
+                pilotInputs: pilotSummary
+            )
             let trial = WalkTrial(
                 id: trialId,
                 startedAtIso: cap.startedAt.iso8601,
                 endedAtIso: endedAt.iso8601,
                 durationSec: duration,
                 endReason: endReason,
-                config: cap.config,
+                config: finalConfig,
                 outcome: outcome,
                 label: nil,
                 timeseries: timeseries

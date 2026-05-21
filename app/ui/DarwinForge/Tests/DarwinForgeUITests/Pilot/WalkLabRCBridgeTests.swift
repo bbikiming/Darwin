@@ -133,6 +133,76 @@ final class WalkLabRCBridgeTests: XCTestCase {
         let secondSnapshot = bridge.snapshotAndReset()
         XCTAssertEqual(secondSnapshot.totalEvents, 0, "reset 후 카운터 0")
     }
+
+    // MARK: - Cycle 7: Trial 통합 (pilotBridge weak ref + auto-attach)
+
+    /// **v1.20.1 사이클 7** — `WalkLabSession.captureTrialStart` 가 pilotBridge.accumulator 를 reset.
+    /// 신규 trial 시작 시 이전 trial 의 stick 통계가 누적되지 않도록 보장.
+    func testCaptureTrialStartResetsBridgeAccumulator() {
+        session.pilotBridge = bridge
+        // 이전 trial 의 잔재가 있다고 가정 — bridge 에 직접 record.
+        bridge.accumulator.record(.move(WalkingCommand(strideMm: 10, sideMm: 0, turnDeg: 0), from: .keyboard))
+        bridge.accumulator.record(.move(WalkingCommand(strideMm: 15, sideMm: 0, turnDeg: 0), from: .keyboard))
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 2, "사전: 2개 누적")
+
+        // 신규 trial 시작 (session.start 가 captureTrialStart 호출).
+        session.start(.march)
+
+        // captureTrialStart 안에서 pilotBridge?.accumulator.reset() 실행 → 0.
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 0,
+                       "captureTrialStart 이 bridge accumulator 를 reset")
+    }
+
+    /// **v1.20.1 사이클 7** — `WalkLabSession.finalizeTrialIfPending` 이 pilotBridge.snapshotAndReset 호출.
+    /// Observable side effect: 종료 후 bridge.accumulator 가 비어있음.
+    func testFinalizeSnapshotsBridgeAccumulator() {
+        session.pilotBridge = bridge
+        session.start(.march)  // captureTrialStart → reset.
+        bridge.handleTelloStick(lr: 0, fb: 50, ud: 0, yaw: 0)
+        bridge.handleTelloStick(lr: 30, fb: 0, ud: 0, yaw: 0)
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 2,
+                       "사전: stop 전 2건 누적")
+
+        session.stop()  // finalize 가 main actor 에서 snapshotAndReset 동기 호출.
+
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 0,
+                       "stop → finalize → snapshotAndReset 이 accumulator 비움")
+    }
+
+    /// **v1.20.1 사이클 7** — finalize 가 생성한 `pendingLabelTrial.config.pilotInputs` 가 bridge 통계 반영.
+    /// 비동기 Task 통과 대기 — sleep poll 패턴 (testEmergency 와 동일).
+    func testFinalizeAttachesPilotSummaryToTrialConfig() async {
+        session.pilotBridge = bridge
+        session.start(.march)
+        bridge.handleTelloStick(lr: 0, fb: 80, ud: 0, yaw: 0)  // strideMm 32 (80*0.4)
+        bridge.handleTelloStick(lr: 25, fb: 0, ud: 0, yaw: 0)  // sideMm ~ 10 (25*0.4)
+
+        session.stop()
+
+        // finalize 내부 Task 완료 대기 — 비동기 file I/O + main hop.
+        // 최대 5초 polling (50ms × 100).
+        var pendingTrial: WalkTrial?
+        for _ in 0..<100 {
+            if let t = session.pendingLabelTrial {
+                pendingTrial = t
+                break
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        guard let trial = pendingTrial else {
+            XCTFail("pendingLabelTrial 가 finalize 후에도 nil — async Task 완료 안 됨")
+            return
+        }
+        guard let pilot = trial.config.pilotInputs else {
+            XCTFail("trial.config.pilotInputs 가 nil — finalize 가 pilotSummary 첨부 실패")
+            return
+        }
+        XCTAssertEqual(pilot.totalEvents, 2, "두 stick 입력 모두 summary 에 기록")
+        XCTAssertTrue(pilot.sourcesUsed.contains(.tello), "tello source 포함")
+        XCTAssertGreaterThan(pilot.peakStrideMm, 0, "stride peak > 0")
+        XCTAssertGreaterThan(pilot.peakSideMm, 0, "side peak > 0")
+    }
 }
 
 /// **PilotIntent + PilotInputSummary value 타입 테스트**.

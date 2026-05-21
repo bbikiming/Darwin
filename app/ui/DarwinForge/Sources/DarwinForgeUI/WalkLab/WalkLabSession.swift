@@ -143,6 +143,11 @@ public final class WalkLabSession {
     /// nil = 경고 없음. 사용자가 dismiss 시 nil 로 reset.
     public var lastScopeWarning: String?
 
+    /// **v1.20.1 (사이클 7)** — Pilot bridge weak ref.
+    /// finalize 시 bridge?.snapshotAndReset() → trial.config.pilotInputs 자동 첨부.
+    /// nil = pilot 미연결 (UI preset 만 사용한 trial).
+    public weak var pilotBridge: WalkLabRCBridge?
+
     /// **v1.14.8.1 (2026-05-21) perf — perf-engineer HIGH fix**: footTrail.lefts 캐시.
     /// 종전 WalkLabView 가 body 마다 `session.footTrail.map { $0.left }` → 200-element
     /// 새 SIMD3 배열 alloc + RobotScene3D struct 가 매번 다른 배열 → updateNSView

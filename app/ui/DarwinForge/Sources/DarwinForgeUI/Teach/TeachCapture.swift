@@ -32,7 +32,10 @@ public final class TeachCapture: ObservableObject {
 
     public init() {}
 
-    public struct PoseSnapshot: Identifiable, Equatable {
+    /// **v1.20.1 (사이클 7)** — Sendable 추가: MotionDescriptor.teach(PoseSnapshot) 가
+    /// Sendable enum 의 associated value 라 Swift 6 모드에서 conformance 필수.
+    /// RobotPose / UUID / String / Date 모두 Sendable.
+    public struct PoseSnapshot: Identifiable, Equatable, Sendable {
         public let id = UUID()
         public let name: String
         public let pose: RobotPose
