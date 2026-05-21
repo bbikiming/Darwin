@@ -21,6 +21,8 @@ public struct WalkTrialLibraryView: View {
     @State private var filter = TrialFilter()
     @State private var sort: TrialSort = .startedDesc
     @State private var labelingTrial: WalkTrial?
+    /// **v1.19.1 (2026-05-21) 사이클 4**: AutoGenerator sheet 표시 토글.
+    @State private var showingAutoGenerator: Bool = false
 
     private let store: WalkTrialStore
 
@@ -42,11 +44,20 @@ public struct WalkTrialLibraryView: View {
                         Text(s.label).tag(s)
                     }
                 }
+                // **v1.19.1 (2026-05-21) 사이클 4**: AutoGenerator 진입점.
+                Button(action: { showingAutoGenerator = true }) {
+                    Image(systemName: "sparkles.rectangle.stack")
+                }
+                .help("Trial 자동 생성 — Recommender 학습용")
                 Button(action: refresh) {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("새로고침")
             }
+        }
+        .sheet(isPresented: $showingAutoGenerator) {
+            WalkTrialAutoGeneratorSheet()
+                .onDisappear { refresh() }
         }
         .sheet(item: $labelingTrial) { trial in
             WalkTrialLabelSheet(trial: trial,
