@@ -85,6 +85,9 @@ public struct KeyboardPilotPanel: View {
                     isFocused = true
                 }
             }
+            // **v1.20.14 사이클 20** — 게임 UX: 키보드 입력은 EMA smoothing 적용
+            // (0.5 = stride 가 0 → 40 까지 ~3 call 에 걸쳐 ramp). 키 release 시 jarring stop 완화.
+            session.pilotBridge?.smoothingFactor = 0.5
         }
         // **v1.20.2.1 사이클 8-fix HIGH (코덱스)** — overlay 제거 / 뷰 dismount 시 release.
         // WalkLabView 가 `showingPilotOverlay = false` 처리할 때 view 가 즉시 사라짐 →

@@ -147,6 +147,44 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(bridge.safetyMessage?.contains("비활성") ?? false)
     }
 
+    // MARK: - Cycle 20: smoothing factor
+
+    /// **v1.20.14 사이클 20** — smoothingFactor=1.0 (default) → 종전 동작 (즉시 반영).
+    func testSmoothingFactorDefaultIsImmediate() {
+        XCTAssertEqual(bridge.smoothingFactor, 1.0, "default backward-compat")
+        session.start(.march)
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        XCTAssertEqual(session.strideMm, 40, accuracy: 1e-9, "default 1.0 → 즉시 max")
+    }
+
+    /// **v1.20.14 사이클 20** — smoothingFactor=0.5 → 단일 call 에 50% blend.
+    func testSmoothingFactorHalfBlend() {
+        bridge.smoothingFactor = 0.5
+        session.start(.march)
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "사전 0")
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        XCTAssertEqual(session.strideMm, 20, accuracy: 1e-9, "0.5 × 40 + 0.5 × 0 = 20")
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        XCTAssertEqual(session.strideMm, 30, accuracy: 1e-9, "0.5 × 40 + 0.5 × 20 = 30")
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        XCTAssertEqual(session.strideMm, 35, accuracy: 1e-9, "0.5 × 40 + 0.5 × 30 = 35")
+    }
+
+    /// **v1.20.14 사이클 20** — release 시 smoothing 이 부드러운 ramp-down 적용.
+    func testSmoothingRampsDownGracefully() {
+        bridge.smoothingFactor = 0.5
+        session.start(.march)
+        // 먼저 fully ramp up.
+        for _ in 0..<5 {
+            bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        }
+        XCTAssertGreaterThan(session.strideMm, 35, "ramp 완료")
+        // Release — deadzone (cmd = stop) 이지만 smooth 라 한 번에 0 아님.
+        bridge.handleTelloStick(lr: 0, fb: 0, ud: 0, yaw: 0)
+        XCTAssertLessThan(session.strideMm, 35, "감소 시작")
+        XCTAssertGreaterThan(session.strideMm, 5, "한 번에 0 아님 (graceful)")
+    }
+
     // MARK: - Cycle 14/15: activityRate + isActive
 
     /// **v1.20.8 사이클 14/15** — bridge.activityRate 이 record 후 > 0 됨.

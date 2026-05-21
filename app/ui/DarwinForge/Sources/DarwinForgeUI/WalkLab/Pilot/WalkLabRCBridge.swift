@@ -77,6 +77,11 @@ public final class WalkLabRCBridge {
     /// `nil` = auto-start 비활성 (사용자가 명시 preset 선택해야 입력 활성).
     /// 기본 `.march` — 가장 안전한 (낮은 amplitude) preset.
     public var pilotAutoStartPreset: WalkLabPreset? = .march
+    /// **v1.20.14 (2026-05-22) 사이클 20** — amplitude smoothing factor (EMA α).
+    /// 0 = 무한 smooth (변화 없음 — 입력 무시), 1 = 즉시 (smoothing 없음, 종전 동작).
+    /// default 1.0 — backward compat (기존 테스트 + Tello stick 즉시 반응 기대치 유지).
+    /// 게임 UX 원하면 KeyboardPilotPanel 이 onAppear 시 0.5 설정.
+    public var smoothingFactor: Double = 1.0
 
     // MARK: - Init
 
@@ -308,13 +313,20 @@ public final class WalkLabRCBridge {
     /// `WalkLabSession` 의 advanced slider 와 동일 채널에 stick 값 주입.
     /// 보행 중 변경 시 `walkTuningRestartTask` 가 220ms debounce 후 cycle 재시작 (Mac sparse)
     /// 또는 `WalkLabOnboardBridge` 가 300ms debounce 후 SSH 송출 (Onboard) — 기존 채널 활용.
+    ///
+    /// **v1.20.14 사이클 20** — EMA smoothing. `smoothingFactor` (0..1) 만큼 새 값 blend.
+    /// 0 = 무한 smooth (변화 없음), 1 = 즉시 (smoothing 없음, 종전 동작). default 0.5 = 적당히 부드러움.
+    /// 게임 캐릭터 ramp-up/down 효과: 키 release 시 strideMm 한 번에 0 되지 않고 점진적 감속.
+    /// 다음 applyAmplitude 호출 시 blend 가 누적 → 진정한 stop 위해 키 release 후에도
+    /// "한 번 더" call 필요 — 호출자 (KeyboardPilotPanel) 가 release 시 명시 stop 호출하면 충분.
     private func applyAmplitude(_ cmd: WalkingCommand, in session: WalkLabSession) {
-        session.strideMm = cmd.strideMm
-        session.sideMm = cmd.sideMm
-        session.turnDeg = cmd.turnDeg
+        let α = smoothingFactor
+        session.strideMm = α * cmd.strideMm + (1 - α) * session.strideMm
+        session.sideMm   = α * cmd.sideMm   + (1 - α) * session.sideMm
+        session.turnDeg  = α * cmd.turnDeg  + (1 - α) * session.turnDeg
         // 사용자 안내 — 어떤 source 가 명령했는지.
         if let source = lastIntent?.source {
-            session.lastRobotEvent = "🕹 \(source.label) → stride=\(Int(cmd.strideMm)) side=\(Int(cmd.sideMm)) turn=\(Int(cmd.turnDeg))"
+            session.lastRobotEvent = "🕹 \(source.label) → stride=\(Int(session.strideMm)) side=\(Int(session.sideMm)) turn=\(Int(session.turnDeg))"
         }
     }
 
