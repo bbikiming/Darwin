@@ -72,6 +72,11 @@ public final class WalkLabRCBridge {
     public var enabled: Bool = true
     /// stick 변환 scale — 사용자 sensitivity 조정.
     public var scale: TelloRCMapper.Scale = .default
+    /// **v1.20.3 (2026-05-22) 사이클 9** — idle 상태에서 첫 pilot 입력 시 자동 시작할 preset.
+    /// 게임 캐릭터처럼 W 키 → 즉시 걷기 (preset 버튼 클릭 불필요).
+    /// `nil` = auto-start 비활성 (사용자가 명시 preset 선택해야 입력 활성).
+    /// 기본 `.march` — 가장 안전한 (낮은 amplitude) preset.
+    public var pilotAutoStartPreset: WalkLabPreset? = .march
 
     // MARK: - Init
 
@@ -131,8 +136,26 @@ public final class WalkLabRCBridge {
         }
         // bus / cradle 검사 — preset 시작 path 와 동일.
         if session.current == .idle {
-            safetyMessage = "보행 시작 후 stick 입력 가능 — preset 먼저 선택"
-            return
+            // **v1.20.3 사이클 9** — 게임 캐릭터 idle 응답: 사용자가 keyboard/Tello move 입력 시
+            // 자동으로 preset 시작. preflight 검사 (cradle/bus/IMU) 는 session.start 가 그대로 수행 →
+            // 안전 우회 아님. .stop / .motion 같이 amplitude 없는 intent 는 skip.
+            guard let autoStartPreset = pilotAutoStartPreset,
+                  case .move(let cmd) = intent.kind,
+                  !cmd.isStop else {
+                safetyMessage = "보행 시작 후 stick 입력 가능 — preset 먼저 선택"
+                return
+            }
+            session.start(autoStartPreset)
+            // session.start 가 실패한 경우 (preflight 차단) 여전히 idle → 종료.
+            if session.current == .idle {
+                safetyMessage = "Auto-start (\(autoStartPreset.rawValue)) 차단 — 안전 검사 미통과"
+                return
+            }
+            // 성공 → 아래 일반 처리로 fall-through.
+            // **주의**: session.start 가 captureTrialStart 호출 → bridge.accumulator.reset() 발생.
+            // 본 intent 는 새 trial 의 첫 입력이므로 다시 record (위 record 는 reset 으로 무효화됨).
+            accumulator.record(intent)
+            session.lastRobotEvent = "🎮 \(intent.source.label) → auto-start \(autoStartPreset.rawValue)"
         }
 
         // 정상 처리 — Walking module amplitude 갱신.

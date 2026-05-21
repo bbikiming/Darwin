@@ -19,6 +19,9 @@ final class WalkLabRCBridgeTests: XCTestCase {
         session = WalkLabSession()
         bridge = WalkLabRCBridge(tello: mock)
         bridge.session = session
+        // **v1.20.3 사이클 9** — `session.pilotBridge` 는 각 테스트가 필요 시 명시 wiring.
+        // setUp 에서 일률 wiring 하면 session.emergencyStop / finalize 가 bridge.accumulator
+        // 를 reset 해 종전 테스트 (testAccumulatorRecordsAllIntents 등) 의 semantic 깨짐.
     }
 
     override func tearDown() async throws {
@@ -56,13 +59,43 @@ final class WalkLabRCBridgeTests: XCTestCase {
 
     // MARK: - Idle guard
 
-    func testStickInputIgnoredWhenIdle() {
-        // session.current == .idle — bridge 가 safety message 만 설정.
+    /// **v1.20.3 사이클 9** — auto-start 비활성 시 종전 behavior 유지.
+    /// `pilotAutoStartPreset = nil` 시 idle 입력은 거부.
+    func testStickInputIgnoredWhenIdleAndAutoStartDisabled() {
+        bridge.pilotAutoStartPreset = nil  // auto-start 비활성.
         bridge.handleTelloStick(lr: 50, fb: 50, ud: 0, yaw: 0)
 
-        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "idle 시 stride 미변경")
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "idle + auto-start off → stride 미변경")
+        XCTAssertEqual(session.current, .idle, "session 도 idle 유지")
         XCTAssertNotNil(bridge.safetyMessage)
-        XCTAssertTrue(bridge.safetyMessage?.contains("preset 먼저 선택") ?? false)
+        XCTAssertTrue(bridge.safetyMessage?.contains("preset 먼저 선택") ?? false,
+                      "기존 안전 메시지 보존")
+    }
+
+    /// **v1.20.3 사이클 9** — auto-start 활성 (default) 시 idle 에서 첫 move 입력으로 즉시 시작.
+    /// 게임 캐릭터처럼 W 키 → 보행 시작. preflight 는 session.start 가 그대로 수행.
+    func testAutoStartPresetOnIdleMoveInput() {
+        // production wiring 재현 — 본 path 는 session.pilotBridge 가 set 일 때 정확.
+        session.pilotBridge = bridge
+        // 사전 조건: bridge.pilotAutoStartPreset = .march (default)
+        XCTAssertEqual(session.current, .idle, "사전: idle")
+        XCTAssertEqual(bridge.pilotAutoStartPreset, .march, "default auto-start preset = .march")
+
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+
+        XCTAssertEqual(session.current, .march, "auto-start 발화 → preset 진입")
+        XCTAssertEqual(session.strideMm, 40, accuracy: 1e-9, "auto-start 후 amplitude 적용")
+        // accumulator: capture 시 reset 후 재기록 → 1 event.
+        let summary = bridge.accumulator.summarize()
+        XCTAssertEqual(summary.totalEvents, 1, "auto-start triggering intent 가 새 trial 의 첫 event")
+    }
+
+    /// **v1.20.3 사이클 9** — auto-start 가 stop intent 에는 발화 안 함.
+    func testAutoStartDoesNotFireOnStopIntent() {
+        // deadzone (|stick| < 5) → mapper 가 .stop intent 생성.
+        bridge.handleTelloStick(lr: 2, fb: 1, ud: 0, yaw: 1)
+        XCTAssertEqual(session.current, .idle, "stop intent → auto-start skip")
+        XCTAssertNotNil(bridge.safetyMessage, "기존 idle 안전 메시지")
     }
 
     // MARK: - Emergency
@@ -171,8 +204,10 @@ final class WalkLabRCBridgeTests: XCTestCase {
 
     /// **v1.20.1 사이클 7-fix MEDIUM 2 (코덱스)** — finalize 가 두 번 호출되어도 bridge snapshot 은 1회만.
     /// idempotent: `trialStartCapture nil 가드` 가 두 번째 finalize 를 no-op 으로 막아야 함.
+    /// **v1.20.3 사이클 9 보강**: stop 후 입력이 auto-start 를 재발화 안 하도록 disable.
     func testFinalizeIsIdempotentForBridgeSnapshot() {
         session.pilotBridge = bridge
+        bridge.pilotAutoStartPreset = nil  // 사이클 9: stop 후 재 auto-start 차단 — pure idempotent 검증.
         session.start(.march)  // captureTrialStart → reset.
         bridge.handleTelloStick(lr: 0, fb: 50, ud: 0, yaw: 0)
         bridge.handleTelloStick(lr: 30, fb: 0, ud: 0, yaw: 0)
