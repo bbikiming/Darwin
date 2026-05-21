@@ -232,4 +232,11 @@ final class KeyboardPilotMapperTests: XCTestCase {
         let handled = Set(KeyboardPilotMapper.allHandledKeys.map(\.character))
         XCTAssertTrue(handled.contains("m"), "M 키 포함")
     }
+
+    /// **v1.20.35 사이클 45** — allHandledKeys 가 우연 누락 차단 — 전체 key count 확인.
+    func testAllHandledKeysCount() {
+        let count = KeyboardPilotMapper.allHandledKeys.count
+        // WASD/QE (6) + arrows (4) + space (1) + digits 0-7 (8) + r (1) + m (1) = 21
+        XCTAssertEqual(count, 21, "21 keys total")
+    }
 }
