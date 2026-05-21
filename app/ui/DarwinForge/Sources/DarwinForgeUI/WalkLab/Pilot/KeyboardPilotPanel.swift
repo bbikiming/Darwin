@@ -33,6 +33,10 @@ public struct KeyboardPilotPanel: View {
     @FocusState private var isFocused: Bool
     /// **v1.20.6 사이클 12** — overlay 열자마자 키 입력 활성. 게임 UX: 즉시 응답.
     private let autoFocusOnAppear: Bool
+    /// **v1.20.11 사이클 17** — 사용자 sensitivity multiplier (0.5x~2x).
+    /// bridge.scale = default * multiplier. AppStorage 로 세션 간 유지.
+    /// 1.0 = default (fb=0.4, lr=0.3, yaw=0.2). 0.5 = newbie/slow. 2.0 = expert/fast.
+    @AppStorage("df.pilot.sensitivityMultiplier") private var sensitivityMultiplier: Double = 1.0
 
     public init(autoFocusOnAppear: Bool = true) {
         self.autoFocusOnAppear = autoFocusOnAppear
@@ -43,6 +47,7 @@ public struct KeyboardPilotPanel: View {
             header
             keyMap
             presetShortcuts  // **v1.20.4 사이클 10** — 숫자 키 단축키 가이드.
+            sensitivityRow   // **v1.20.11 사이클 17** — sensitivity slider.
             statusLine
         }
         .padding(12)
@@ -198,6 +203,50 @@ public struct KeyboardPilotPanel: View {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(isActive ? DFColor.accent : DFColor.textSecondary.opacity(0.2),
                         lineWidth: isActive ? 1.0 : 0.5)
+        )
+    }
+
+    // MARK: - Sensitivity slider (Cycle 17)
+
+    /// **v1.20.11 사이클 17** — bridge.scale multiplier 슬라이더.
+    /// 변경 시 bridge.scale = default * multiplier. AppStorage 로 다음 세션 복원.
+    private var sensitivityRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("감도")
+                    .font(.caption2)
+                    .foregroundStyle(DFColor.textSecondary)
+                Spacer()
+                Text(sensitivityLabel)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(sensitivityMultiplier == 1.0 ? DFColor.textSecondary : DFColor.accent)
+            }
+            Slider(value: $sensitivityMultiplier, in: 0.5...2.0, step: 0.1)
+                .controlSize(.mini)
+                .onChange(of: sensitivityMultiplier) { _, newValue in
+                    applySensitivity(newValue)
+                }
+                .onAppear {
+                    applySensitivity(sensitivityMultiplier)
+                }
+        }
+    }
+
+    private var sensitivityLabel: String {
+        switch sensitivityMultiplier {
+        case ..<0.75:  return String(format: "%.1fx (slow)", sensitivityMultiplier)
+        case ..<1.25:  return String(format: "%.1fx", sensitivityMultiplier)
+        default:       return String(format: "%.1fx (fast)", sensitivityMultiplier)
+        }
+    }
+
+    private func applySensitivity(_ multiplier: Double) {
+        guard let bridge = session.pilotBridge else { return }
+        let base = TelloRCMapper.Scale.default
+        bridge.scale = TelloRCMapper.Scale(
+            fb: base.fb * multiplier,
+            lr: base.lr * multiplier,
+            yaw: base.yaw * multiplier
         )
     }
 
