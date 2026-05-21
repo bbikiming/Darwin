@@ -37,6 +37,10 @@ public final class WalkLabRCBridge {
     /// 약한 참조 — view lifecycle 에 영향 안 줌. session 가 owner.
     public weak var session: WalkLabSession?
 
+    /// **v1.18.0.2 (사이클 2)** — MotionBlender 통합 (Phase 3 의 외톨이 활성화).
+    /// PilotIntent.motion 발화 시 blender.play() 호출 + SafetyContext 전달.
+    public let motionBlender = MotionBlender()
+
     // MARK: - 관찰 가능 상태
 
     /// 가장 최근 처리한 intent. nil = 미수신.
@@ -125,9 +129,48 @@ public final class WalkLabRCBridge {
         case .stop:
             applyAmplitude(.stop, in: session)
             safetyMessage = nil
-        case .motion, .emergency:
-            break  // motion 은 Phase 5, emergency 위에서 처리.
+        case .motion(let id):
+            // **v1.18.0.2 사이클 2**: motion intent 활성화 — Phase 3 의 MotionBlender 통합.
+            // 단순 String id 기반 — caller 가 직접 MotionDescriptor 빌드해서 `handleMotion(_:)` 호출 권장.
+            // 본 path 는 id resolution 미구현 — 사용자 안내 + accumulator 에만 기록.
+            safetyMessage = "motion '\(id)' — handleMotion(_:descriptor:) 직접 호출 권장 (id resolution 미구현)"
+        case .emergency:
+            break  // emergency 위에서 처리.
         }
+    }
+
+    /// **v1.18.0.2 (사이클 2)** — MotionDescriptor 기반 motion intent 처리.
+    /// PilotIntent.motion(String) 의 외부 caller 가 catalog 에서 descriptor 를 resolve 한 후 호출.
+    /// MotionBlender.play 가 TransitionPolicy 통합 검증 → BlendResult 반환.
+    @discardableResult
+    public func handleMotion(_ descriptor: MotionDescriptor, from source: InputSource) -> BlendResult {
+        let intent = PilotIntent(kind: .motion(descriptor.id), source: source)
+        let result: BlendResult
+        if let session = session {
+            // SafetyContext — session 의 현재 balance + bus + risk.
+            let ctx = SafetyContext(
+                balanceState: session.balanceState,
+                robotConnected: session.store?.bus != nil,
+                riskAcknowledged: session.riskAcknowledged
+            )
+            result = motionBlender.play(descriptor, safetyContext: ctx)
+        } else {
+            // session 미연결 — sim only path. policy skip.
+            result = motionBlender.play(descriptor, safetyContext: nil)
+        }
+        lastIntent = intent
+        accumulator.record(intent)
+        // 결과 반영.
+        switch result {
+        case .accepted, .acceptedFullBody:
+            safetyMessage = nil
+            session?.lastRobotEvent = "🎬 \(source.label) → motion '\(descriptor.displayLabel)' 적용"
+        case .rejectedSafety(let reason):
+            safetyMessage = reason
+        case .rejectedEmptyChannels:
+            safetyMessage = "motion 이 어떤 joint 도 점유 안 함 — 빈 명령 거부"
+        }
+        return result
     }
 
     /// `WalkLabSession` 의 advanced slider 와 동일 채널에 stick 값 주입.

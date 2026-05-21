@@ -97,14 +97,38 @@ extension WalkLabSafety {
     }
 }
 
-// MARK: - MotionDescriptor Equatable + Hashable (id 기반)
+// MARK: - MotionDescriptor Equatable + Hashable (associated value 비교)
 
+/// **v1.18.0.1 fix (코덱스 HIGH 1)**: 종전 id 기반 비교는 같은 slot 의 page 가 다른
+/// displayName/safetyClass 를 가져도 == 처리 → composite safety max 산출 시 stale 값
+/// 위험. associated value 자체 비교로 변경.
 extension MotionDescriptor: Equatable, Hashable {
     public static func == (lhs: MotionDescriptor, rhs: MotionDescriptor) -> Bool {
-        lhs.id == rhs.id
+        switch (lhs, rhs) {
+        case (.walk(let a), .walk(let b)):
+            return a == b
+        case (.page(let a), .page(let b)):
+            // MotionPageMetadata 는 Equatable — 모든 stored field 비교.
+            return a == b
+        case (.teach(let a), .teach(let b)):
+            return a == b
+        default:
+            return false
+        }
     }
     public func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
+        switch self {
+        case .walk(let p):
+            hasher.combine(0)
+            hasher.combine(p.rawValue)
+        case .page(let m):
+            hasher.combine(1)
+            hasher.combine(m.slot)
+            hasher.combine(m.safetyClass.rawValue)
+        case .teach(let s):
+            hasher.combine(2)
+            hasher.combine(s.id)
+        }
     }
 }
 

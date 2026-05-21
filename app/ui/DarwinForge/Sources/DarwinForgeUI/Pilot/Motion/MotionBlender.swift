@@ -43,8 +43,31 @@ public final class MotionBlender {
     // MARK: - Play / Stop
 
     /// 단일 또는 composite motion 시작. channel 충돌 / safety verdict 검증.
+    ///
+    /// **v1.18.0.1 fix (코덱스 HIGH 2)**: `safetyContext` 전달 시 TransitionPolicy 통합 호출.
+    /// nil 이면 (테스트 / safety guard 별도 처리 시) 검증 skip.
     @discardableResult
-    public func play(_ descriptor: MotionDescriptor, loop: Bool = false) -> BlendResult {
+    public func play(
+        _ descriptor: MotionDescriptor,
+        loop: Bool = false,
+        safetyContext: SafetyContext? = nil
+    ) -> BlendResult {
+        // 1) safety policy 검증 (있는 경우).
+        if let ctx = safetyContext {
+            let verdict = MotionTransitionPolicy.validate(
+                target: descriptor,
+                balanceState: ctx.balanceState,
+                robotConnected: ctx.robotConnected,
+                riskAcknowledged: ctx.riskAcknowledged
+            )
+            if case .blocked(let reason) = verdict {
+                let result: BlendResult = .rejectedSafety(reason: reason)
+                lastResult = result
+                lastUpdatedAt = Date()
+                return result
+            }
+            // requireConfirm 은 caller 책임 (UI sheet 표시) — 여기선 일단 통과.
+        }
         let result = validateAndApply(single: descriptor, loop: loop)
         lastResult = result
         lastUpdatedAt = Date()
@@ -53,8 +76,28 @@ public final class MotionBlender {
 
     /// composite 시작 — lower + upper 동시.
     @discardableResult
-    public func play(composite: CompositeMotion, upperLoops: Bool = false) -> BlendResult {
-        // CompositeMotion init 가 이미 channel 충돌 검증 — 통과한 상태.
+    public func play(
+        composite: CompositeMotion,
+        upperLoops: Bool = false,
+        safetyContext: SafetyContext? = nil
+    ) -> BlendResult {
+        // **v1.18.0.1 fix**: composite 도 safety 검증 — lower + upper 각각 별도 검증.
+        if let ctx = safetyContext {
+            for descriptor in [composite.lower, composite.upper] {
+                let verdict = MotionTransitionPolicy.validate(
+                    target: descriptor,
+                    balanceState: ctx.balanceState,
+                    robotConnected: ctx.robotConnected,
+                    riskAcknowledged: ctx.riskAcknowledged
+                )
+                if case .blocked(let reason) = verdict {
+                    let result: BlendResult = .rejectedSafety(reason: reason)
+                    lastResult = result
+                    lastUpdatedAt = Date()
+                    return result
+                }
+            }
+        }
         lower = composite.lower
         upper = composite.upper
         self.upperLoops = upperLoops
@@ -127,6 +170,26 @@ public final class MotionBlender {
         }
         // 빈 motion — 무시.
         return .rejectedEmptyChannels
+    }
+}
+
+// MARK: - SafetyContext
+
+/// `MotionBlender.play(_:safetyContext:)` 의 검증 input.
+/// 호출 site (예: WalkLabRCBridge) 가 현재 session 의 balanceState 등을 캡처해서 전달.
+public struct SafetyContext: Equatable, Sendable {
+    public let balanceState: WalkLabSession.BalanceState
+    public let robotConnected: Bool
+    public let riskAcknowledged: Bool
+
+    public init(
+        balanceState: WalkLabSession.BalanceState,
+        robotConnected: Bool,
+        riskAcknowledged: Bool
+    ) {
+        self.balanceState = balanceState
+        self.robotConnected = robotConnected
+        self.riskAcknowledged = riskAcknowledged
     }
 }
 

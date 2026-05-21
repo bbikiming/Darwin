@@ -216,6 +216,76 @@ final class MotionBlenderTests: XCTestCase {
         XCTAssertEqual(max(SafetyClass.safe, .highRisk), .highRisk)
     }
 
+    // MARK: - Boundary cases (코덱스 MEDIUM)
+
+    /// teach 자세는 전신 점유 → acceptedFullBody 분기.
+    func testTeachAssumedFullBody() {
+        let blender = MotionBlender()
+        let snap = TeachCapture.PoseSnapshot(name: "test pose", pose: .walkReady, capturedAt: Date())
+        let result = blender.play(.teach(snap))
+        if case .acceptedFullBody = result { /* OK */ } else {
+            XCTFail("teach 는 전신 점유 — acceptedFullBody 기대, 실제: \(result)")
+        }
+        XCTAssertNotNil(blender.lower, "전신 motion 은 lower channel 에 저장")
+    }
+
+    /// 빈 occupied channel 거부.
+    func testEmptyChannelMotionRejected() {
+        let blender = MotionBlender()
+        // bodyRegions 빈 page — 인공적 edge case.
+        let emptyPage = makeTestPage(slot: 99, bodyParts: [])
+        let result = blender.play(.page(emptyPage))
+        XCTAssertEqual(result, .rejectedEmptyChannels)
+    }
+
+    /// safety policy 거부 — emergency 상태에서 motion 차단.
+    func testSafetyContextBlocksDuringEmergency() {
+        let blender = MotionBlender()
+        let upperPage = makeTestPage(slot: 1, bodyParts: [.rightArm])
+        let ctx = SafetyContext(
+            balanceState: .emergency,
+            robotConnected: false,
+            riskAcknowledged: false
+        )
+        let result = blender.play(.page(upperPage), safetyContext: ctx)
+        if case .rejectedSafety = result { /* OK */ } else {
+            XCTFail("emergency 상태 — rejectedSafety 기대, 실제: \(result)")
+        }
+        XCTAssertNil(blender.upper, "rejected → state 변경 X")
+    }
+
+    /// safety context 없으면 검증 skip (sim mode).
+    func testNoSafetyContextSkipsValidation() {
+        let blender = MotionBlender()
+        let result = blender.play(.walk(.slowWalk), safetyContext: nil)
+        XCTAssertTrue(result.isAccepted)
+    }
+
+    /// composite 후 새 lower play 시 upper 유지.
+    func testPlayingNewLowerKeepsExistingUpper() {
+        let blender = MotionBlender()
+        let upperPage = makeTestPage(slot: 1, bodyParts: [.rightArm])
+        guard let composite = CompositeMotion(lower: .walk(.slowWalk), upper: .page(upperPage)) else {
+            XCTFail("composite init"); return
+        }
+        blender.play(composite: composite)
+        XCTAssertEqual(blender.upper?.id, MotionDescriptor.page(upperPage).id)
+
+        // 새 lower (다른 walk) play.
+        blender.play(.walk(.march))
+        XCTAssertEqual(blender.lower?.id, MotionDescriptor.walk(.march).id, "lower 교체됨")
+        XCTAssertEqual(blender.upper?.id, MotionDescriptor.page(upperPage).id, "upper 유지")
+    }
+
+    /// associated value 비교 — 같은 slot 다른 safety 는 != (코덱스 HIGH 1).
+    func testMotionDescriptorEqualityRespectsSafety() {
+        let safePage = makeTestPage(slot: 7, bodyParts: [.rightArm], safety: .safe)
+        let highPage = makeTestPage(slot: 7, bodyParts: [.rightArm], safety: .highRisk)
+        // 종전 id 기반은 == True 였음. 신규 associated value 기반 == False.
+        XCTAssertNotEqual(MotionDescriptor.page(safePage), MotionDescriptor.page(highPage),
+                          "같은 slot 의 다른 safety = != (HIGH 1 fix)")
+    }
+
     // MARK: - Fixtures
 
     private func makeTestPage(
