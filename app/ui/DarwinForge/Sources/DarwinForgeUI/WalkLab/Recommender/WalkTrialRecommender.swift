@@ -48,6 +48,9 @@ public final class WalkTrialRecommender {
         if let coord = coordinateDescent(for: preset) {
             results.append(coord)
         }
+        if let pilot = pilotBiased(for: preset) {
+            results.append(pilot)
+        }
         // Claude strategy 는 Phase 2 에선 placeholder. ExperimentLoopController 와 통합 후 별도.
 
         return results
@@ -178,6 +181,69 @@ public final class WalkTrialRecommender {
         )
     }
 
+    // MARK: - Strategy 3: Pilot-biased (Cycle 16)
+
+    /// **v1.20.9 (2026-05-22) 사이클 16** — pilot stick 입력의 peak amplitude 를 사용자
+    /// comfort zone 으로 해석. trial.config.pilotInputs (Cycle 7) 가 set 된 trial 만 사용.
+    ///
+    /// # 비유
+    ///
+    /// 사용자가 자전거 타며 "이 정도 속도가 편하다" 라고 결정하는 것과 같음. 본 strategy 는
+    /// "사용자가 stick 으로 최대 35mm 까지 밀고 좋은 결과 (overall > 0.7) 가 나왔다면 35mm 가
+    /// 그들의 selector sweet spot" 으로 추론.
+    ///
+    /// # 필터
+    ///
+    /// - preset 일치
+    /// - pilotInputs != nil (Cycle 7 이후 trial 만)
+    /// - pilotInputs.totalEvents >= 10 (substantial 조종 활동)
+    /// - outcome.overallScore >= 0.7 (mild success threshold — 평균 stride 안전성 보장)
+    /// - falls == 0
+    ///
+    /// trial 부족 (< 2 개) 시 nil.
+    public func pilotBiased(for preset: String) -> WalkTrialRecommendation? {
+        // Trial 목록을 직접 load — pilotInputs filter 가 store query 의 필드에 없음 (in-memory filter).
+        let filter = TrialFilter(preset: preset, minOverallScore: 0.7, noFallsOnly: true)
+        let allEntries = store.query(filter: filter, sort: .overallDesc)
+        let pilotedTrials: [WalkTrial] = allEntries.prefix(10).compactMap { entry in
+            guard let trial = store.load(id: entry.id),
+                  let pilot = trial.config.pilotInputs,
+                  pilot.totalEvents >= 10 else { return nil }
+            return trial
+        }
+        guard pilotedTrials.count >= 2 else { return nil }
+
+        let n = Double(pilotedTrials.count)
+        let avgPeakStride = pilotedTrials.map { $0.config.pilotInputs!.peakStrideMm }.reduce(0, +) / n
+        let avgPeakSide   = pilotedTrials.map { $0.config.pilotInputs!.peakSideMm   }.reduce(0, +) / n
+        let avgPeakTurn   = pilotedTrials.map { $0.config.pilotInputs!.peakTurnDeg  }.reduce(0, +) / n
+        // 다른 tuning 축은 trial 의 평균 (slider 가 결정).
+        let baseTuning = averageTuning(pilotedTrials.map { $0.config.tuning })
+        // peak amplitude 를 stride/side/turn 에 적용 (사용자 comfort zone).
+        let pilotTuning = TuningSnapshot(
+            strideMm: avgPeakStride,
+            sideMm: avgPeakSide,
+            turnDeg: avgPeakTurn,
+            periodMs: baseTuning.periodMs,
+            footHeightMm: baseTuning.footHeightMm,
+            balanceGain: baseTuning.balanceGain
+        )
+        let intensitySum = pilotedTrials.map { $0.config.intensityLevel }.reduce(0, +)
+        let avgIntensity = Int((Double(intensitySum) / n).rounded())
+        let totalEventsSum = pilotedTrials.map { $0.config.pilotInputs!.totalEvents }.reduce(0, +)
+
+        return WalkTrialRecommendation(
+            strategy: .pilotBiased,
+            preset: preset,
+            tuning: pilotTuning,
+            intensityLevel: avgIntensity,
+            balanceConfig: pilotedTrials.first?.config.balanceConfig ?? .defaultRobotis,
+            dataMaturity: min(1.0, n / 5.0),
+            rationale: "\(Int(n))개 piloted trial — peak avg: stride \(Int(avgPeakStride))mm / side \(Int(avgPeakSide))mm / turn \(Int(avgPeakTurn))° (총 \(totalEventsSum) events)",
+            sourceSampleIds: pilotedTrials.map { $0.id }
+        )
+    }
+
     // MARK: - Helpers
 
     private func averageTuning(_ tunings: [TuningSnapshot]) -> TuningSnapshot {
@@ -220,12 +286,16 @@ public struct WalkTrialRecommendation: Equatable, Sendable, Identifiable {
         /// (Recommender 가 직접 instantiate 안 함). 추후 ClaudeCriticResponse 를 본 Recommendation
         /// 으로 wrap 하는 adapter 추가 시 사용. 현재는 enum exhaustive 완전성을 위해 보존.
         case claudeCritic
+        /// **v1.20.9 (2026-05-22) 사이클 16** — pilot stick 입력 평균 기반.
+        /// trial.config.pilotInputs.peak* 값들의 평균을 사용자 comfort zone 으로 해석.
+        case pilotBiased
 
         public var label: String {
             switch self {
             case .ruleBased:          return "규칙 기반 (good trial 평균)"
             case .coordinateDescent:  return "좌표 하강 (1축 ±10%)"
             case .claudeCritic:       return "Claude 분석 (추후 통합)"
+            case .pilotBiased:        return "조종 기반 (사용자 comfort)"
             }
         }
 
@@ -234,6 +304,7 @@ public struct WalkTrialRecommendation: Equatable, Sendable, Identifiable {
             case .ruleBased:          return "chart.bar.fill"
             case .coordinateDescent:  return "arrow.up.and.down.righttriangle.up.righttriangle.down"
             case .claudeCritic:       return "brain"
+            case .pilotBiased:        return "gamecontroller.fill"
             }
         }
     }

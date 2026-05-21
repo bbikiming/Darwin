@@ -140,11 +140,79 @@ final class WalkTrialRecommenderTests: XCTestCase {
         XCTAssertTrue(recs.isEmpty)
     }
 
+    // MARK: - Cycle 16: pilot-biased strategy
+
+    /// **v1.20.9 사이클 16** — pilotInputs 가 있는 2+ trial 이 있으면 pilot-biased 추천 발화.
+    func testPilotBiasedReturnsRecommendationWhenEnoughPilotedTrials() {
+        // pilotInputs 가 set 된 trial 3개 추가 (overall > 0.7, 10+ events).
+        store.append(makeTrial(id: "p1", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 30, pilotEvents: 15))
+        store.append(makeTrial(id: "p2", preset: "march", score: 0.9, falls: 0,
+                                pilotPeakStride: 35, pilotEvents: 25))
+        store.append(makeTrial(id: "p3", preset: "march", score: 0.8, falls: 0,
+                                pilotPeakStride: 25, pilotEvents: 20))
+        let rec = recommender.pilotBiased(for: "march")
+        XCTAssertNotNil(rec, "3 piloted trials → 추천")
+        XCTAssertEqual(rec?.strategy, .pilotBiased)
+        XCTAssertEqual(rec?.tuning.strideMm ?? 0, 30, accuracy: 1e-9, "(30+35+25)/3 = 30")
+        XCTAssertEqual(rec?.sourceSampleIds.count, 3)
+    }
+
+    /// **v1.20.9 사이클 16** — pilotInputs 가 없는 trial 은 제외.
+    func testPilotBiasedExcludesTrialsWithoutPilotInputs() {
+        // pilotInputs nil — 제외.
+        store.append(makeTrial(id: "n1", preset: "march", score: 0.85, falls: 0))
+        store.append(makeTrial(id: "n2", preset: "march", score: 0.9, falls: 0))
+        let rec = recommender.pilotBiased(for: "march")
+        XCTAssertNil(rec, "pilotInputs nil 인 trial 만 있을 때 nil")
+    }
+
+    /// **v1.20.9 사이클 16** — totalEvents < 10 인 trial 은 제외.
+    func testPilotBiasedExcludesLowActivityPilots() {
+        store.append(makeTrial(id: "low1", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 30, pilotEvents: 5))  // 미달
+        store.append(makeTrial(id: "low2", preset: "march", score: 0.85, falls: 0,
+                                pilotPeakStride: 30, pilotEvents: 8))  // 미달
+        let rec = recommender.pilotBiased(for: "march")
+        XCTAssertNil(rec, "totalEvents < 10 trial 제외 → 2개 안 채워짐")
+    }
+
+    /// **v1.20.9 사이클 16** — recommend() 가 pilot-biased 포함.
+    func testRecommendIncludesPilotBiased() {
+        // ruleBased + pilotBiased 모두 활성화: 3+ piloted trial + 충분한 overall.
+        for i in 0..<5 {
+            store.append(makeTrial(id: "g\(i)", preset: "march", score: 0.85, falls: 0,
+                                    pilotPeakStride: 28 + Double(i), pilotEvents: 12 + i))
+        }
+        let recs = recommender.recommend(for: "march")
+        let strategies = Set(recs.map { $0.strategy })
+        XCTAssertTrue(strategies.contains(.pilotBiased),
+                      "충분한 piloted trial 시 pilotBiased 활성")
+    }
+
     // MARK: - Fixtures
 
     private func makeTrial(
         id: String, preset: String, score: Double, falls: Int,
-        stride: Double = 20, periodMs: Double = 600
+        stride: Double = 20, periodMs: Double = 600,
+        pilotPeakStride: Double? = nil, pilotEvents: Int = 0
+    ) -> WalkTrial {
+        let pilotInputs: PilotInputSummary? = {
+            guard let peak = pilotPeakStride else { return nil }
+            return PilotInputSummary(
+                sourcesUsed: [.keyboard], totalEvents: pilotEvents,
+                avgAbsStrideMm: peak * 0.5, avgAbsSideMm: 0, avgAbsTurnDeg: 0,
+                peakStrideMm: peak, peakSideMm: 0, peakTurnDeg: 0,
+                emergencyTriggered: false
+            )
+        }()
+        return _makeTrialCore(id: id, preset: preset, score: score, falls: falls,
+                              stride: stride, periodMs: periodMs, pilotInputs: pilotInputs)
+    }
+
+    private func _makeTrialCore(
+        id: String, preset: String, score: Double, falls: Int,
+        stride: Double, periodMs: Double, pilotInputs: PilotInputSummary?
     ) -> WalkTrial {
         WalkTrial(
             id: id,
@@ -159,7 +227,8 @@ final class WalkTrialRecommenderTests: XCTestCase {
                 tuning: TuningSnapshot(strideMm: stride, sideMm: 0, turnDeg: 0,
                                        periodMs: periodMs, footHeightMm: 40, balanceGain: 1.0),
                 walkingEngine: "macSparseKeyframe",
-                isRealRobot: false
+                isRealRobot: false,
+                pilotInputs: pilotInputs
             ),
             outcome: TrialOutcome(
                 stabilityScore: score, smoothnessScore: score, energyScore: score,
