@@ -294,6 +294,9 @@ public final class WalkLabRCBridge {
             // 본 intent 는 새 trial 의 첫 입력 — reset 후 record. session.pilotBridge nil 시 reset
             // 발생 안 함 → 단일 record (이전 record 가 진입 즉시 발화 안 했으므로 OK).
             accumulator.record(intent)
+            // **v1.20.29 사이클 35** — auto-start 도 preset transition telemetry (handlePreset 일관성).
+            accumulator.recordPresetChange(source: intent.source)
+            presetChangeMirror += 1
             // **사이클 9-fix LOW 1 (코덱스)** — lastRobotEvent overwrite 차단 위해 set 제거.
             // 종전: "🎮 ... auto-start" → applyAmplitude 즉시 "🕹 ... stride" 로 덮임 → 사용자 못 봄.
             // 사용자는 session.current 변화 (idle → march) 와 amplitude 메시지로 충분히 인지.

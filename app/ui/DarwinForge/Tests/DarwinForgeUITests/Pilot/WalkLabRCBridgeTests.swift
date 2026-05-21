@@ -167,6 +167,15 @@ final class WalkLabRCBridgeTests: XCTestCase {
                        "session.start reset 후 re-record (사이클 23-fix MEDIUM 1)")
     }
 
+    /// **v1.20.29 사이클 35** — auto-start (process .move auto-start path) 도 presetChangeMirror 증가.
+    func testAutoStartIncrementsPresetChangeMirror() {
+        session.pilotBridge = bridge  // production wiring.
+        XCTAssertEqual(bridge.presetChangeMirror, 0)
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)  // auto-start
+        XCTAssertEqual(session.current, .march)
+        XCTAssertEqual(bridge.presetChangeMirror, 1, "auto-start = preset transition")
+    }
+
     /// **v1.20.17.1 사이클 23-fix MEDIUM 2 (코덱스)** — observable mirror 증가.
     func testHandlePresetIncrementsObservableMirror() {
         XCTAssertEqual(bridge.presetChangeMirror, 0)
