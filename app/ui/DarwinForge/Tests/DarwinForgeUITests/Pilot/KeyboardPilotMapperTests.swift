@@ -239,4 +239,18 @@ final class KeyboardPilotMapperTests: XCTestCase {
         // WASD/QE (6) + arrows (4) + space (1) + digits 0-7 (8) + r (1) + m (1) = 21
         XCTAssertEqual(count, 21, "21 keys total")
     }
+
+    // MARK: - Cycle 47: PilotKey labels
+
+    func testAllPilotKeysHaveNonEmptyLabels() {
+        for key in PilotKey.allCases {
+            XCTAssertFalse(key.label.isEmpty, "\(key) label 존재")
+            XCTAssertFalse(key.koreanDescription.isEmpty, "\(key) 한국어 설명 존재")
+        }
+    }
+
+    func testPilotKeyKoreanDescriptions() {
+        XCTAssertEqual(PilotKey.forward.koreanDescription, "전진")
+        XCTAssertEqual(PilotKey.emergency.koreanDescription, "긴급 정지")
+    }
 }
