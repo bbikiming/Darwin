@@ -74,6 +74,38 @@ final class PilotMotionCatalogTests: XCTestCase {
         }
     }
 
+    /// **v1.20.22.1 사이클 36-fix HIGH 1 (코덱스)** — handleMotion(id:) safety gate (disabled).
+    @MainActor
+    func testBridgeHandleMotionIdRejectsWhenDisabled() {
+        let mock = MockTelloLink()
+        let session = WalkLabSession()
+        let bridge = WalkLabRCBridge(tello: mock)
+        bridge.session = session
+        bridge.enabled = false
+        let result = bridge.handleMotion(id: "preset.march", from: .ui)
+        if case .rejectedSafety = result { /* OK */ } else {
+            XCTFail("disabled → rejectedSafety 기대")
+        }
+        XCTAssertTrue(bridge.safetyMessage?.contains("비활성") ?? false)
+    }
+
+    /// **v1.20.22.1 사이클 36-fix HIGH 1 (코덱스)** — handleMotion(id:) safety gate (emergency).
+    @MainActor
+    func testBridgeHandleMotionIdRejectsDuringEmergency() {
+        let mock = MockTelloLink()
+        let session = WalkLabSession()
+        let bridge = WalkLabRCBridge(tello: mock)
+        bridge.session = session
+        session.start(.march)
+        bridge.handleEmergency(from: .ui)
+        XCTAssertTrue(session.emergencyStopActive)
+        let result = bridge.handleMotion(id: "preset.march", from: .ui)
+        if case .rejectedSafety = result { /* OK */ } else {
+            XCTFail("emergency → rejectedSafety 기대")
+        }
+        XCTAssertTrue(bridge.safetyMessage?.contains("긴급") ?? false)
+    }
+
     @MainActor
     func testBridgeHandleMotionIdRejectsUnknown() {
         let mock = MockTelloLink()
