@@ -270,11 +270,16 @@ public struct TelloPilotHud: View {
     private var controlsRow: some View {
         VStack(spacing: 4) {
             // **v1.20.15 사이클 21** — 현재 settings 표시 (감도 + smoothing).
+            // **v1.20.23 사이클 29**: preset 전환 카운터 chip 추가 (KeyboardPanel 와 일관성).
             HStack(spacing: 6) {
                 settingChip(icon: "speedometer",
                             label: String(format: "감도 %.1fx", currentSensitivity))
                 settingChip(icon: "waveform.path",
                             label: String(format: "smooth %.1f", bridge.smoothingFactor))
+                if bridge.presetChangeMirror > 0 {
+                    settingChip(icon: "arrow.triangle.2.circlepath",
+                                label: "\(bridge.presetChangeMirror)")
+                }
                 Spacer()
             }
             HStack(spacing: 8) {
