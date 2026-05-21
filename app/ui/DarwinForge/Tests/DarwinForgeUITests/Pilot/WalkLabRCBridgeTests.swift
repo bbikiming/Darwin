@@ -317,6 +317,16 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
+    /// **v1.20.33 사이클 41** — lastInputAt + lastInputAge.
+    func testBridgeLastInputTracking() {
+        XCTAssertNil(bridge.lastInputAt)
+        XCTAssertNil(bridge.lastInputAge)
+        bridge.handleStop(from: .keyboard)
+        XCTAssertNotNil(bridge.lastInputAt)
+        XCTAssertNotNil(bridge.lastInputAge)
+        XCTAssertLessThan(bridge.lastInputAge!, 1.0, "방금 — 1초 미만")
+    }
+
     /// **v1.20.31 사이클 39** — bridge.enabled=false 토글 시 stride hard-zero.
     func testBridgeDisableHardZerosAmplitude() {
         session.pilotBridge = bridge

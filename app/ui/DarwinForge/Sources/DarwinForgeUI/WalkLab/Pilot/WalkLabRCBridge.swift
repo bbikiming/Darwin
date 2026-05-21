@@ -437,4 +437,15 @@ public final class WalkLabRCBridge {
     public var isActive: Bool {
         activityRate > 0.5  // 0.5 events/sec 이상이면 active 로 간주.
     }
+
+    /// **v1.20.33 사이클 41** — 가장 최근 intent 의 timestamp. UI age 표시 용.
+    public var lastInputAt: Date? {
+        lastIntent?.timestamp
+    }
+
+    /// **v1.20.33 사이클 41** — 가장 최근 입력 이후 경과 시간 (초). nil = 입력 없음.
+    public var lastInputAge: TimeInterval? {
+        guard let t = lastInputAt else { return nil }
+        return Date().timeIntervalSince(t)
+    }
 }
