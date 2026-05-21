@@ -303,9 +303,16 @@ public struct KeyboardPilotPanel: View {
                     .lineLimit(2)
             }
         } else if isFocused && !pressedKeys.isEmpty {
-            Text(activeKeysSummary)
-                .font(.caption.monospaced())
-                .foregroundStyle(DFColor.accent)
+            HStack(spacing: 4) {
+                Text(activeKeysSummary)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(DFColor.accent)
+                if presetChangeCount > 0 {
+                    Text("· 🔄\(presetChangeCount)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+            }
         } else if !isFocused {
             Text("패널 클릭 후 WASD/QE 키로 조종, Space 긴급정지")
                 .font(.caption2)
@@ -322,6 +329,12 @@ public struct KeyboardPilotPanel: View {
             .sorted { $0.label < $1.label }
             .map(\.label)
         return "활성: " + labels.joined(separator: " + ")
+    }
+
+    /// **v1.20.17 사이클 23** — 현재 trial 의 preset 전환 횟수 표시.
+    /// accumulator 의 live snapshot — UI refresh 마다 갱신.
+    private var presetChangeCount: Int {
+        session.pilotBridge?.accumulator.summarize().presetChangeCount ?? 0
     }
 
     // MARK: - Key handling
