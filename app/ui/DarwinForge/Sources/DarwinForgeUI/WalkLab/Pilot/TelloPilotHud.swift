@@ -209,7 +209,28 @@ public struct TelloPilotHud: View {
 
     private var statusRow: some View {
         Group {
-            if let msg = bridge.safetyMessage {
+            // **v1.20.19 사이클 25** — emergency 상태 시 recovery 버튼 (KeyboardPilotPanel 와 동일).
+            if let session = bridge.session, session.emergencyStopActive {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.octagon.fill")
+                        .font(.caption2)
+                        .foregroundStyle(DFColor.danger)
+                    Text("긴급 정지 — recovery 필요")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(DFColor.danger)
+                    Spacer()
+                    Button("Recover") {
+                        bridge.handleRecovery(from: .ui)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .tint(DFColor.warning)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(DFColor.danger.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            } else if let msg = bridge.safetyMessage {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption2)
