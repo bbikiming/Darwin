@@ -126,6 +126,18 @@ public final class WalkLabRCBridge {
         process(.stop(from: source))
     }
 
+    /// **v1.20.22.1 사이클 28-fix HIGH (코덱스)** — string id 기반 motion 진입 (catalog resolve).
+    /// 외부 caller (음성, MCP, button 등) 가 motion descriptor 직접 구성 없이 id 만으로 발화.
+    /// catalog 가 모르는 id → BlendResult.rejectedSafety("unknown") 반환.
+    @discardableResult
+    public func handleMotion(id: String, from source: InputSource) -> BlendResult {
+        guard let descriptor = pilotMotionCatalog.resolve(id) else {
+            safetyMessage = "모션 '\(id)' — 등록 안 됨. 가능한 id: \(pilotMotionCatalog.knownIds.prefix(3).joined(separator: ", "))…"
+            return .rejectedSafety(reason: "motion id \"\(id)\" not in catalog")
+        }
+        return handleMotion(descriptor, from: source)
+    }
+
     /// **v1.20.12 사이클 18** — emergency recovery (사이클 10-fix CRITICAL 후속).
     /// session.emergencyStopActive=true 일 때 사용자 명시 recovery → flag clear, walking 미시작.
     /// 이후 handlePreset / handleTelloStick 가 다시 정상 동작.
@@ -134,8 +146,11 @@ public final class WalkLabRCBridge {
             safetyMessage = "WalkLabSession 미연결"
             return
         }
+        // **v1.20.22.1 사이클 28-fix LOW (코덱스)** — 이미 비 emergency 면 silent no-op.
+        // 종전: "Emergency 상태 아님 — recovery 불필요" 메시지로 기존 safetyMessage 덮음 →
+        // 두 곳 (Panel + HUD) 에서 거의 동시에 recovery 클릭 시 두 번째 호출이 이전 메시지 덮음.
+        // 신규: silent no-op (safetyMessage 미변경) → 호출 idempotent.
         guard session.emergencyStopActive else {
-            safetyMessage = "Emergency 상태 아님 — recovery 불필요"
             return
         }
         session.exitEmergencyMode()
@@ -155,10 +170,6 @@ public final class WalkLabRCBridge {
             safetyMessage = "WalkLabSession 미연결 — bridge.session 설정 필요"
             return
         }
-        // **v1.20.16 사이클 22** — accumulator 에 preset 전환 기록 (telemetry).
-        accumulator.recordPresetChange(source: source)
-        // **v1.20.17.1 사이클 23-fix MEDIUM 2 (코덱스)** — observable mirror 동시 증가.
-        presetChangeMirror += 1
         if !enabled {
             safetyMessage = "Bridge 비활성 — preset 단축키 무시 (emergency 만 허용)"
             return
@@ -181,14 +192,18 @@ public final class WalkLabRCBridge {
             }
             return
         }
-        // **v1.20.20 사이클 26** — 같은 preset 재입력 idempotent (no-op).
+        // **v1.20.20 사이클 26 + 28-fix MEDIUM** — 같은 preset 재입력 idempotent (no-op).
         // 종전: alreadyWalking preflight 차단 + "march 진행 중" safety 메시지 — 게임 UX 거슬림.
         // 신규: 동일 preset 재입력 시 silent no-op (사용자 의도: 변경 없음).
         // 단 emergencyStopActive 체크는 위에서 이미 통과한 상태.
+        // **사이클 28-fix MEDIUM (코덱스)**: telemetry 도 same-preset 경우 skip (UI 카운터 노이즈 차단).
         if session.current == preset {
             safetyMessage = nil  // 기존 메시지 clear (clean state).
             return
         }
+        // **v1.20.16 사이클 22 + 28-fix MEDIUM**: 실 preset 전환 path 에서만 telemetry 기록.
+        accumulator.recordPresetChange(source: source)
+        presetChangeMirror += 1
         // **v1.20.4.1 사이클 10-fix HIGH (코덱스)** — same-preset retry 의 false-positive 차단.
         // 종전: session.start 후 `current == preset` true 면 성공 처리 → 활성 .march 에 1 재입력
         // 시 preflight 가 alreadyWalking 으로 차단해도 current 변화 없어 성공 메시지 + nil safety.

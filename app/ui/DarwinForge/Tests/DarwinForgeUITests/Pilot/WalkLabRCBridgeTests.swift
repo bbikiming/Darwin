@@ -400,11 +400,12 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertEqual(session.current, .march, "recovery 후 unblock")
     }
 
-    /// **v1.20.12 사이클 18** — emergency 상태 아닐 때 recovery 호출 시 no-op.
+    /// **v1.20.12 사이클 18 + 28-fix LOW (코덱스)** — non-emergency 상태에서 recovery silent no-op.
+    /// 신규 (28-fix LOW): 이중 클릭 (Panel + HUD) idempotent — message 미변경.
     func testHandleRecoveryNoOpWhenNotInEmergency() {
         XCTAssertFalse(session.emergencyStopActive)
         bridge.handleRecovery(from: .ui)
-        XCTAssertEqual(bridge.safetyMessage, "Emergency 상태 아님 — recovery 불필요")
+        XCTAssertNil(bridge.safetyMessage, "silent no-op — message 미변경")
         XCTAssertFalse(session.emergencyStopActive)
     }
 

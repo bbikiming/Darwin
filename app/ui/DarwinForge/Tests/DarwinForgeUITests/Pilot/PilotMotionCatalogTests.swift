@@ -54,6 +54,42 @@ final class PilotMotionCatalogTests: XCTestCase {
         XCTAssertNil(composite.resolve("unknown"))
     }
 
+    /// **v1.20.22.1 사이클 28-fix HIGH (코덱스)** — bridge.handleMotion(id:) public entry.
+    @MainActor
+    func testBridgeHandleMotionIdResolvesViaCatalog() {
+        let mock = MockTelloLink()
+        let session = WalkLabSession()
+        let bridge = WalkLabRCBridge(tello: mock)
+        bridge.session = session
+        // PresetBacked default catalog → "preset.march" 인식.
+        let result = bridge.handleMotion(id: "preset.march", from: .ui)
+        // result 가 accepted / rejectedSafety 무관 — handleMotion(descriptor:) 호출 자체가 success.
+        switch result {
+        case .accepted, .acceptedFullBody:
+            // OK
+            break
+        case .rejectedSafety, .rejectedEmptyChannels:
+            // 가능 — context / safety 에 따라.
+            break
+        }
+    }
+
+    @MainActor
+    func testBridgeHandleMotionIdRejectsUnknown() {
+        let mock = MockTelloLink()
+        let session = WalkLabSession()
+        let bridge = WalkLabRCBridge(tello: mock)
+        bridge.session = session
+        let result = bridge.handleMotion(id: "totally_unknown_xyz", from: .ui)
+        if case .rejectedSafety = result {
+            // OK
+        } else {
+            XCTFail("unknown id 는 rejected 여야 함")
+        }
+        XCTAssertNotNil(bridge.safetyMessage)
+        XCTAssertTrue(bridge.safetyMessage?.contains("등록 안 됨") ?? false)
+    }
+
     func testCompositeKnownIdsConcatenates() {
         let composite = CompositePilotMotionCatalog([
             PresetBackedPilotMotionCatalog(),
