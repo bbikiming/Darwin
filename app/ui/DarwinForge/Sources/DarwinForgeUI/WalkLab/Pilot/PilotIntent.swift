@@ -213,6 +213,10 @@ public struct PilotInputSummary: Codable, Sendable, Equatable {
     )
 
     public var hasData: Bool { totalEvents > 0 }
+
+    /// **v1.20.34 사이클 42** — move intent 만 검사. stop / emergency / motion 만 있고 실 조종
+    /// (move) 없는 trial 구분. Recommender pilotBiased filter 가 이 신호 사용.
+    public var hasMoveData: Bool { moveEventCount > 0 }
 }
 
 // MARK: - Pilot input accumulator (Phase 4 — bridge 내부)
