@@ -166,6 +166,10 @@ public struct TrialConfig: Codable, Sendable, Equatable {
     public let walkingEngine: String
     /// 실 robot 송출 여부.
     public let isRealRobot: Bool
+    /// **v1.17.0 (2026-05-21) Phase 4**: 본 trial 의 pilot 입력 통계.
+    /// nil = pilot bridge 미연결 (UI preset 만 사용한 trial).
+    /// Recommender 가 "사용자 선호 amplitude" 학습 신호로 활용 + Codable backward-compat.
+    public let pilotInputs: PilotInputSummary?
 
     public init(
         preset: String,
@@ -176,7 +180,8 @@ public struct TrialConfig: Codable, Sendable, Equatable {
         tuning: TuningSnapshot,
         customGain: CustomGainSnapshot? = nil,
         walkingEngine: String,
-        isRealRobot: Bool
+        isRealRobot: Bool,
+        pilotInputs: PilotInputSummary? = nil
     ) {
         self.preset = preset
         self.presetSafety = presetSafety
@@ -187,6 +192,7 @@ public struct TrialConfig: Codable, Sendable, Equatable {
         self.customGain = customGain
         self.walkingEngine = walkingEngine
         self.isRealRobot = isRealRobot
+        self.pilotInputs = pilotInputs
     }
 }
 

@@ -67,7 +67,7 @@ public enum TelloRCMapper {
 }
 
 /// 매핑 결과 — Walking module 의 X_MOVE/Y_MOVE/A_MOVE amplitude 대응.
-public struct WalkingCommand: Equatable, Sendable {
+public struct WalkingCommand: Equatable, Sendable, Hashable {
     public let strideMm: Double   // X_MOVE — 보폭 (앞=양수)
     public let sideMm: Double     // Y_MOVE — 측면 (오른쪽=양수)
     public let turnDeg: Double    // A_MOVE — 회전 (반시계=양수)
