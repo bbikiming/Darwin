@@ -262,6 +262,42 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertEqual(session.turnDeg, 0, accuracy: 1e-9, "emergency 후 turn 0")
     }
 
+    /// **v1.20.21 사이클 27** — full pilot pipeline 통합 검증.
+    /// handleTelloStick → applyAmplitude → advanced=true → effectiveCommand 까지 일관성.
+    /// effectiveCommand 가 walking engine 의 실 입력값 — 본 path 가 정확하면 robot 도 정확.
+    func testFullPilotPipelineReachesEffectiveCommand() {
+        session.start(.march)
+        XCTAssertEqual(session.current, .march)
+        XCTAssertFalse(session.advanced, "사전: advanced=false")
+
+        // 100% forward stick → strideMm 40 (TelloRCMapper default).
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+
+        // 1. session 상태 검증.
+        XCTAssertTrue(session.advanced, "advanced 자동 활성 (CRITICAL fix)")
+        XCTAssertEqual(session.strideMm, 40, accuracy: 1e-9, "strideMm 적용")
+        // 2. effectiveCommand 검증 — walking engine 이 실제로 받는 값.
+        let cmd = session.effectiveCommand
+        XCTAssertEqual(cmd.x, 0.040, accuracy: 1e-9, "x_m = strideMm/1000")
+        XCTAssertEqual(cmd.y, 0, accuracy: 1e-9)
+        XCTAssertEqual(cmd.a, 0, accuracy: 1e-9)
+        XCTAssertTrue(cmd.enabled, "current != .idle → enabled true")
+    }
+
+    /// **v1.20.21 사이클 27** — pipeline 종료 path (.stop hard-zero) effectiveCommand reflect.
+    func testFullPilotPipelineStopReachesEffectiveCommand() {
+        session.start(.march)
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        XCTAssertGreaterThan(session.effectiveCommand.x, 0)
+
+        // Release — deadzone (.stop intent) → hard-zero.
+        bridge.handleTelloStick(lr: 0, fb: 0, ud: 0, yaw: 0)
+
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "stop hard-zero")
+        XCTAssertEqual(session.effectiveCommand.x, 0, accuracy: 1e-9,
+                       "effectiveCommand 도 zero — robot 실 정지")
+    }
+
     /// **v1.20.14.1 사이클 20-fix CRITICAL (코덱스)** — applyAmplitude 가 advanced=true 자동 활성.
     /// 종전: bridge 가 strideMm 만 수정, advanced=false 면 walking engine preset default 사용.
     /// 신규: 첫 move intent 시 session.advanced=true 활성 → 실 walking 에 반영.
