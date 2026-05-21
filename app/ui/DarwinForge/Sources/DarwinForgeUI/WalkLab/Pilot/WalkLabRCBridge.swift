@@ -347,11 +347,21 @@ public final class WalkLabRCBridge {
         }
     }
 
-    /// **v1.18.0.2 (사이클 2)** — MotionDescriptor 기반 motion intent 처리.
+    /// **v1.18.0.2 (사이클 2) + 사이클 44** — MotionDescriptor 기반 motion intent 처리.
     /// PilotIntent.motion(String) 의 외부 caller 가 catalog 에서 descriptor 를 resolve 한 후 호출.
     /// MotionBlender.play 가 TransitionPolicy 통합 검증 → BlendResult 반환.
+    /// **사이클 44**: handleMotion(id:) 와 동일 safety gate 적용 — descriptor 직접 호출 시도 차단.
     @discardableResult
     public func handleMotion(_ descriptor: MotionDescriptor, from source: InputSource) -> BlendResult {
+        // **사이클 44**: safety gate (handleMotion(id:) 와 일치).
+        if !enabled {
+            safetyMessage = "Bridge 비활성 — motion 차단"
+            return .rejectedSafety(reason: "bridge disabled")
+        }
+        if let session = session, session.emergencyStopActive {
+            safetyMessage = "긴급 정지 상태 — motion 차단 (recovery 필요)"
+            return .rejectedSafety(reason: "emergency active")
+        }
         let intent = PilotIntent(kind: .motion(descriptor.id), source: source)
         let result: BlendResult
         if let session = session {
