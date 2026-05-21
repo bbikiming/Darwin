@@ -139,14 +139,65 @@ final class WalkLabRCBridgeTests: XCTestCase {
                       "highRiskNotAcknowledged userMessage 노출 (\"위험 동의 필요\")")
     }
 
-    /// **v1.20.16 사이클 22** — handlePreset 호출이 accumulator.presetChangeCount 증가.
+    /// **v1.20.16 사이클 22 + 23-fix MEDIUM 1** — handlePreset 호출이 accumulator.presetChangeCount 증가.
+    /// production wiring 에서 각 session.start 마다 trial reset → accumulator count 가 trial 단위.
+    /// 누적 count 는 bridge.presetChangeMirror 가 보존 (cycle 23-fix MEDIUM 2).
     func testHandlePresetIncrementsPresetChangeCount() {
+        session.pilotBridge = bridge
         XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 0)
         bridge.handlePreset(.march, from: .keyboard)
-        XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 1)
+        XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 1,
+                       "march 시작 trial 의 첫 preset = 1")
+        // .slowWalk 으로 전환 시 sim 모드에서 새 trial 시작 (preflight 통과) → accumulator reset.
         bridge.handlePreset(.slowWalk, from: .keyboard)
-        XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 2)
+        XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 1,
+                       "slowWalk 새 trial 의 첫 preset = 1 (reset 후 re-record)")
         XCTAssertTrue(bridge.accumulator.summarize().sourcesUsed.contains(.keyboard))
+    }
+
+    /// **v1.20.17.1 사이클 23-fix MEDIUM 1 (코덱스)** — pilotBridge wiring 상태에서
+    /// handlePreset 가 session.start 호출 후 accumulator.reset 으로 count 가 0 되지 않음.
+    /// re-record 가 보존.
+    func testHandlePresetCountPreservedAfterSessionStartResets() {
+        session.pilotBridge = bridge  // production wiring 재현.
+        bridge.handlePreset(.march, from: .keyboard)
+        // 성공 path 통과 후 (session.current = .march) accumulator 가 reset 됐다가 재기록.
+        XCTAssertEqual(session.current, .march)
+        XCTAssertEqual(bridge.accumulator.summarize().presetChangeCount, 1,
+                       "session.start reset 후 re-record (사이클 23-fix MEDIUM 1)")
+    }
+
+    /// **v1.20.17.1 사이클 23-fix MEDIUM 2 (코덱스)** — observable mirror 증가.
+    func testHandlePresetIncrementsObservableMirror() {
+        XCTAssertEqual(bridge.presetChangeMirror, 0)
+        bridge.handlePreset(.march, from: .keyboard)
+        XCTAssertEqual(bridge.presetChangeMirror, 1, "observable mirror 증가")
+        bridge.handlePreset(.slowWalk, from: .keyboard)
+        XCTAssertEqual(bridge.presetChangeMirror, 2)
+        // 차이점: mirror 는 reset 영향 안 받음 — bridge lifetime.
+    }
+
+    /// **v1.20.17.1 사이클 23-fix HIGH (코덱스)** — legacy PilotInputSummary JSON 디코딩.
+    /// 기존 trial JSON (presetChangeCount, moveEventCount, peakNeg* 미포함) 도 fallback 0.
+    func testPilotInputSummaryDecodesLegacyJSON() throws {
+        let legacyJSON = """
+        {
+            "sourcesUsed": ["keyboard"],
+            "totalEvents": 5,
+            "avgAbsStrideMm": 10.0,
+            "avgAbsSideMm": 0.0,
+            "avgAbsTurnDeg": 0.0,
+            "peakStrideMm": 20.0,
+            "peakSideMm": 0.0,
+            "peakTurnDeg": 0.0,
+            "emergencyTriggered": false
+        }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(PilotInputSummary.self, from: legacyJSON)
+        XCTAssertEqual(decoded.totalEvents, 5)
+        XCTAssertEqual(decoded.moveEventCount, 0, "legacy missing → 0 default")
+        XCTAssertEqual(decoded.peakNegStrideMm, 0)
+        XCTAssertEqual(decoded.presetChangeCount, 0, "legacy missing → 0 default")
     }
 
     /// **v1.20.4 사이클 10** — bridge 비활성 시 preset 단축키 무시.

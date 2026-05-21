@@ -65,6 +65,11 @@ public final class WalkLabRCBridge {
     public private(set) var accumulator = PilotInputAccumulator()
     /// emergency 발화 횟수 — telemetry.
     public private(set) var emergencyCount: Int = 0
+    /// **v1.20.17.1 사이클 23-fix MEDIUM 2 (코덱스)** — handlePreset 호출 mirror count.
+    /// @Observable 이 internal accumulator 변경 추적 안 함 → View 리액티브 갱신 안 됨.
+    /// 본 mirror 가 bridge 의 observable property 라서 변경 시 View 자동 refresh.
+    /// accumulator 와 분리 — accumulator 는 trial 단위 reset, mirror 는 bridge lifetime.
+    public private(set) var presetChangeMirror: Int = 0
 
     // MARK: - Settings
 
@@ -147,6 +152,8 @@ public final class WalkLabRCBridge {
         }
         // **v1.20.16 사이클 22** — accumulator 에 preset 전환 기록 (telemetry).
         accumulator.recordPresetChange(source: source)
+        // **v1.20.17.1 사이클 23-fix MEDIUM 2 (코덱스)** — observable mirror 동시 증가.
+        presetChangeMirror += 1
         if !enabled {
             safetyMessage = "Bridge 비활성 — preset 단축키 무시 (emergency 만 허용)"
             return
@@ -184,6 +191,10 @@ public final class WalkLabRCBridge {
 
         if session.current == preset && session.current != currentBefore {
             // 실 진입 (sim 정보성 noConnection 포함). 성공 처리.
+            // **v1.20.17.1 사이클 23-fix MEDIUM 1 (코덱스)** — session.start 이 captureTrialStart
+            // 통해 accumulator.reset 호출 → 위 recordPresetChange 가 무효화됨. 재기록.
+            // (mirror 는 reset 영향 안 받음 — bridge lifetime).
+            accumulator.recordPresetChange(source: source)
             session.lastRobotEvent = "🎮 \(source.label) → preset \(preset.rawValue) 시작"
             safetyMessage = nil
         } else if let failure = session.lastPreflightFailure, failure != preflightBefore {

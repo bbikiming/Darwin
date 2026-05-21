@@ -122,6 +122,35 @@ public struct PilotInputSummary: Codable, Sendable, Equatable {
     /// 사용자가 trial 중 preset 단축키 (0-7) 로 전환한 횟수. 높을수록 "사용자가 적극 조작" 신호.
     public let presetChangeCount: Int
 
+    // **v1.20.17.1 사이클 23-fix HIGH (코덱스)** — synthesized Codable 이 default 값을
+    // missing key 에 적용 안 함. 기존 JSON (presetChangeCount, moveEventCount, peakNeg* 미포함)
+    // 디코딩 시 실패 → 전체 trial nil 처리. custom init(from:) 으로 backward-compat.
+    enum CodingKeys: String, CodingKey {
+        case sourcesUsed, totalEvents, moveEventCount,
+             avgAbsStrideMm, avgAbsSideMm, avgAbsTurnDeg,
+             peakStrideMm, peakSideMm, peakTurnDeg,
+             peakNegStrideMm, peakNegSideMm, peakNegTurnDeg,
+             emergencyTriggered, presetChangeCount
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sourcesUsed = try c.decode([InputSource].self, forKey: .sourcesUsed)
+        totalEvents = try c.decode(Int.self, forKey: .totalEvents)
+        moveEventCount = try c.decodeIfPresent(Int.self, forKey: .moveEventCount) ?? 0
+        avgAbsStrideMm = try c.decode(Double.self, forKey: .avgAbsStrideMm)
+        avgAbsSideMm = try c.decode(Double.self, forKey: .avgAbsSideMm)
+        avgAbsTurnDeg = try c.decode(Double.self, forKey: .avgAbsTurnDeg)
+        peakStrideMm = try c.decode(Double.self, forKey: .peakStrideMm)
+        peakSideMm = try c.decode(Double.self, forKey: .peakSideMm)
+        peakTurnDeg = try c.decode(Double.self, forKey: .peakTurnDeg)
+        peakNegStrideMm = try c.decodeIfPresent(Double.self, forKey: .peakNegStrideMm) ?? 0
+        peakNegSideMm = try c.decodeIfPresent(Double.self, forKey: .peakNegSideMm) ?? 0
+        peakNegTurnDeg = try c.decodeIfPresent(Double.self, forKey: .peakNegTurnDeg) ?? 0
+        emergencyTriggered = try c.decode(Bool.self, forKey: .emergencyTriggered)
+        presetChangeCount = try c.decodeIfPresent(Int.self, forKey: .presetChangeCount) ?? 0
+    }
+
     public init(
         sourcesUsed: [InputSource],
         totalEvents: Int,

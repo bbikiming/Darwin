@@ -331,10 +331,11 @@ public struct KeyboardPilotPanel: View {
         return "활성: " + labels.joined(separator: " + ")
     }
 
-    /// **v1.20.17 사이클 23** — 현재 trial 의 preset 전환 횟수 표시.
-    /// accumulator 의 live snapshot — UI refresh 마다 갱신.
+    /// **v1.20.17 사이클 23 + 23-fix MEDIUM 2** — bridge.presetChangeMirror (observable).
+    /// 종전: accumulator.summarize 호출 — internal mutation 추적 안 됨 → UI 갱신 fail.
+    /// 신규: observable mirror 사용 — bridge 변경 시 SwiftUI 자동 refresh.
     private var presetChangeCount: Int {
-        session.pilotBridge?.accumulator.summarize().presetChangeCount ?? 0
+        session.pilotBridge?.presetChangeMirror ?? 0
     }
 
     // MARK: - Key handling
