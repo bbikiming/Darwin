@@ -147,6 +147,27 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(bridge.safetyMessage?.contains("비활성") ?? false)
     }
 
+    // MARK: - Cycle 14/15: activityRate + isActive
+
+    /// **v1.20.8 사이클 14/15** — bridge.activityRate 이 record 후 > 0 됨.
+    func testBridgeActivityRateAfterRecord() {
+        session.start(.march)
+        XCTAssertEqual(bridge.activityRate, 0, accuracy: 0.01, "사전: 0")
+        bridge.handleTelloStick(lr: 0, fb: 50, ud: 0, yaw: 0)
+        bridge.handleTelloStick(lr: 30, fb: 0, ud: 0, yaw: 0)
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        // 3 events within last ~1ms — eventsPerSecond default window 1s → rate ~3.
+        XCTAssertGreaterThanOrEqual(bridge.activityRate, 2.5, "3개 입력 직후 rate ~3")
+    }
+
+    /// **v1.20.8 사이클 14/15** — bridge.isActive: rate > 0.5 threshold.
+    func testBridgeIsActiveThreshold() {
+        session.start(.march)
+        XCTAssertFalse(bridge.isActive, "사전: 입력 없음 → inactive")
+        bridge.handleTelloStick(lr: 0, fb: 50, ud: 0, yaw: 0)
+        XCTAssertTrue(bridge.isActive, "1 event > 0.5 threshold → active")
+    }
+
     /// **v1.20.4.1 사이클 10-fix CRITICAL (코덱스)** — emergency 후 즉시 preset 재시작 차단.
     /// Space + 1 race scenario: emergency 발화 후 1 (march) 입력해도 차단되어야 함.
     func testHandlePresetBlockedDuringEmergency() {
