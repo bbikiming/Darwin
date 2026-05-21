@@ -775,6 +775,30 @@ final class PilotIntentTests: XCTestCase {
         XCTAssertEqual(PilotInputSummary.empty.totalEvents, 0)
     }
 
+    /// **v1.20.28 사이클 34** — comfortLevel 정규화 검증.
+    func testPilotInputSummaryComfortLevel() {
+        let empty = PilotInputSummary.empty
+        XCTAssertEqual(empty.comfortLevel, 0, accuracy: 1e-9, "pilot 미사용 → 0")
+
+        let max = PilotInputSummary(
+            sourcesUsed: [.keyboard], totalEvents: 1, moveEventCount: 1,
+            avgAbsStrideMm: 40, avgAbsSideMm: 25, avgAbsTurnDeg: 20,
+            peakStrideMm: 40, peakSideMm: 25, peakTurnDeg: 20,
+            peakNegStrideMm: 0, peakNegSideMm: 0, peakNegTurnDeg: 0,
+            emergencyTriggered: false
+        )
+        XCTAssertEqual(max.comfortLevel, 1.0, accuracy: 1e-9, "모든 축 max → 1.0")
+
+        let half = PilotInputSummary(
+            sourcesUsed: [.keyboard], totalEvents: 1, moveEventCount: 1,
+            avgAbsStrideMm: 0, avgAbsSideMm: 0, avgAbsTurnDeg: 0,
+            peakStrideMm: 20, peakSideMm: 12.5, peakTurnDeg: 10,
+            peakNegStrideMm: 0, peakNegSideMm: 0, peakNegTurnDeg: 0,
+            emergencyTriggered: false
+        )
+        XCTAssertEqual(half.comfortLevel, 0.5, accuracy: 1e-9, "half × 3축 평균 → 0.5")
+    }
+
     func testAccumulatorAvgCalculation() {
         let acc = PilotInputAccumulator()
         acc.record(.move(WalkingCommand(strideMm: 10, sideMm: 5, turnDeg: -3), from: .tello))

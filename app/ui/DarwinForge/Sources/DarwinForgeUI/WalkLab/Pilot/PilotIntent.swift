@@ -189,6 +189,17 @@ public struct PilotInputSummary: Codable, Sendable, Equatable {
     public var peakAbsSideMm: Double   { max(peakSideMm,   peakNegSideMm)   }
     public var peakAbsTurnDeg: Double  { max(peakTurnDeg,  peakNegTurnDeg)  }
 
+    /// **v1.20.28 사이클 34** — 단일 "comfort level" 지표 (0..~50).
+    /// 3 축 peakAbs 의 정규화된 평균. Recommender / UI 가 한 숫자로 trial 비교 가능.
+    /// 0 = pilot 미사용, 높을수록 사용자가 큰 amplitude 사용.
+    /// 정규화 기준: stride 40mm = 1.0, side 25mm = 1.0, turn 20° = 1.0 (TelloRCMapper clamp).
+    public var comfortLevel: Double {
+        let normStride = peakAbsStrideMm / 40.0
+        let normSide   = peakAbsSideMm / 25.0
+        let normTurn   = peakAbsTurnDeg / 20.0
+        return (normStride + normSide + normTurn) / 3.0
+    }
+
     /// pilot input 없음 — 사용자가 UI preset 만 사용한 trial.
     public static let empty = PilotInputSummary(
         sourcesUsed: [], totalEvents: 0, moveEventCount: 0,
