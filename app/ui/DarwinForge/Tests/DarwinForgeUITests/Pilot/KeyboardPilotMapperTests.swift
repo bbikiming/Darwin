@@ -164,4 +164,36 @@ final class KeyboardPilotMapperTests: XCTestCase {
             XCTAssertTrue(handled.contains(arrow), "\(arrow.character) 포함")
         }
     }
+
+    // MARK: - Cycle 10: preset shortcuts (number keys)
+
+    func testResolvePresetDigits() {
+        XCTAssertEqual(KeyboardPilotMapper.resolvePreset("0"), .idle)
+        XCTAssertEqual(KeyboardPilotMapper.resolvePreset("1"), .march)
+        XCTAssertEqual(KeyboardPilotMapper.resolvePreset("2"), .slowWalk)
+        XCTAssertEqual(KeyboardPilotMapper.resolvePreset("3"), .normalWalk)
+        XCTAssertEqual(KeyboardPilotMapper.resolvePreset("4"), .fastWalk)
+        XCTAssertEqual(KeyboardPilotMapper.resolvePreset("5"), .jog)
+        XCTAssertEqual(KeyboardPilotMapper.resolvePreset("6"), .turnLeft)
+        XCTAssertEqual(KeyboardPilotMapper.resolvePreset("7"), .turnRight)
+    }
+
+    func testResolvePresetUnmappedDigits() {
+        XCTAssertNil(KeyboardPilotMapper.resolvePreset("8"))
+        XCTAssertNil(KeyboardPilotMapper.resolvePreset("9"))
+    }
+
+    func testResolvePresetNonDigit() {
+        XCTAssertNil(KeyboardPilotMapper.resolvePreset("a"))
+        XCTAssertNil(KeyboardPilotMapper.resolvePreset("w"))
+        XCTAssertNil(KeyboardPilotMapper.resolvePreset(.space))
+    }
+
+    func testAllHandledKeysIncludesDigits() {
+        let handled = Set(KeyboardPilotMapper.allHandledKeys.map(\.character))
+        for digit in 0..<8 {
+            XCTAssertTrue(handled.contains(Character(String(digit))),
+                          "digit \(digit) 포함")
+        }
+    }
 }

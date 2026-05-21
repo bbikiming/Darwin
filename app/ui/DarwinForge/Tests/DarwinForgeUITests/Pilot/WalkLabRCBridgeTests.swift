@@ -110,6 +110,41 @@ final class WalkLabRCBridgeTests: XCTestCase {
                        "차단 path 도 사용자 입력 1회 기록")
     }
 
+    // MARK: - Cycle 10: handlePreset (number key shortcuts)
+
+    /// **v1.20.4 사이클 10** — handlePreset 이 idle 상태에서 march 시작.
+    func testHandlePresetStartsWalking() {
+        XCTAssertEqual(session.current, .idle)
+        bridge.handlePreset(.march, from: .keyboard)
+        XCTAssertEqual(session.current, .march, "preset 시작 성공")
+        XCTAssertNil(bridge.safetyMessage)
+    }
+
+    /// **v1.20.4 사이클 10** — handlePreset(.idle) = session.stop 효과.
+    func testHandlePresetIdleStopsWalking() {
+        session.start(.march)
+        XCTAssertEqual(session.current, .march)
+        bridge.handlePreset(.idle, from: .keyboard)
+        XCTAssertEqual(session.current, .idle, ".idle preset → session.stop")
+    }
+
+    /// **v1.20.4 사이클 10** — preflight 실패 시 (jog + risk 미동의) safety message.
+    func testHandlePresetBlockedByPreflight() {
+        XCTAssertFalse(session.riskAcknowledged)
+        bridge.handlePreset(.jog, from: .keyboard)
+        XCTAssertEqual(session.current, .idle, "preflight 차단 → idle 유지")
+        XCTAssertNotNil(bridge.safetyMessage)
+        XCTAssertTrue(bridge.safetyMessage?.contains("차단") ?? false)
+    }
+
+    /// **v1.20.4 사이클 10** — bridge 비활성 시 preset 단축키 무시.
+    func testHandlePresetIgnoredWhenDisabled() {
+        bridge.enabled = false
+        bridge.handlePreset(.march, from: .keyboard)
+        XCTAssertEqual(session.current, .idle, "disabled bridge → preset 무시")
+        XCTAssertTrue(bridge.safetyMessage?.contains("비활성") ?? false)
+    }
+
     /// **v1.20.3 사이클 9** — auto-start 가 stop intent 에는 발화 안 함.
     func testAutoStartDoesNotFireOnStopIntent() {
         // deadzone (|stick| < 5) → mapper 가 .stop intent 생성.

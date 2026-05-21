@@ -38,6 +38,7 @@ public struct KeyboardPilotPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             header
             keyMap
+            presetShortcuts  // **v1.20.4 사이클 10** — 숫자 키 단축키 가이드.
             statusLine
         }
         .padding(12)
@@ -142,6 +143,44 @@ public struct KeyboardPilotPanel: View {
         )
     }
 
+    // MARK: - Preset shortcuts (Cycle 10)
+
+    /// **v1.20.4 사이클 10** — 숫자 키 0-7 preset 매핑 가이드.
+    /// 게임 컨트롤러 D-pad 처럼 동작: 1번 키 = march, 2번 = slowWalk, 등.
+    private var presetShortcuts: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Preset 단축키 (0=정지)")
+                .font(.caption2)
+                .foregroundStyle(DFColor.textSecondary)
+            HStack(spacing: 4) {
+                ForEach(0..<8, id: \.self) { i in
+                    presetShortcutChip(digit: i)
+                }
+            }
+        }
+    }
+
+    private func presetShortcutChip(digit: Int) -> some View {
+        let key = KeyEquivalent(Character(String(digit)))
+        let preset = KeyboardPilotMapper.resolvePreset(key)
+        let isActive = preset.map { session.current == $0 } ?? false
+        return VStack(spacing: 1) {
+            Text("\(digit)")
+                .font(.caption2.monospaced().weight(.bold))
+            Text(preset?.label.prefix(3).uppercased() ?? "—")
+                .font(.system(size: 8))
+                .foregroundStyle(DFColor.textSecondary)
+        }
+        .frame(width: 32, height: 30)
+        .background(isActive ? DFColor.accent.opacity(0.25) : DFColor.textSecondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(isActive ? DFColor.accent : DFColor.textSecondary.opacity(0.2),
+                        lineWidth: isActive ? 1.0 : 0.5)
+        )
+    }
+
     @ViewBuilder
     private var statusLine: some View {
         if let msg = session.pilotBridge?.safetyMessage {
@@ -179,6 +218,12 @@ public struct KeyboardPilotPanel: View {
     // MARK: - Key handling
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        // **v1.20.4 사이클 10** — 숫자 키 (0-7) → preset 단축키. down 만 처리 (toggle 아님).
+        // direction 키보다 먼저 검사 — resolve(0) 는 nil 이지만 명시적으로 ordering.
+        if press.phase == .down, let preset = KeyboardPilotMapper.resolvePreset(press.key) {
+            session.pilotBridge?.handlePreset(preset, from: .keyboard)
+            return .handled
+        }
         guard let pilotKey = KeyboardPilotMapper.resolve(press.key) else {
             return .ignored
         }

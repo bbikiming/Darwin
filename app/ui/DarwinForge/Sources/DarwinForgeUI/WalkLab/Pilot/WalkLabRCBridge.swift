@@ -111,6 +111,40 @@ public final class WalkLabRCBridge {
         process(.stop(from: source))
     }
 
+    /// **v1.20.4 (2026-05-22) 사이클 10** — preset 직접 선택 (number key / future button).
+    /// session.start (preflight 포함) 호출 + lastRobotEvent 갱신. `.idle` 은 session.stop.
+    /// bridge 비활성 (enabled=false) 시 거부 + safetyMessage.
+    public func handlePreset(_ preset: WalkLabPreset, from source: InputSource) {
+        guard let session else {
+            safetyMessage = "WalkLabSession 미연결 — bridge.session 설정 필요"
+            return
+        }
+        if !enabled {
+            safetyMessage = "Bridge 비활성 — preset 단축키 무시 (emergency 만 허용)"
+            return
+        }
+        if preset == .idle {
+            // .idle == 정지. 현재 보행 중일 때만 의미 있음.
+            if session.current != .idle {
+                session.stop()
+                session.lastRobotEvent = "🎮 \(source.label) → 정지 (preset .idle)"
+                safetyMessage = nil
+            } else {
+                safetyMessage = "이미 정지 상태"
+            }
+            return
+        }
+        // 정상 preset — session.start 가 preflight 수행.
+        session.start(preset)
+        if session.current == preset {
+            session.lastRobotEvent = "🎮 \(source.label) → preset \(preset.rawValue) 시작"
+            safetyMessage = nil
+        } else {
+            // session.start 가 preflight 실패 → current 변화 없음 (또는 다른 preset).
+            safetyMessage = "Preset \(preset.rawValue) 시작 차단 — \(session.startBlockedReason ?? "안전 검사 미통과")"
+        }
+    }
+
     // MARK: - Core process
 
     private func process(_ intent: PilotIntent) {

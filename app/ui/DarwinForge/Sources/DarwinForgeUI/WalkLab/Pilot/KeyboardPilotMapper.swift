@@ -115,9 +115,29 @@ public enum KeyboardPilotMapper: Sendable {
     }
 
     /// 본 매퍼가 처리할 모든 KeyEquivalent — onKeyPress 의 keys 파라미터에 전달.
+    /// **v1.20.4 사이클 10**: 0-7 숫자 키 추가 — preset 단축키.
     public static let allHandledKeys: [KeyEquivalent] = [
         "w", "a", "s", "d", "q", "e",
         .upArrow, .downArrow, .leftArrow, .rightArrow,
-        .space
+        .space,
+        "0", "1", "2", "3", "4", "5", "6", "7"
     ]
+
+    /// **v1.20.4 사이클 10** — 숫자 키 → WalkLabPreset 매핑 (게임 컨트롤러 단축키).
+    /// 0 = idle (stop), 1=march, 2=slowWalk, 3=normalWalk, 4=fastWalk,
+    /// 5=jog (highRisk), 6=turnLeft, 7=turnRight.
+    /// `nil` = 매핑 없는 키 (8, 9, A, B 등).
+    public static func resolvePreset(_ key: KeyEquivalent) -> WalkLabPreset? {
+        switch key.character {
+        case "0": return .idle
+        case "1": return .march
+        case "2": return .slowWalk
+        case "3": return .normalWalk
+        case "4": return .fastWalk
+        case "5": return .jog
+        case "6": return .turnLeft
+        case "7": return .turnRight
+        default:  return nil
+        }
+    }
 }
