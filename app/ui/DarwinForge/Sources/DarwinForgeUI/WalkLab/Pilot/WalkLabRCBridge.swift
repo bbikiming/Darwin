@@ -305,4 +305,17 @@ public final class WalkLabRCBridge {
         accumulator.reset()
         return snap
     }
+
+    // MARK: - Live activity metrics (Cycle 14)
+
+    /// **v1.20.8 사이클 14** — 최근 1초간 event rate (events/sec). HUD activity dot 등에 사용.
+    /// PilotInputAccumulator.eventsPerSecond pass-through. 0 = 입력 없음.
+    public var activityRate: Double {
+        accumulator.eventsPerSecond(window: 1.0)
+    }
+
+    /// **v1.20.8 사이클 14** — activity 가 active 한지 (rate > 0). 시각 indicator 용 boolean.
+    public var isActive: Bool {
+        activityRate > 0.5  // 0.5 events/sec 이상이면 active 로 간주.
+    }
 }

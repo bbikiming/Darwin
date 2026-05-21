@@ -52,7 +52,14 @@ public struct TelloPilotHud: View {
 
     private var sourceChip: some View {
         let source = bridge.lastIntent?.source
+        // **v1.20.8 사이클 14** — bridge.isActive (rate > 0.5/s) 시 success 강조 + dot pulse.
+        let isActive = bridge.isActive
         return HStack(spacing: 3) {
+            if isActive {
+                Circle()
+                    .fill(DFColor.success)
+                    .frame(width: 6, height: 6)
+            }
             Image(systemName: source?.icon ?? "circle.dashed")
                 .font(.caption2)
             Text(source?.label ?? "대기")
@@ -60,7 +67,7 @@ public struct TelloPilotHud: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background((source != nil ? DFColor.success : DFColor.textSecondary).opacity(0.18))
+        .background((source != nil ? DFColor.success : DFColor.textSecondary).opacity(isActive ? 0.28 : 0.18))
         .foregroundStyle(source != nil ? DFColor.success : DFColor.textSecondary)
         .clipShape(Capsule())
     }
