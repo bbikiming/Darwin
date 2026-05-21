@@ -214,4 +214,22 @@ final class KeyboardPilotMapperTests: XCTestCase {
         let handled = Set(KeyboardPilotMapper.allHandledKeys.map(\.character))
         XCTAssertTrue(handled.contains("r"), "R 키 포함")
     }
+
+    // MARK: - Cycle 31: Motion key (M)
+
+    func testIsMotionKeyMatchesM() {
+        XCTAssertTrue(KeyboardPilotMapper.isMotionKey("m"))
+        XCTAssertTrue(KeyboardPilotMapper.isMotionKey("M"))
+    }
+
+    func testIsMotionKeyDoesNotMatchOthers() {
+        XCTAssertFalse(KeyboardPilotMapper.isMotionKey("w"))
+        XCTAssertFalse(KeyboardPilotMapper.isMotionKey("r"))
+        XCTAssertFalse(KeyboardPilotMapper.isMotionKey("1"))
+    }
+
+    func testAllHandledKeysIncludesM() {
+        let handled = Set(KeyboardPilotMapper.allHandledKeys.map(\.character))
+        XCTAssertTrue(handled.contains("m"), "M 키 포함")
+    }
 }

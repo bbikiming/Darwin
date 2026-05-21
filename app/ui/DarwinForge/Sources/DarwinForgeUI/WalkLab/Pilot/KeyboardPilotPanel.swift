@@ -44,6 +44,10 @@ public struct KeyboardPilotPanel: View {
     /// bridge.scale = default * multiplier. AppStorage 로 세션 간 유지.
     /// 1.0 = default (fb=0.4, lr=0.3, yaw=0.2). 0.5 = newbie/slow. 2.0 = expert/fast.
     @AppStorage("df.pilot.sensitivityMultiplier") private var sensitivityMultiplier: Double = 1.0
+    /// **v1.20.25 사이클 31** — M 키로 발화할 motion id. catalog 에 등록된 id.
+    /// default "page.1" = motion_4096 의 첫 페이지 (보통 walkReady).
+    /// 사용자가 별도 UI 로 변경 가능 (미래).
+    @AppStorage("df.pilot.motionKeyId") private var motionKeyId: String = "page.1"
 
     public init(autoFocusOnAppear: Bool = true) {
         self.autoFocusOnAppear = autoFocusOnAppear
@@ -353,6 +357,11 @@ public struct KeyboardPilotPanel: View {
                 return .handled  // Space held — recovery 무시 (safety).
             }
             session.pilotBridge?.handleRecovery(from: .keyboard)
+            return .handled
+        }
+        // **v1.20.25 사이클 31** — M 키 → motion catalog 의 default id 발화.
+        if press.phase == .down, KeyboardPilotMapper.isMotionKey(press.key) {
+            _ = session.pilotBridge?.handleMotion(id: motionKeyId, from: .keyboard)
             return .handled
         }
         // **v1.20.4 사이클 10** — 숫자 키 (0-7) → preset 단축키. down 만 처리 (toggle 아님).
