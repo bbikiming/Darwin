@@ -63,7 +63,8 @@ public enum PilotKey: Hashable, Sendable, CaseIterable {
 }
 
 /// 키보드 입력 → WalkingCommand 매핑 + 키 해석.
-public enum KeyboardPilotMapper {
+/// **v1.20.2.1 사이클 8-fix LOW (코덱스)** — Sendable 명시 (stateless 계약 명확화).
+public enum KeyboardPilotMapper: Sendable {
 
     /// 현재 누르고 있는 키 set 을 가상 stick value (-100..100) → WalkingCommand 변환.
     /// 단일 키 = full 강도 (100), 조합 = 각 축 합산 (W+D = fb 100 + lr 100 = 대각선).

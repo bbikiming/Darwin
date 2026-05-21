@@ -26,6 +26,9 @@ import SwiftUI
 public struct KeyboardPilotPanel: View {
 
     @Environment(WalkLabSession.self) private var session
+    /// **v1.20.2.1 사이클 8-fix HIGH (코덱스)** — alt-tab / overlay 닫기 등 .up 누락 경로 안전망.
+    /// scenePhase 가 .active 아닐 때 자동 release.
+    @Environment(\.scenePhase) private var scenePhase
     @State private var pressedKeys: Set<PilotKey> = []
     @FocusState private var isFocused: Bool
 
@@ -56,6 +59,20 @@ public struct KeyboardPilotPanel: View {
         .onChange(of: isFocused) { _, newValue in
             // focus 잃으면 모든 키 release — 멈춤.
             if !newValue {
+                releaseAll()
+            }
+        }
+        // **v1.20.2.1 사이클 8-fix HIGH (코덱스)** — overlay 제거 / 뷰 dismount 시 release.
+        // WalkLabView 가 `showingPilotOverlay = false` 처리할 때 view 가 즉시 사라짐 →
+        // 그 시점에 .up 이 발화 안 했다면 마지막 amplitude 가 남음. onDisappear 가 보장.
+        .onDisappear {
+            releaseAll()
+        }
+        // **v1.20.2.1 사이클 8-fix HIGH (코덱스)** — alt-tab / 백그라운드 진입 시 자동 release.
+        // scenePhase: .active → .inactive / .background 변화 = 사용자가 다른 앱으로 이동.
+        // 그대로 두면 robot 이 계속 걸어감. release 가 panic switch.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active {
                 releaseAll()
             }
         }
@@ -168,7 +185,10 @@ public struct KeyboardPilotPanel: View {
         // emergency 는 down 즉시 발화 (up 은 무시 — 한 번 발화하면 끝).
         if pilotKey == .emergency && press.phase == .down {
             session.pilotBridge?.handleEmergency(from: .keyboard)
-            pressedKeys.remove(.emergency)  // emergency 는 toggle 아님 — 즉시 release.
+            // **v1.20.2.1 사이클 8-fix MEDIUM (코덱스)** — emergency 시 전체 pressedKeys clear.
+            // 종전: `.emergency` 만 제거 → W 누른 채 Space 시 W 가 stale 한 상태로 UI 에 남음.
+            // recovery 후 다음 키 이벤트와 섞이는 race 차단.
+            pressedKeys.removeAll()
             return .handled
         }
         if press.phase == .down {
@@ -182,7 +202,9 @@ public struct KeyboardPilotPanel: View {
 
     private func sendIntent() {
         guard let bridge = session.pilotBridge else { return }
-        let cmd = KeyboardPilotMapper.mapToCommand(pressedKeys: pressedKeys)
+        // **v1.20.2.1 사이클 8-fix MEDIUM (코덱스)** — Tello path 와 동일하게 bridge.scale 적용.
+        // 종전: default scale → 사용자가 settings 에서 sensitivity 조정해도 keyboard 만 무시됨.
+        let cmd = KeyboardPilotMapper.mapToCommand(pressedKeys: pressedKeys, scale: bridge.scale)
         bridge.handleMove(cmd, from: .keyboard)
     }
 
