@@ -117,6 +117,23 @@ final class PilotMotionCatalogTests: XCTestCase {
         XCTAssertNil(catalog.resolve("page.0"), "slot 0 → reject (1-based spec)")
     }
 
+    /// **v1.20.32 사이클 40** — 빈 문자열 / "page." / "page.." edge case.
+    func testPageBackedRejectsEmptyAndMalformed() {
+        let catalog = PageBackedPilotMotionCatalog()
+        XCTAssertNil(catalog.resolve(""), "빈 문자열")
+        XCTAssertNil(catalog.resolve("page."), "page. (key 없음)")
+        XCTAssertNil(catalog.resolve("page.."), "page.. (dot key)")
+        XCTAssertNil(catalog.resolve(" "), "space")
+    }
+
+    /// **v1.20.32 사이클 40** — Preset catalog 도 동일 edge case.
+    func testPresetBackedRejectsEmptyAndMalformed() {
+        let catalog = PresetBackedPilotMotionCatalog()
+        XCTAssertNil(catalog.resolve(""))
+        XCTAssertNil(catalog.resolve("preset."))
+        XCTAssertNil(catalog.resolve("preset.."))
+    }
+
     func testPageBackedRejectsNonPagePrefix() {
         let catalog = PageBackedPilotMotionCatalog()
         XCTAssertNil(catalog.resolve("preset.march"))
