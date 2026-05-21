@@ -31,6 +31,10 @@ public struct KeyboardPilotPanel: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var pressedKeys: Set<PilotKey> = []
     @FocusState private var isFocused: Bool
+    /// **v1.20.13.1 사이클 19-fix MEDIUM (코덱스)** — Space 키 latch.
+    /// pressedKeys.removeAll() (emergency 시) 이 호출되어도 Space 가 물리적으로 held 면 true.
+    /// R 키 입력 시 검사 → Space held 동안 recovery 차단 (의도된 "press to hold" emergency UX).
+    @State private var spaceKeyHeld: Bool = false
     /// **v1.20.6 사이클 12** — overlay 열자마자 키 입력 활성. 게임 UX: 즉시 응답.
     private let autoFocusOnAppear: Bool
     /// **v1.20.11 사이클 17** — 사용자 sensitivity multiplier (0.5x~2x).
@@ -309,8 +313,17 @@ public struct KeyboardPilotPanel: View {
     // MARK: - Key handling
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        // **v1.20.13.1 사이클 19-fix MEDIUM (코덱스)** — Space latch 갱신.
+        // pressedKeys.removeAll (emergency 시) 이 Space 상태 잃어버려도 본 latch 가 보존.
+        if let pilotKey = KeyboardPilotMapper.resolve(press.key), pilotKey == .emergency {
+            spaceKeyHeld = (press.phase == .down)
+        }
         // **v1.20.13 사이클 19** — R 키 → recovery (emergency 상태일 때만 의미).
+        // **사이클 19-fix MEDIUM**: Space held 동안 R 차단 — emergency latch 유지.
         if press.phase == .down, KeyboardPilotMapper.isRecoveryKey(press.key) {
+            guard !spaceKeyHeld else {
+                return .handled  // Space held — recovery 무시 (safety).
+            }
             session.pilotBridge?.handleRecovery(from: .keyboard)
             return .handled
         }
@@ -355,5 +368,7 @@ public struct KeyboardPilotPanel: View {
             // focus 잃었으므로 강제 stop.
             session.pilotBridge?.handleStop(from: .keyboard)
         }
+        // **v1.20.13.1 사이클 19-fix MEDIUM**: Space latch 도 clear — focus 잃어도 안전.
+        spaceKeyHeld = false
     }
 }

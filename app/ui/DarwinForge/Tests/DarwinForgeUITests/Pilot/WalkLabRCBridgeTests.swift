@@ -209,6 +209,33 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertFalse(session.emergencyStopActive)
     }
 
+    /// **v1.20.13.1 사이클 19-fix LOW 1 (코덱스)** — recovery 후 lastIntent 가 clear.
+    /// 종전: HUD 가 stale "긴급" 표시 유지. 신규: nil → HUD "대기" 복귀.
+    func testHandleRecoveryClearsLastIntent() {
+        session.start(.march)
+        bridge.handleEmergency(from: .ui)
+        XCTAssertNotNil(bridge.lastIntent, "사전: emergency intent 기록")
+
+        bridge.handleRecovery(from: .ui)
+
+        XCTAssertNil(bridge.lastIntent, "recovery 후 lastIntent clear")
+    }
+
+    /// **v1.20.13.1 사이클 19-fix LOW 2 (코덱스)** — emergency↔recovery 반복 가능 (회귀 가드).
+    func testRepeatedEmergencyAndRecovery() {
+        for cycle in 1...3 {
+            session.start(.march)
+            XCTAssertEqual(session.current, .march, "cycle \(cycle): march 시작")
+
+            bridge.handleEmergency(from: .ui)
+            XCTAssertTrue(session.emergencyStopActive, "cycle \(cycle): emergency 활성")
+            XCTAssertEqual(session.current, .idle)
+
+            bridge.handleRecovery(from: .ui)
+            XCTAssertFalse(session.emergencyStopActive, "cycle \(cycle): recovery 후 flag clear")
+        }
+    }
+
     /// **v1.20.4.1 사이클 10-fix CRITICAL (코덱스)** — emergency 후 즉시 preset 재시작 차단.
     /// Space + 1 race scenario: emergency 발화 후 1 (march) 입력해도 차단되어야 함.
     func testHandlePresetBlockedDuringEmergency() {

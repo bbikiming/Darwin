@@ -125,6 +125,10 @@ public final class WalkLabRCBridge {
         }
         session.exitEmergencyMode()
         safetyMessage = nil
+        // **v1.20.13.1 사이클 19-fix LOW 1 (코덱스)** — lastIntent clear.
+        // 종전: lastIntent 는 emergency 그대로 → HUD sourceChip 가 stale ("긴급" 표시 유지).
+        // 신규: nil 로 reset → HUD "대기" 로 복귀, recovery 완료 시각화.
+        lastIntent = nil
         session.lastRobotEvent = "✅ \(source.label) → emergency recovery (preset 입력 활성)"
     }
 
