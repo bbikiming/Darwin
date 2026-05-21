@@ -193,6 +193,8 @@ extension WalkLabSession {
             case voltageDroop
             /// 사용자가 onboard 수동 송출 성공.
             case manualSendSucceeded
+            /// **v1.20.12 사이클 18** — 사용자 emergency recovery (flag clear, walking 미시작).
+            case recovery
         }
         public let id = UUID()
         public let timestamp: Date

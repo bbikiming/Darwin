@@ -168,6 +168,47 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(bridge.isActive, "1 event > 0.5 threshold → active")
     }
 
+    // MARK: - Cycle 18: emergency recovery
+
+    /// **v1.20.12 사이클 18** — handleRecovery 이 emergencyStopActive flag 만 clear, walking 미시작.
+    func testHandleRecoveryClearsEmergencyFlag() {
+        session.start(.march)
+        bridge.handleEmergency(from: .ui)
+        XCTAssertTrue(session.emergencyStopActive)
+        XCTAssertEqual(session.current, .idle, "emergency 후 current idle")
+
+        bridge.handleRecovery(from: .ui)
+
+        XCTAssertFalse(session.emergencyStopActive, "recovery → flag clear")
+        XCTAssertEqual(session.current, .idle, "walking 자동 시작 안 함")
+        XCTAssertNil(bridge.safetyMessage, "safety 메시지 clear")
+    }
+
+    /// **v1.20.12 사이클 18** — recovery 후 handlePreset 다시 작동.
+    func testRecoveryUnblocksPresetShortcuts() {
+        session.start(.march)
+        bridge.handleEmergency(from: .ui)
+        XCTAssertTrue(session.emergencyStopActive)
+
+        // recovery 전: handlePreset 차단.
+        bridge.handlePreset(.march, from: .keyboard)
+        XCTAssertEqual(session.current, .idle, "recovery 전 차단")
+
+        bridge.handleRecovery(from: .ui)
+
+        // recovery 후: handlePreset 다시 작동.
+        bridge.handlePreset(.march, from: .keyboard)
+        XCTAssertEqual(session.current, .march, "recovery 후 unblock")
+    }
+
+    /// **v1.20.12 사이클 18** — emergency 상태 아닐 때 recovery 호출 시 no-op.
+    func testHandleRecoveryNoOpWhenNotInEmergency() {
+        XCTAssertFalse(session.emergencyStopActive)
+        bridge.handleRecovery(from: .ui)
+        XCTAssertEqual(bridge.safetyMessage, "Emergency 상태 아님 — recovery 불필요")
+        XCTAssertFalse(session.emergencyStopActive)
+    }
+
     /// **v1.20.4.1 사이클 10-fix CRITICAL (코덱스)** — emergency 후 즉시 preset 재시작 차단.
     /// Space + 1 race scenario: emergency 발화 후 1 (march) 입력해도 차단되어야 함.
     func testHandlePresetBlockedDuringEmergency() {

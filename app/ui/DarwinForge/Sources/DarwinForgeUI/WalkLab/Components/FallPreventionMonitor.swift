@@ -1187,6 +1187,7 @@ struct FallPreventionMonitor: View {
         case .autoTunerApplied:      return "wand.and.stars"
         case .voltageDroop:          return "battery.25"
         case .manualSendSucceeded:   return "paperplane.fill"
+        case .recovery:              return "checkmark.shield.fill"  // 사이클 18
         }
     }
 
@@ -1198,7 +1199,7 @@ struct FallPreventionMonitor: View {
              .thermalAlarm, .preflightFailure,
              .voltageDroop:                              return DFColor.danger
         case .correctorOn, .rampComplete,
-             .manualSendSucceeded:                       return DFColor.success
+             .manualSendSucceeded, .recovery:            return DFColor.success
         case .imuSourceChange, .motorTempSourceChange:   return DFColor.info
         // v1.11.25 audit log-D
         case .engineSwitched:                            return DFColor.info

@@ -111,6 +111,23 @@ public final class WalkLabRCBridge {
         process(.stop(from: source))
     }
 
+    /// **v1.20.12 사이클 18** — emergency recovery (사이클 10-fix CRITICAL 후속).
+    /// session.emergencyStopActive=true 일 때 사용자 명시 recovery → flag clear, walking 미시작.
+    /// 이후 handlePreset / handleTelloStick 가 다시 정상 동작.
+    public func handleRecovery(from source: InputSource) {
+        guard let session else {
+            safetyMessage = "WalkLabSession 미연결"
+            return
+        }
+        guard session.emergencyStopActive else {
+            safetyMessage = "Emergency 상태 아님 — recovery 불필요"
+            return
+        }
+        session.exitEmergencyMode()
+        safetyMessage = nil
+        session.lastRobotEvent = "✅ \(source.label) → emergency recovery (preset 입력 활성)"
+    }
+
     /// **v1.20.4 (2026-05-22) 사이클 10** — preset 직접 선택 (number key / future button).
     /// session.start (preflight 포함) 호출 + lastRobotEvent 갱신. `.idle` 은 session.stop.
     /// bridge 비활성 (enabled=false) 시 거부 + safetyMessage.

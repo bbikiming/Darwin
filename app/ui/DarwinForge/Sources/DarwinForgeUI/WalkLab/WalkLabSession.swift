@@ -895,6 +895,19 @@ public final class WalkLabSession {
     /// 모터 정상 평형 온도 (idle).
     private let motorAmbientTemp: Double = 35.0
 
+    /// **v1.20.12 사이클 18** — emergency 상태 명시 recovery (사용자가 "I'm ready to continue").
+    /// flag 만 clear — walking 시작 안 함. session.start 가 별도로 호출돼야 robot 다시 움직임.
+    /// 사이클 10-fix CRITICAL 에서 emergency 후 preset 단축키 차단 → 본 메서드가 unblock entry point.
+    public func exitEmergencyMode() {
+        guard emergencyStopActive else { return }
+        emergencyStopActive = false
+        lastRobotEvent = "✅ 긴급 정지 recovery — preset 입력 가능"
+        logSafetyEvent(
+            kind: .recovery,
+            message: "사용자 emergency recovery — flag 해제, walking 미시작"
+        )
+    }
+
     public init() {
         self.engine = WalkEngine()
         // v1.7: enableBalanceCorrection default ON 이라 ramp 시작 시점을 init 시 기록.

@@ -252,7 +252,29 @@ public struct KeyboardPilotPanel: View {
 
     @ViewBuilder
     private var statusLine: some View {
-        if let msg = session.pilotBridge?.safetyMessage {
+        // **v1.20.12 사이클 18** — emergency 상태 시 명시 recovery 버튼 노출.
+        // 사이클 10-fix CRITICAL 이 preset 단축키 차단 → 사용자가 unblock 할 명확한 경로.
+        if session.emergencyStopActive {
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .font(.caption2)
+                    .foregroundStyle(DFColor.danger)
+                Text("긴급 정지 — recovery 필요")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DFColor.danger)
+                Spacer()
+                Button("Recover") {
+                    session.pilotBridge?.handleRecovery(from: .ui)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.mini)
+                .tint(DFColor.warning)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(DFColor.danger.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        } else if let msg = session.pilotBridge?.safetyMessage {
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption2)
