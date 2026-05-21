@@ -66,7 +66,16 @@ public final class MotionBlender {
                 lastUpdatedAt = Date()
                 return result
             }
-            // requireConfirm 은 caller 책임 (UI sheet 표시) — 여기선 일단 통과.
+            // **v1.20.30.1 사이클 36-fix HIGH 2 (코덱스)** — requireConfirm 도 차단.
+            // 종전: caller 책임으로 통과 — bridge.handleMotion(id:) path 가 confirm UI 없이 발화 →
+            // highRisk page (slot 12/13 등) 가 사용자 동의 없이 실행 위험.
+            // 신규: requireConfirm 도 reject — caller 가 명시 confirm 후 별도 path 로 재호출 필요.
+            if case .requireConfirm(let reason) = verdict {
+                let result: BlendResult = .rejectedSafety(reason: "위험 동의 필요: \(reason)")
+                lastResult = result
+                lastUpdatedAt = Date()
+                return result
+            }
         }
         let result = validateAndApply(single: descriptor, loop: loop)
         lastResult = result

@@ -129,11 +129,20 @@ public final class WalkLabRCBridge {
         process(.stop(from: source))
     }
 
-    /// **v1.20.22.1 사이클 28-fix HIGH (코덱스)** — string id 기반 motion 진입 (catalog resolve).
+    /// **v1.20.22.1 사이클 28-fix HIGH (코덱스) + 사이클 36-fix HIGH 1** — id 기반 motion 진입.
     /// 외부 caller (음성, MCP, button 등) 가 motion descriptor 직접 구성 없이 id 만으로 발화.
-    /// catalog 가 모르는 id → BlendResult.rejectedSafety("unknown") 반환.
+    /// 사이클 36-fix HIGH 1: safety gate (enabled / emergencyStopActive) 적용.
     @discardableResult
     public func handleMotion(id: String, from source: InputSource) -> BlendResult {
+        // 사이클 36-fix HIGH 1 (코덱스): safety gate.
+        if !enabled {
+            safetyMessage = "Bridge 비활성 — motion 차단"
+            return .rejectedSafety(reason: "bridge disabled")
+        }
+        if let session = session, session.emergencyStopActive {
+            safetyMessage = "긴급 정지 상태 — motion 차단 (recovery 필요)"
+            return .rejectedSafety(reason: "emergency active")
+        }
         guard let descriptor = pilotMotionCatalog.resolve(id) else {
             safetyMessage = "모션 '\(id)' — 등록 안 됨. 가능한 id: \(pilotMotionCatalog.knownIds.prefix(3).joined(separator: ", "))…"
             return .rejectedSafety(reason: "motion id \"\(id)\" not in catalog")
@@ -204,9 +213,9 @@ public final class WalkLabRCBridge {
             safetyMessage = nil  // 기존 메시지 clear (clean state).
             return
         }
-        // **v1.20.16 사이클 22 + 28-fix MEDIUM**: 실 preset 전환 path 에서만 telemetry 기록.
-        accumulator.recordPresetChange(source: source)
-        presetChangeMirror += 1
+        // **v1.20.16 사이클 22 + 28-fix MEDIUM + 36-fix MEDIUM 2 (코덱스)**:
+        // telemetry 는 실 preset transition 성공 후에만 (preflight 실패는 카운트 안 함).
+        // 일단 기록 안 함 — 성공 분기에서 record.
         // **v1.20.4.1 사이클 10-fix HIGH (코덱스)** — same-preset retry 의 false-positive 차단.
         // 종전: session.start 후 `current == preset` true 면 성공 처리 → 활성 .march 에 1 재입력
         // 시 preflight 가 alreadyWalking 으로 차단해도 current 변화 없어 성공 메시지 + nil safety.
@@ -222,10 +231,11 @@ public final class WalkLabRCBridge {
 
         if session.current == preset && session.current != currentBefore {
             // 실 진입 (sim 정보성 noConnection 포함). 성공 처리.
-            // **v1.20.17.1 사이클 23-fix MEDIUM 1 (코덱스)** — session.start 이 captureTrialStart
-            // 통해 accumulator.reset 호출 → 위 recordPresetChange 가 무효화됨. 재기록.
-            // (mirror 는 reset 영향 안 받음 — bridge lifetime).
+            // **v1.20.17.1 사이클 23-fix MEDIUM 1 + 36-fix MEDIUM 2 (코덱스)** — 성공 path 에서만
+            // telemetry. session.start 이 captureTrialStart → accumulator.reset → 재기록.
+            // mirror 는 reset 영향 안 받음 — bridge lifetime, 본 path 에서 첫 증가.
             accumulator.recordPresetChange(source: source)
+            presetChangeMirror += 1
             session.lastRobotEvent = "🎮 \(source.label) → preset \(preset.rawValue) 시작"
             safetyMessage = nil
         } else if let failure = session.lastPreflightFailure, failure != preflightBefore {
