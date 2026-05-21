@@ -169,6 +169,65 @@ final class WalkLabRCBridgeTests: XCTestCase {
                        "stop → finalize → snapshotAndReset 이 accumulator 비움")
     }
 
+    /// **v1.20.1 사이클 7-fix MEDIUM 2 (코덱스)** — finalize 가 두 번 호출되어도 bridge snapshot 은 1회만.
+    /// idempotent: `trialStartCapture nil 가드` 가 두 번째 finalize 를 no-op 으로 막아야 함.
+    func testFinalizeIsIdempotentForBridgeSnapshot() {
+        session.pilotBridge = bridge
+        session.start(.march)  // captureTrialStart → reset.
+        bridge.handleTelloStick(lr: 0, fb: 50, ud: 0, yaw: 0)
+        bridge.handleTelloStick(lr: 30, fb: 0, ud: 0, yaw: 0)
+        // 첫 stop → finalize → snapshotAndReset.
+        session.stop()
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 0, "1차: 비움")
+
+        // 사용자가 두 번째 입력 — 이건 새 trial 시작 전이므로 그냥 누적.
+        bridge.handleTelloStick(lr: 10, fb: 0, ud: 0, yaw: 0)
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 1, "stop 후 입력 누적")
+
+        // 2차 stop — captureTrialStart 가 호출 안 됐으므로 trialStartCapture 는 nil →
+        // finalizeTrialIfPending 의 guard 가 즉시 return → bridge.snapshotAndReset 미발화.
+        session.stop()
+
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 1,
+                       "2차 finalize: trialStartCapture nil guard → bridge 영향 없음")
+    }
+
+    /// **v1.20.1 사이클 7-fix MEDIUM 3 (코덱스)** — stop 후 새 입력이 trial.config.pilotInputs 에 미포함.
+    /// stop 시점에 snapshotAndReset 이 동기 발화하므로 그 이후 입력은 다음 trial 의 일부.
+    func testPostStopInputsDoNotPolluteFinalizedTrial() async {
+        session.pilotBridge = bridge
+        session.start(.march)
+        bridge.handleTelloStick(lr: 0, fb: 50, ud: 0, yaw: 0)  // 종료 전 1건
+        bridge.handleTelloStick(lr: 30, fb: 0, ud: 0, yaw: 0)  // 종료 전 2건
+        session.stop()  // snapshotAndReset — accumulator 비워짐.
+
+        // stop 직후 새 입력 — bridge 에 누적되지만 stop 의 trial 에는 영향 없어야 함.
+        // (실제 stick 입력은 session.current == .idle 라 amplitude 미적용, 단 accumulator 만 누적.)
+        bridge.handleTelloStick(lr: 80, fb: 80, ud: 0, yaw: 80)
+
+        // pendingLabelTrial 동기/비동기 대기.
+        var pendingTrial: WalkTrial?
+        for _ in 0..<100 {
+            if let t = session.pendingLabelTrial {
+                pendingTrial = t
+                break
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard let trial = pendingTrial else {
+            XCTFail("pendingLabelTrial 미설정 — async Task 미완료")
+            return
+        }
+        guard let pilot = trial.config.pilotInputs else {
+            XCTFail("pilotInputs 가 nil")
+            return
+        }
+        XCTAssertEqual(pilot.totalEvents, 2,
+                       "stop 이전 2건만 — post-stop 입력은 격리")
+        XCTAssertLessThanOrEqual(pilot.peakStrideMm, 21,
+                                 "post-stop 의 fb=80 stride (=32) 가 trial 에 누출 안 됨")
+    }
+
     /// **v1.20.1 사이클 7** — finalize 가 생성한 `pendingLabelTrial.config.pilotInputs` 가 bridge 통계 반영.
     /// 비동기 Task 통과 대기 — sleep poll 패턴 (testEmergency 와 동일).
     func testFinalizeAttachesPilotSummaryToTrialConfig() async {

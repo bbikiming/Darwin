@@ -26,9 +26,17 @@ public struct RootView: View {
     // session 인스턴스 (현재 config) 를 읽고 변경하도록 RootView 로 hoist.
     // 라이프사이클: 앱 전체. 메뉴/탭 전환 시 보존.
     @State private var walkLabSession = WalkLabSession()
+    /// **v1.20.1 사이클 7-fix HIGH 1 (코덱스 검수)** — Pilot bridge production wiring.
+    /// `WalkLabSession.pilotBridge` 가 `nil` 이면 trial finalize 시 pilot summary 첨부가
+    /// no-op. RootView 의 onAppear 에서 bridge 인스턴스 생성 + 양방향 wiring.
+    /// telloLink 는 init 시 socket 안 열림 (start() 호출 시에만). nil = 아직 onAppear 안 됨.
+    @State private var pilotBridge: WalkLabRCBridge? = nil
     // **v1.11.15 (2026-05-19)** — 테마 매니저. DarwinForgeApp 이 environmentObject 로 주입.
     @EnvironmentObject private var themeManager: DFThemeManager
     private let commander: ClaudeCommander
+    /// **v1.20.1 사이클 7-fix HIGH 1** — Tello UDP 송신 채널.
+    /// `start()` 호출 전까지 socket 안 열림 → 사용자가 Tello 연결 시까지 idle.
+    private let telloLink: TelloLink
 
     @State private var section: Section = .studio
     @State private var expertTab: ExpertTab = .board
@@ -44,6 +52,9 @@ public struct RootView: View {
         let d = IntentDispatcher()
         _dispatcher = StateObject(wrappedValue: d)
         self.commander = ClaudeCommander()
+        // **v1.20.1 사이클 7-fix HIGH 1** — Tello UDP 채널 생성 (no-op until start()).
+        // init 은 socket 미생성 → cost 없음. 사용자가 Tello 연결 시 start() 발화.
+        self.telloLink = TelloLink()
     }
 
     /// Status bar 높이 — sidebar 끝에 보정용 빈 공간을 둘 때 사용.
@@ -106,6 +117,15 @@ public struct RootView: View {
             // 첫 onAppear (앱 시작 직후) 에서 wiring 하여 race window 최소화. 또한
             // idempotent (같은 controller 받으면 closure overwrite, 동작 동일).
             walkLabSession.setExperimentLoop(experimentLoop)
+            // **v1.20.1 사이클 7-fix HIGH 1** — Pilot bridge production wiring.
+            // 일회성: 이미 생성된 경우 skip (idempotent — onAppear 가 view re-mount 시 재발화 가능).
+            // 양방향: session→bridge (weak, finalize 시 snapshot) + bridge→session (weak, amplitude 적용).
+            if pilotBridge == nil {
+                let bridge = WalkLabRCBridge(tello: telloLink)
+                bridge.session = walkLabSession
+                walkLabSession.pilotBridge = bridge
+                pilotBridge = bridge
+            }
             // 첫 실행 자동 연결/자동 마법사는 제거됨 — 사용자가 직접
             // 우측 상단 "Auto Connect" 버튼 또는 마법사를 눌러서 연결.
         }
