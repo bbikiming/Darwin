@@ -87,6 +87,11 @@ public final class WalkLabRCBridge {
     /// default 1.0 — backward compat (기존 테스트 + Tello stick 즉시 반응 기대치 유지).
     /// 게임 UX 원하면 KeyboardPilotPanel 이 onAppear 시 0.5 설정.
     public var smoothingFactor: Double = 1.0
+    /// **v1.20.22 (2026-05-22) 사이클 28** — PilotIntent.motion(id) → MotionDescriptor 변환.
+    /// default: PresetBackedMotionCatalog — `"preset.<name>"` id 지원.
+    /// 사용자가 다른 backend (Page / Teach) 주입 가능 — composite 통해 chain.
+    /// **주의**: 기존 enum `MotionCatalog` (motion_4096 페이지) 와 다름 — 의도적으로 prefix 분리.
+    public var pilotMotionCatalog: PilotMotionCatalog = PresetBackedPilotMotionCatalog()
 
     // MARK: - Init
 
@@ -288,10 +293,12 @@ public final class WalkLabRCBridge {
             applyAmplitude(.stop, in: session, applyHardZero: true)
             safetyMessage = nil
         case .motion(let id):
-            // **v1.18.0.2 사이클 2**: motion intent 활성화 — Phase 3 의 MotionBlender 통합.
-            // 단순 String id 기반 — caller 가 직접 MotionDescriptor 빌드해서 `handleMotion(_:)` 호출 권장.
-            // 본 path 는 id resolution 미구현 — 사용자 안내 + accumulator 에만 기록.
-            safetyMessage = "motion '\(id)' — handleMotion(_:descriptor:) 직접 호출 권장 (id resolution 미구현)"
+            // **v1.20.22 사이클 28** — pilotMotionCatalog 가 id resolve → MotionDescriptor → handleMotion.
+            if let descriptor = pilotMotionCatalog.resolve(id) {
+                _ = handleMotion(descriptor, from: intent.source)
+            } else {
+                safetyMessage = "motion '\(id)' — catalog 에 등록 없음 (catalog.knownIds 참조)"
+            }
         case .emergency:
             break  // emergency 위에서 처리.
         }
