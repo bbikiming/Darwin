@@ -87,11 +87,14 @@ public final class WalkLabRCBridge {
     /// default 1.0 — backward compat (기존 테스트 + Tello stick 즉시 반응 기대치 유지).
     /// 게임 UX 원하면 KeyboardPilotPanel 이 onAppear 시 0.5 설정.
     public var smoothingFactor: Double = 1.0
-    /// **v1.20.22 (2026-05-22) 사이클 28** — PilotIntent.motion(id) → MotionDescriptor 변환.
-    /// default: PresetBackedMotionCatalog — `"preset.<name>"` id 지원.
-    /// 사용자가 다른 backend (Page / Teach) 주입 가능 — composite 통해 chain.
+    /// **v1.20.22 (2026-05-22) 사이클 28 + 사이클 30** — PilotIntent.motion(id) → MotionDescriptor 변환.
+    /// default: PresetBacked + PageBacked composite — `"preset.<name>"` + `"page.<slot|name>"` 지원.
+    /// 사용자가 추가 backend (Teach 등) 주입 가능.
     /// **주의**: 기존 enum `MotionCatalog` (motion_4096 페이지) 와 다름 — 의도적으로 prefix 분리.
-    public var pilotMotionCatalog: PilotMotionCatalog = PresetBackedPilotMotionCatalog()
+    public var pilotMotionCatalog: PilotMotionCatalog = CompositePilotMotionCatalog([
+        PresetBackedPilotMotionCatalog(),
+        PageBackedPilotMotionCatalog()
+    ])
 
     // MARK: - Init
 

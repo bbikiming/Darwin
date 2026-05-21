@@ -90,6 +90,32 @@ final class PilotMotionCatalogTests: XCTestCase {
         XCTAssertTrue(bridge.safetyMessage?.contains("등록 안 됨") ?? false)
     }
 
+    // MARK: - Cycle 30: PageBacked
+
+    func testPageBackedResolvesBySlot() {
+        let catalog = PageBackedPilotMotionCatalog()
+        // motion_4096 의 slot 1 페이지 (보통 walkReady 또는 init pose).
+        let descriptor = catalog.resolve("page.1")
+        XCTAssertNotNil(descriptor, "slot 1 페이지 매핑")
+        if case .page(let meta) = descriptor {
+            XCTAssertEqual(meta.slot, 1)
+        } else {
+            XCTFail("expected .page descriptor")
+        }
+    }
+
+    func testPageBackedRejectsUnknownSlot() {
+        let catalog = PageBackedPilotMotionCatalog()
+        XCTAssertNil(catalog.resolve("page.255"), "slot 255 일반적으로 없음")
+        XCTAssertNil(catalog.resolve("page.unknown_name_xyz"))
+    }
+
+    func testPageBackedRejectsNonPagePrefix() {
+        let catalog = PageBackedPilotMotionCatalog()
+        XCTAssertNil(catalog.resolve("preset.march"))
+        XCTAssertNil(catalog.resolve("wave"))
+    }
+
     func testCompositeKnownIdsConcatenates() {
         let composite = CompositePilotMotionCatalog([
             PresetBackedPilotMotionCatalog(),

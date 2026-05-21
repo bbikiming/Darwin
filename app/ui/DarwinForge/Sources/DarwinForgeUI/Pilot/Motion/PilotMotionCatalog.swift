@@ -45,6 +45,37 @@ public struct PresetBackedPilotMotionCatalog: PilotMotionCatalog {
     }
 }
 
+/// **v1.20.24 사이클 30** — motion_4096 페이지 backed catalog.
+/// id format: `"page.<slot>"` (숫자 slot, e.g. "page.1", "page.24")
+///           또는 `"page.<rawName>"` (e.g. "page.Bow", "page.Wave")
+/// 기존 enum `MotionCatalog.all` (motion_4096 메타데이터) → `.page(MotionPageMetadata)` descriptor.
+public struct PageBackedPilotMotionCatalog: PilotMotionCatalog {
+    public init() {}
+
+    public func resolve(_ id: String) -> MotionDescriptor? {
+        let lower = id.lowercased()
+        guard lower.hasPrefix("page.") else { return nil }
+        let key = String(lower.dropFirst("page.".count))
+        // slot 숫자 시도.
+        if let slot = UInt8(key), let page = MotionCatalog.find(slot: slot) {
+            return .page(page)
+        }
+        // rawName / displayName 매칭.
+        if let page = MotionCatalog.all.first(where: {
+            $0.rawName.lowercased() == key
+                || $0.displayName.lowercased() == key
+                || $0.displayNameKo.lowercased() == key
+        }) {
+            return .page(page)
+        }
+        return nil
+    }
+
+    public var knownIds: [String] {
+        MotionCatalog.all.map { "page.\($0.slot)" }
+    }
+}
+
 /// **v1.20.22 사이클 28** — 여러 catalog 합성 (chain of responsibility).
 /// 순서대로 resolve 시도 → 첫 hit 반환. 명시 우선순위 제어.
 public struct CompositePilotMotionCatalog: PilotMotionCatalog {
