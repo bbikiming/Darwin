@@ -116,12 +116,22 @@ public enum KeyboardPilotMapper: Sendable {
 
     /// 본 매퍼가 처리할 모든 KeyEquivalent — onKeyPress 의 keys 파라미터에 전달.
     /// **v1.20.4 사이클 10**: 0-7 숫자 키 추가 — preset 단축키.
+    /// **v1.20.13 사이클 19**: R 키 추가 — emergency recovery.
     public static let allHandledKeys: [KeyEquivalent] = [
         "w", "a", "s", "d", "q", "e",
         .upArrow, .downArrow, .leftArrow, .rightArrow,
         .space,
-        "0", "1", "2", "3", "4", "5", "6", "7"
+        "0", "1", "2", "3", "4", "5", "6", "7",
+        "r"
     ]
+
+    /// **v1.20.13 사이클 19** — recovery 키 (R) 인지 확인.
+    public static func isRecoveryKey(_ key: KeyEquivalent) -> Bool {
+        switch key.character {
+        case "r", "R": return true
+        default:       return false
+        }
+    }
 
     /// **v1.20.4 사이클 10** — 숫자 키 → WalkLabPreset 매핑 (게임 컨트롤러 단축키).
     /// 0 = idle (stop), 1=march, 2=slowWalk, 3=normalWalk, 4=fastWalk,

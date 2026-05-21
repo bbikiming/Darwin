@@ -196,4 +196,22 @@ final class KeyboardPilotMapperTests: XCTestCase {
                           "digit \(digit) 포함")
         }
     }
+
+    // MARK: - Cycle 19: Recovery key
+
+    func testIsRecoveryKeyMatchesR() {
+        XCTAssertTrue(KeyboardPilotMapper.isRecoveryKey("r"))
+        XCTAssertTrue(KeyboardPilotMapper.isRecoveryKey("R"))
+    }
+
+    func testIsRecoveryKeyDoesNotMatchOthers() {
+        XCTAssertFalse(KeyboardPilotMapper.isRecoveryKey("w"))
+        XCTAssertFalse(KeyboardPilotMapper.isRecoveryKey("1"))
+        XCTAssertFalse(KeyboardPilotMapper.isRecoveryKey(.space))
+    }
+
+    func testAllHandledKeysIncludesR() {
+        let handled = Set(KeyboardPilotMapper.allHandledKeys.map(\.character))
+        XCTAssertTrue(handled.contains("r"), "R 키 포함")
+    }
 }

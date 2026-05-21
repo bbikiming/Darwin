@@ -309,6 +309,11 @@ public struct KeyboardPilotPanel: View {
     // MARK: - Key handling
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        // **v1.20.13 사이클 19** — R 키 → recovery (emergency 상태일 때만 의미).
+        if press.phase == .down, KeyboardPilotMapper.isRecoveryKey(press.key) {
+            session.pilotBridge?.handleRecovery(from: .keyboard)
+            return .handled
+        }
         // **v1.20.4 사이클 10** — 숫자 키 (0-7) → preset 단축키. down 만 처리 (toggle 아님).
         // direction 키보다 먼저 검사 — resolve(0) 는 nil 이지만 명시적으로 ordering.
         if press.phase == .down, let preset = KeyboardPilotMapper.resolvePreset(press.key) {
