@@ -829,7 +829,12 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         let historyBefore = await readSharedHistoryFile()
         _ = session.rollbackExperiment()
         // controller.cancel 은 Task { @MainActor } fire-and-forget — 대기.
-        try await Task.sleep(nanoseconds: 200_000_000)
+        // **사이클 142 (codex proactive fix)**: 200ms sleep → polling. 부하 시 race 회피.
+        let rollbackDeadline = Date().addingTimeInterval(2.0)
+        while (session.activeExperimentId != nil || controller.current != nil),
+              Date() < rollbackDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)  // 50ms polling
+        }
         XCTAssertNil(session.activeExperimentId, "session 측 clear")
         XCTAssertNil(controller.current,
                      "controller.current 도 clear — 새 실험 가능")
@@ -956,8 +961,13 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         session.triggerAutoLoopIfActive(summaryId: experimentSessionId, baseDir: tempDir)
 
         // 4. async Task 완료 대기 — appendSession + load + compare + lastRobotEvent.
-        // 디스크 IO + main actor hop 포함이라 500ms 충분.
-        try await Task.sleep(nanoseconds: 500_000_000)
+        // **사이클 142 (codex MAJOR fix)**: 종전 500ms sleep — cycle 136 line 653 동일 패턴
+        // 적용. heavy parallel test load 에서 timing 부족 → 3 assertion fail (재현).
+        // polling 방식 — verdict 도착 또는 2초 timeout. isolated 빠르게 통과, 부하 시 대기.
+        let e2eDeadline = Date().addingTimeInterval(2.0)
+        while controller.lastComparison?.verdict == nil, Date() < e2eDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)  // 50ms polling
+        }
 
         // 5. 검증.
         XCTAssertNotNil(controller.lastComparison, "compareWithBaseline 호출됨")
