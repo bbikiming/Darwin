@@ -319,13 +319,14 @@ WalkLab → Pilot 조종 toggle → 6번째 panel "Pilot Settings":
 - event rate (events/s) — 입력 활동 강도
 - ⚡ 활성 / 비활성 — bridge enabled 토글
 
-## v1.22.X 내부 구조 개선 (cycles 100-105)
+## v1.22.X 내부 구조 개선 (cycles 100-115)
 
 사용자 입장에서 직접 보이는 기능 변화는 없지만, 향후 변경 회귀 위험 ↓.
 
-### God Object 분할 — Phase 1A ~ 6 완료
+### God Object 분할 — Phase 1A ~ 10 완료
 
-`WalkLabSession.swift` (4493 line → 2942 line, **-34% 감축**) 가 9 extension file 로 split:
+`WalkLabSession.swift` (4431 line → 2678 line, **-40% 감축**) 가 13 extension file 로 split
+(11 split + 1 facade + 1 types):
 
 | Phase | Extension 파일 | Cycle | 라인 |
 |-------|----------------|-------|------|
@@ -346,35 +347,43 @@ WalkLab → Pilot 조종 toggle → 6번째 panel "Pilot Settings":
 각 extension 은 본체와 동일 `@MainActor` actor 격리 유지 — race condition 위험 없음.
 외부 API surface 변경 0 (모든 격상은 `internal(set)` — module 내부 write 만 허용).
 
-### Test Coverage 강화 (cycles 103 + 105 + 108 + 110 + 113)
+### Test Coverage 강화 + Audit (cycles 103-115)
 
-`Tests/DarwinForgeUITests/WalkLabSessionExtensionCoverageTests.swift` (38 test):
+`Tests/DarwinForgeUITests/WalkLabSessionExtensionCoverageTests.swift` (33 real behavioral tests):
 
-- Calibration: capture / diagnosis / reset / reject during walking
-- Sensor Updates: sim IMU + sim thermal + voltage droop counter + IMU source fallback
-- Experiment: onboardHealthCheckWarnings 4 input combo + instance helper
-- Logging: loadSummaryFromDisk + loadAllExperimentSummaries (nonisolated static)
-- Phase 4: cancelWalkCycle clears task + internal access verification
-- Phase 5: correctionEnabledAt + lastSafePose 격상 검증
-- Phase 7 (cycle 108): updateFallPrediction stale IMU + jitter + zero initialization
-- Phase 8 (cycle 110): applyBalanceMitigation normal reset + engine internal access
-- Phase 9 (cycle 113): recordSafetySampleAndEvents append + sync invariant + constants
-- Phase 10 (cycle 113): quickPreflight idle pass + sim mode + advanced critical guard
+- Calibration: 보행 중 reject + idle 캡처 + axis overwrite
+- Sensor Updates: sim IMU 진동/감쇠 + sim thermal 발열/냉각 + voltage droop + IMU fallback
+- Experiment: onboardHealthCheckWarnings 6 case (4 input combo + instance helper + dead code 회귀 가드)
+- Logging: empty dir + **JSONL roundtrip** (실 summary write→load→7개 field 일치)
+- Phase 7: stale IMU buffer 비움 + jitter guard + **5 ticks accumulation**
+- Phase 8: normal counter reset + **warning hysteresis 3 ticks** + **speedScale 정확값**
+- Phase 9: 1 sample append + sync invariant + **state transition event emission**
+- Phase 10: idle pass + 시뮬 caution preset 검증
 
-총 테스트 수: **1305 tests pass** (1267 baseline + 38 cumulative extension cases).
+**v1.22.0 사이클 115 audit fix**: code-reviewer agent 가 cycle 103-113 의 38 tests 중
+21개 (55%) cargo-cult / no-assertion 판정. 9 deleted / 5 strengthened / 5 NEW critical
+scenarios. 모든 신규 test 는 implementation 변경 시 fail 보장.
 
-### 코덱스 review 결과
+총 테스트 수: **1300 tests pass** (cargo-cult 정리로 1305 → 1300, 품질 ↑).
 
-4차에 걸친 codex critic 평가:
-- **cycle 93**: cycles 86-89 review — H1+H2+H3 도출, 사이클 103 에서 모두 해소
-- **cycle 104**: cycles 100-103 review — VERDICT: ACCEPT, no CRITICAL/MAJOR. 3 MINOR 만 → 사이클 105 fix.
-- **cycle 111(codex 107-110)**: VERDICT: ACCEPT. cancelWalkCycle/engine 격상 SAFE 확인 (외부 호출 0). 1 MINOR (FallPrevention docstring stale) → 사이클 111 동시 fix.
+### 코덱스 + 병렬 에이전트 review 결과
+
+5차에 걸친 multi-agent 검증:
+- **cycle 93**: cycles 86-89 review — H1+H2+H3 도출, 사이클 103 fix
+- **cycle 104**: cycles 100-103 — VERDICT: ACCEPT, 3 MINOR → 사이클 105 fix
+- **cycle 111(codex 107-110)**: VERDICT: ACCEPT, cancelWalkCycle/engine 격상 SAFE 확인
+- **cycle 115 (4 parallel agents — critic / security-auditor / code-reviewer / explore)**:
+  - critic VERDICT: ACCEPT-WITH-RESERVATIONS (1 MAJOR: doc stale — 본 사이클 fix)
+  - security-auditor: 0 CRITICAL / 0 HIGH, 격상 SAFE (UI 모두 read-only)
+  - code-reviewer: 21/38 cargo-cult 발견 → 사이클 115 fix (real behavioral tests)
+  - explore: onboardHealthCheckWarnings 는 dead code (production 미호출, tests 만 사용)
 
 ### 향후 계획
 
-- 본체 2678 line — startWalkCycle (456 line) / tick (169 line) / start (148 line) / stop (66 line) / emergencyStop (63 line) 등 lifecycle method 가 잔존
+- 본체 2678 line — startWalkCycle (456 line) / tick (169 line) / start (148 line) /
+  stop (66 line) / emergencyStop (63 line) 등 lifecycle method 가 잔존
 - 추가 감축은 lifecycle method 의 internal cohesion 우선 (분할 시 의미 흩어짐 위험)
-- 다음 단계: 안전한 작은 method 추출 / 사용자 가시 기능 추가
+- 다음 단계: onboardHealthCheckWarnings 의 production wire-up (또는 명시 deprecation)
 
 ---
 
