@@ -166,6 +166,30 @@ final class PilotMotionCatalogTests: XCTestCase {
         XCTAssertNil(catalog.resolve("preset.."))
     }
 
+    /// **v1.20.38 사이클 51** — Composite 가 첫 catalog hit 시 다음 catalog 호출 안 함.
+    /// performance + ordering 일관성 확인.
+    func testCompositeStopsAfterFirstHit() {
+        var callCount = 0
+        struct ProbeCatalog: PilotMotionCatalog {
+            let callRef: () -> Void
+            func resolve(_ id: String) -> MotionDescriptor? {
+                callRef()
+                return nil  // 항상 nil — 다음으로 cascading.
+            }
+            var knownIds: [String] { [] }
+        }
+        let composite = CompositePilotMotionCatalog([
+            PresetBackedPilotMotionCatalog(),
+            ProbeCatalog(callRef: { callCount += 1 })
+        ])
+        // 첫 catalog 가 hit → probe 호출 안 됨.
+        _ = composite.resolve("preset.march")
+        XCTAssertEqual(callCount, 0, "첫 catalog hit → cascading 중단")
+        // 첫 catalog 가 nil → probe 호출됨.
+        _ = composite.resolve("unknown_xyz")
+        XCTAssertEqual(callCount, 1, "첫 catalog nil → probe 도 시도")
+    }
+
     func testPageBackedRejectsNonPagePrefix() {
         let catalog = PageBackedPilotMotionCatalog()
         XCTAssertNil(catalog.resolve("preset.march"))
