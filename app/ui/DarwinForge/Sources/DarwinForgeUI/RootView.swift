@@ -143,6 +143,8 @@ public struct RootView: View {
                     fb: prefs.scaleFB, lr: prefs.scaleLR, yaw: prefs.scaleYaw
                 )
                 bridge.smoothingFactor = prefs.smoothingFactor
+                // **사이클 86**: 청각 안전 피드백 wire-up — emergency 시 NSBeep.
+                bridge.audioFeedback = NSBeepFeedbackPlayer()
             }
             // **v1.20.35 사이클 18 + 사이클 73 (코덱스 HIGH-2 fix)** — Tello listener owner alloc.
             // 종전: onAppear 에서 owner.start() 즉시 호출 → macOS 가 의도 없이 권한 다이얼로그

@@ -132,6 +132,11 @@ public final class WalkLabRCBridge {
     /// 응답을 위한 명시 활성. 활성 시 process / applyAmplitude 가 stage 별 record.
     public var latencyTracker: PilotLatencyTracker?
 
+    /// **사이클 86 — 오디오 안전 피드백**: emergency 발화 시 NSBeep.
+    /// `nil` (test default) 시 silent — XCTest 환경에서 system sound 안 울림.
+    /// production RootView 가 NSBeepFeedbackPlayer() 주입.
+    public var audioFeedback: AudioFeedbackPlayer?
+
     // MARK: - Init
 
     public init(tello: TelloLinkProtocol) {
@@ -319,6 +324,8 @@ public final class WalkLabRCBridge {
             safetyMessage = "긴급 정지 발화 — 모든 채널 차단"
             // emergency 는 engineSynced 까지 안 감 → cancel 로 cycle 정리 (rejectedCount +1).
             latencyTracker?.cancel()
+            // **사이클 86**: 안전 critical event 청각 피드백 (시각 UI 가려져도 인지).
+            audioFeedback?.playEmergency()
             return
         }
         // bus / cradle 검사 — preset 시작 path 와 동일.
