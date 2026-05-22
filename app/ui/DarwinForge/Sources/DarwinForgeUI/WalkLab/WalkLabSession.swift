@@ -2103,7 +2103,12 @@ public final class WalkLabSession {
             aDeg: tuning.turnDeg,
             periodMs: tuning.periodMs,
             footHeightMm: tuning.footHeightMm,
-            hipPitchOffsetDeg: tuning.hipPitchOffsetDeg
+            hipPitchOffsetDeg: tuning.hipPitchOffsetDeg,
+            // 사이클 162 (P0-2 fix): balance 3 필드 — Mac UI 의 자이로 보정 설정을 robot 전달.
+            // 옛 daemon (sscanf 7 필드) 는 trailing 무시 → backward compat.
+            balanceGain: balanceGain,
+            balanceEnable: enableBalanceCorrection,
+            correctorIntensityLevel: correctorIntensityLevel
         )
     }
 

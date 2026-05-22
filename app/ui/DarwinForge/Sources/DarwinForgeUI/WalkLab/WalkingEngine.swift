@@ -80,6 +80,12 @@ public enum WalkingEngine: String, CaseIterable, Codable, Sendable, Identifiable
 /// **v1.11.5.2 (2026-05-18) chain break fix**: 종전 6 필드는 `hipPitchOffsetDeg` 누락 →
 /// 사용자가 trim slider 변경해도 `.robotisOnboard` 모드에서 robot 에 전달 안 되는 버그.
 /// 7 번째 필드 추가로 Mac sparse / ROBOTIS onboard 양쪽에서 trim 일관 적용.
+///
+/// **사이클 162 (P0-2, gyro closed-loop review fix)**: balance 3 필드 추가.
+/// 종전: balanceGain / enableBalanceCorrection / correctorIntensityLevel 가 Mac UI 만
+/// 영향, robot 측 미전달 → Onboard mode 사용자가 자이로 slider 조정해도 robot 동작 동일.
+/// 신규 8-10 번째 필드 — 옛 robot daemon (sscanf 7 필드) 는 그대로 무시 (backward compat).
+/// 새 daemon (v2 patch) 는 추가 필드 read → robot-side Walking::GetInstance() balance 인자 set.
 public struct WalkingEngineCommand: Equatable, Sendable {
     public let enabled: Bool
     public let xMm: Double
@@ -91,8 +97,22 @@ public struct WalkingEngineCommand: Equatable, Sendable {
     /// default 13.0 (ROBOTIS Walking.cpp 원본). UI trim slider 와 일관.
     public let hipPitchOffsetDeg: Double
 
+    /// **사이클 162**: balance gain (0..5). robot-side `Walking::GetInstance()->BALANCE_*` 인자.
+    /// default 1.0 (ROBOTIS Walking.cpp 원본).
+    public let balanceGain: Double
+    /// **사이클 162**: 자이로 보정 enable (0/1). robot-side
+    /// `Walking::GetInstance()->BALANCE_ENABLE` set. default false (안전).
+    public let balanceEnable: Bool
+    /// **사이클 162**: 보정 강도 5단계 (0..4) — Mac UI 의 correctorIntensityLevel.
+    /// robot-side 가 0=off, 1=절반, 2=표준, 3=1.5배, 4=2배 매핑. default 2 (표준).
+    public let correctorIntensityLevel: Int
+
     public init(enabled: Bool, xMm: Double, yMm: Double, aDeg: Double,
-                periodMs: Double, footHeightMm: Double, hipPitchOffsetDeg: Double = 13.0) {
+                periodMs: Double, footHeightMm: Double,
+                hipPitchOffsetDeg: Double = 13.0,
+                balanceGain: Double = 1.0,
+                balanceEnable: Bool = false,
+                correctorIntensityLevel: Int = 2) {
         self.enabled = enabled
         self.xMm = xMm
         self.yMm = yMm
@@ -100,17 +120,24 @@ public struct WalkingEngineCommand: Equatable, Sendable {
         self.periodMs = periodMs
         self.footHeightMm = footHeightMm
         self.hipPitchOffsetDeg = hipPitchOffsetDeg
+        self.balanceGain = balanceGain
+        self.balanceEnable = balanceEnable
+        self.correctorIntensityLevel = max(0, min(4, correctorIntensityLevel))
     }
 
     /// file 로 write 할 직렬화 — 한 줄, robot-side parser 가 sscanf 로 read.
+    /// 사이클 162: 10 필드 — 옛 daemon (7 필드 sscanf) 는 8-10 trailing 무시 (backward compat).
     public var serializedLine: String {
-        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg` — space-separated.
-        // robot-side patch sscanf: `sscanf(line, "%d %f %f %f %f %f %f", &en,&x,&y,&a,&p,&f,&h)`.
-        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f",
-               enabled ? 1 : 0, xMm, yMm, aDeg, periodMs, footHeightMm, hipPitchOffsetDeg)
+        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg balance_gain balance_enable corrector_level`.
+        // 옛 daemon sscanf: `sscanf(line, "%d %f %f %f %f %f %f", &en,&x,&y,&a,&p,&f,&h)` → 7 필드 read, 무시.
+        // 새 daemon sscanf: `sscanf(line, "%d %f %f %f %f %f %f %f %d %d", &en,...,&bg,&be,&bl)` → 10 필드.
+        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f %.2f %d %d",
+               enabled ? 1 : 0, xMm, yMm, aDeg, periodMs, footHeightMm, hipPitchOffsetDeg,
+               balanceGain, balanceEnable ? 1 : 0, correctorIntensityLevel)
     }
 
-    /// 정지 명령 — enabled=0, 나머지 0, hipPitchOffsetDeg=13 (기본 유지).
+    /// 정지 명령 — enabled=0, 나머지 0, hipPitchOffsetDeg=13 (기본 유지),
+    /// balance default (1.0 / false / 2).
     public static let stop = WalkingEngineCommand(
         enabled: false, xMm: 0, yMm: 0, aDeg: 0, periodMs: 0, footHeightMm: 0
     )

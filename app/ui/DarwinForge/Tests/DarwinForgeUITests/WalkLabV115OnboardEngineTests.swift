@@ -34,18 +34,21 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
 
     // MARK: - 2. WalkingEngineCommand
 
-    /// 명령 serialize format: `enabled x y a period foot hipPitch` (v1.11.5.2 — 7필드).
+    /// 명령 serialize format: `enabled x y a period foot hipPitch balanceGain balanceEnable correctorLevel`
+    /// (사이클 162 — 10 필드, 옛 robot daemon 은 trailing 3 무시 — backward compat).
     func testCommandSerializedLineFormat() {
         let cmd = WalkingEngineCommand(
             enabled: true, xMm: 28.0, yMm: 0.0, aDeg: 0.0,
             periodMs: 600, footHeightMm: 40, hipPitchOffsetDeg: 13.0
         )
-        XCTAssertEqual(cmd.serializedLine, "1 28.00 0.00 0.00 600 40 13.00")
+        XCTAssertEqual(cmd.serializedLine, "1 28.00 0.00 0.00 600 40 13.00 1.00 0 2",
+            "10 필드 — 기존 7 + balance(1.0/false/2) default trailing")
     }
 
-    /// 정지 명령 — enabled=0, hipPitch default 13.
+    /// 정지 명령 — enabled=0, hipPitch default 13, balance default.
     func testCommandStopFormat() {
-        XCTAssertEqual(WalkingEngineCommand.stop.serializedLine, "0 0.00 0.00 0.00 0 0 13.00")
+        XCTAssertEqual(WalkingEngineCommand.stop.serializedLine,
+                       "0 0.00 0.00 0.00 0 0 13.00 1.00 0 2")
     }
 
     /// 음수 turn / side 처리.
@@ -54,12 +57,13 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
             enabled: true, xMm: 18.0, yMm: -5.0, aDeg: -25.0,
             periodMs: 700, footHeightMm: 40, hipPitchOffsetDeg: 5.0
         )
-        XCTAssertEqual(cmd.serializedLine, "1 18.00 -5.00 -25.00 700 40 5.00")
+        XCTAssertEqual(cmd.serializedLine, "1 18.00 -5.00 -25.00 700 40 5.00 1.00 0 2")
     }
 
     /// **v1.11.5.2 chain break fix 회귀**: hipPitchOffsetTrimDeg 변경이 ROBOTIS onboard
     /// 명령에 전달되는지 검증. 종전 (v1.11.5.1 까지) WalkingEngineCommand 가 trim 필드
     /// 누락 → onboard 모드에서 사용자 slider 변경이 robot 에 도달 못 함.
+    /// 사이클 162: trim 필드 위치가 7번째 (1-indexed). 8-10 은 balance.
     func testHipPitchOffsetReachesWalkingEngineCommand() {
         let s = WalkLabSession()
         s.current = .normalWalk
@@ -67,8 +71,11 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
         let cmd = s.currentWalkingEngineCommand(enabled: true)
         XCTAssertEqual(cmd.hipPitchOffsetDeg, 5.0, accuracy: 0.01,
             "hipPitchOffsetTrimDeg → cmd.hipPitchOffsetDeg chain 통과")
-        XCTAssertTrue(cmd.serializedLine.hasSuffix("5.00"),
-            "serializedLine 마지막 필드가 trim 값: \(cmd.serializedLine)")
+        // 사이클 162: 7번째 필드 (hipPitchOffsetDeg) 가 5.00 인지 — split + 위치 검증.
+        let fields = cmd.serializedLine.split(separator: " ")
+        XCTAssertEqual(fields.count, 10, "10 필드")
+        XCTAssertEqual(String(fields[6]), "5.00",
+            "7번째 필드가 trim 값: \(cmd.serializedLine)")
     }
 
     /// trim 0° 도 cmd 에 전달.
