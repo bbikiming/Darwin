@@ -267,6 +267,94 @@ final class GamepadPilotAdapterTests: XCTestCase {
         XCTAssertEqual(session.current, .idle, "emergency 후 idle (preset 차단)")
     }
 
+    // MARK: - 사이클 62 — 코덱스 HIGH 회귀 가드 (button-before-stick + early return)
+
+    /// **사이클 62 코덱스 HIGH**: stick + emergency 같은 frame → emergency 가 stick 보다 먼저.
+    ///
+    /// 종전: stick → button 순서 → stick 의 amplitude write 가 emergency 가드보다 먼저
+    /// 발생 → 1 frame 의 race window (사용자가 panic + stick 을 동시 입력 시 robot 이
+    /// 마지막으로 stride 적용 후 정지).
+    ///
+    /// 수정 후: button 의 emergency edge 가 먼저 처리 → fire 시 stick 처리 skip → write 차단.
+    func testStickAndEmergencySameFrameStickIsSkipped() {
+        session.start(.march)
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "사전: stride 0")
+
+        // 사용자가 emergency 누르며 동시에 stick 도 밀고 있음.
+        mock.sticks = GamepadStickState(leftX: 0, leftY: 1.0, rightX: 0, rightY: 0)
+        mock.buttons.faceTop = true
+        adapter.pollOnce()
+
+        // 핵심: emergency 가 먼저 fire → stick 처리 skip → strideMm 0 유지.
+        // 종전 (stick → button): strideMm 40 적용 → emergency → strideMm 0 으로 재초기화.
+        // 수정 후 (button → stick early return): strideMm 0 유지 (write 자체가 없음).
+        XCTAssertEqual(bridge.emergencyCount, 1, "emergency fire")
+        XCTAssertTrue(session.emergencyStopActive, "emergency 활성")
+        XCTAssertEqual(session.current, .idle, "emergency 후 idle")
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9,
+                       "stick write skip — emergency 와 같은 frame 의 stride 0 유지")
+    }
+
+    /// **사이클 62 회귀**: emergency edge frame 의 stick 은 silent. 다음 frame 에서 정상 재개.
+    func testStickResumesNextFrameAfterEmergency() {
+        session.start(.march)
+
+        // Frame 1: emergency + stick → emergency 만 fire.
+        mock.sticks = GamepadStickState(leftX: 0, leftY: 1.0, rightX: 0, rightY: 0)
+        mock.buttons.faceTop = true
+        adapter.pollOnce()
+        XCTAssertEqual(bridge.emergencyCount, 1)
+
+        // Recovery + restart.
+        mock.buttons.faceTop = false
+        bridge.handleRecovery(from: .ui)
+        session.start(.march)
+
+        // Frame 2: stick 만 (emergency 떼었음) → stick 정상 처리.
+        adapter.pollOnce()
+        XCTAssertEqual(session.strideMm, 40, accuracy: 1e-9,
+                       "다음 frame 의 stick 정상 처리 (button release 후)")
+    }
+
+    /// **사이클 62 회귀**: emergency 안 누른 일반 button (D-pad) 은 stick 과 동시 처리 OK.
+    /// emergency 만 stick 을 skip — D-pad preset 은 stick 처리 영향 없음.
+    func testStickAndDpadPresetSameFrameBothApplied() {
+        // D-pad ↑ = march preset, stick = forward.
+        mock.buttons.dpadUp = true
+        mock.sticks = GamepadStickState(leftX: 0, leftY: 1.0, rightX: 0, rightY: 0)
+        adapter.pollOnce()
+
+        XCTAssertEqual(session.current, .march, "D-pad preset 적용")
+        XCTAssertEqual(session.strideMm, 40, accuracy: 1e-9,
+                       "stick 도 함께 적용 (emergency 아닌 button 은 race 없음)")
+    }
+
+    /// **사이클 62 회귀**: emergency fire 후 stick zero 도 skip — `previousStickWasZero`
+    /// 가 갱신 안 됨 → 다음 frame 에서 stick zero 시 stop 발화 정상.
+    func testEmergencyFrameDoesNotUpdateStickZeroState() {
+        session.start(.march)
+
+        // 사전: 한 frame 의 stick 움직임 (zero → nonzero).
+        mock.sticks = GamepadStickState(leftX: 0, leftY: 1.0, rightX: 0, rightY: 0)
+        adapter.pollOnce()
+        // 이제 previousStickWasZero = false.
+
+        // Frame: emergency + stick zero — emergency 가 fire → stick skip.
+        mock.sticks = .neutral
+        mock.buttons.faceTop = true
+        adapter.pollOnce()
+        // emergency frame 이라 stick 처리 skip → previousStickWasZero 그대로 false.
+
+        // Recovery + 다음 frame 에서 stick zero → stop 발화 (silent 안 됨).
+        bridge.handleRecovery(from: .ui)
+        session.start(.march)
+        mock.buttons.faceTop = false
+        adapter.lastActionLabel = nil
+        adapter.pollOnce()
+        XCTAssertEqual(adapter.lastActionLabel, "stick stop",
+                       "emergency frame 이 stick state 를 corrupt 하지 않음")
+    }
+
     // MARK: - 컨트롤러 없음
 
     func testNoControllerPolledQuietly() {

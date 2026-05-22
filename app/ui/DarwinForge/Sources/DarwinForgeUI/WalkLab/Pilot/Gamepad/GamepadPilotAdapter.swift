@@ -173,6 +173,20 @@ public final class GamepadPilotAdapter {
     // MARK: - Polling
 
     /// **테스트 entry point** + Timer callback. source 의 현재 상태를 읽어 bridge 에 전달.
+    ///
+    /// # 처리 순서 (사이클 62 — 코덱스 HIGH 수정)
+    ///
+    /// 종전: stick → button 순서로 처리 → emergency edge 가 같은 frame 의 stick move 뒤에
+    /// 처리되어 1 frame 의 race window. 사용자가 emergency(△) 와 stick 을 동시 입력 시
+    /// stick 의 amplitude write 가 emergency 가드보다 먼저 발생.
+    ///
+    /// 수정 후: **button edge → emergency 발화 시 즉시 return** → stick 처리 skip.
+    /// 일반 button (preset / recovery) 은 stick 과 동시 발생 허용 (race 없음 — 별 통로).
+    ///
+    /// # 의도
+    ///
+    /// emergency 는 최고 우선순위 — 같은 frame 의 다른 입력은 모두 silent drop. UI 일관성
+    /// 보다 안전 invariant 우선 (panic 입력의 의미: "지금 즉시 멈춰").
     public func pollOnce() {
         guard let bridge = bridge else { return }
         let snapshot = source.snapshot()
@@ -180,13 +194,19 @@ public final class GamepadPilotAdapter {
         // 컨트롤러 이름 sync (mock 에서도 valid).
         connectedControllerName = snapshot.controllerName
 
-        // 1. Stick → handleMove
-        processSticks(snapshot.sticks, bridge: bridge)
-
-        // 2. Button edge detection → emergency / preset / recovery
-        processButtons(snapshot.buttons, bridge: bridge)
-
+        // 1. Button edge detection 먼저 (사이클 62 — emergency 우선순위 보장).
+        // emergency 발화 시 stick 처리 skip → return 후 다음 frame.
+        let emergencyFired = processButtons(snapshot.buttons, bridge: bridge)
         previousButtonState = snapshot.buttons
+
+        if emergencyFired {
+            // emergency 발화 frame 의 stick 은 무시 — 다음 frame 에서 정상 재개.
+            // previousStickWasZero 는 갱신 안 함 → 다음 frame 의 stick zero 시 stop 1회 발화 가능.
+            return
+        }
+
+        // 2. Stick → handleMove (emergency 가 발화 안 했을 때만).
+        processSticks(snapshot.sticks, bridge: bridge)
     }
 
     private func processSticks(_ sticks: GamepadStickState, bridge: WalkLabRCBridge) {
@@ -211,12 +231,20 @@ public final class GamepadPilotAdapter {
         }
     }
 
-    private func processButtons(_ buttons: GamepadButtonState, bridge: WalkLabRCBridge) {
-        // Edge trigger: 이번 frame 에서 새로 눌린 버튼만 fire.
+    /// 버튼 edge detection. emergency 가 발화되었으면 `true` 반환 → caller (pollOnce)
+    /// 가 stick 처리 skip. 일반 버튼은 always `false` (stick 과 동시 발생 안전).
+    ///
+    /// **순서**: emergency 를 먼저 검사 — 같은 frame 에 preset+emergency 가 함께 눌리면
+    /// emergency 만 fire 하고 preset 은 다음 frame 으로 미룸 (panic 일관성).
+    @discardableResult
+    private func processButtons(_ buttons: GamepadButtonState, bridge: WalkLabRCBridge) -> Bool {
+        // Emergency edge 최우선 — fire 시 즉시 return.
         if buttons.faceTop && !previousButtonState.faceTop {
             bridge.handleEmergency(from: .gamepad)
             lastActionLabel = "emergency (faceTop / △ / Y)"
+            return true
         }
+        // 일반 버튼 — 동일 frame 다중 fire 허용 (D-pad 두 방향 동시 등은 hardware 측 무시).
         if buttons.faceLeft && !previousButtonState.faceLeft {
             bridge.handlePreset(.idle, from: .gamepad)
             lastActionLabel = "preset idle (faceLeft / □ / X)"
@@ -241,6 +269,7 @@ public final class GamepadPilotAdapter {
             bridge.handleRecovery(from: .gamepad)
             lastActionLabel = "recovery (START / ☰)"
         }
+        return false
     }
 
     // MARK: - Controller binding
