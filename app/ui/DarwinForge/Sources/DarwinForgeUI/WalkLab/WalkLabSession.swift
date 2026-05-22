@@ -931,7 +931,9 @@ public final class WalkLabSession {
     }
 
     // MARK: - 내부
-    private let engine: WalkEngine
+    /// **사이클 109 (Phase 8)**: `private` → `internal` — `WalkLabSession+BalanceMitigation`
+    /// 의 `applyBalanceMitigation()` 가 `engine.setCommand(...)` 호출 필요.
+    internal let engine: WalkEngine
     private var simTimer: Timer?
     private var startTime: Date?
     /// Sim IMU 본체 흔들림 위상 (rad). tick 마다 ω·dt 누적.
@@ -2239,7 +2241,9 @@ public final class WalkLabSession {
     /// 보행 cycle cancel + walkReady 안전 복귀. stop / emergency / preset 전환 시 호출.
     /// task 가 자체적으로 walkReady 복귀를 수행하지만, cancel 응답 지연을 보장하기 위해
     /// `sendRobotPose` 로 명시 송출 (applyPoseSmoothly 의 검증된 분할/부하 watchdog 경로).
-    private func cancelWalkCycle(eventLabel: String) {
+    /// **사이클 109 (Phase 8)**: `private` → `internal` — `WalkLabSession+BalanceMitigation`
+    /// 의 warning/danger hysteresis 자동 cancel 경로가 본 method 호출 필요.
+    internal func cancelWalkCycle(eventLabel: String) {
         guard let task = walkCycleTask else { return }
         task.cancel()
         walkCycleTask = nil
@@ -2741,53 +2745,17 @@ public final class WalkLabSession {
     ///   - lastRobotEvent 로 사용자에게 명확 안내: "기울기 35°+ — 감속 정지"
     ///   - 사용자가 직접 stride 줄여서 재시작 (자동 재시작 안 함 = 안전)
     /// 즉시 동적 plan 재합성은 위험 (motor 명령 mid-step 갈아치기 → jerk + 낙상 가능).
-    private func applyBalanceMitigation() {
-        let cmd = effectiveCommand
-        switch balanceState {
-        case .normal, .caution:
-            // **Phase D 정정**: 회복 시 engine 100% 복원. 이전 warning 의 0.7× 잔존 방지.
-            engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
-            // v1.8: warning hysteresis 리셋.
-            warningStateConsecutiveSamples = 0
-            dangerStateConsecutiveSamples = 0
-        case .warning:
-            // 70% 자동 감속 — sim engine 의 x_amplitude 만 줄임.
-            engine.setCommand(
-                x: cmd.x * BalanceState.warning.speedScale,
-                y: cmd.y,
-                a: cmd.a,
-                enabled: cmd.enabled
-            )
-            // v1.8 (2026-05-17): hysteresis 도입. 한 sample spike → 즉시 cancel false-positive
-            // 차단. 3 tick 연속 (150ms @ 50ms tick) warning 일 때만 실 robot 보행 정지.
-            warningStateConsecutiveSamples += 1
-            dangerStateConsecutiveSamples = 0
-            if warningStateConsecutiveSamples >= 3,
-               isRobotWalking, store?.bus != nil {
-                lastRobotEvent = "⚠️ 기울기 35°+ 지속 — 실 robot 보행 정지. 슬라이더 줄이고 재시작 권장"
-                cancelWalkCycle(eventLabel: "Warning state 지속 자동 정지")
-                warningStateConsecutiveSamples = 0
-            }
-        case .danger:
-            // **Phase C**: sim engine 정지 + `transformPose` 가 lastSafePose 반환.
-            engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
-            // v1.8: danger 도 3 tick hysteresis.
-            dangerStateConsecutiveSamples += 1
-            if dangerStateConsecutiveSamples >= 3,
-               isRobotWalking, store?.bus != nil {
-                lastRobotEvent = "🛑 기울기 45°+ 지속 — 자세 동결 (낙상 직전)"
-                cancelWalkCycle(eventLabel: "Danger state 지속 자세 동결")
-                dangerStateConsecutiveSamples = 0
-            }
-        case .emergency:
-            // 즉시 L3 게이트 (별도 처리).
-            break
-        }
-    }
+    // MARK: - Balance Mitigation (사이클 109 Phase 8 — extension 이동)
+    //
+    // `applyBalanceMitigation()` (~42 line) 은 `WalkLabSession+BalanceMitigation.swift`
+    // 로 이동. `engine / warningStateConsecutiveSamples / dangerStateConsecutiveSamples /
+    // cancelWalkCycle` 4개 격상 (`private` → `internal`). 호출 site `tick()` 동일.
 
     /// v1.8 (2026-05-17): warning/danger hysteresis — 정상 보행의 순간 spike 흡수.
-    private var warningStateConsecutiveSamples: Int = 0
-    private var dangerStateConsecutiveSamples: Int = 0
+    /// **사이클 109 (Phase 8)**: `private` → `internal` — `WalkLabSession+BalanceMitigation`
+    /// 의 `applyBalanceMitigation()` 가 read/write 필요.
+    internal var warningStateConsecutiveSamples: Int = 0
+    internal var dangerStateConsecutiveSamples: Int = 0
 
     /// v1.8 safety constants — 10x review P2 fix: magic number → 상수화.
     public static let hysteresisTriggerCount: Int = 3
