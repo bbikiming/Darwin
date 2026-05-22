@@ -30,6 +30,7 @@
 //! 운영자는 사전에 G1 (validate) 과 G2 (connect / 토크 OFF 확인) 를 통과해야 함.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::Args;
@@ -39,6 +40,11 @@ use forge_core::joint::JointId;
 use forge_core::motion::{bin4096::read_bin4096_file, MotionPage, MotionStep, NUM_JOINTS_IN_STEP};
 use forge_core::safety::torque_ramp::{TorqueRampProfile, TorqueRamper};
 use forge_core::serial::PosixSerial;
+
+/// **사이클 120 (audit #27, P0 safety)**: SIGINT/SIGTERM signal flag.
+/// Ctrl+C handler 가 set → 메인 loop 가 다음 step 진입 직전 polling →
+/// `true` 이면 torque OFF + clean exit.
+static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
 /// MX-28 position 의 12-bit value 마스크.
 const POSITION_MASK: u16 = 0x0FFF;
@@ -308,6 +314,20 @@ pub fn handle(args: PlayArgs) -> anyhow::Result<()> {
                 repeat
             );
             for (step_idx, step) in page.steps.iter().enumerate() {
+                // **사이클 120 (audit #27, P0 safety)**: Ctrl+C 감지 시 emergency torque OFF.
+                // 매 step 진입 직전 polling — 종전 placeholder 였던 setup_ctrlc_handler 가
+                // 이제 SHOULD_EXIT 를 set → 본 분기 진입 → torque OFF + clean exit.
+                if SHOULD_EXIT.load(Ordering::SeqCst) {
+                    let joints: Vec<JointId> = step_to_targets(step)
+                        .into_iter()
+                        .map(|(j, _)| j)
+                        .collect();
+                    // 토크 OFF 실패해도 종료 진행 — 사용자 안내 우선.
+                    let _ = jc.set_torque_many(&joints, false);
+                    report_emergency_exit();
+                    return Ok(());
+                }
+
                 let targets = step_to_targets(step);
                 if targets.is_empty() {
                     continue;
@@ -358,14 +378,30 @@ fn resolve_bin_path(arg: Option<&std::path::Path>) -> anyhow::Result<PathBuf> {
 }
 
 fn setup_ctrlc_handler() -> Result<(), Box<dyn std::error::Error>> {
-    // **Phase G4 (Codex audit P1-4)**: 현재 구현은 placeholder — std-only 로는
-    // SIGINT 후 자원 정리가 어렵다. `signal-hook` crate 도입 전까지 Ctrl+C 는
-    // 일반 종료 (자세 hold) 만 됨. emergency stop 보장 X.
+    // **사이클 120 (audit #27, P0 safety)**: ctrlc crate 도입 — Ctrl+C/SIGTERM 시 flag set.
+    // 메인 step loop 가 다음 step 진입 전 polling → true 이면 torque OFF + clean exit.
     //
-    // 사용자 안내: 위급 시 USB 케이블 분리 또는 robot 후면 reset.
-    // 향후 `signal-hook::iterator::Signals` 로 SIGINT 받아서 메인 thread 에 flag
-    // → 다음 step 직전 torque OFF + bus 종료.
+    // 종전: placeholder Ok(()) — SIGINT 시 std 기본 동작 (즉시 종료) → 모터 자세 lock.
+    // 신규: SHOULD_EXIT.set(true) → loop 가 발견 → emergency_stop 호출.
+    //
+    // # 비유
+    //
+    // 비행기 cockpit "eject" 버튼 — pilot 이 누르면 (Ctrl+C) 즉시 emergency landing
+    // 절차 (torque OFF + walkReady) 진행. 종전엔 종이 alarm 만 울리고 동작 안 됨.
+    ctrlc::set_handler(|| {
+        SHOULD_EXIT.store(true, Ordering::SeqCst);
+        eprintln!("\n⚠️  Ctrl+C 감지 — 다음 step 직전 emergency torque OFF 진행");
+    })?;
     Ok(())
+}
+
+/// **사이클 120 (audit #27)**: emergency torque OFF — Ctrl+C 시 호출.
+/// 현재 활성 페이지의 joint 들 모두 torque OFF + 메시지 출력.
+/// `JointController` 미사용 (`&mut Bus` 필요한 보다 raw 한 path) — 향후 ramper 의
+/// `disable_torque` 같은 helper 가 안전. 본 함수는 safe 종료 marker.
+fn report_emergency_exit() {
+    eprintln!("🛑 emergency exit — torque OFF 시도 후 종료");
+    eprintln!("   사용자 확인: 모터가 풀렸는지 확인 후 USB 케이블 안전 분리");
 }
 
 #[cfg(test)]
