@@ -9,7 +9,10 @@ import SwiftUI
 /// - 정확한 안전 등급 / 한국어 라벨 / SF Symbol 을 UI 측이 직접 보유해야 인터넷 없이 즉시 표시
 ///
 /// 향후 forge-ffi 에 enum + 한국어 라벨 export 추가 시 본 파일은 thin wrapper 로 축소.
-public enum WalkLabPreset: String, CaseIterable, Identifiable, Hashable {
+// **사이클 141 (Swift 6 Sendable warning fix)**: MotionDescriptor.walk(WalkLabPreset) 의
+// Sendable 전파를 위해 명시 Sendable. enum String + Hashable + Identifiable + Sendable
+// (모든 case 가 String raw value 만 — concurrency safe).
+public enum WalkLabPreset: String, CaseIterable, Identifiable, Hashable, Sendable {
     case idle, march, slowWalk, normalWalk, fastWalk, jog, turnLeft, turnRight
 
     public var id: String { rawValue }

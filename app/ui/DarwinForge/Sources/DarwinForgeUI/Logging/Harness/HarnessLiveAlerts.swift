@@ -38,7 +38,9 @@ public final class HarnessLiveAlerts: ObservableObject {
     }
 
     /// 윈도우 크기.
-    public static let defaultWindowSeconds: Double = 60
+    /// 사이클 141 (Swift 6 MainActor isolation fix): `evaluate(events:windowSeconds:)` 의
+    /// default parameter 에서 참조하기 위해 `nonisolated` — 단순 immutable 상수이므로 안전.
+    public nonisolated static let defaultWindowSeconds: Double = 60
 
     /// 임계 — 사용자가 향후 조정 가능하도록 추후 UserDefaults 노출.
     public struct Thresholds: Sendable {

@@ -167,7 +167,8 @@ public struct RootView: View {
             }
         }
         // v1.12.0 telemetry — section 변경 추적 (메뉴/단축키/사이드바 모두 포착).
-        .onChange(of: section) { newValue in
+        // **사이클 141 (Swift 6 deprecated fix)**: 1-param onChange → 2-param closure (macOS 14+).
+        .onChange(of: section) { _, newValue in
             Harness.shared.record(
                 .uiSectionChanged, level: .info, actor: .user,
                 data: ["to": AnyCodable(newValue.rawValue)]

@@ -1508,9 +1508,10 @@ public final class ConnectionStore: ObservableObject {
             //       결과만 MainActor 에서 publish — UI freeze 해소.
 
             // P0-D: 보드 read는 매 5 tick (1 Hz). throw 감지 시 watchdog 카운터 +1.
+            // **사이클 141 (Swift 6 warning fix)**: imu 는 재할당 없음 → let.
             var didFail = false
             var board: BoardSnapshot? = lastTelemetry?.board
-            var imu: ImuRaw? = lastTelemetry?.imu
+            let imu: ImuRaw? = lastTelemetry?.imu
             if tick % 5 == 0 {
                 let t0 = Date()
                 // background bus I/O.

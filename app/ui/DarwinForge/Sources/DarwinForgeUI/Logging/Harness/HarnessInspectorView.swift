@@ -354,7 +354,8 @@ struct SessionDetailView: View {
                 .frame(minHeight: 180)
         }
         .onAppear { loadEvents() }
-        .onChange(of: session) { _ in loadEvents() }
+        // 사이클 141 (Swift 6 deprecated fix): 1-param onChange → 0-param closure (macOS 14+).
+        .onChange(of: session) { loadEvents() }
         .sheet(isPresented: $envelopeSheetOpen) {
             if let a = analysis {
                 ErrorEnvelopeSheet(
@@ -913,18 +914,22 @@ struct CurrentSessionPanel: View {
         Task.detached(priority: .utility) {
             let events = dir.appendingPathComponent("events.jsonl")
             let metaURL = dir.appendingPathComponent("meta.json")
-            var newEventCount: UInt64 = 0
-            var newSize: UInt64 = 0
-            if let data = try? Data(contentsOf: metaURL),
-               let m = try? JSONDecoder().decode(TelemetrySessionMeta.self, from: data) {
-                newEventCount = m.eventCount
-                newSize = m.sizeBytes
-            }
-            var newFlushAt: Date? = nil
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: events.path),
-               let mtime = attrs[.modificationDate] as? Date {
-                newFlushAt = mtime
-            }
+            // 사이클 141 (Swift 6 Sendable closure fix): var → let — Task closure 가 concurrently
+            // execute 될 때 var capture 가 Swift 6 mode 에서 error. immutable let 으로 1회 계산.
+            let (newEventCount, newSize): (UInt64, UInt64) = {
+                if let data = try? Data(contentsOf: metaURL),
+                   let m = try? JSONDecoder().decode(TelemetrySessionMeta.self, from: data) {
+                    return (m.eventCount, m.sizeBytes)
+                }
+                return (0, 0)
+            }()
+            let newFlushAt: Date? = {
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: events.path),
+                   let mtime = attrs[.modificationDate] as? Date {
+                    return mtime
+                }
+                return nil
+            }()
             // **v1.14.1 (Critic P2-7 fix, 2026-05-21)** — maxLines 200 → 800.
             // 종전: bus storm (분당 수백 회 발생) 시 200 line 윈도우가 bus 에러만으로
             // 차서 LiveAlerts 가 봐야 할 heartbeat 가 밖으로 밀려나 RTT/IMU stale 알림
