@@ -200,7 +200,9 @@ final class GamepadPilotAdapterTests: XCTestCase {
         adapter.pollOnce()
 
         XCTAssertEqual(session.current, .idle, "faceLeft → preset.idle = stop")
-        XCTAssertEqual(bridge.lastIntent?.source, .gamepad)
+        // 주의: handlePreset(.idle) 은 session.stop 만 호출, bridge.lastIntent 미설정 (intent
+        // 아닌 직접 preset 명령). adapter.lastActionLabel 로 검증.
+        XCTAssertEqual(adapter.lastActionLabel, "preset idle (faceLeft / □ / X)")
     }
 
     func testDpadUpCallsPresetMarch() {
@@ -224,9 +226,20 @@ final class GamepadPilotAdapterTests: XCTestCase {
     }
 
     func testDpadLeftCallsPresetFastWalk() {
+        // `.fastWalk` 는 caution preset → enableBalanceCorrection 필요.
+        session.enableBalanceCorrection = true
         mock.buttons.dpadLeft = true
         adapter.pollOnce()
         XCTAssertEqual(session.current, .fastWalk, "D-pad ← → preset 4 (fastWalk)")
+    }
+
+    /// `.fastWalk` 는 caution preset — balance correction OFF 면 차단 (safety message).
+    func testDpadLeftFastWalkBlockedWithoutBalanceCorrection() {
+        XCTAssertFalse(session.enableBalanceCorrection, "사전: balance correction OFF")
+        mock.buttons.dpadLeft = true
+        adapter.pollOnce()
+        XCTAssertEqual(session.current, .idle, "caution preset 차단")
+        XCTAssertNotNil(bridge.safetyMessage, "차단 사유 노출")
     }
 
     func testMenuButtonCallsRecovery() {

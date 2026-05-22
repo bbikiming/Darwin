@@ -87,6 +87,7 @@ public final class WalkLabRCBridge {
             }
         }
     }
+
     /// stick 변환 scale — 사용자 sensitivity 조정.
     public var scale: TelloRCMapper.Scale = .default
     /// **v1.20.3 (2026-05-22) 사이클 9** — idle 상태에서 첫 pilot 입력 시 자동 시작할 preset.
@@ -107,6 +108,11 @@ public final class WalkLabRCBridge {
         PresetBackedPilotMotionCatalog(),
         PageBackedPilotMotionCatalog()
     ])
+
+    /// **v1.20.45 (2026-05-22) 사이클 59** — input → engine latency tracker (옵셔널).
+    /// `nil` (default) 시 측정 비활성 — overhead 0. critic 지적 "game character 정량 기준"
+    /// 응답을 위한 명시 활성. 활성 시 process / applyAmplitude 가 stage 별 record.
+    public var latencyTracker: PilotLatencyTracker?
 
     // MARK: - Init
 
@@ -151,7 +157,7 @@ public final class WalkLabRCBridge {
             safetyMessage = "Bridge 비활성 — motion 차단"
             return .rejectedSafety(reason: "bridge disabled")
         }
-        if let session = session, session.emergencyStopActive {
+        if let session = session, session.pilotIsEmergency {
             safetyMessage = "긴급 정지 상태 — motion 차단 (recovery 필요)"
             return .rejectedSafety(reason: "emergency active")
         }
@@ -174,16 +180,16 @@ public final class WalkLabRCBridge {
         // 종전: "Emergency 상태 아님 — recovery 불필요" 메시지로 기존 safetyMessage 덮음 →
         // 두 곳 (Panel + HUD) 에서 거의 동시에 recovery 클릭 시 두 번째 호출이 이전 메시지 덮음.
         // 신규: silent no-op (safetyMessage 미변경) → 호출 idempotent.
-        guard session.emergencyStopActive else {
+        guard session.pilotIsEmergency else {
             return
         }
-        session.exitEmergencyMode()
+        session.pilotEmergencyExit()
         safetyMessage = nil
         // **v1.20.13.1 사이클 19-fix LOW 1 (코덱스)** — lastIntent clear.
         // 종전: lastIntent 는 emergency 그대로 → HUD sourceChip 가 stale ("긴급" 표시 유지).
         // 신규: nil 로 reset → HUD "대기" 로 복귀, recovery 완료 시각화.
         lastIntent = nil
-        session.lastRobotEvent = "✅ \(source.label) → emergency recovery (preset 입력 활성)"
+        session.pilotPostEvent("✅ \(source.label) → emergency recovery (preset 입력 활성)")
     }
 
     /// **v1.20.4 (2026-05-22) 사이클 10** — preset 직접 선택 (number key / future button).
@@ -201,15 +207,15 @@ public final class WalkLabRCBridge {
         // **v1.20.4.1 사이클 10-fix CRITICAL (코덱스)** — emergency 상태에서 preset 재시작 차단.
         // 종전: Space (emergency) → 1 (preset) 순서로 입력 시 즉시 재시작 가능 (큰 안전 hole).
         // 신규: emergencyStopActive 동안 사용자 명시 recovery 전까지 preset 무시. emergency 만 통과.
-        if session.emergencyStopActive {
+        if session.pilotIsEmergency {
             safetyMessage = "긴급 정지 상태 — preset 단축키 차단 (recovery 필요)"
             return
         }
         if preset == .idle {
             // .idle == 정지. 현재 보행 중일 때만 의미 있음.
-            if session.current != .idle {
-                session.stop()
-                session.lastRobotEvent = "🎮 \(source.label) → 정지 (preset .idle)"
+            if session.pilotIsWalking {
+                session.pilotStop()
+                session.pilotPostEvent("🎮 \(source.label) → 정지 (preset .idle)")
                 safetyMessage = nil
             } else {
                 safetyMessage = "이미 정지 상태"
@@ -221,41 +227,26 @@ public final class WalkLabRCBridge {
         // 신규: 동일 preset 재입력 시 silent no-op (사용자 의도: 변경 없음).
         // 단 emergencyStopActive 체크는 위에서 이미 통과한 상태.
         // **사이클 28-fix MEDIUM (코덱스)**: telemetry 도 same-preset 경우 skip (UI 카운터 노이즈 차단).
-        if session.current == preset {
-            safetyMessage = nil  // 기존 메시지 clear (clean state).
-            return
-        }
-        // **v1.20.16 사이클 22 + 28-fix MEDIUM + 36-fix MEDIUM 2 (코덱스)**:
-        // telemetry 는 실 preset transition 성공 후에만 (preflight 실패는 카운트 안 함).
-        // 일단 기록 안 함 — 성공 분기에서 record.
-        // **v1.20.4.1 사이클 10-fix HIGH (코덱스)** — same-preset retry 의 false-positive 차단.
-        // 종전: session.start 후 `current == preset` true 면 성공 처리 → 활성 .march 에 1 재입력
-        // 시 preflight 가 alreadyWalking 으로 차단해도 current 변화 없어 성공 메시지 + nil safety.
         //
-        // 신규 판정: `current 가 실제로 바뀌었고 preset 으로 도착`. 사이드 채널:
-        // - sim mode: current 변경 후 startWalkCycle 의 noConnection 차단 — 성공 판정 (current 변함)
-        // - real success: current = preset, lastPreflightFailure = nil — 성공
-        // - alreadyWalking retry: quickPreflight 가 current 변경 전에 return → 변화 없음 → 차단
-        // - 다른 preset switch 중 alreadyWalking: 동일 — current 변화 없음 → 차단
-        let currentBefore = session.current
-        let preflightBefore = session.lastPreflightFailure
-        session.start(preset)
-
-        if session.current == preset && session.current != currentBefore {
+        // **v1.20.45 facade refactor**: same-preset / success / blocked 판정을 facade
+        // (`pilotStart`) 에 위임. bridge 는 결과 enum 만 보고 safetyMessage / telemetry 결정.
+        // 종전 3개 property (current / lastPreflightFailure / startBlockedReason) read →
+        // 단일 method 호출로 축소.
+        switch session.pilotStart(preset: preset) {
+        case .sameAsCurrent:
+            safetyMessage = nil  // 기존 메시지 clear (clean state).
+        case .success:
             // 실 진입 (sim 정보성 noConnection 포함). 성공 처리.
             // **v1.20.17.1 사이클 23-fix MEDIUM 1 + 36-fix MEDIUM 2 (코덱스)** — 성공 path 에서만
             // telemetry. session.start 이 captureTrialStart → accumulator.reset → 재기록.
             // mirror 는 reset 영향 안 받음 — bridge lifetime, 본 path 에서 첫 증가.
             accumulator.recordPresetChange(source: source)
             presetChangeMirror += 1
-            session.lastRobotEvent = "🎮 \(source.label) → preset \(preset.rawValue) 시작"
+            session.pilotPostEvent("🎮 \(source.label) → preset \(preset.rawValue) 시작")
             safetyMessage = nil
-        } else if let failure = session.lastPreflightFailure, failure != preflightBefore {
-            // **사이클 10-fix MEDIUM 1 (코덱스)** — 진단 코드 대신 사용자 메시지 노출.
-            safetyMessage = failure.userMessage
-        } else {
-            // 기타 차단 (예: startWalkCycle 내부 추가 guard, race).
-            safetyMessage = "Preset \(preset.rawValue) 시작 차단 — \(session.startBlockedReason ?? "알 수 없음")"
+        case .blocked(let userMessage):
+            // preflight failure 의 userMessage 또는 startBlockedReason 합성 메시지.
+            safetyMessage = userMessage
         }
     }
 
@@ -263,6 +254,9 @@ public final class WalkLabRCBridge {
 
     private func process(_ intent: PilotIntent) {
         lastIntent = intent
+        // **v1.20.45 사이클 59** — latency tracker: input received stage.
+        // nil (default) 시 record 호출 skip — overhead 0.
+        latencyTracker?.record(stage: .inputReceived)
         // **v1.20.3.1 사이클 9-fix MEDIUM 2 (코덱스)** — accumulator.record 는 각 path 에서
         // 정확히 1회. 종전: 진입 즉시 record + auto-start 후 재 record → session.pilotBridge nil
         // (production wiring 실패) 시 reset 안 돼 double-count. 신규: path 별 1회 record.
@@ -283,7 +277,7 @@ public final class WalkLabRCBridge {
         // 종전: handleMove 의 auto-start path 가 emergency 상태에서도 session.start 호출 → robot 재작동.
         // emergency Space → W → autostart .march 로 robot 깨어남. 큰 안전 hole.
         // 신규: 모든 non-emergency intent 차단 + 사용자에게 recovery 안내.
-        if intent.kind != .emergency && session.emergencyStopActive {
+        if intent.kind != .emergency && session.pilotIsEmergency {
             accumulator.record(intent)
             safetyMessage = "긴급 정지 상태 — recovery 필요 (R 키 또는 Recover 버튼)"
             return
@@ -298,7 +292,7 @@ public final class WalkLabRCBridge {
             return
         }
         // bus / cradle 검사 — preset 시작 path 와 동일.
-        if session.current == .idle {
+        if !session.pilotIsWalking {
             // **v1.20.3 사이클 9** — 게임 캐릭터 idle 응답: 사용자가 keyboard/Tello move 입력 시
             // 자동으로 preset 시작. preflight 검사 (cradle/bus/IMU) 는 session.start 가 그대로 수행 →
             // 안전 우회 아님. .stop / .motion 같이 amplitude 없는 intent 는 skip.
@@ -316,7 +310,7 @@ public final class WalkLabRCBridge {
             }
             session.start(autoStartPreset)
             // session.start 가 실패한 경우 (preflight 차단) 여전히 idle → 종료.
-            if session.current == .idle {
+            if !session.pilotIsWalking {
                 accumulator.record(intent)
                 safetyMessage = "Auto-start (\(autoStartPreset.rawValue)) 차단 — 안전 검사 미통과"
                 return
@@ -336,6 +330,9 @@ public final class WalkLabRCBridge {
             // 일반 (이미 walking 중) path — record.
             accumulator.record(intent)
         }
+
+        // **v1.20.45 사이클 59** — safety 통과 완료 stage 기록.
+        latencyTracker?.record(stage: .safetyGated)
 
         // 정상 처리 — Walking module amplitude 갱신.
         switch intent.kind {
@@ -368,20 +365,17 @@ public final class WalkLabRCBridge {
             safetyMessage = "Bridge 비활성 — motion 차단"
             return .rejectedSafety(reason: "bridge disabled")
         }
-        if let session = session, session.emergencyStopActive {
+        if let session = session, session.pilotIsEmergency {
             safetyMessage = "긴급 정지 상태 — motion 차단 (recovery 필요)"
             return .rejectedSafety(reason: "emergency active")
         }
         let intent = PilotIntent(kind: .motion(descriptor.id), source: source)
         let result: BlendResult
         if let session = session {
-            // SafetyContext — session 의 현재 balance + bus + risk.
-            let ctx = SafetyContext(
-                balanceState: session.balanceState,
-                robotConnected: session.store?.bus != nil,
-                riskAcknowledged: session.riskAcknowledged
-            )
-            result = motionBlender.play(descriptor, safetyContext: ctx)
+            // **v1.20.45 facade refactor**: SafetyContext 합성을 facade 에 위임.
+            // 종전 3개 property (balanceState / store?.bus / riskAcknowledged) read →
+            // 단일 method 호출로 축소.
+            result = motionBlender.play(descriptor, safetyContext: session.pilotSafetyContext())
         } else {
             // session 미연결 — sim only path. policy skip.
             result = motionBlender.play(descriptor, safetyContext: nil)
@@ -392,7 +386,7 @@ public final class WalkLabRCBridge {
         switch result {
         case .accepted, .acceptedFullBody:
             safetyMessage = nil
-            session?.lastRobotEvent = "🎬 \(source.label) → motion '\(descriptor.displayLabel)' 적용"
+            session?.pilotPostEvent("🎬 \(source.label) → motion '\(descriptor.displayLabel)' 적용")
         case .rejectedSafety(let reason):
             safetyMessage = reason
         case .rejectedEmptyChannels:
@@ -409,36 +403,41 @@ public final class WalkLabRCBridge {
     /// - `applyHardZero=true`: bypass EMA, 진정한 0 도달 (release/stop path).
     /// - `applyHardZero=false`: EMA blend (game ramp UX).
     /// - **CRITICAL fix**: advanced=true 자동 활성 + syncCommandToEngine 호출 → 실 walking 에 반영.
+    ///
+    /// **v1.20.45 facade refactor**: emergency 가드 / advanced=true 자동 활성 / slider write /
+    /// syncCommandToEngine 호출은 `WalkLabSession+Pilot.swift` facade 에 위임. bridge 는
+    /// smoothing 합성 + latency marker + lastRobotEvent 메시지만 담당.
     private func applyAmplitude(_ cmd: WalkingCommand, in session: WalkLabSession,
                                  applyHardZero: Bool = false) {
-        // **v1.20.44 사이클 58 — security-auditor HIGH 2 fix**:
-        // emergency 상태에서 applyAmplitude 호출 차단 — race 로 process() 우회 시 invariant 보장.
-        // 호출자 (handleMotion 등) 의 가드가 우회되더라도 marginal layer 차단.
-        if session.emergencyStopActive {
-            return  // emergency 중 amplitude write 차단.
-        }
-        // **사이클 20-fix CRITICAL (코덱스)** — advanced=true 자동 활성 (amplitude 쓰기 전에!).
-        // 이유: `advanced` didSet 가 `loadPresetDefaultsToSliders(current)` 호출 →
-        // 기존 strideMm 0 으로 reset. 따라서 amplitude 적용 BEFORE 가 아닌 advanced AFTER 면
-        // 우리 값이 즉시 덮임. 순서: advanced first, then write amplitude.
-        if !session.advanced {
-            session.advanced = true
-        }
+        // EMA blend — bridge 의 smoothing 책임. facade 에서 emergency 차단 시 false 반환.
+        let final: WalkingCommand
         if applyHardZero {
             // **사이클 20-fix HIGH 1 (코덱스)** — .stop path 의 hard-zero.
-            session.strideMm = cmd.strideMm
-            session.sideMm   = cmd.sideMm
-            session.turnDeg  = cmd.turnDeg
+            final = cmd
         } else {
             let α = max(0, min(1, smoothingFactor))  // clamp 0..1 (safety)
-            session.strideMm = α * cmd.strideMm + (1 - α) * session.strideMm
-            session.sideMm   = α * cmd.sideMm   + (1 - α) * session.sideMm
-            session.turnDeg  = α * cmd.turnDeg  + (1 - α) * session.turnDeg
+            let prev = session.pilotCurrentAmplitude
+            final = WalkingCommand(
+                strideMm: α * cmd.strideMm + (1 - α) * prev.strideMm,
+                sideMm:   α * cmd.sideMm   + (1 - α) * prev.sideMm,
+                turnDeg:  α * cmd.turnDeg  + (1 - α) * prev.turnDeg
+            )
         }
-        session.syncCommandToEngine()
+        // facade — emergency 가드 / advanced 자동 활성 / slider write.
+        // false 반환 시 emergency 상태 — engine sync / 메시지 모두 skip.
+        guard session.pilotApplyAmplitude(final) else {
+            return
+        }
+        // **v1.20.45 사이클 59** — slider mutation 완료. engine sync 직전.
+        latencyTracker?.record(stage: .amplitudeApplied)
+        session.pilotSyncEngine()
+        // **v1.20.45 사이클 59** — engine sync 직후 — 사용자 체감 응답 끝점.
+        // 실 motor 시간은 hw — 본 layer 까지만 측정.
+        latencyTracker?.record(stage: .engineSynced)
         // 사용자 안내 — 어떤 source 가 명령했는지.
         if let source = lastIntent?.source {
-            session.lastRobotEvent = "🕹 \(source.label) → stride=\(Int(session.strideMm)) side=\(Int(session.sideMm)) turn=\(Int(session.turnDeg))"
+            let now = session.pilotCurrentAmplitude
+            session.pilotPostEvent("🕹 \(source.label) → stride=\(Int(now.strideMm)) side=\(Int(now.sideMm)) turn=\(Int(now.turnDeg))")
         }
     }
 

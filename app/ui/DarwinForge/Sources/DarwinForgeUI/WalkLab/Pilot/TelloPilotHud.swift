@@ -292,6 +292,13 @@ public struct TelloPilotHud: View {
                     settingChip(icon: "figure.walk.motion",
                                 label: String(format: "%.0f%%", comfort * 100))
                 }
+                // **v1.20.45 사이클 59** — input → engine median latency (옵셔널 tracker 활성 시).
+                // critic 지적 응답 — "game character" 정량 기준. nil tracker 면 chip 미표시.
+                if let stats = bridge.latencyTracker?.statistics(for: .endToEnd),
+                   stats.count > 0 {
+                    settingChip(icon: "timer",
+                                label: String(format: "L: %.0fms", stats.median * 1000))
+                }
                 Spacer()
             }
             HStack(spacing: 8) {
