@@ -199,4 +199,142 @@ final class TelloStateListenerOwnerTests: XCTestCase {
                        "start 실패 시 isActive=false — silent 처리")
         XCTAssertEqual(listener.startCount, 1, "start 시도는 카운트")
     }
+
+    // MARK: - 8. 사이클 73 (코덱스 HIGH-2): 사용자 명시 start() 호출 전엔 inactive 유지
+
+    /// RootView 의 자동 owner.start() 제거 후 회귀 가드.
+    /// owner alloc 만 했고 사용자가 "Tello 활성화" 버튼 클릭 안 했으면 isActive=false +
+    /// health() == .inactive. macOS 권한 다이얼로그도 발화 안 함 (NWListener 미생성).
+    func testStartRequiresExplicitInvocation() {
+        let listener = MockListener()
+        let owner = TelloStateListenerOwner(bridge: nil, listener: listener)
+
+        // 명시 start() 미호출 — alloc 직후 상태.
+        XCTAssertFalse(owner.isActive, "alloc 직후 isActive=false (자동 start 금지)")
+        XCTAssertEqual(listener.startCount, 0, "listener.start 미호출")
+        XCTAssertEqual(owner.health(), .inactive,
+                       "사용자 명시 활성화 대기 — banner 가 'Tello 활성화' 토글 표시")
+        XCTAssertNil(owner.startedAt, "startedAt nil — 시작 안 됨")
+        XCTAssertFalse(owner.lastStartFailed, "lastStartFailed false — 실패 아님")
+    }
+
+    // MARK: - 9. 사이클 73: start 실패 후 health() == .startFailed
+
+    /// silent fail 가시화: owner.lastStartFailed 가 true 되며 health() 가 분류.
+    /// HUD 가 "🔌 listener 비활성 + 다시 시도" banner 표시.
+    func testStartFailureMarksHealthAsStartFailed() {
+        let listener = MockListener()
+        listener.startError = NSError(
+            domain: "test", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Permission denied"]
+        )
+        let owner = TelloStateListenerOwner(bridge: nil, listener: listener)
+
+        owner.start()
+
+        XCTAssertFalse(owner.isActive, "isActive=false (silent fail)")
+        XCTAssertTrue(owner.lastStartFailed, "실패 플래그 설정")
+        XCTAssertEqual(owner.health(), .startFailed,
+                       "사용자 안내: '다시 시도' 버튼 + 권한 안내")
+    }
+
+    // MARK: - 10. 사이클 73: stalled state — Date 주입으로 결정적 검증
+
+    /// 활성화 후 N초간 메시지 무수신 시 health() == .stalled(elapsedSec).
+    /// Wi-Fi 미연결 / Info.plist 누락 시뮬레이션. clock 주입으로 wall-time 의존 제거.
+    func testStalledStateDetectedAfterThreshold() {
+        // T0 = 시작 시점. clock 이 mutable now 를 가리키게 한다.
+        let nowBox = NowBox(value: Date(timeIntervalSince1970: 1_000_000))
+        let listener = MockListener()
+        let owner = TelloStateListenerOwner(
+            bridge: nil,
+            listener: listener,
+            clock: { nowBox.value }
+        )
+
+        owner.start()
+        XCTAssertEqual(owner.health(stalledThreshold: 5.0), .healthy,
+                       "활성 직후 — 메시지 도착 대기 (5초 미만)")
+
+        // 4초 경과 — 아직 stalled 아님.
+        nowBox.value = nowBox.value.addingTimeInterval(4.0)
+        XCTAssertEqual(owner.health(stalledThreshold: 5.0), .healthy,
+                       "4초 < 5초 threshold")
+
+        // 5초 정확 도달 — stalled.
+        nowBox.value = nowBox.value.addingTimeInterval(1.0)  // T+5
+        if case .stalled(let elapsed) = owner.health(stalledThreshold: 5.0) {
+            XCTAssertEqual(elapsed, 5.0, accuracy: 0.01,
+                           "stalled elapsedSec 정확")
+        } else {
+            XCTFail("5초 도달 시 .stalled 분류 필요")
+        }
+
+        // 8초 — 여전히 stalled, elapsed 갱신.
+        nowBox.value = nowBox.value.addingTimeInterval(3.0)  // T+8
+        if case .stalled(let elapsed) = owner.health(stalledThreshold: 5.0) {
+            XCTAssertEqual(elapsed, 8.0, accuracy: 0.01)
+        } else {
+            XCTFail("8초 도달 시 .stalled 분류 필요")
+        }
+    }
+
+    // MARK: - 11. 사이클 73: 메시지 1건이라도 수신 시 healthy
+
+    /// stalled threshold 초과해도 메시지가 들어오면 healthy 로 분류 — banner 사라짐.
+    func testFirstMessageClearsStalledState() async {
+        let nowBox = NowBox(value: Date(timeIntervalSince1970: 2_000_000))
+        let listener = MockListener()
+        let owner = TelloStateListenerOwner(
+            bridge: nil,
+            listener: listener,
+            clock: { nowBox.value }
+        )
+
+        owner.start()
+        nowBox.value = nowBox.value.addingTimeInterval(10.0)
+        // 10초 경과 — stalled.
+        if case .stalled = owner.health(stalledThreshold: 5.0) {} else {
+            XCTFail("precondition: stalled 상태여야 함")
+        }
+
+        // 메시지 1건 도착.
+        listener.simulate(sampleMessage(battery: 50))
+        await Task.yield()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(owner.health(stalledThreshold: 5.0), .healthy,
+                       "messagesReceived > 0 → healthy")
+    }
+
+    // MARK: - 12. 사이클 73: 권한 거부 시뮬레이션 — start 다시 시도 시 복구 가능
+
+    /// 사용자가 "다시 시도" 버튼 클릭 → start() 재호출. 두번째 호출은 성공 시뮬.
+    /// owner state 가 reset 후 healthy 로 전환.
+    func testRetryAfterStartFailureRecovers() {
+        let listener = MockListener()
+        listener.startError = NSError(domain: "test", code: 1)
+        let owner = TelloStateListenerOwner(bridge: nil, listener: listener)
+
+        owner.start()  // 첫 시도 실패.
+        XCTAssertEqual(owner.health(), .startFailed)
+        XCTAssertTrue(owner.lastStartFailed)
+
+        // 사용자가 권한 허용 후 "다시 시도" 클릭.
+        listener.startError = nil
+        owner.start()
+
+        XCTAssertTrue(owner.isActive, "재시도 성공 → isActive=true")
+        XCTAssertFalse(owner.lastStartFailed, "실패 플래그 reset")
+        XCTAssertNotNil(owner.startedAt, "startedAt 갱신")
+        XCTAssertEqual(listener.startCount, 2, "두 번 시도 카운트")
+    }
+}
+
+/// **사이클 73**: clock injection 을 위한 mutable wrapper.
+/// `@Sendable` closure 가 외부 mutable state 를 read 하려면 reference type 필요.
+/// 테스트 단일 thread 환경 가정 — `@unchecked Sendable`.
+private final class NowBox: @unchecked Sendable {
+    var value: Date
+    init(value: Date) { self.value = value }
 }

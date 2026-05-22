@@ -15,8 +15,27 @@ import SwiftUI
 public struct TelloPilotHud: View {
     @Bindable public var bridge: WalkLabRCBridge
 
-    public init(bridge: WalkLabRCBridge) {
+    /// **사이클 73 — 코덱스 HIGH-2 fix**: listener lifecycle owner (옵셔널).
+    /// nil = HUD 가 status banner 표시 안 함 (legacy / preview). 정상 wiring 시
+    /// `WalkLabView` 가 RootView 의 owner reference 를 전달.
+    /// @Bindable 사용 — owner.isActive / messagesReceived 변경에 view reactive.
+    public var listenerOwner: TelloStateListenerOwner?
+
+    /// **사이클 73**: stalled 판정 threshold — 활성 후 N초 무수신 시 경고.
+    /// 기본 5초. preview / test 에서 임의 값 주입 가능.
+    public let stalledThresholdSec: TimeInterval
+
+    /// **사이클 73**: HUD render 시 stalled 판정을 위한 "now" tick.
+    /// `TimelineView(.periodic)` 가 1초 간격으로 갱신 → 활성인데 무수신인 상태가
+    /// 자동으로 stalled 전환됨. nil tick = 정적 (test / preview).
+    @State private var nowTick: Date = Date()
+
+    public init(bridge: WalkLabRCBridge,
+                listenerOwner: TelloStateListenerOwner? = nil,
+                stalledThresholdSec: TimeInterval = 5.0) {
         self.bridge = bridge
+        self.listenerOwner = listenerOwner
+        self.stalledThresholdSec = stalledThresholdSec
     }
 
     public var body: some View {
@@ -24,6 +43,7 @@ public struct TelloPilotHud: View {
             header
             stickBars
             telloStateRow
+            listenerStatusBanner
             statusRow
             controlsRow
         }
@@ -35,6 +55,11 @@ public struct TelloPilotHud: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(DFColor.accent.opacity(0.35), lineWidth: 1)
         )
+        // 1초 주기로 nowTick 갱신 → health() stalled 판정 자동 refresh.
+        // listenerOwner nil 이면 banner 자체 skip — overhead 무.
+        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
+            if listenerOwner != nil { nowTick = Date() }
+        }
     }
 
     // MARK: - Header
@@ -209,6 +234,98 @@ public struct TelloPilotHud: View {
         if age < 1 { return "방금" }
         if age < 60 { return String(format: "%.0fs", age) }
         return String(format: "%.0fm", age / 60)
+    }
+
+    // MARK: - Listener status banner (사이클 73 — 코덱스 HIGH-2 fix)
+
+    /// **사이클 73**: silent fail visibility — owner.health() 분류에 따라 banner.
+    /// - `.healthy`: 표시 안 함 (정상 운영 시 noise 최소화).
+    /// - `.inactive`: "Tello 활성화" 토글 버튼 (사용자 명시 클릭 → start()).
+    /// - `.startFailed`: 권한 거부 안내 + "다시 시도" 버튼.
+    /// - `.stalled`: Wi-Fi / Info.plist 점검 안내 (활성인데 5초+ 무수신).
+    @ViewBuilder
+    private var listenerStatusBanner: some View {
+        if let owner = listenerOwner {
+            let h = owner.health(stalledThreshold: stalledThresholdSec, now: nowTick)
+            switch h {
+            case .healthy:
+                EmptyView()
+            case .inactive:
+                inactiveBanner(owner: owner)
+            case .startFailed:
+                startFailedBanner(owner: owner)
+            case .stalled(let elapsedSec):
+                stalledBanner(elapsedSec: elapsedSec)
+            }
+        }
+    }
+
+    private func inactiveBanner(owner: TelloStateListenerOwner) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                .font(.caption2)
+                .foregroundStyle(DFColor.textSecondary)
+            Text("Tello state listener 비활성")
+                .font(.caption)
+                .foregroundStyle(DFColor.textSecondary)
+            Spacer()
+            Button("Tello 활성화") {
+                owner.start()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.mini)
+            .tint(DFColor.accent)
+            .help("UDP 8890 listener 시작 — 첫 호출 시 macOS 가 로컬 네트워크 권한 요청")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(DFColor.textSecondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func startFailedBanner(owner: TelloStateListenerOwner) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text("🔌 Tello state listener 비활성")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DFColor.danger)
+                Spacer()
+                Button("다시 시도") {
+                    owner.start()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.mini)
+                .tint(DFColor.warning)
+            }
+            Text("시스템 환경설정 > 개인정보 > 로컬 네트워크 확인")
+                .font(.caption2)
+                .foregroundStyle(DFColor.textSecondary)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(DFColor.danger.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func stalledBanner(elapsedSec: Double) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text("⚠️ Tello state 미수신")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DFColor.warning)
+                Text(String(format: "(%.0f초+)", elapsedSec))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(DFColor.warning.opacity(0.8))
+                Spacer()
+            }
+            Text("Wi-Fi 연결 / Info.plist (NSLocalNetworkUsage) 확인")
+                .font(.caption2)
+                .foregroundStyle(DFColor.textSecondary)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(DFColor.warning.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
     // MARK: - Status row

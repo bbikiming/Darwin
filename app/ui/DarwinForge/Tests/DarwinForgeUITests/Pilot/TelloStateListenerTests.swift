@@ -214,8 +214,12 @@ final class TelloStateListenerTests: XCTestCase {
         XCTAssertEqual(bridge.lastTelloState?.batteryPct, 18,
                        "listener 가 bridge 까지 메시지 전파")
         XCTAssertEqual(bridge.lastTelloState?.batteryLevel, .low,
-                       "low battery 분류 + bridge.safetyMessage 갱신")
-        XCTAssertNotNil(bridge.safetyMessage,
-                        "low battery → safety message 발화 (bridge 책임)")
+                       "low battery 분류")
+        // 사이클 72 코덱스 MEDIUM-2 fix: low battery advisory 가 별도 channel
+        // (telloAdvisoryMessage). safetyMessage 가 100ms 마다 덮어쓰기되던 race 차단.
+        XCTAssertNotNil(bridge.telloAdvisoryMessage,
+                        "low battery → telloAdvisoryMessage (별도 channel)")
+        XCTAssertTrue(bridge.telloAdvisoryMessage?.contains("배터리") ?? false,
+                      "advisory 에 '배터리' 키워드 포함")
     }
 }

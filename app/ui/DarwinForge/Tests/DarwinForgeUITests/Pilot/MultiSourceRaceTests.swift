@@ -146,34 +146,37 @@ final class MultiSourceRaceTests: XCTestCase {
                       "차단 시 사용자에게 긴급 정지 메시지 안내")
     }
 
-    /// **P0-2 Race-5**: TelloStateListener mock 이 updateTelloState 를 호출하면서
-    /// keyboard 입력이 동시에 발화 — safetyMessage priority 검증.
+    /// **P0-2 Race-5 + 사이클 72 코덱스 MEDIUM-2 회귀**: TelloStateListener 가 updateTelloState
+    /// 호출하면서 keyboard 입력 동시 발화 — telloAdvisoryMessage 가 별도 channel 로 분리되어
+    /// keyboard safetyMessage 와 충돌 안 함.
     ///
-    /// low battery safetyMessage 가 keyboard stop 에 의해 nil 이 되면 안 된다.
-    /// (stop path 는 safetyMessage=nil 을 set — battery warning 덮어쓰기 주의)
+    /// 종전 (cycle 71 이전): low battery → bridge.safetyMessage = "배터리..." 직접 write
+    /// → keyboard stop 의 safetyMessage=nil 이 즉시 배터리 경고 덮어쓰기 → 사용자 못 봄.
+    /// 사이클 72 fix: low battery → telloAdvisoryMessage (별도 channel) 사용 →
+    /// safetyMessage 와 namespace 분리.
     func testTelloStateUpdateAndKeyboardInputSafetyMessagePriority() {
         session.start(.march)
 
-        // Tello state: low battery → safetyMessage 설정.
+        // Tello state: low battery → telloAdvisoryMessage 설정 (safetyMessage 아님).
         let lowBattery = makeTelloState(battery: 5, height: 50)
         bridge.updateTelloState(lowBattery)
-        XCTAssertNotNil(bridge.safetyMessage, "low battery → safetyMessage 설정")
-        let batteryMsg = bridge.safetyMessage!
-        XCTAssertTrue(batteryMsg.contains("배터리"), "배터리 경고 메시지")
+        XCTAssertNotNil(bridge.telloAdvisoryMessage,
+                        "low battery → telloAdvisoryMessage 설정 (별도 channel)")
+        let batteryMsg = bridge.telloAdvisoryMessage!
+        XCTAssertTrue(batteryMsg.contains("배터리"), "배터리 경고 메시지 advisory channel")
 
-        // 동시에 keyboard 에서 move 입력 (정상 move → safetyMessage=nil 덮어쓰기).
+        // 동시에 keyboard 에서 move 입력 (safetyMessage=nil 덮어쓰기).
         bridge.handleMove(WalkingCommand(strideMm: 20, sideMm: 0, turnDeg: 0), from: .keyboard)
 
-        // move 처리 후 safetyMessage 는 nil 이 될 수 있음 — 이 behavior 가 의도적인지 확인.
-        // 핵심: session 상태는 일관성 있어야 함 (NaN 없음, range 준수).
+        // 핵심 (MEDIUM-2 fix): keyboard move 후에도 advisory 가 살아있음 — 채널 분리.
+        XCTAssertNotNil(bridge.telloAdvisoryMessage,
+                        "keyboard move 후 advisory 가 살아있음 (사이클 72 채널 분리)")
         XCTAssertEqual(session.strideMm, 20, accuracy: 1e-9,
-                       "keyboard move 가 정상 처리되어야 한다")
+                       "keyboard move 가 정상 처리")
         XCTAssertFalse(session.strideMm.isNaN,
                        "Tello state + keyboard 동시 처리 후 strideMm 이 NaN 이면 안 된다")
-        // accumulator 에 두 이벤트가 모두 기록되어야 함.
-        // updateTelloState 는 accumulator.record 를 호출하지 않음 — keyboard move 1건만.
         XCTAssertGreaterThanOrEqual(bridge.accumulator.summarize().totalEvents, 1,
-                                    "keyboard move 가 accumulator 에 기록되어야 한다")
+                                    "keyboard move accumulator 기록")
     }
 
     /// **P0-2 Race-6**: 빠른 emergency + recovery + re-start 시퀀스에서

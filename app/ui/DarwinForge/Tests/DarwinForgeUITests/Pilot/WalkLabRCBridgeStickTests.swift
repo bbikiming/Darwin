@@ -267,18 +267,24 @@ final class WalkLabRCBridgeStickTests: XCTestCase {
         XCTAssertEqual(bridge.lastTelloState?.heightCm, 100)
     }
 
+    // 사이클 72 코덱스 MEDIUM-2 fix: low battery → telloAdvisoryMessage (별도 channel).
     func testUpdateTelloStateLowBatteryWarning() {
         let msg = makeTelloState(battery: 10, height: 50)
         bridge.updateTelloState(msg)
-        XCTAssertNotNil(bridge.safetyMessage)
-        XCTAssertTrue(bridge.safetyMessage?.contains("배터리") ?? false,
-                      "low battery safety 메시지")
+        XCTAssertNotNil(bridge.telloAdvisoryMessage,
+                        "low battery → telloAdvisoryMessage 설정 (cycle 72 분리)")
+        XCTAssertTrue(bridge.telloAdvisoryMessage?.contains("배터리") ?? false,
+                      "advisory 에 '배터리' 키워드")
+        XCTAssertNil(bridge.safetyMessage,
+                     "safetyMessage 는 별도 — Tello packet 이 덮어쓰지 않음")
     }
 
     func testUpdateTelloStateNormalBatteryNoWarning() {
         let msg = makeTelloState(battery: 80, height: 0)
         bridge.updateTelloState(msg)
-        XCTAssertNil(bridge.safetyMessage, "normal battery — message 없음")
+        XCTAssertNil(bridge.telloAdvisoryMessage,
+                     "normal battery — advisory 없음")
+        XCTAssertNil(bridge.safetyMessage, "safetyMessage 도 없음")
     }
 
     // MARK: - Helpers

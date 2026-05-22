@@ -131,14 +131,13 @@ public struct RootView: View {
                 walkLabSession.pilotBridge = bridge
                 pilotBridge = bridge
             }
-            // **v1.20.35 사이클 18** — Tello state listener owner alloc + start.
-            // listener 의 raw UDP transport 가 bridge.updateTelloState 까지 도달하도록 wiring.
-            // start() 가 silent 실패 (NSLocalNetworkUsageDescription 미허락) 시 OSLog 만 남기고
-            // isActive=false 유지 → 사용자 권한 허용 후 재 start 가능 (현재는 일회성).
+            // **v1.20.35 사이클 18 + 사이클 73 (코덱스 HIGH-2 fix)** — Tello listener owner alloc.
+            // 종전: onAppear 에서 owner.start() 즉시 호출 → macOS 가 의도 없이 권한 다이얼로그
+            // 표시 (UX 나쁨) + silent fail 시 사용자 안내 부재.
+            // 신규: alloc 만, start() 는 TelloPilotHud 의 "Tello 활성화" 버튼이 호출 — VoicePilotPanel
+            // 의 마이크 권한 정책과 일관. owner.health() 가 banner 분기 정보 제공.
             if telloStateOwner == nil, let bridge = pilotBridge {
-                let owner = TelloStateListenerOwner(bridge: bridge)
-                owner.start()
-                telloStateOwner = owner
+                telloStateOwner = TelloStateListenerOwner(bridge: bridge)
             }
             // 첫 실행 자동 연결/자동 마법사는 제거됨 — 사용자가 직접
             // 우측 상단 "Auto Connect" 버튼 또는 마법사를 눌러서 연결.
@@ -193,6 +192,11 @@ public struct RootView: View {
         .environmentObject(experimentLoop)
         // **v1.14.9 (2026-05-21) Fix #7** — @Observable 은 .environment(_:) 로 주입.
         .environment(walkLabSession)
+        // **사이클 73 (2026-05-22) 코덱스 HIGH-2 fix** — TelloPilotHud 가 status banner /
+        // "활성화" 토글 / "다시 시도" 버튼 표시할 수 있도록 owner reference 전파.
+        // 옵셔널 — bridge alloc 전 (cold start race) 면 nil. SwiftUI 의 @Environment(...self)
+        // 가 Optional Observable 지원 (macOS 14+).
+        .environment(telloStateOwner)
         // 글로벌 단축키 (메뉴와 같은 단축키 — 메뉴 enabled 일 때 메뉴가 우선 처리)
         .background(globalShortcuts)
     }

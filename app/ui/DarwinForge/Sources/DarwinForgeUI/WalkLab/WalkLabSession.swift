@@ -184,6 +184,16 @@ public final class WalkLabSession {
     /// 토크 OFF 이후 호출되는 race 차단용. emergency 시 true → exit 자체 skip.
     /// start/reset 시 false 리셋.
     public private(set) var emergencyStopActive: Bool = false
+    /// **v1.21.2 사이클 67 (코덱스 MEDIUM-3 fix)** — 마지막 emergency trigger 보존.
+    /// `emergencyStop(trigger:)` 시 capture, `start(_:)` root guard 가 preflight failure
+    /// payload 로 사용 → 사용자에게 "어떤 trigger 가 emergency 유발" 명시 노출.
+    /// `exitEmergencyMode()` 시 nil reset (recovery 완료 = 과거 trigger 무관).
+    private var _lastEmergencyTrigger: EmergencyTrigger?
+
+    /// **사이클 67** — 외부 read-only accessor. WalkTrialAutoGenerator 등 root guard 우회
+    /// path 가 동일 trigger payload 생성에 사용. nil 이면 아직 emergency 미발생 또는
+    /// recovery 완료.
+    public var lastEmergencyTrigger: EmergencyTrigger? { _lastEmergencyTrigger }
 
     // 2026-05-17 T3.1 partial split: MotorTempSource / ImuSource enum 정의는
     // WalkLabSession+Types.swift 로 이동. type identity 그대로 (extension nested).
@@ -938,6 +948,8 @@ public final class WalkLabSession {
     public func exitEmergencyMode() {
         guard emergencyStopActive else { return }
         emergencyStopActive = false
+        // **v1.21.2 사이클 67**: trigger payload 도 cleanup — recovery 완료 = 과거 trigger 무관.
+        _lastEmergencyTrigger = nil
         lastRobotEvent = "✅ 긴급 정지 recovery — preset 입력 가능"
         logSafetyEvent(
             kind: .recovery,
@@ -1052,8 +1064,14 @@ public final class WalkLabSession {
         // "시뮬 모드 — 로봇 미연결" 로 전달 → 사용자 mental model corruption (emergency
         // 차단을 connection 문제로 오인). 신규: `.emergencyActive` 의 userMessage 가
         // 명시 recovery 안내. diagnosticCode = "emergencyActive" 로 telemetry 도 정확.
+        //
+        // **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: trigger payload 도 전달.
+        // 사용자 메시지에 "(L3 균형 손실)" 같은 출처 라벨 노출 + diagnosticCode 가
+        // `emergencyActive_balanceLostL3` 형식으로 telemetry trigger 별 분류 가능.
+        // `_lastEmergencyTrigger` 가 nil 인 race (init 직후 외부에서 flag set) 는
+        // `.unknown` fallback — safe degrade.
         if emergencyStopActive {
-            let f = WalkPreflightFailure(cause: .emergencyActive)
+            let f = WalkPreflightFailure(cause: .emergencyActive(trigger: _lastEmergencyTrigger ?? .unknown))
             lastPreflightFailure = f
             lastRobotEvent = f.userMessage
             startBlockedReason = f.diagnosticCode
@@ -1125,6 +1143,8 @@ public final class WalkLabSession {
         thermalAlarm = false
         // v1.11.22.1: emergency flag clear — 새 session 시작 시 exit-phase 허용.
         emergencyStopActive = false
+        // 사이클 67: trigger payload 도 cleanup — 다음 emergency 까지 stale 차단.
+        _lastEmergencyTrigger = nil
         // v1.8: hysteresis reset — 이전 cycle 잔존 데이터로 false trigger 차단.
         warningStateConsecutiveSamples = 0
         dangerStateConsecutiveSamples = 0
@@ -1307,6 +1327,9 @@ public final class WalkLabSession {
         // 0. emergencyStopActive flag 먼저 set → walkCycleTask 의 exit phase 가
         //    walkReady setPosition 시도 전 check 하여 skip. 토크 OFF 이후 명령 무효 보장.
         emergencyStopActive = true
+        // **v1.21.2 사이클 67 (코덱스 MEDIUM-3 fix)** — trigger payload 보존.
+        // start() root guard 의 .emergencyActive(trigger:) 가 사용자에게 출처 명시.
+        _lastEmergencyTrigger = trigger
         // 1. 보행 cycle 즉시 cancel — 모터 송출 중지.
         walkCycleTask?.cancel()
         walkCycleTask = nil

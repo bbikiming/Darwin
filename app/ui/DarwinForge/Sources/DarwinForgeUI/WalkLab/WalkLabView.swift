@@ -21,6 +21,10 @@ public struct WalkLabView: View {
     // WalkDataView 가 별도 session 인스턴스를 못 봐 applyExperimentChange 의 부작용
     // 단절. 라이프사이클은 RootView 가 관리.
     @Environment(WalkLabSession.self) private var session
+    /// **사이클 73 (2026-05-22) 코덱스 HIGH-2 fix** — Tello listener owner reference.
+    /// RootView 가 `.environment(telloStateOwner)` 로 전파. nil 가능 (bridge 미alloc).
+    /// TelloPilotHud 가 status banner 표시 + "활성화" 토글 / "다시 시도" 버튼 분기.
+    @Environment(TelloStateListenerOwner.self) private var telloStateOwner: TelloStateListenerOwner?
     @State private var showingRiskConfirm: Bool = false
     @State private var pendingHighRiskPreset: WalkLabPreset?
     /// **v1.15.0 (2026-05-21) Phase 1**: trial library sheet 표시 토글.
@@ -249,7 +253,9 @@ public struct WalkLabView: View {
             }
             if let bridge = session.pilotBridge {
                 KeyboardPilotPanel()
-                TelloPilotHud(bridge: bridge)
+                // **사이클 73**: owner reference 전달 — HUD 가 silent fail 시
+                // banner 표시 + 사용자가 "Tello 활성화" / "다시 시도" 클릭 가능.
+                TelloPilotHud(bridge: bridge, listenerOwner: telloStateOwner)
                 // **v1.20.45 사이클 59-ui** — input → engine latency 시각화.
                 // critic 지적 응답: 측정 + UI 노출까지가 "game character" 정량 기준 close-loop.
                 PilotLatencyPanel(bridge: bridge)

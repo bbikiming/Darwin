@@ -48,6 +48,11 @@ public final class TelloStateListenerOwner {
     /// 진단 로거 — 권한 거부 / start 실패 / stop 시각 등.
     private let log = Logger(subsystem: "DarwinForge", category: "TelloStateListenerOwner")
 
+    /// **사이클 73 — 코덱스 HIGH-2 fix**: stalled 판정 시 사용할 clock.
+    /// 테스트에서 임의 "now" 주입 가능. production 은 `Date()` 기본값.
+    /// nonisolated — pure 함수, actor hop 회피.
+    public nonisolated let clock: @Sendable () -> Date
+
     // MARK: - Observable state
 
     /// listener.start() 성공 후 true, stop() 시 false. start 실패 시 false 유지.
@@ -59,16 +64,30 @@ public final class TelloStateListenerOwner {
     /// 누적 수신 메시지 개수. UI 진단 / health check 용.
     public private(set) var messagesReceived: Int = 0
 
+    /// **사이클 73 — 코덱스 HIGH-2 fix**: 마지막 `start()` 성공 시각.
+    /// nil = 한 번도 시작 안 됨 또는 마지막 호출이 실패. stalled (활성인데 무수신)
+    /// 판정의 기준점 — `now - startedAt > threshold` 이고 `messagesReceived == 0`.
+    public private(set) var startedAt: Date?
+
+    /// **사이클 73 — 코덱스 HIGH-2 fix**: 마지막 `start()` 시도의 실패 여부.
+    /// true = 마지막 호출이 throw (권한 거부 등). 사용자가 재시도 UI 표시 분기.
+    /// `start()` 성공 시 false, `stop()` 시 false (초기 상태로 복귀).
+    public private(set) var lastStartFailed: Bool = false
+
     // MARK: - Init
 
     /// - Parameters:
     ///   - bridge: state 갱신 대상. 약한 참조 — caller 가 강한 참조 유지 필요.
     ///   - listener: 주입 가능 (테스트). default 는 실 `TelloStateListener()` —
     ///               init 자체는 socket 미생성 (cost 0).
+    ///   - clock: 현재 시각 provider — 기본 `Date()`. 테스트가 stalled 판정을
+    ///            결정적으로 검증할 수 있도록 주입 가능.
     public init(bridge: WalkLabRCBridge?,
-                listener: TelloStateListenerProtocol = TelloStateListener()) {
+                listener: TelloStateListenerProtocol = TelloStateListener(),
+                clock: @escaping @Sendable () -> Date = { Date() }) {
         self.bridge = bridge
         self.listener = listener
+        self.clock = clock
     }
 
     deinit {
@@ -103,12 +122,16 @@ public final class TelloStateListenerOwner {
         do {
             try listener.start()
             isActive = true
+            startedAt = clock()
+            lastStartFailed = false
             log.info("Tello state listener active (UDP 8890)")
         } catch {
             // 권한 거부 등 — silent 실패 + log.
             // callback 은 등록 상태로 두되 isActive=false → caller 가 재시도 가능.
             log.error("Tello state listener start failed: \(error.localizedDescription, privacy: .public)")
             isActive = false
+            startedAt = nil
+            lastStartFailed = true
         }
     }
 
@@ -119,6 +142,49 @@ public final class TelloStateListenerOwner {
         listener.stop()
         listener.onState = nil
         isActive = false
+        startedAt = nil
+        lastStartFailed = false
         log.debug("Tello state listener stopped")
+    }
+
+    // MARK: - Health diagnostics (사이클 73)
+
+    /// **사이클 73 — 코덱스 HIGH-2 fix**: UI 가 사용자에게 표시할 listener 상태.
+    /// pure — 외부 입력 없이 owner 의 observable state 만으로 분류. View 가 매
+    /// render 시 호출. 5초+ 미수신을 stalled 로 판정 (Wi-Fi / Info.plist 점검 안내).
+    public enum Health: Equatable, Sendable {
+        /// listener 가 활성 + 메시지 정상 수신 중.
+        case healthy
+        /// 사용자가 아직 start() 호출 안 함 — 명시 활성화 대기.
+        case inactive
+        /// start() 실패 (NSLocalNetworkUsage 거부 등) → 사용자가 권한 허용 + 재시도 필요.
+        case startFailed
+        /// 활성이지만 N초+ 메시지 미수신 — Wi-Fi 연결 / Info.plist 누락 의심.
+        case stalled(elapsedSec: Double)
+    }
+
+    /// 현재 상태를 분류 — UI banner 표시 분기. 기본 threshold 5초.
+    /// - Parameters:
+    ///   - stalledThreshold: 활성 후 이 시간 이상 무수신 시 `.stalled` 분류. 기본 5초.
+    ///   - now: 현재 시각 — 기본은 init 의 `clock()`. 호출 시점 임의 시각 주입 가능.
+    public func health(stalledThreshold: TimeInterval = 5.0,
+                       now: Date? = nil) -> Health {
+        if messagesReceived > 0 {
+            return .healthy
+        }
+        if isActive, let startedAt {
+            let currentTime = now ?? clock()
+            let elapsed = currentTime.timeIntervalSince(startedAt)
+            if elapsed >= stalledThreshold {
+                return .stalled(elapsedSec: elapsed)
+            }
+            // 활성 + 시작 직후 (threshold 미만) — 메시지 도착 대기 중 (healthy 로 표시).
+            return .healthy
+        }
+        if lastStartFailed {
+            return .startFailed
+        }
+        // 한 번도 start() 안 했거나 stop() 이후 — 사용자 명시 활성화 대기.
+        return .inactive
     }
 }

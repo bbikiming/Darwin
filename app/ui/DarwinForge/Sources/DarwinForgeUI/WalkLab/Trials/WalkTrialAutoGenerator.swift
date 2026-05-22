@@ -53,8 +53,13 @@ public final class WalkTrialAutoGenerator {
         //    source prefix 일관성). 종전 직접 write 는 cycle 60 facade 규칙 위반.
         // 2. lastPreflightFailure / startBlockedReason 명시 set — root guard 의 invariant 와
         //    일치 (test 가 generator 자체의 guard 만으로 cause 검증 가능).
+        //
+        // **사이클 67 (코덱스 MEDIUM-3 fix)**: trigger payload 전달. session 의
+        // `lastEmergencyTrigger` 가 source-of-truth — generator 도 root guard 와 동일 출처
+        // 노출. nil 일 때 `.unknown` fallback.
         if session.emergencyStopActive {
-            let f = WalkLabSession.WalkPreflightFailure(cause: .emergencyActive)
+            let trigger = session.lastEmergencyTrigger ?? .unknown
+            let f = WalkLabSession.WalkPreflightFailure(cause: .emergencyActive(trigger: trigger))
             session.pilotMarkPreflightFailure(f)
             session.pilotPostEvent(
                 "Auto Trial 생성 차단 — \(f.userMessage)",
@@ -109,8 +114,10 @@ public final class WalkTrialAutoGenerator {
     ) async {
         guard session.store?.bus == nil else { return }
         // 사이클 66 + 사이클 71 — emergency silent breakage 차단 + facade 일관성.
+        // 사이클 67 — trigger payload 전달 (session.lastEmergencyTrigger source-of-truth).
         if session.emergencyStopActive {
-            let f = WalkLabSession.WalkPreflightFailure(cause: .emergencyActive)
+            let trigger = session.lastEmergencyTrigger ?? .unknown
+            let f = WalkLabSession.WalkPreflightFailure(cause: .emergencyActive(trigger: trigger))
             session.pilotMarkPreflightFailure(f)
             session.pilotPostEvent(
                 "Auto Trial single 차단 — \(f.userMessage)",

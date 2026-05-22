@@ -47,13 +47,31 @@ public final class WalkLabRCBridge {
     public var lastTelloState: TelloStateMessage?
 
     /// 외부 (NWListener 또는 mock) 가 호출 — state 갱신 + 안전 검증.
+    ///
+    /// # 사이클 72 — 코덱스 MEDIUM-2 fix
+    ///
+    /// 종전: `safetyMessage` 직접 write → Tello 가 100ms 마다 packet 보내면서 다른 채널의
+    /// 사용자 메시지 (예: "Bridge 비활성") 를 매 100ms 덮어씀 — race silently destroys
+    /// other safety channels.
+    ///
+    /// 수정: battery low 같은 Tello-advisory 는 별도 channel (`telloAdvisoryMessage`) 에
+    /// write → safetyMessage 와 namespace 분리 → UI 가 두 메시지 별도 표시 가능.
+    /// Edge detection: low → normal 전환 시 advisory clear.
     public func updateTelloState(_ msg: TelloStateMessage) {
         lastTelloState = msg
-        // battery low warning — 사용자 안내.
+        // battery low advisory — 별도 channel (safetyMessage 와 분리).
         if msg.batteryLevel == .low {
-            safetyMessage = "⚠️ Tello 배터리 \(msg.batteryPct)% — 충전 권장"
+            telloAdvisoryMessage = "⚠️ Tello 배터리 \(msg.batteryPct)% — 충전 권장"
+        } else {
+            // low 에서 정상 복귀 — advisory clear.
+            telloAdvisoryMessage = nil
         }
     }
+
+    /// **사이클 72 — 코덱스 MEDIUM-2 fix**: Tello-specific advisory channel.
+    /// `safetyMessage` 와 분리 — Tello state packet (100ms 마다) 가 다른 safety 메시지
+    /// 덮어쓰기 차단. UI 는 두 채널 별도 표시 (예: header 의 advisory + body 의 safety).
+    public private(set) var telloAdvisoryMessage: String?
 
     // MARK: - 관찰 가능 상태
 

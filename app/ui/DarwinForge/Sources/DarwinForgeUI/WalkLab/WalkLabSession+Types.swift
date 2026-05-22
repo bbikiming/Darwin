@@ -24,6 +24,10 @@ extension WalkLabSession {
     ///
     /// 종전: 모든 trigger 가 Harness 의 actor=.user 로 기록 → 사용자 클릭 vs 자동 trigger
     /// (balance lost / thermal / voltage) 발생률 통계 추출 불가.
+    ///
+    /// **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: `.unknown` fallback case 추가.
+    /// `WalkPreflightFailure.emergencyActive(trigger:)` payload 가 trigger 정보를 보존
+    /// — `_lastEmergencyTrigger` 가 nil 인 edge case (init 직후 race) 에 안전한 fallback.
     public enum EmergencyTrigger: String, Sendable {
         /// 사용자 비상정지 버튼 / ESC 키.
         case userClick
@@ -37,12 +41,30 @@ extension WalkLabSession {
         case fallPredictorRecommend
         /// 외부 emergency (Pilot ESC, RootView 전역 단축키 등).
         case externalEStop
+        /// **사이클 67 신규** — emergency 활성 상태 진입은 알지만 trigger 출처 미상.
+        /// 보통 `_lastEmergencyTrigger` race 또는 외부 상태 직접 set 시.
+        case unknown
 
         /// Harness telemetry actor — `.user` 만 사용자, 그 외는 자동.
         public var harnessActor: TelemetryActor {
             switch self {
             case .userClick, .externalEStop: return .user
-            case .balanceLostL3, .thermalOverheat, .voltageDroop, .fallPredictorRecommend: return .robot
+            case .balanceLostL3, .thermalOverheat, .voltageDroop, .fallPredictorRecommend, .unknown:
+                return .robot
+            }
+        }
+
+        /// **사이클 67 신규** — 사용자 메시지용 한국어 라벨.
+        /// `.emergencyActive` cause 의 userMessage 가 trigger 출처를 명시 노출.
+        public var koreanLabel: String {
+            switch self {
+            case .userClick:              return "사용자 정지"
+            case .balanceLostL3:          return "L3 균형 손실"
+            case .thermalOverheat:        return "모터 과열"
+            case .voltageDroop:           return "전압 droop"
+            case .fallPredictorRecommend: return "낙상 예측"
+            case .externalEStop:          return "외부 E-Stop"
+            case .unknown:                return "출처 미상"
             }
         }
     }
@@ -280,7 +302,13 @@ extension WalkLabSession {
             /// **v1.21.1 사이클 66 (코덱스 CRITICAL-1)** — emergency 활성 상태에서 preset
             /// 재시작 차단. 종전 cycle 61 이 `.noConnection` 을 재사용 → 사용자에게 "시뮬 모드"
             /// 로 잘못 노출. 전용 cause 추가 — recovery 명확 안내.
-            case emergencyActive
+            ///
+            /// **v1.21.2 사이클 67 (코덱스 MEDIUM-3 fix)** — `trigger` payload 추가.
+            /// 종전: `.emergencyActive` 가 associated value 없음 → 사용자 메시지가 generic
+            /// "긴급 정지 상태" → 어떤 trigger (userClick / balanceLostL3 / thermalOverheat
+            /// 등) 가 emergency 유발했는지 알 수 없음. payload 가 mental model + telemetry
+            /// 정확도 모두 회복.
+            case emergencyActive(trigger: EmergencyTrigger)
         }
         public let cause: Cause
         public var userMessage: String {
@@ -319,8 +347,9 @@ extension WalkLabSession {
             case .motorTempCoolDownRequired(let current, let exit):
                 return String(format: "🌡️ 모터 냉각 필요 — 현재 %.1f°C, %.1f°C 미만까지 대기 (60°C 알람 후 cool-down)",
                               current, exit)
-            case .emergencyActive:
-                return "🛑 긴급 정지 상태 — recovery (R 키 또는 Recover 버튼) 후 재시작"
+            case .emergencyActive(let trigger):
+                // **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: trigger 출처 명시 노출.
+                return "🛑 긴급 정지 상태 (\(trigger.koreanLabel)) — recovery (R 키 또는 Recover 버튼) 후 재시작"
             }
         }
 
@@ -343,7 +372,8 @@ extension WalkLabSession {
             case .onboardAutoBrokeringOff:                      return "onboardAutoBrokeringOff"
             case .onboardAckTimeout:                            return "onboardAckTimeout"
             case .motorTempCoolDownRequired:                    return "motorTempCoolDownRequired"
-            case .emergencyActive:                              return "emergencyActive"
+            // **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: trigger 별 telemetry 추적.
+            case .emergencyActive(let trigger):                 return "emergencyActive_\(trigger.rawValue)"
             }
         }
     }
