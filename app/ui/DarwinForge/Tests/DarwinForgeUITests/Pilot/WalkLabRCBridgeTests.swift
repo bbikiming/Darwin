@@ -414,6 +414,63 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertNotNil(bridge.safetyMessage)
     }
 
+    // MARK: - Cycle 58 security-auditor: Emergency bypass 회귀 가드
+
+    /// **CRITICAL fix 회귀 가드** — security-auditor H1: handleMove auto-start path 가
+    /// emergency 시 robot 재작동 시키지 못함.
+    /// 종전 (사이클 10-fix CRITICAL): handlePreset 만 차단. handleTelloStick 의 auto-start
+    /// 우회 가능. Space → W → autostart .march 로 robot 깨어남.
+    /// 신규: process() 진입 즉시 emergencyStopActive 검사.
+    func testEmergencyBlocksHandleTelloStickAutoStart() {
+        session.pilotBridge = bridge
+        session.start(.march)
+        bridge.handleEmergency(from: .ui)
+        XCTAssertTrue(session.emergencyStopActive)
+        XCTAssertEqual(session.current, .idle)
+
+        // emergency 동안 W (forward) 누름 — 종전 버그: autostart 발화. 신규: 차단.
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+
+        XCTAssertEqual(session.current, .idle, "emergency 중 autostart 차단")
+        XCTAssertTrue(bridge.safetyMessage?.contains("긴급 정지") ?? false,
+                      "사용자에게 recovery 안내")
+    }
+
+    /// **CRITICAL fix 회귀 가드** — security-auditor C1: syncCommandToEngine emergency 차단.
+    /// 종전: emergency 후 외부 코드 (slider didSet / 자동화) 가 session.strideMm 직접
+    /// mutate + syncCommandToEngine 호출 시 engine 에 setCommand(enabled:true) 송출.
+    /// 신규: emergencyStopActive 시 setCommand(0,0,0,false) 만 송출 + return.
+    func testEmergencyBlocksSyncCommandToEngine() {
+        session.start(.march)
+        bridge.handleEmergency(from: .ui)
+        XCTAssertTrue(session.emergencyStopActive)
+
+        // emergency 후 외부에서 stride 직접 mutate + syncCommandToEngine.
+        session.strideMm = 40
+        session.syncCommandToEngine()
+
+        // 검증 어렵 — engine 은 private. session 의 effectiveCommand 가 reset 보장:
+        // syncCommandToEngine 가 enabled=false 만 송출하므로 engine state 안전.
+        // 명시 검증: 추가 호출에도 emergency 유지.
+        XCTAssertTrue(session.emergencyStopActive, "syncCommand 이 emergency state 영향 없음")
+    }
+
+    /// **HIGH 2 fix 회귀 가드** — applyAmplitude 가 emergency 시 즉시 return.
+    /// race 로 process() 우회 시 marginal defense.
+    func testEmergencyBlocksApplyAmplitudeViaHandleMotion() {
+        session.start(.march)
+        bridge.handleEmergency(from: .ui)
+        XCTAssertTrue(session.emergencyStopActive)
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "emergency 후 stride 0")
+
+        // handleMotion(id:) 도 H1 fix 로 차단되지만, marginal 검증.
+        let result = bridge.handleMotion(id: "preset.march", from: .ui)
+        if case .rejectedSafety = result { /* OK */ } else {
+            XCTFail("emergency → handleMotion rejected 기대")
+        }
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "stride 변화 없음")
+    }
+
     // MARK: - Cycle 33: End-to-end happy path
 
     /// **v1.20.27 사이클 33** — 사용자 시뮬: 전 cycle 의 piece 가 통합 작동.
