@@ -2063,88 +2063,10 @@ public final class WalkLabSession {
         )
     }
 
-    /// v1.11.24 audit (2026-05-20) P0-1 — `start(_:)` 진입 시 **부작용 없는** preflight.
-    ///
-    /// 검사 항목 (모두 통과해야 state mutation 허용):
-    /// 1. 이미 다른 보행이 active (walkCycleTask != nil || onboardWalkingActive || isRobotWalking)
-    /// 2. cradleConfirmed
-    /// 3. preset.requiresRiskConfirmation && !riskAcknowledged
-    /// 4. advanced && stabilityScore.category == .critical
-    /// 5. caution preset && !enableBalanceCorrection
-    /// 6. (실 robot 만) IMU unavailable / stale / plausibility 실패
-    ///
-    /// **side effect 없음** — 단순 검사. `preflightForWalkCycle(bus:)` 의 torque ON 같은
-    /// state-mutating 검사는 startWalkCycle 안에서 실행 (bus guard 통과 후).
-    ///
-    /// idle preset 은 항상 통과 (정지 동작은 차단되면 안 됨).
-    private func quickPreflight(for preset: WalkLabPreset) -> WalkPreflightFailure? {
-        if preset == .idle { return nil }
-
-        // 1. 이미 다른 보행이 active.
-        // **사이클 61 노트**: 본 site 는 `isActuallyWalking` 위임 안 함 — `current != .idle`
-        // 까지 검사하면 preset 전환 (march → slowWalk 등) 까지 차단되어 UX 깨짐.
-        // preset switch 는 cancelWalkCycle 이 cleanup 책임. 본 가드는 "실 motor task 또는
-        // onboard 활성" 만 차단 (semantic 의도가 isActuallyWalking 과 다름).
-        if isWalkActive || walkCycleTask != nil {
-            let activeLabel = activeRobotPreset?.label ?? current.label
-            return WalkPreflightFailure(cause: .alreadyWalking(
-                activePresetLabel: activeLabel,
-                requestedLabel: preset.label
-            ))
-        }
-
-        // 2. cradle 미확인. **v1.14.7 (2026-05-21)** — 시뮬 모드 (bus 미연결) 면 skip.
-        //    실 로봇 연결 시에만 cradle 강제. 시뮬에선 사용자가 보행 알고리즘 미리보기 가능.
-        let needsCradle = (store?.bus != nil)
-        if needsCradle && !cradleConfirmed {
-            return WalkPreflightFailure(cause: .cradleNotConfirmed)
-        }
-
-        // 3. high risk 미확인.
-        if preset.requiresRiskConfirmation && !riskAcknowledged {
-            return WalkPreflightFailure(cause: .highRiskNotAcknowledged(presetLabel: preset.label))
-        }
-
-        // 4. advanced critical.
-        if advanced && stabilityScore.category == .critical {
-            return WalkPreflightFailure(cause: .advancedStabilityCritical)
-        }
-
-        // 5. caution preset 의 balance corrector 의무.
-        if preset.safety == .caution && !enableBalanceCorrection {
-            return WalkPreflightFailure(cause: .balanceCorrectorRequiredForCautionPreset(
-                presetLabel: preset.label
-            ))
-        }
-
-        // 6. 실 robot 연결 시에만 IMU 가드 — sim 모드는 통과 (preview 가능).
-        if let store = self.store, store.bus != nil {
-            if store.isImuUnavailable {
-                return WalkPreflightFailure(cause: .imuUnavailable)
-            }
-            if store.isImuStale {
-                return WalkPreflightFailure(cause: .imuStale)
-            }
-            if store.imuScaleSuspicion == .suspectedLegacy10Bit
-                || store.imuScaleSuspicion == .outOfRange {
-                return WalkPreflightFailure(cause: .imuPlausibilityFailed(
-                    store.imuScaleSuspicion.rawValue
-                ))
-            }
-        }
-
-        // 7. v1.11.25 audit-D — thermal cool-down 강제.
-        // 종전: banner "닫기" 누르면 즉시 thermalAlarm=false → 60°C 직후 1초 만에 재시작 가능.
-        // motor 영구 손상 위험. 일단 60°C 도달했으면 cooldownExitTemp (50°C) 미만까지 차단.
-        if thermalCoolDownRequired && maxMotorTemp >= Self.thermalCooldownExitTemp {
-            return WalkPreflightFailure(cause: .motorTempCoolDownRequired(
-                currentTempC: maxMotorTemp,
-                exitTempC: Self.thermalCooldownExitTemp
-            ))
-        }
-
-        return nil
-    }
+    // MARK: - Preflight (사이클 112 Phase 10 — extension 이동)
+    //
+    // `quickPreflight(for:)` (~67 line) 은 `WalkLabSession+Preflight.swift` 로 이동.
+    // 호출 site `start(preset:)` 동일. 격상 0 — 모든 dependent 이미 internal 이상.
 
     /// v1.11.25 audit-D — thermal cool-down 진행 중 flag.
     /// 60°C 도달 시 true → maxMotorTemp 가 thermalCooldownExitTemp 미만 도달까지 유지.
