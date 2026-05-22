@@ -98,6 +98,8 @@ extension WalkLabSession {
             lastRawCandidate = nil
             lastCorrectionApplied = false
             lastSafePose = pose
+            // 사이클 160 (P0-3 fix): UI 표시 가능하도록 freshness 상태 publish.
+            balanceCorrectionFreshness = .blocked
             return pose
         }
         if let age = imuAgeMs {
@@ -107,16 +109,22 @@ extension WalkLabSession {
                 lastRawCandidate = nil
                 lastCorrectionApplied = false
                 lastSafePose = pose
+                // 사이클 160: blocked 상태 표시.
+                balanceCorrectionFreshness = .blocked
                 return pose
             } else if age > 250 {
                 // 부분 stale — linear 감쇠 (250→500ms : 1.0→0.0).
                 freshnessGate = max(0, 1.0 - (age - 250) / 250)
+                // 사이클 160: degraded 상태 — 보정 일부 적용 중.
+                balanceCorrectionFreshness = .degraded
             } else {
                 freshnessGate = 1.0
+                balanceCorrectionFreshness = .normal
             }
         } else {
             // sim 모드 (bus 없음) — IMU 가 즉시 갱신되는 simulation 신뢰.
             freshnessGate = 1.0
+            balanceCorrectionFreshness = .normal
         }
 
         let config = balanceExperimentConfig

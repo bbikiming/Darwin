@@ -2483,6 +2483,32 @@ public final class WalkLabSession {
     /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var lastCorrectionApplied: Bool = false
 
+    /// 사이클 160 (P0-3 fix, gyro closed-loop review): IMU stale 로 보정이 차단/감쇠 된 상태.
+    ///
+    /// # 의미
+    /// - `.normal`: freshnessGate = 1.0 — 보정 정상 적용 (또는 보정 disabled).
+    /// - `.degraded`: freshnessGate 0 < x < 1.0 — IMU age 250~500ms, linear 감쇠.
+    /// - `.blocked`: freshnessGate = 0 — IMU age ≥ 500ms 또는 bus connected + IMU 한 번도 없음.
+    ///
+    /// UI / HUD 가 본 상태를 표시해 사용자가 "보정 ON 인데 안 움직임" 침묵을 인지 가능.
+    /// 종전: lastCorrectionApplied=false 만 internal — UI 분기 어려움.
+    public internal(set) var balanceCorrectionFreshness: BalanceCorrectionFreshness = .normal
+
+    /// 사이클 160: balanceCorrectionFreshness 의 표시 상태.
+    public enum BalanceCorrectionFreshness: String, Sendable, Equatable, CaseIterable {
+        case normal      // IMU fresh, 보정 정상
+        case degraded    // IMU partial stale, 감쇠 적용
+        case blocked     // IMU 너무 stale 또는 bus connected + IMU 없음, 보정 차단
+
+        public var koreanLabel: String {
+            switch self {
+            case .normal:   return "정상"
+            case .degraded: return "IMU 지연 — 보정 감쇠"
+            case .blocked:  return "IMU 차단 — 보정 정지"
+            }
+        }
+    }
+
     /// **v1.11 (Codex review 2026-05-18 HIGH-1)**: ramp 적용 **전** 의 raw candidate corrections.
     /// handoff §4 의 `candidateDeltas` 정확한 의미 — corrector.corrections() 결과 그대로.
     /// `lastCorrections` 는 ramp 적용 후 (legacy UI/log 호환). 두 개를 분리해야 분석 시
