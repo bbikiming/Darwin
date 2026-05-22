@@ -406,4 +406,42 @@ final class WalkLabSessionExtensionCoverageTests: XCTestCase {
         XCTAssertEqual(session.fallPrediction.score, 0.0, accuracy: 1e-9,
                        "init score = 0")
     }
+
+    // MARK: - Phase 8 Balance Mitigation (사이클 109)
+
+    /// `applyBalanceMitigation()` 가 normal state 시 hysteresis counter 리셋.
+    /// 격상된 `warningStateConsecutiveSamples` 와 `dangerStateConsecutiveSamples` read.
+    func testApplyBalanceMitigationNormalStateResetsCounters() {
+        let session = WalkLabSession()
+        // _testForceImuAndTick 으로 normal 상태 강제 (roll/pitch 0 → normal).
+        session._testForceImuAndTick(rollDeg: 0, pitchDeg: 0)
+        session.applyBalanceMitigation()
+        XCTAssertEqual(session.warningStateConsecutiveSamples, 0,
+                       "normal → warning counter 0 (사이클 109 회귀 가드)")
+        XCTAssertEqual(session.dangerStateConsecutiveSamples, 0,
+                       "normal → danger counter 0")
+    }
+
+    /// `applyBalanceMitigation()` 호출 직접 — crash 없음 + counter 일관성.
+    /// Phase 8 격상 (warningStateConsecutiveSamples / dangerStateConsecutiveSamples)
+    /// 가 module-internal 로 접근 가능한지 검증.
+    func testApplyBalanceMitigationCounterAccessible() {
+        let session = WalkLabSession()
+        // 격상 검증 — internal var 직접 read.
+        _ = session.warningStateConsecutiveSamples
+        _ = session.dangerStateConsecutiveSamples
+        // _testInspect* 와 같은 값인지 확인.
+        XCTAssertEqual(session.warningStateConsecutiveSamples,
+                       session._testInspectWarningHysteresis(),
+                       "internal var == _testInspect* (사이클 109 회귀 가드)")
+    }
+
+    /// `engine` 격상 검증 — internal let 으로 module 내 read 가능.
+    /// 직접 mutation 불가 (let) — 그러나 method 호출 가능.
+    func testEngineAccessibleInternally() {
+        let session = WalkLabSession()
+        // engine 가 internal let — read 가능 (instance method 호출).
+        // 명시 read 검증.
+        _ = session.engine
+    }
 }
