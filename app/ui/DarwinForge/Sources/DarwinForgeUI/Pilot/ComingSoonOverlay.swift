@@ -30,7 +30,11 @@ public struct ComingSoonOverlay: ViewModifier {
                 Image(systemName: "lock.fill")
                     .font(.system(size: DFFontSize.s18, weight: .semibold))
                     .foregroundStyle(PilotColor.comingSoon)
-                Text("\(stage) 활성 예정")
+                // **사이클 135 (audit #7, P2)**: stage 라벨 단일 일관성.
+                // 종전 "v1.5 활성 예정" + "준비 중 활성 예정" 혼재 ("준비 중 활성 예정" 은
+                // 어색한 중복 표현). stage 가 version tag (v로 시작) 면 "활성 예정" 접미,
+                // 아니면 stage 그대로 표시 (이중 의미 회피).
+                Text(stageDisplayText)
                     .font(DFFont.bodyEmph)
                     .foregroundStyle(DFColor.textPrimary)
                 Text(title)
@@ -61,10 +65,12 @@ public struct ComingSoonOverlay: ViewModifier {
             HStack {
                 Image(systemName: "lock.fill")
                     .foregroundStyle(PilotColor.comingSoon)
-                Text("\(stage) 활성 예정")
+                Text(stageDisplayText)
                     .font(DFFont.title)
                 Spacer()
-                Button("닫기") { showSheet = false }
+                // **사이클 133 (audit #24)**: role: .cancel — keyboardShortcut(.cancelAction)
+                // 와 동일 의미를 SwiftUI accessibility 가 인식하도록 명시.
+                Button("닫기", role: .cancel) { showSheet = false }
                     .keyboardShortcut(.cancelAction)
             }
 
@@ -83,6 +89,17 @@ public struct ComingSoonOverlay: ViewModifier {
         }
         .padding(DFSpace.lg)
         .frame(width: 480, height: 320)
+    }
+
+    /// **사이클 135 (audit #7, P2)**: stage 단일 일관성 — 두 케이스 분리 표시.
+    /// - `"v1.5"` / `"v2"` 같은 version tag → "v1.5 활성 예정"
+    /// - `"준비 중"` 같은 generic phrase → 그대로 (이중 의미 회피).
+    /// 종전 `"\(stage) 활성 예정"` 항상 적용 → "준비 중 활성 예정" 어색 회귀.
+    private var stageDisplayText: String {
+        if stage.lowercased().hasPrefix("v") {
+            return "\(stage) 활성 예정"
+        }
+        return stage
     }
 
     private func detailRow(label: String, value: String) -> some View {
