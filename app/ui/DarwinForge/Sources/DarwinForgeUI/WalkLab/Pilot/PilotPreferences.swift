@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// **v1.22.0 (2026-05-22) — 사이클 84: pilot 사용자 설정 영속화 모델**.
 ///
@@ -105,5 +106,26 @@ public final class UserDefaultsPilotPreferencesStore: PilotPreferencesStore, @un
         defaults.set(prefs.scaleFB,         forKey: Self.keyFB)
         defaults.set(prefs.scaleYaw,        forKey: Self.keyYaw)
         defaults.set(prefs.smoothingFactor, forKey: Self.keySmooth)
+    }
+}
+
+// MARK: - SwiftUI Environment 전파 (RootView → WalkLabView → PilotSettingsPanel)
+//
+// `PilotPreferencesStore` 는 protocol 이라 `@EnvironmentObject` 사용 불가
+// (ObservableObject 미준수, sendable 한 단순 store). 본 환경 키가 부모 view
+// 가 자식 view 에 instance 를 명시 전파하는 통로.
+
+/// 환경 기본값 — in-memory store. 실 propagate 안 된 view 에선 영속 안 됨 (안전 fallback).
+private struct PilotPreferencesStoreEnvKey: @preconcurrency EnvironmentKey {
+    @MainActor static let defaultValue: PilotPreferencesStore = InMemoryPilotPreferencesStore()
+}
+
+public extension EnvironmentValues {
+    /// `@Environment(\.pilotPreferencesStore)` 로 자식 view 가 접근.
+    /// RootView 가 launch 시 UserDefaults backed store 를 `.environment(\.pilotPreferencesStore, ...)`
+    /// 로 주입 → WalkLabView → PilotSettingsPanel 까지 자동 전파.
+    var pilotPreferencesStore: PilotPreferencesStore {
+        get { self[PilotPreferencesStoreEnvKey.self] }
+        set { self[PilotPreferencesStoreEnvKey.self] = newValue }
     }
 }

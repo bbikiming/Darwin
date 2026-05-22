@@ -25,6 +25,9 @@ public struct WalkLabView: View {
     /// RootView 가 `.environment(telloStateOwner)` 로 전파. nil 가능 (bridge 미alloc).
     /// TelloPilotHud 가 status banner 표시 + "활성화" 토글 / "다시 시도" 버튼 분기.
     @Environment(TelloStateListenerOwner.self) private var telloStateOwner: TelloStateListenerOwner?
+    /// **사이클 86 — PilotSettingsPanel 영속 store**: RootView 가
+    /// `.environment(\.pilotPreferencesStore, ...)` 로 전파. PilotSettingsPanel 에 직접 주입.
+    @Environment(\.pilotPreferencesStore) private var pilotPreferencesStore
     @State private var showingRiskConfirm: Bool = false
     @State private var pendingHighRiskPreset: WalkLabPreset?
     /// **v1.15.0 (2026-05-21) Phase 1**: trial library sheet 표시 토글.
@@ -268,6 +271,10 @@ public struct WalkLabView: View {
                 // **v1.21.1 (2026-05-22)** — GamepadPilotAdapter UI wire-up.
                 // PS4/Xbox 등 GCExtendedGamepad 호환 컨트롤러 즉시 사용 가능.
                 GamepadPilotPanel(bridge: bridge)
+                // **사이클 86 (2026-05-22)** — 4 차원 종합 감도 + smoothing 설정 panel.
+                // 슬라이더 → bridge 즉시 preview, "저장" 클릭 → UserDefaults 영속.
+                // KeyboardPilotPanel 의 1축 multiplier 와 직교 — 정밀 절대값 조정 채널.
+                PilotSettingsPanel(bridge: bridge, store: pilotPreferencesStore)
             } else {
                 Text("Pilot bridge 미연결 — RootView onAppear 가 wiring 못함")
                     .font(.caption2)

@@ -212,6 +212,10 @@ public struct RootView: View {
         // 옵셔널 — bridge alloc 전 (cold start race) 면 nil. SwiftUI 의 @Environment(...self)
         // 가 Optional Observable 지원 (macOS 14+).
         .environment(telloStateOwner)
+        // **사이클 86 — PilotSettingsPanel 영속 store 전파**: WalkLabView 의 pilotOverlay
+        // 가 자식 panel 에 store 를 환경으로 자동 propagate. UserDefaults backed
+        // (production) 인스턴스를 한 번 wiring.
+        .environment(\.pilotPreferencesStore, pilotPreferencesStore)
         // 글로벌 단축키 (메뉴와 같은 단축키 — 메뉴 enabled 일 때 메뉴가 우선 처리)
         .background(globalShortcuts)
     }
