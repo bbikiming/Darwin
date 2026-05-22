@@ -319,6 +319,53 @@ WalkLab → Pilot 조종 toggle → 6번째 panel "Pilot Settings":
 - event rate (events/s) — 입력 활동 강도
 - ⚡ 활성 / 비활성 — bridge enabled 토글
 
+## v1.22.X 내부 구조 개선 (cycles 100-105)
+
+사용자 입장에서 직접 보이는 기능 변화는 없지만, 향후 변경 회귀 위험 ↓.
+
+### God Object 분할 — Phase 1A ~ 6 완료
+
+`WalkLabSession.swift` (4493 line → 2942 line, **-34% 감축**) 가 9 extension file 로 split:
+
+| Phase | Extension 파일 | Cycle | 라인 |
+|-------|----------------|-------|------|
+| 1A | `+ClaudeAnalysis.swift` | 89 | 95 |
+| 1B | `+PersistentLog.swift` | 90 | 82 |
+| 1C | `+Calibration.swift` | 91 | 99 |
+| 2 | `+Experiment.swift` | 97 | 297 |
+| 3 | `+SensorUpdates.swift` | 98 | 205 |
+| 4 | `+WalkCycleEngine.swift` | 100 | 445 |
+| 5 | `+BalanceCorrection.swift` | 100 | 313 |
+| 6 | `+Logging.swift` | 102 | 443 |
+| (Facade) | `+Pilot.swift` | (prior) | 264 |
+
+각 extension 은 본체와 동일 `@MainActor` actor 격리 유지 — race condition 위험 없음.
+외부 API surface 변경 0 (모든 격상은 `internal(set)` — module 내부 write 만 허용).
+
+### Test Coverage 강화 (cycles 103 + 105)
+
+`Tests/DarwinForgeUITests/WalkLabSessionExtensionCoverageTests.swift` (25 test):
+
+- Calibration: capture / diagnosis / reset / reject during walking
+- Sensor Updates: sim IMU + sim thermal + voltage droop counter + IMU source fallback
+- Experiment: onboardHealthCheckWarnings 4 input combo + instance helper
+- Logging: loadSummaryFromDisk + loadAllExperimentSummaries (nonisolated static)
+- Phase 4: cancelWalkCycle clears task + internal access verification
+- Phase 5: correctionEnabledAt + lastSafePose 격상 검증
+
+총 테스트 수: **1292 tests pass** (1267 baseline + 18 cycle 103 + 7 cycle 105).
+
+### 코덱스 review 결과
+
+3차에 걸친 codex critic 평가:
+- **cycle 93**: cycles 86-89 review — H1+H2+H3 도출, 사이클 103 에서 모두 해소
+- **cycle 104**: cycles 100-103 review — VERDICT: ACCEPT, no CRITICAL/MAJOR. 3 MINOR 만 → 사이클 105 fix.
+
+### 향후 계획
+
+- Phase 7+: `updateFallPrediction` + `applyBalanceMitigation` + `recordSafetySampleAndEvents` 분할 고려 (현재 access 의존 복잡 — defer)
+- 본체 추가 감축은 access escalation 비용 vs 가독성 trade-off 평가 필요
+
 ---
 
 ## 안전 / 책임
