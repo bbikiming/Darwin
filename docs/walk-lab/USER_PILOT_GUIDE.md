@@ -337,14 +337,18 @@ WalkLab → Pilot 조종 toggle → 6번째 panel "Pilot Settings":
 | 4 | `+WalkCycleEngine.swift` | 100 | 445 |
 | 5 | `+BalanceCorrection.swift` | 100 | 313 |
 | 6 | `+Logging.swift` | 102 | 443 |
+| 7 | `+FallPrevention.swift` | 107 | 85 |
+| 8 | `+BalanceMitigation.swift` | 109 | 83 |
+| 9 | `+SafetySampling.swift` | 111 | 152 |
+| 10 | `+Preflight.swift` | 112 | 109 |
 | (Facade) | `+Pilot.swift` | (prior) | 264 |
 
 각 extension 은 본체와 동일 `@MainActor` actor 격리 유지 — race condition 위험 없음.
 외부 API surface 변경 0 (모든 격상은 `internal(set)` — module 내부 write 만 허용).
 
-### Test Coverage 강화 (cycles 103 + 105)
+### Test Coverage 강화 (cycles 103 + 105 + 108 + 110 + 113)
 
-`Tests/DarwinForgeUITests/WalkLabSessionExtensionCoverageTests.swift` (25 test):
+`Tests/DarwinForgeUITests/WalkLabSessionExtensionCoverageTests.swift` (38 test):
 
 - Calibration: capture / diagnosis / reset / reject during walking
 - Sensor Updates: sim IMU + sim thermal + voltage droop counter + IMU source fallback
@@ -352,19 +356,25 @@ WalkLab → Pilot 조종 toggle → 6번째 panel "Pilot Settings":
 - Logging: loadSummaryFromDisk + loadAllExperimentSummaries (nonisolated static)
 - Phase 4: cancelWalkCycle clears task + internal access verification
 - Phase 5: correctionEnabledAt + lastSafePose 격상 검증
+- Phase 7 (cycle 108): updateFallPrediction stale IMU + jitter + zero initialization
+- Phase 8 (cycle 110): applyBalanceMitigation normal reset + engine internal access
+- Phase 9 (cycle 113): recordSafetySampleAndEvents append + sync invariant + constants
+- Phase 10 (cycle 113): quickPreflight idle pass + sim mode + advanced critical guard
 
-총 테스트 수: **1292 tests pass** (1267 baseline + 18 cycle 103 + 7 cycle 105).
+총 테스트 수: **1305 tests pass** (1267 baseline + 38 cumulative extension cases).
 
 ### 코덱스 review 결과
 
-3차에 걸친 codex critic 평가:
+4차에 걸친 codex critic 평가:
 - **cycle 93**: cycles 86-89 review — H1+H2+H3 도출, 사이클 103 에서 모두 해소
 - **cycle 104**: cycles 100-103 review — VERDICT: ACCEPT, no CRITICAL/MAJOR. 3 MINOR 만 → 사이클 105 fix.
+- **cycle 111(codex 107-110)**: VERDICT: ACCEPT. cancelWalkCycle/engine 격상 SAFE 확인 (외부 호출 0). 1 MINOR (FallPrevention docstring stale) → 사이클 111 동시 fix.
 
 ### 향후 계획
 
-- Phase 7+: `updateFallPrediction` + `applyBalanceMitigation` + `recordSafetySampleAndEvents` 분할 고려 (현재 access 의존 복잡 — defer)
-- 본체 추가 감축은 access escalation 비용 vs 가독성 trade-off 평가 필요
+- 본체 2678 line — startWalkCycle (456 line) / tick (169 line) / start (148 line) / stop (66 line) / emergencyStop (63 line) 등 lifecycle method 가 잔존
+- 추가 감축은 lifecycle method 의 internal cohesion 우선 (분할 시 의미 흩어짐 위험)
+- 다음 단계: 안전한 작은 method 추출 / 사용자 가시 기능 추가
 
 ---
 
