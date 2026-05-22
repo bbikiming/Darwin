@@ -180,11 +180,12 @@ public struct MotionLibraryView: View {
     }
 
     /// Sprint 8 prebundled (위 두 범위 외 — 일반적으로 id < 50, 공식 ID 제외).
+    /// 사이클 157 (codex cumulative review MINOR fix): 종전 하드코딩 set [1,2,3,4,...,54]
+    /// 가 cycle 155 centralize 시 누락 → canonical reference 로 마이그레이션.
     private var prebundledEntries: [StarterEntry] {
-        let officialIDs: Set<Int> = [1, 2, 3, 4, 9, 10, 11, 12, 13, 15, 17, 23, 24, 27, 38, 54]
-        return Self.starterPages.filter { entry in
+        Self.starterPages.filter { entry in
             let id = Int(entry.page.id)
-            return id < 50 && !officialIDs.contains(id)
+            return id < 50 && !OfficialCatalogReference.allOfficialIDs.contains(id)
         }
     }
 

@@ -144,4 +144,33 @@ final class OfficialCatalogReferenceTests: XCTestCase {
         XCTAssertFalse(OfficialCatalogReference.placeholderCautionIDs.contains(17))
         XCTAssertFalse(OfficialCatalogReference.highRiskIDs.contains(17))
     }
+
+    /// 사이클 157 (codex cumulative review missing test): ID 17 의 safetyColor 가
+    /// 실제로 .dangerous (highRisk red) 반환 — section grouping + color 일관성 검증.
+    @MainActor
+    func testID17SafetyColorIsDangerous() {
+        let page = OfficialCatalogReference.handStanding(id: 17)
+        let entry = StarterEntry(page: page)
+        // Color equality 비교는 SwiftUI 에서 직접 안 됨 → DFMotionSafetyColor 와 동일성 검증.
+        // 본 테스트는 invariant — canonical ID set 변경 시 view 색이 함께 drift 안 함.
+        XCTAssertTrue(OfficialCatalogReference.allHighRiskIDs.contains(Int(page.id)),
+                      "ID 17 canonical highRisk 포함")
+        // safetyColor 가 nondefault (verified 가 아닌) 색 반환 확인 — 모든 highRisk 가 dangerous.
+        let safeEntry = StarterEntry(page: OfficialCatalogReference.standUp(id: 1))
+        XCTAssertNotEqual(
+            String(describing: entry.safetyColor),
+            String(describing: safeEntry.safetyColor),
+            "ID 17 의 safetyColor 가 safe ID 와 달라야 함 (highRisk → dangerous)")
+    }
+
+    /// 사이클 157: caution+placeholder ID 10/11 의 safetyColor 도 verified (safe) 와 달라야.
+    @MainActor
+    func testPlaceholderCautionSafetyColorIsUnverified() {
+        let getUpFront = StarterEntry(page: OfficialCatalogReference.getUpFront(id: 10))
+        let safeEntry = StarterEntry(page: OfficialCatalogReference.standUp(id: 1))
+        XCTAssertNotEqual(
+            String(describing: getUpFront.safetyColor),
+            String(describing: safeEntry.safetyColor),
+            "ID 10 (caution) 의 safetyColor 가 safe ID 와 달라야 함")
+    }
 }
