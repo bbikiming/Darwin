@@ -257,6 +257,12 @@ public final class WalkLabSession {
     /// → 둘 다 identity 반환. **master 가 OFF 면 mode 무관하게 비활성**. UI 가 두 토글
     /// 모두 노출 — 사용자는 master (이 토글) 만 사용 권장. expert disclosure 의 algorithmMode
     /// 는 master ON 상태에서 algorithm 선택 (off 포함) 용도.
+    ///
+    /// **사이클 145 (IMPLEMENTATION audit #14, #2)**: ApplyScope 명시.
+    /// - Mac sparse engine: 사용 ✓ (cycle pose 에 적용)
+    /// - Onboard 모드 daemon: 송신 ✗ (WalkingEngineCommand 필드 아님 — 별도 PRD)
+    /// - 사용자는 Onboard 모드에서 본 토글 변경해도 robot 반응 변화 없음.
+    ///   UI 가 ApplyScope badge 로 안내 필요.
     public var enableBalanceCorrection: Bool = false {
         didSet {
             if enableBalanceCorrection != oldValue {
@@ -479,6 +485,11 @@ public final class WalkLabSession {
     ///   - 2: 표준 (intensity 1.0 = ROBOTIS default — 권장)
     ///   - 3: 적극적 (intensity 1.5 = ROBOTIS 1.5배)
     ///   - 4: 최대 (intensity 2.0 = ROBOTIS 2배, 안전 clamp ±15° 유지)
+    ///
+    /// **사이클 145 (IMPLEMENTATION audit #14, #2)**: ApplyScope 명시.
+    /// - Mac sparse engine: 사용 ✓ (corrector multiplier 적용)
+    /// - Onboard 모드 daemon: 송신 ✗ (별도 PRD — robot firmware 측에 동일 mapping 없음)
+    /// - Onboard 모드에서 사용자가 슬라이더 조정해도 실 robot 자이로 보정 강도는 변경 안 됨.
     public var correctorIntensityLevel: Int = 2 {
         didSet {
             let clamped = max(0, min(4, correctorIntensityLevel))
