@@ -25,6 +25,12 @@ public struct TelloPilotHud: View {
     /// 기본 5초. preview / test 에서 임의 값 주입 가능.
     public let stalledThresholdSec: TimeInterval
 
+    /// **사이클 81 — 코덱스 MEDIUM-1 fix**: telloAdvisoryMessage (low battery 등) freshness
+    /// 판정 threshold — Tello firmware 가 batteryPct subscribe 시 6초+ lag 보고 가능 →
+    /// stalledThresholdSec (5초, listener banner 용) 와 분리 — 정상 firmware 도 stale 표시 차단.
+    /// 기본 6초. firmware build / battery cell 별 cadence 차이 흡수.
+    public let advisoryFreshnessSec: TimeInterval
+
     /// **사이클 73**: HUD render 시 stalled 판정을 위한 "now" tick.
     /// `TimelineView(.periodic)` 가 1초 간격으로 갱신 → 활성인데 무수신인 상태가
     /// 자동으로 stalled 전환됨. nil tick = 정적 (test / preview).
@@ -32,10 +38,12 @@ public struct TelloPilotHud: View {
 
     public init(bridge: WalkLabRCBridge,
                 listenerOwner: TelloStateListenerOwner? = nil,
-                stalledThresholdSec: TimeInterval = 5.0) {
+                stalledThresholdSec: TimeInterval = 5.0,
+                advisoryFreshnessSec: TimeInterval = 6.0) {
         self.bridge = bridge
         self.listenerOwner = listenerOwner
         self.stalledThresholdSec = stalledThresholdSec
+        self.advisoryFreshnessSec = advisoryFreshnessSec
     }
 
     public var body: some View {
@@ -236,12 +244,13 @@ public struct TelloPilotHud: View {
         return String(format: "%.0fm", age / 60)
     }
 
-    /// **사이클 76 — 코덱스 CRITICAL-2 fix**: Tello state freshness 판정 (5초 임계).
-    /// telloAdvisoryMessage 가 stale state (Tello disconnect 등) 에서 잔존하는 버그 차단.
-    /// `lastTelloState` 가 nil 이거나 5초+ 오래된 경우 advisory 도 hide.
+    /// **사이클 76 + 사이클 81 — 코덱스 CRITICAL-2 + MEDIUM-1 fix**: Tello state freshness
+    /// 판정 — advisoryFreshnessSec (default 6초, init param) 사용.
+    /// telloAdvisoryMessage 가 stale state 에서 잔존하는 버그 차단 + Tello firmware 별
+    /// cadence 차이 (5-6초 lag 빈번) 흡수.
     private var isTelloStateFresh: Bool {
         guard let s = bridge.lastTelloState else { return false }
-        return Date().timeIntervalSince(s.receivedAt) < 5.0
+        return Date().timeIntervalSince(s.receivedAt) < advisoryFreshnessSec
     }
 
     // MARK: - Listener status banner (사이클 73 — 코덱스 HIGH-2 fix)
