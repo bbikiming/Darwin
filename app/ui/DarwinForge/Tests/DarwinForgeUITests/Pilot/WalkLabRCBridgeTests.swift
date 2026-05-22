@@ -821,6 +821,20 @@ final class PilotIntentTests: XCTestCase {
         XCTAssertEqual(PilotInputSummary.empty.totalEvents, 0)
     }
 
+    /// **v1.20.30.1 사이클 36-fix MEDIUM 1 (코덱스)** — comfortLevel 100% 초과 차단.
+    /// raw peak 값이 정규화 한도 초과 시에도 0..1 clamp.
+    func testPilotInputSummaryComfortLevelClamps() {
+        let over = PilotInputSummary(
+            sourcesUsed: [.keyboard], totalEvents: 1, moveEventCount: 1,
+            avgAbsStrideMm: 100, avgAbsSideMm: 100, avgAbsTurnDeg: 100,
+            peakStrideMm: 100, peakSideMm: 100, peakTurnDeg: 100,  // 한도 (40/25/20) 초과
+            peakNegStrideMm: 0, peakNegSideMm: 0, peakNegTurnDeg: 0,
+            emergencyTriggered: false
+        )
+        XCTAssertEqual(over.comfortLevel, 1.0, accuracy: 1e-9,
+                       "한도 초과 → clamp 1.0 (HUD 100% 초과 차단)")
+    }
+
     /// **v1.20.28 사이클 34** — comfortLevel 정규화 검증.
     func testPilotInputSummaryComfortLevel() {
         let empty = PilotInputSummary.empty
