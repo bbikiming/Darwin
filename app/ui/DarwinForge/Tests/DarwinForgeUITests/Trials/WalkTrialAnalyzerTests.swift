@@ -224,7 +224,8 @@ final class WalkTrialAnalyzerTests: XCTestCase {
         state: String, fall: Bool,
         roll: Double, pitch: Double,
         accelXYZ: (Double, Double, Double)?,
-        temp: Double?
+        temp: Double?,
+        correctionApplied: Bool? = nil
     ) -> WalkSessionSample {
         WalkSessionSample(
             t: 0,
@@ -239,10 +240,121 @@ final class WalkTrialAnalyzerTests: XCTestCase {
             imuSource: "sim",
             batteryVolts: nil,
             motorAvgTemp: temp,
+            correctionAppliedToRobot: correctionApplied,
             rawAccelXG: accelXYZ?.0,
             rawAccelYG: accelXYZ?.1,
             rawAccelZG: accelXYZ?.2,
             fallRecommendEmergency: fall
         )
+    }
+
+    // MARK: - 사이클 165 (P1-3 wire-up): correctionEffectMetric
+
+    /// 빈 배열 → nil.
+    func testCorrectionEffectMetricEmptyReturnsNil() {
+        let metric = WalkTrialAnalyzer.correctionEffectMetric(samples: [])
+        XCTAssertNil(metric)
+    }
+
+    /// 모든 sample correctionApplied=true → corrected only group.
+    func testCorrectionEffectMetricAllCorrected() {
+        let samples = [
+            sampleFull(state: "normal", fall: false, roll: 3, pitch: 2,
+                       accelXYZ: nil, temp: nil, correctionApplied: true),
+            sampleFull(state: "normal", fall: false, roll: -5, pitch: 4,
+                       accelXYZ: nil, temp: nil, correctionApplied: true)
+        ]
+        let metric = WalkTrialAnalyzer.correctionEffectMetric(samples: samples)
+        XCTAssertNotNil(metric)
+        XCTAssertEqual(metric?.correctedSampleCount, 2)
+        XCTAssertEqual(metric?.uncorrectedSampleCount, 0)
+        XCTAssertEqual(metric?.correctionApplyRatio ?? 0, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(metric?.correctedPeakAbsRollDeg ?? 0, 5, accuracy: 1e-9)
+        XCTAssertEqual(metric?.correctedPeakAbsPitchDeg ?? 0, 4, accuracy: 1e-9)
+        XCTAssertNil(metric?.uncorrectedPeakAbsRollDeg)
+        XCTAssertNil(metric?.uncorrectedPeakAbsPitchDeg)
+    }
+
+    /// mixed — corrected 와 uncorrected 모두 peak abs 계산.
+    func testCorrectionEffectMetricMixed() {
+        let samples = [
+            sampleFull(state: "normal", fall: false, roll: 8, pitch: 3,
+                       accelXYZ: nil, temp: nil, correctionApplied: true),
+            sampleFull(state: "normal", fall: false, roll: -2, pitch: 1,
+                       accelXYZ: nil, temp: nil, correctionApplied: true),
+            sampleFull(state: "normal", fall: false, roll: 15, pitch: -10,
+                       accelXYZ: nil, temp: nil, correctionApplied: false),
+            sampleFull(state: "normal", fall: false, roll: 12, pitch: -7,
+                       accelXYZ: nil, temp: nil, correctionApplied: false)
+        ]
+        let metric = WalkTrialAnalyzer.correctionEffectMetric(samples: samples)
+        XCTAssertNotNil(metric)
+        XCTAssertEqual(metric?.correctedSampleCount, 2)
+        XCTAssertEqual(metric?.uncorrectedSampleCount, 2)
+        XCTAssertEqual(metric?.correctionApplyRatio ?? 0, 0.5, accuracy: 1e-9)
+        // corrected peak abs = max(|8|, |-2|) = 8
+        XCTAssertEqual(metric?.correctedPeakAbsRollDeg ?? 0, 8, accuracy: 1e-9)
+        // uncorrected peak abs = max(|15|, |12|) = 15
+        XCTAssertEqual(metric?.uncorrectedPeakAbsRollDeg ?? 0, 15, accuracy: 1e-9)
+        XCTAssertEqual(metric?.uncorrectedPeakAbsPitchDeg ?? 0, 10, accuracy: 1e-9)
+    }
+
+    /// nil (legacy) 은 uncorrected 로 분류 (보수적).
+    func testCorrectionEffectMetricNilCountsAsUncorrected() {
+        let samples = [
+            sampleFull(state: "normal", fall: false, roll: 5, pitch: 3,
+                       accelXYZ: nil, temp: nil, correctionApplied: nil)
+        ]
+        let metric = WalkTrialAnalyzer.correctionEffectMetric(samples: samples)
+        XCTAssertEqual(metric?.correctedSampleCount, 0)
+        XCTAssertEqual(metric?.uncorrectedSampleCount, 1)
+        XCTAssertEqual(metric?.correctionApplyRatio ?? 1, 0.0, accuracy: 1e-9)
+    }
+
+    /// summaryLabel 검증.
+    func testCorrectionEffectMetricSummaryLabel() {
+        let allOn = TrialOutcome.CorrectionEffectMetric(
+            correctedSampleCount: 100, uncorrectedSampleCount: 0,
+            correctionApplyRatio: 1.0,
+            correctedPeakAbsRollDeg: 5, correctedPeakAbsPitchDeg: 3,
+            uncorrectedPeakAbsRollDeg: nil, uncorrectedPeakAbsPitchDeg: nil,
+            blockedSampleCount: 0, degradedSampleCount: 0)
+        XCTAssertTrue(allOn.summaryLabel.contains("100%"))
+
+        let allOff = TrialOutcome.CorrectionEffectMetric(
+            correctedSampleCount: 0, uncorrectedSampleCount: 50,
+            correctionApplyRatio: 0.0,
+            correctedPeakAbsRollDeg: nil, correctedPeakAbsPitchDeg: nil,
+            uncorrectedPeakAbsRollDeg: 8, uncorrectedPeakAbsPitchDeg: 6,
+            blockedSampleCount: 0, degradedSampleCount: 0)
+        XCTAssertTrue(allOff.summaryLabel.contains("비활성"))
+
+        let mixed = TrialOutcome.CorrectionEffectMetric(
+            correctedSampleCount: 30, uncorrectedSampleCount: 70,
+            correctionApplyRatio: 0.3,
+            correctedPeakAbsRollDeg: 5, correctedPeakAbsPitchDeg: 3,
+            uncorrectedPeakAbsRollDeg: 12, uncorrectedPeakAbsPitchDeg: 8,
+            blockedSampleCount: 0, degradedSampleCount: 0)
+        XCTAssertTrue(mixed.summaryLabel.contains("30%"))
+        XCTAssertTrue(mixed.summaryLabel.contains("ON"))
+        XCTAssertTrue(mixed.summaryLabel.contains("OFF"))
+    }
+
+    /// analyze() 가 correctionEffectMetric 을 TrialOutcome 에 포함.
+    func testAnalyzeIncludesCorrectionEffectMetric() {
+        let samples = [
+            sampleFull(state: "normal", fall: false, roll: 2, pitch: 1,
+                       accelXYZ: nil, temp: 40, correctionApplied: true),
+            sampleFull(state: "normal", fall: false, roll: 3, pitch: 2,
+                       accelXYZ: nil, temp: 40, correctionApplied: true)
+        ]
+        let outcome = WalkTrialAnalyzer.analyze(
+            samples: samples,
+            endReason: .userStop, durationSec: 2.0,
+            stepsExecuted: 4, busWriteFailures: 0
+        )
+        XCTAssertNotNil(outcome.correctionEffectMetric,
+            "analyze() 가 correctionEffectMetric 을 TrialOutcome 에 포함")
+        XCTAssertEqual(outcome.correctionEffectMetric?.correctedSampleCount, 2)
     }
 }

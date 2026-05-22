@@ -42,6 +42,8 @@ public enum WalkTrialAnalyzer {
         let meanTimeBetweenFalls = computeMeanTimeBetweenFalls(samples: samples, fallEventCount: fallEventCount, durationSec: durationSec)
         let (peakRoll, peakPitch, meanRoll, meanPitch) = imuStats(samples: samples)
         let peakTemp = peakMotorTemp(samples: samples)
+        // 사이클 165 (P1-3 wire-up): 보정 효과 metric 계산.
+        let correctionEffect = correctionEffectMetric(samples: samples)
 
         let stability = stabilityScore(
             stateDistribution: stateDistribution,
@@ -71,7 +73,64 @@ public enum WalkTrialAnalyzer {
             peakMotorTempC: peakTemp,
             busWriteFailures: busWriteFailures,
             stepsExecuted: stepsExecuted,
-            sampleCount: samples.count
+            sampleCount: samples.count,
+            correctionEffectMetric: correctionEffect
+        )
+    }
+
+    // MARK: - 사이클 165 (P1-3 wire-up): correctionEffectMetric
+
+    /// 보정 ON / OFF 구간 의 peak abs roll/pitch + sample count 계산.
+    /// 사용처: TrialOutcome 의 correctionEffectMetric — Recommender 가 "보정 효과" 정량 측정.
+    ///
+    /// 분류 기준:
+    /// - sample.correctionAppliedToRobot == true → corrected 그룹
+    /// - sample.correctionAppliedToRobot == false → uncorrected 그룹
+    /// - nil (legacy log) → 모두 uncorrected 로 분류 (보수적).
+    ///
+    /// 빈 배열 또는 모든 sample 이 한 그룹 → 반대 그룹 peak 는 nil.
+    /// 전체 sample 0 → 반환 nil (전체 metric 자체 없음).
+    ///
+    /// freshness 분류 (cycle 160): 본 metric 에서는 sample 의 IMU stale 정보가 없어
+    /// blocked/degraded count = 0 으로 default. 향후 sample 에 imuFreshnessState 추가 시 갱신.
+    public static func correctionEffectMetric(samples: [WalkSessionSample]) -> TrialOutcome.CorrectionEffectMetric? {
+        guard !samples.isEmpty else { return nil }
+
+        var correctedSamples: [WalkSessionSample] = []
+        var uncorrectedSamples: [WalkSessionSample] = []
+        for s in samples {
+            // 사이클 165: nil (legacy) → uncorrected 로 분류 (보수적 — 알 수 없음 = 비활성).
+            if s.correctionAppliedToRobot == true {
+                correctedSamples.append(s)
+            } else {
+                uncorrectedSamples.append(s)
+            }
+        }
+
+        let total = samples.count
+        let correctedCount = correctedSamples.count
+        let uncorrectedCount = uncorrectedSamples.count
+        let applyRatio = total > 0 ? Double(correctedCount) / Double(total) : 0.0
+
+        func peakAbsRoll(_ ss: [WalkSessionSample]) -> Double? {
+            guard !ss.isEmpty else { return nil }
+            return ss.map { abs($0.imuRollDeg) }.max() ?? 0
+        }
+        func peakAbsPitch(_ ss: [WalkSessionSample]) -> Double? {
+            guard !ss.isEmpty else { return nil }
+            return ss.map { abs($0.imuPitchDeg) }.max() ?? 0
+        }
+
+        return TrialOutcome.CorrectionEffectMetric(
+            correctedSampleCount: correctedCount,
+            uncorrectedSampleCount: uncorrectedCount,
+            correctionApplyRatio: applyRatio,
+            correctedPeakAbsRollDeg: peakAbsRoll(correctedSamples),
+            correctedPeakAbsPitchDeg: peakAbsPitch(correctedSamples),
+            uncorrectedPeakAbsRollDeg: peakAbsRoll(uncorrectedSamples),
+            uncorrectedPeakAbsPitchDeg: peakAbsPitch(uncorrectedSamples),
+            blockedSampleCount: 0,      // cycle 160 freshness — sample 에 정보 없음, default 0.
+            degradedSampleCount: 0
         )
     }
 
