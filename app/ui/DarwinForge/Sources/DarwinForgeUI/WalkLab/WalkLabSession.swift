@@ -1148,6 +1148,19 @@ public final class WalkLabSession {
         lastPreflightFailure = nil
         startBlockedReason = nil
 
+        // **사이클 117 (explore agent dead-code fix)**: onboardHealthCheckWarnings
+        // production wire-up. 사이클 97 분할 후 production 호출 site 0 이었음 (explore
+        // agent flagged). 본 site 에서 호출 — non-blocking 진단 로그 (preflight 통과 후
+        // robot/cradle/autoOnboardBrokering state 가 silent failure 위험 있을 때 경고).
+        // preflight 차단 사유와 중복 아닌 새 정보 (autoOnboardBrokering off 등) 만 잡힘.
+        let onboardWarnings = onboardHealthCheckWarnings()
+        for warning in onboardWarnings {
+            logSafetyEvent(
+                kind: .preflightFailure,
+                message: "[onboard 진단] \(warning)"
+            )
+        }
+
         // v1.11.24 audit iter2-C — 고급 모드에서 slider 동기화는 preflight 통과 후에만.
         // 종전: tap() 가 start() 호출 전에 loadPresetDefaultsToSliders 호출 → start() 가
         // preflight 차단되면 slider 만 바뀌고 motor task 는 안 바뀜 (UX 불일치).
