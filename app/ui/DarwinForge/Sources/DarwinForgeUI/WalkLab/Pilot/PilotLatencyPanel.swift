@@ -121,16 +121,20 @@ public struct PilotLatencyPanel: View {
                     .font(.caption2)
                     .foregroundStyle(DFColor.textSecondary.opacity(0.7))
             }
-            // **사이클 75 — 코덱스 CRITICAL-1 후속 UI**: rejectedCount 시각화.
-            // emergency / blocked / disabled path 의 거부 입력 수 — 사용자가 stats 신뢰도 평가.
+            // **사이클 75 + 사이클 80 — 코덱스 CRITICAL-1 후속 UI + MEDIUM-2 강화**:
+            // rejectedCount 시각화 + 임계 색상 분리 (normal vs anomalous).
+            // - 1-10 rejected: 정상 (emergency 1-2 회 발화 가능) — warning 색.
+            // - 11+ rejected: race storm 의심 (사용자 입력이 emergency 와 자주 충돌) — danger 색 + 안내.
             if rejected > 0 {
+                let isAnomalous = rejected > 10
+                let color: Color = isAnomalous ? DFColor.danger : DFColor.warning
                 HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Image(systemName: isAnomalous ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
                         .font(.caption2)
-                        .foregroundStyle(DFColor.warning)
-                    Text("\(rejected) 거부 (emergency/blocked)")
+                        .foregroundStyle(color)
+                    Text("\(rejected) 거부\(isAnomalous ? " — race storm 의심" : "")")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(DFColor.warning)
+                        .foregroundStyle(color)
                 }
             }
         }

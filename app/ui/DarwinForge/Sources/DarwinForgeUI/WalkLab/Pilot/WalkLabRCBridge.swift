@@ -460,12 +460,14 @@ public final class WalkLabRCBridge {
         }
         // facade — emergency 가드 / advanced 자동 활성 / slider write.
         // false 반환 시 emergency 상태 — engine sync / 메시지 모두 skip.
-        // **사이클 76 — 코덱스 CRITICAL-1 fix**: false (race emergency) 시 latency cycle
-        // 도 cancel — 종전 cycle 71 cancel coverage 가 6 early-return 만 — 본 race window
-        // (process → safetyGated 통과 후 applyAmplitude 안에서 emergency 발화) 누락.
-        // 결과: orphan cycle 잔존 → 다음 inputReceived 가 자동 폐기되지만 rejectedCount 누락.
+        // **사이클 76 + 사이클 80 — 코덱스 CRITICAL-1 + HIGH-2 fix**: false (race emergency)
+        // 시 latency cycle cancel + 사용자 visibility 확보.
+        // 종전 cancel 만 했을 때 lastIntent (line 274) 가 stale move 로 남아 HUD sourceChip
+        // green dot 표시 → 사용자가 입력 통과로 오해. 신규: safetyMessage 안내 + accumulator
+        // 일관성 (intent 이미 record 됐으므로 추가 record 불요).
         guard session.pilotApplyAmplitude(final) else {
             latencyTracker?.cancel()
+            safetyMessage = "긴급 정지 race — 입력 무시 (recovery 후 재시도)"
             return
         }
         // **v1.20.45 사이클 59** — slider mutation 완료. engine sync 직전.
