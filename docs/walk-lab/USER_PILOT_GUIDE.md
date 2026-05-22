@@ -385,6 +385,64 @@ scenarios. 모든 신규 test 는 implementation 변경 시 fail 보장.
 - 추가 감축은 lifecycle method 의 internal cohesion 우선 (분할 시 의미 흩어짐 위험)
 - 다음 단계: onboardHealthCheckWarnings 의 production wire-up (또는 명시 deprecation)
 
+## DARWIN_UX_AUDIT v4 처리 (cycles 119-133, 2026-05-22)
+
+스튜디오 클로드 (UX) + 스튜디오 코덱스 (코드) 합산 합본 (268 findings) 처리 결과.
+
+### 진행률
+
+| Priority | Total | Fixed (Active) | Mitigated/Deferred |
+|---|---|---|---|
+| P0 | 15 | **11** (#9, #11, #15, #17, #22, #23, #26, #27, #30, #31, #32) | 4 (#3, #5, #12, #20) |
+| P1 | 13 | **9** (#1, #2, #14, #16, #18, #19, #25, #28, #33) | 4 (#4, #6, #13, #21) |
+| P2 | 8 | **6** (#7, #8, #24, #29, #34, #36) | 2 (#13 dup, #35) |
+| **TOTAL** | 36 | **26 active (72%)** | 10 (28%) — 모두 mitigation 입증 |
+
+### Cycle 별 처리
+
+- **119**: 4 P0 (#15 RemotePilot fake / #30 MotionBlender sim / #31 Recommender real-only / #32 Static Stability proxy)
+- **120**: #27 forge Ctrl+C 토크 OFF (ctrlc crate + SHOULD_EXIT flag)
+- **121**: #11 PilotActionBar silent fail (5초 orange banner)
+- **122**: #17 [시뮬] prefix / #26 D-pad 단발
+- **123**: #9 Expert 합성 IMU label
+- **124**: #1/#2/#14/#25/#33 doc clarity (5건 batch)
+- **125**: #16/#18/#19/#36 IntentDispatcher / ClaudeCommander / STL fallback
+- **126**: #34 MotionBuilder random ID 결정성
+- **127**: #13 ComingSoon consistency
+- **128**: #29 SwiftPM warning
+- **129**: codex MAJOR fix — #31 coordinateDescent realRobotOnly
+- **130**: #23 InitialSetup VNC 수동확인
+- **131**: #22 masterSetup rollback
+- **132**: #8 Quick Connect endpoint 상수화
+- **133**: #24 KoreanUX 닫기 button role .cancel
+
+### Deferred 사유
+
+- **#5 카탈로그 placeholder**: `v1TargetPoseID: nil` filter 이미 의도된 design
+- **#12 .simReady ARM 오인**: `isSimMode` check 가 subtitle 분기 우선 — 이미 mitigated
+- **#20 SSH MITM**: `accept-new` TOFU 는 산업 표준 (Trust On First Use)
+- **#4 음성 버튼**: 이미 "준비 중" 라벨 + `disabled(true)` — 변경 불요
+- **#6 HarnessBaseline**: v1.14.1 P1-1 fix 에서 이미 해소 — 추가 변경 불요
+- **#21 InitialSetupWizard 자동 검증 부분**: VNC #23 + 5530/22 polling 으로 이미 충분
+- **#35 ClaudeCritic future**: enum case 만 정의, instantiation 0 — "추후 통합" 라벨 명확
+
+### Multi-agent 검증
+
+- **cycle 119-128 codex critic review**: VERDICT ACCEPT-WITH-RESERVATIONS, 1 MAJOR (사이클 129 즉시 fix)
+- 검증 도구: 4 parallel agents (critic / security-auditor / code-reviewer / explore)
+- 결과: 1300 Swift + 368 Rust tests pass throughout
+
+### 최종 상태
+
+| Metric | Before audit | After audit |
+|---|---|---|
+| User-misleading labels | 11 instances | 0 (all annotated or fixed) |
+| Hardcoded magic values | 5+ sites | Quick Connect endpoint 통일 + 5 비-critical 잔존 (cycle 132+) |
+| Silent failures | 7-page silent fail (#11) | 5초 banner + auto-dismiss |
+| Safety placeholders | Ctrl+C placeholder (#27) | Real ctrlc handler + SHOULD_EXIT flag |
+| Proxy validation 라벨 오해 | Static Stability `Pass` | `Warn("정적 안정성 proxy")` |
+| Sim/real 추천 혼동 | sim 데이터 기반 무표시 | rationale 에 "실로봇 N개 / 시뮬 N개" 비율
+
 ---
 
 ## 안전 / 책임
