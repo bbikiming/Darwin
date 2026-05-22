@@ -300,14 +300,14 @@ public final class WalkLabSession {
     /// true 일 때 didSet 의 inner re-entry 는 silent.
     private var isRefusingBalanceOff: Bool = false
     /// 보정 활성 시 0~1초 ramp 시작 시점. nil 이면 ramp 미시작.
-    /// **v1.22.X 사이클 90 (Phase 5)**: private → internal — `+BalanceCorrection.swift`
+    /// **v1.22.X 사이클 100 (Phase 5)**: private → internal — `+BalanceCorrection.swift`
     /// extension 의 `applyBalanceCorrectionIfEnabled` 가 ramp 시작 시각 mutate.
     var correctionEnabledAt: Date?
     /// 최근 산정 보정 delta (UI 표시·디버그 용).
-    /// **v1.22.X 사이클 90 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
+    /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var lastCorrections: BalanceCorrector.Corrections?
     /// **Phase C (2026-05-16)**: balanceState .danger 시 동결 기준 pose. nil 이면 walkReady fallback.
-    /// **v1.22.X 사이클 90 (Phase 5)**: private → internal — extension corrections apply 가
+    /// **v1.22.X 사이클 100 (Phase 5)**: private → internal — extension corrections apply 가
     /// safe pose snapshot 갱신.
     var lastSafePose: RobotPose?
     /// Corrector 인스턴스 — `WalkParams.default()` gain 정합. v1.8 정정: intensity 가
@@ -935,7 +935,7 @@ public final class WalkLabSession {
     /// extension 의 `updateSimIMU` 가 read/write. module 내부만 접근.
     internal var simSwayPhase: Double = 0
     /// 실 보행 cycle Task — start(preset) 시 시작, stop / emergency 시 cancel.
-    /// **사이클 90 (Phase 1C)**: `private` → `internal` 격상 — `WalkLabSession+Calibration`
+    /// **사이클 91 (Phase 1C)**: `private` → `internal` 격상 — `WalkLabSession+Calibration`
     /// extension 의 `runStaticTiltCalibration` 이 본 Task 의 nil 여부로 보행 중 거부 판정
     /// 필요. module 내부 접근만 허용, 외부 module 은 여전히 not visible.
     internal var walkCycleTask: Task<Void, Never>?
@@ -2600,7 +2600,7 @@ public final class WalkLabSession {
     // 에서 호출하므로 file-level private 불가). 외부 API (loadPersistentEvents /
     // clearPersistentEvents) signature 변경 0.
 
-    // MARK: - Balance Correction (v1.22.X 사이클 90 Phase 5 — extension 이동)
+    // MARK: - Balance Correction (v1.22.X 사이클 100 Phase 5 — extension 이동)
     //
     // `applyBalanceCorrectionIfEnabled` (~213 line) + static helper `scaleCorrections` /
     // `applyCorrections` 는 `WalkLabSession+BalanceCorrection.swift` 로 이동. stored
@@ -2611,50 +2611,50 @@ public final class WalkLabSession {
 
     /// v1.11: 마지막 tick 에서 corrections 가 실제 pose 에 적용됐는지 (observe-only / applyToRobot=false 면 false).
     /// Logging + UI status indicator 용.
-    /// **v1.22.X 사이클 90 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
+    /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var lastCorrectionApplied: Bool = false
 
     /// **v1.11 (Codex review 2026-05-18 HIGH-1)**: ramp 적용 **전** 의 raw candidate corrections.
     /// handoff §4 의 `candidateDeltas` 정확한 의미 — corrector.corrections() 결과 그대로.
     /// `lastCorrections` 는 ramp 적용 후 (legacy UI/log 호환). 두 개를 분리해야 분석 시
     /// "corrector 자체의 효과" vs "ramp + corrector 의 합성 효과" 를 구분 가능.
-    /// **v1.22.X 사이클 90 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
+    /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var lastRawCandidate: BalanceCorrector.Corrections?
 
     /// v1.11: 마지막 Hybrid B+A 결과 — slow/fast delta + effective err 로깅용.
-    /// **v1.22.X 사이클 90 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
+    /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var lastHybridResult: BalanceCorrector.HybridResult?
 
     /// v1.11: 마지막 tick 의 walking cycle 안 elapsed (ms). Hybrid 경로일 때만 값.
-    /// **v1.22.X 사이클 90 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
+    /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var lastWalkCycleElapsedMs: Double?
 
     /// v1.11: 마지막 tick 의 walking cycle period (ms). Hybrid 경로일 때만 값.
-    /// **v1.22.X 사이클 90 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
+    /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var lastWalkPeriodMs: Double?
 
-    // MARK: - v1.22.X 사이클 90 (Phase 5) — scaleCorrections / applyCorrections moved
+    // MARK: - v1.22.X 사이클 100 (Phase 5) — scaleCorrections / applyCorrections moved
     //
     // 두 static helper 는 `WalkLabSession+BalanceCorrection.swift` 로 이동 (file-level
     // private → internal static 격상 — 호출 site `applyBalanceCorrectionIfEnabled` 이
     // 동일 extension 안에 있음).
 
     /// v1.9 critic fix — LPF state for corrector (sway 제거).
-    /// **v1.22.X 사이클 90 (Phase 5)**: private → internal — extension P-control 경로가
+    /// **v1.22.X 사이클 100 (Phase 5)**: private → internal — extension P-control 경로가
     /// alpha-filter state mutate.
     var correctorFilteredRoll: Double = 0
     var correctorFilteredPitch: Double = 0
 
     /// v1.10 (2026-05-17) Hybrid B+A state — slow EMA pitch/roll baseline.
     /// `applyBalanceCorrectionIfEnabled` 가 매 tick mutate.
-    /// **v1.22.X 사이클 90 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
+    /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var hybridBalanceState = HybridBalanceState()
 
     /// **v1.11 (2026-05-17 phase fix)**: walking cycle 시작 시각. session 전체 시각
     /// (`sessionStartedAt`) 과 별개 — Hybrid phase-locked correction 의 정확한 phase
     /// 계산을 위함. `runContinuousWalk` 진입 시 갱신, 한 cycle 종료 시 갱신 안 함
     /// (cycle 가 연속이므로 truncatingRemainder 로 wrap).
-    /// **v1.22.X 사이클 90 (Phase 5)**: `public private(set)` → `public internal(set)` —
+    /// **v1.22.X 사이클 100 (Phase 5)**: `public private(set)` → `public internal(set)` —
     /// `+BalanceCorrection.swift` 의 hybrid 경로가 read; `+Logging.swift` 등은 read 만,
     /// 본체 `runContinuousWalk` 만 write. extension read 가능하도록 internal 격상.
     public internal(set) var cycleStartedAt: Date?
@@ -2896,10 +2896,10 @@ public final class WalkLabSession {
     // updateMotorTempFromRealOrSim / updateSimThermal 는
     // `WalkLabSession+SensorUpdates.swift` extension 으로 이동.
 
-    // MARK: - v1.11.3 (2026-05-18) — P1.0 정적 IMU 캘리브레이션 (사이클 90 Phase 1C: method 분할)
+    // MARK: - v1.11.3 (2026-05-18) — P1.0 정적 IMU 캘리브레이션 (사이클 91 Phase 1C: method 분할)
 
     /// 5축 캡처 보관소 — 앱 세션 중에만 유지. Disk 저장은 별도 helper.
-    /// **사이클 90 (Phase 1C)**: setter `private(set)` → `internal(set)` 격상 —
+    /// **사이클 91 (Phase 1C)**: setter `private(set)` → `internal(set)` 격상 —
     /// `WalkLabSession+Calibration` extension method 가 write 필요. external API 는 read-only.
     public internal(set) var calibrationCaptures: [StaticTiltCalibration.Capture] = []
 

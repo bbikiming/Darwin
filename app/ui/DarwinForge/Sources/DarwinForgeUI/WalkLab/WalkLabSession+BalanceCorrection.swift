@@ -1,7 +1,7 @@
 import Foundation
 import ForgeCore
 
-/// **v1.22.0 (2026-05-22) — 사이클 90: god object Phase 5 분할 (architect agent plan)**.
+/// **v1.22.0 (2026-05-22) — 사이클 100: god object Phase 5 분할 (architect agent plan)**.
 ///
 /// `WalkLabSession.swift` 의 balance correction code (~280 line) 를 본 extension 으로 이동.
 /// 본 분할은 architect plan 의 **중간 위험** — 213-line `applyBalanceCorrectionIfEnabled`
@@ -281,7 +281,7 @@ extension WalkLabSession {
     }
 
     /// Corrections 를 ramp factor 로 scale.
-    /// **v1.22.0 사이클 90 (Phase 5)**: `private static` → `internal static` — extension
+    /// **v1.22.0 사이클 100 (Phase 5)**: `private static` → `internal static` — extension
     /// 의 `applyBalanceCorrectionIfEnabled` 가 file-level 분리됐기 때문에 file-private 불가.
     static func scaleCorrections(_ c: BalanceCorrector.Corrections, by k: Double) -> BalanceCorrector.Corrections {
         BalanceCorrector.Corrections(
@@ -293,7 +293,7 @@ extension WalkLabSession {
     }
 
     /// Corrections deg delta 를 pose 의 각 joint raw 에 적용.
-    /// **v1.22.0 사이클 90 (Phase 5)**: `private static` → `internal static`.
+    /// **v1.22.0 사이클 100 (Phase 5)**: `private static` → `internal static`.
     static func applyCorrections(_ c: BalanceCorrector.Corrections, to pose: RobotPose) -> RobotPose {
         var dict = pose.positions
         let deltas: [JointID: Double] = [
