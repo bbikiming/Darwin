@@ -55,8 +55,10 @@ public struct OnboardHealthIndicator: View {
     /// 사이클 168 (cycle 164 wire-up): 옛 daemon (v1 patch, sscanf 7 필드) 는 balance
     /// 필드 silent ignore — Mac UI 가 "보정 활성" 표시했지만 robot 무동작 위험.
     /// 사용자가 daemon v2 확인 후 onboardBalanceSchemaVerified 토글로 dismiss.
+    /// 사이클 169: "v2 확인" 버튼 추가 — 사용자 명시 dismiss path.
     @ViewBuilder
     private var schemaWarningBanner: some View {
+        @Bindable var session = session
         HStack(spacing: DFSpace.xs2) {
             Image(systemName: "exclamationmark.shield.fill")
                 .font(.system(size: DFFontSize.s11, weight: .bold))
@@ -70,6 +72,21 @@ public struct OnboardHealthIndicator: View {
                     .foregroundStyle(DFColor.textSecondary)
                     .lineLimit(2)
             }
+            Spacer(minLength: DFSpace.xs2)
+            // 사이클 169: 사용자가 robot 측 daemon v2 확인 후 dismiss.
+            Button("v2 확인") {
+                session.onboardBalanceSchemaVerified = true
+                // 다음 currentWalkingEngineCommand 호출 시 warningActive=false.
+                // 즉시 dismiss 위해 manual update.
+                session.onboardBalanceSchemaWarningActive = false
+            }
+            .font(DFFont.micro.weight(.semibold))
+            .buttonStyle(.borderedProminent)
+            .controlSize(.mini)
+            .tint(DFColor.warning)
+            .help("ROBOTIS daemon 이 v2 patch (sscanf 10 필드) 임을 명시 확인. " +
+                  "이후 balance 필드가 robot 에 전달됩니다.")
+            .accessibilityLabel("daemon v2 확인 토글")
         }
         .padding(.horizontal, DFSpace.xs2)
         .padding(.vertical, 2)
@@ -77,7 +94,7 @@ public struct OnboardHealthIndicator: View {
             RoundedRectangle(cornerRadius: DFRadius.xs2)
                 .fill(DFColor.warning.opacity(0.10))
         )
-        .accessibilityLabel("경고 — daemon v2 미확인, balance 보정 robot 미적용 가능")
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("onboard.schema.warning.banner")
     }
 
