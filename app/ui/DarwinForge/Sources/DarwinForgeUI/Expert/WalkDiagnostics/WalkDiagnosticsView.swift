@@ -324,7 +324,9 @@ public struct WalkDiagnosticsView: View {
     private var statusPill: some View {
         let on = enabled
         let modeTint: Color = source == .preview ? DFColor.info : DFColor.success
-        let modeTag: String = source == .preview ? "미리보기" : "실측"
+        // **사이클 123 (audit #9, P0)**: preview 모드의 합성 IMU 명시.
+        // 종전 "미리보기" → 사용자가 실 IMU 데이터로 오해 가능. "(합성)" 추가.
+        let modeTag: String = source == .preview ? "미리보기 (합성 IMU)" : "실측"
         return HStack(spacing: DFSpace.xs2) {
             // 모드 배지 — 합성/실측 구분.
             Text(modeTag)
