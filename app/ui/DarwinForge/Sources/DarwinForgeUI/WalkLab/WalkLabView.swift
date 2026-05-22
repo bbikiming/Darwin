@@ -250,6 +250,15 @@ public struct WalkLabView: View {
             if let bridge = session.pilotBridge {
                 KeyboardPilotPanel()
                 TelloPilotHud(bridge: bridge)
+                // **v1.20.45 사이클 59-ui** — input → engine latency 시각화.
+                // critic 지적 응답: 측정 + UI 노출까지가 "game character" 정량 기준 close-loop.
+                PilotLatencyPanel(bridge: bridge)
+                // **v1.22.0 (2026-05-22) Phase 5** — 음성 조종 panel.
+                // 마이크 권한은 사용자 명시 토글 시점에만 요청 (자동 start 금지).
+                VoicePilotPanel(bridge: bridge)
+                // **v1.21.1 (2026-05-22)** — GamepadPilotAdapter UI wire-up.
+                // PS4/Xbox 등 GCExtendedGamepad 호환 컨트롤러 즉시 사용 가능.
+                GamepadPilotPanel(bridge: bridge)
             } else {
                 Text("Pilot bridge 미연결 — RootView onAppear 가 wiring 못함")
                     .font(.caption2)

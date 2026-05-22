@@ -31,6 +31,11 @@ public struct RootView: View {
     /// no-op. RootView 의 onAppear 에서 bridge 인스턴스 생성 + 양방향 wiring.
     /// telloLink 는 init 시 socket 안 열림 (start() 호출 시에만). nil = 아직 onAppear 안 됨.
     @State private var pilotBridge: WalkLabRCBridge? = nil
+    /// **v1.20.35 사이클 18** — Tello state listener (UDP 8890) lifecycle owner.
+    /// bridge 와 listener 사이 wiring 담당. start() 시 listener bind → onState callback
+    /// 이 MainActor hop 후 bridge.updateTelloState 호출.
+    /// nil = bridge alloc 전 (onAppear 후 일괄 alloc).
+    @State private var telloStateOwner: TelloStateListenerOwner? = nil
     // **v1.11.15 (2026-05-19)** — 테마 매니저. DarwinForgeApp 이 environmentObject 로 주입.
     @EnvironmentObject private var themeManager: DFThemeManager
     private let commander: ClaudeCommander
@@ -125,6 +130,15 @@ public struct RootView: View {
                 bridge.session = walkLabSession
                 walkLabSession.pilotBridge = bridge
                 pilotBridge = bridge
+            }
+            // **v1.20.35 사이클 18** — Tello state listener owner alloc + start.
+            // listener 의 raw UDP transport 가 bridge.updateTelloState 까지 도달하도록 wiring.
+            // start() 가 silent 실패 (NSLocalNetworkUsageDescription 미허락) 시 OSLog 만 남기고
+            // isActive=false 유지 → 사용자 권한 허용 후 재 start 가능 (현재는 일회성).
+            if telloStateOwner == nil, let bridge = pilotBridge {
+                let owner = TelloStateListenerOwner(bridge: bridge)
+                owner.start()
+                telloStateOwner = owner
             }
             // 첫 실행 자동 연결/자동 마법사는 제거됨 — 사용자가 직접
             // 우측 상단 "Auto Connect" 버튼 또는 마법사를 눌러서 연결.
