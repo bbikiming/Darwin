@@ -277,6 +277,10 @@ extension WalkLabSession {
             case onboardAckTimeout
             // v1.11.25 audit-D — thermal cool-down 강제. 60°C 도달 후 50°C 미만까지 재시작 차단.
             case motorTempCoolDownRequired(currentTempC: Double, exitTempC: Double)
+            /// **v1.21.1 사이클 66 (코덱스 CRITICAL-1)** — emergency 활성 상태에서 preset
+            /// 재시작 차단. 종전 cycle 61 이 `.noConnection` 을 재사용 → 사용자에게 "시뮬 모드"
+            /// 로 잘못 노출. 전용 cause 추가 — recovery 명확 안내.
+            case emergencyActive
         }
         public let cause: Cause
         public var userMessage: String {
@@ -315,6 +319,8 @@ extension WalkLabSession {
             case .motorTempCoolDownRequired(let current, let exit):
                 return String(format: "🌡️ 모터 냉각 필요 — 현재 %.1f°C, %.1f°C 미만까지 대기 (60°C 알람 후 cool-down)",
                               current, exit)
+            case .emergencyActive:
+                return "🛑 긴급 정지 상태 — recovery (R 키 또는 Recover 버튼) 후 재시작"
             }
         }
 
@@ -337,6 +343,7 @@ extension WalkLabSession {
             case .onboardAutoBrokeringOff:                      return "onboardAutoBrokeringOff"
             case .onboardAckTimeout:                            return "onboardAckTimeout"
             case .motorTempCoolDownRequired:                    return "motorTempCoolDownRequired"
+            case .emergencyActive:                              return "emergencyActive"
             }
         }
     }

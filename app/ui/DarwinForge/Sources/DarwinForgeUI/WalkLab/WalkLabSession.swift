@@ -1010,19 +1010,24 @@ public final class WalkLabSession {
         // 시퀀스가 robot 재작동.
         // 신규: 모든 public start entry 차단. 사용자 명시 recovery (exitEmergencyMode) 전까지
         // 어떤 path 도 start 진행 불가. emergency guard 가 한 곳에 모임.
+        // **v1.21.1 사이클 66 — 코덱스 CRITICAL-1 fix**: 전용 `.emergencyActive` cause 사용.
+        // 종전: `.noConnection` 재사용 → facade (pilotStart) 가 failure.userMessage 를
+        // "시뮬 모드 — 로봇 미연결" 로 전달 → 사용자 mental model corruption (emergency
+        // 차단을 connection 문제로 오인). 신규: `.emergencyActive` 의 userMessage 가
+        // 명시 recovery 안내. diagnosticCode = "emergencyActive" 로 telemetry 도 정확.
         if emergencyStopActive {
-            let f = WalkPreflightFailure(cause: .noConnection)  // 임시 reuse (전용 case 신규 권장).
+            let f = WalkPreflightFailure(cause: .emergencyActive)
             lastPreflightFailure = f
-            lastRobotEvent = "🛑 긴급 정지 상태 — recovery (R 키 또는 Recover 버튼) 후 재시작"
-            startBlockedReason = "emergencyStopActive"
+            lastRobotEvent = f.userMessage
+            startBlockedReason = f.diagnosticCode
             logSafetyEvent(
                 kind: .preflightFailure,
-                message: "start 차단 — emergency 상태에서 recovery 없이 재시작 시도"
+                message: "start 차단 — \(f.diagnosticCode): emergency 상태에서 recovery 없이 재시작 시도"
             )
             Harness.shared.record(
                 .walkLabStartBlocked, level: .warn, actor: .user,
                 data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable("emergency_active"),
+                       "reason": AnyCodable(f.diagnosticCode),
                        "guard": AnyCodable("root_emergency_guard")]
             )
             return
