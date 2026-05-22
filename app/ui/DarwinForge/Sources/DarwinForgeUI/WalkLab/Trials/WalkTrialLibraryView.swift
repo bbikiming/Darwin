@@ -330,7 +330,14 @@ private struct TrialDetailView: View {
     }
 
     private func refreshRecommendations() {
-        recommendations = WalkTrialRecommender.shared.recommend(for: trial.config.preset)
+        // 사이클 151 (codex MAJOR #1 follow-up): 사용자의 robot 연결 상태에 따라
+        // realRobotOnly 자동 결정 — 실 robot 연결 시 sim 추천 제외 (안전 default).
+        // session.store?.bus != nil 이면 연결 — cycle 119 audit #31 의 의도 달성.
+        let robotConnected = session.store?.bus != nil
+        recommendations = WalkTrialRecommender.shared.recommend(
+            for: trial.config.preset,
+            realRobotOnly: robotConnected
+        )
     }
 
     private var header: some View {
