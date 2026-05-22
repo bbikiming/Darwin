@@ -92,8 +92,12 @@ public enum MotionBuilder {
             finalSteps.append(MotionStep.from(pose: ready.pose, playMs: 500, pauseMs: 200))
         }
 
-        let nextId = UInt8.random(in: 100...250)  // 임시 — 호출자가 ID 재할당
-        return MotionPage(id: nextId, name: name, steps: finalSteps)
+        // **사이클 126 (audit #34, P2)**: 결정적 placeholder ID 사용.
+        // 종전 `UInt8.random(in: 100...250)` 은 caller 가 id 재할당 잊으면 비결정성 + 충돌 위험.
+        // 신규: 명시 `0` 사용 — caller 가 id == 0 인지 검사하면 "ID 재할당 필요" detect 가능.
+        // (.unassigned 같은 enum 도 가능하나 MotionPage.id 가 UInt8 이라 sentinel 0 채택.)
+        let placeholderId: UInt8 = 0
+        return MotionPage(id: placeholderId, name: name, steps: finalSteps)
     }
 
     /// 자연어 명령 → StepSpec 시퀀스 (휴리스틱).
