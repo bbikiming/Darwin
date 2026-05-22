@@ -31,20 +31,37 @@ public struct MotionLibraryView: View {
     public var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                // ROBOTIS 공식 카탈로그 (16)
-                Section("ROBOTIS 공식 데모 (16)") {
-                    ForEach(officialEntries) { e in
+                // 사이클 154 (사용자 권고 #4): ROBOTIS 공식 카탈로그 를 status 별 그룹 분리.
+                // 종전: 16개 모두 한 section → 사용자가 placeholder / 고위험 / safe 구분 어려움.
+                // 신규: 3 subsection — 공식 raw (safe) / Placeholder (preview only) / 고위험 (실험용).
+                // [placeholder] prefix 와 함께 사용자 의도 명확.
+                Section("ROBOTIS 공식 — 공식 raw (\(officialSafeEntries.count))") {
+                    ForEach(officialSafeEntries) { e in
                         sidebarRow(entry: e).tag(Selection.starter(e.id))
                     }
                 }
+                if !officialPlaceholderEntries.isEmpty {
+                    Section("ROBOTIS 공식 — Placeholder (\(officialPlaceholderEntries.count))") {
+                        ForEach(officialPlaceholderEntries) { e in
+                            sidebarRow(entry: e).tag(Selection.starter(e.id))
+                        }
+                    }
+                }
+                if !officialHighRiskEntries.isEmpty {
+                    Section("ROBOTIS 공식 — 고위험 / 실험용 (\(officialHighRiskEntries.count))") {
+                        ForEach(officialHighRiskEntries) { e in
+                            sidebarRow(entry: e).tag(Selection.starter(e.id))
+                        }
+                    }
+                }
                 // Sprint 11 reference (19)
-                Section("커뮤니티 reference (19)") {
+                Section("커뮤니티 reference (\(referenceEntries.count))") {
                     ForEach(referenceEntries) { e in
                         sidebarRow(entry: e).tag(Selection.starter(e.id))
                     }
                 }
                 // Sprint 8 prebundled (5)
-                Section("기본 시작 (5)") {
+                Section("앱 합성 — 기본 시작 (\(prebundledEntries.count))") {
                     ForEach(prebundledEntries) { e in
                         sidebarRow(entry: e).tag(Selection.starter(e.id))
                     }
@@ -131,6 +148,29 @@ public struct MotionLibraryView: View {
     private var officialEntries: [StarterEntry] {
         let officialIDs: Set<Int> = [1, 2, 3, 4, 9, 10, 11, 12, 13, 15, 17, 23, 24, 27, 38, 54]
         return Self.starterPages.filter { officialIDs.contains(Int($0.page.id)) }
+    }
+
+    /// 사이클 154 (사용자 권고 #4): 공식 카탈로그 의 safety class 별 분리.
+    /// safe — 실제 합성된 안전 motion (Stand Up, Yes, No, Walk Ready 등).
+    private var officialSafeEntries: [StarterEntry] {
+        let placeholderIDs: Set<Int> = [10, 11, 17]   // Get Up Front/Back, Hand Standing
+        let highRiskIDs: Set<Int> = [12, 13]          // Right/Left Kick
+        return officialEntries.filter { entry in
+            let id = Int(entry.page.id)
+            return !placeholderIDs.contains(id) && !highRiskIDs.contains(id)
+        }
+    }
+
+    /// 사이클 154: placeholder — walkReady hold 만, 실 구현 없음 ([placeholder] prefix).
+    private var officialPlaceholderEntries: [StarterEntry] {
+        let placeholderIDs: Set<Int> = [10, 11, 17]
+        return officialEntries.filter { placeholderIDs.contains(Int($0.page.id)) }
+    }
+
+    /// 사이클 154: 고위험 / 실험용 — 실 합성 있지만 단발 지지 / 정비 스탠드 필수.
+    private var officialHighRiskEntries: [StarterEntry] {
+        let highRiskIDs: Set<Int> = [12, 13]
+        return officialEntries.filter { highRiskIDs.contains(Int($0.page.id)) }
     }
 
     /// Sprint 11 ReferenceMotionLibrary 항목 (50..=83).
