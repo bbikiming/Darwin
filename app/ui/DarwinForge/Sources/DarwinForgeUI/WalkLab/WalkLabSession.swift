@@ -2112,12 +2112,8 @@ public final class WalkLabSession {
         )
         // 사이클 164 (codex MAJOR fix, cycle 162 review): silent failure 차단 — Onboard
         // mode 에서 balance ON 인데 daemon version 확인 안 됐으면 사용자 명시 경고.
-        if walkingEngine == .robotisOnboard && cmd.balanceEnable
-           && !onboardBalanceSchemaVerified {
-            onboardBalanceSchemaWarningActive = true
-        } else {
-            onboardBalanceSchemaWarningActive = false
-        }
+        // **사이클 172 (codex MINOR #3 fix)**: onboardBalanceSchemaWarningActive 가
+        // computed property 로 전환 — 본 메소드에서 명시 set 불필요. UI 가 read 시 즉시 평가.
         return cmd
     }
 
@@ -2125,11 +2121,33 @@ public final class WalkLabSession {
     /// 종전: ACK / version handshake 없음 — Mac 가 10 필드 송신, 옛 daemon (v1) 은 7 만 사용.
     /// 사용자가 명시 토글 (UI 의 "Onboard v2 firmware 확인됨" 체크박스) 후 true 로 set.
     /// nil/false = 미확인. Mac UI 가 balance 활성 시 경고 표시.
-    public var onboardBalanceSchemaVerified: Bool = false
+    ///
+    /// **사이클 172 (codex MINOR #4 fix)**: 종전 plain Bool — 매 session 재시작 시 false 복원
+    /// → 사용자가 매번 재확인 (annoying for known-v2 daemons). 신규: didSet 으로 UserDefaults
+    /// persist. Key = "df.walklab.onboardBalanceSchemaVerified". 로드 시 자동 복원.
+    public var onboardBalanceSchemaVerified: Bool = {
+        UserDefaults.standard.bool(forKey: WalkLabSession.onboardBalanceSchemaVerifiedKey)
+    }() {
+        didSet {
+            UserDefaults.standard.set(onboardBalanceSchemaVerified,
+                                       forKey: WalkLabSession.onboardBalanceSchemaVerifiedKey)
+        }
+    }
+
+    /// 사이클 172 — UserDefaults persist key.
+    public static let onboardBalanceSchemaVerifiedKey = "df.walklab.onboardBalanceSchemaVerified"
 
     /// 사이클 164: HUD 가 표시할 active warning — currentWalkingEngineCommand 가 갱신.
     /// true = Onboard mode + balance ON + version 미확인 → 사용자가 의도와 다른 동작 가능.
-    public internal(set) var onboardBalanceSchemaWarningActive: Bool = false
+    ///
+    /// **사이클 172 (codex MINOR #3 fix)**: 종전 currentWalkingEngineCommand() 호출 시에만
+    /// 갱신 → UI 처음 진입 시 flag 가 stale (false 상태) — 사용자는 첫 walk 명령 전까지
+    /// 경고 못 봄. 신규: computed property 로 매 read 시 평가 — 항상 정확.
+    public var onboardBalanceSchemaWarningActive: Bool {
+        walkingEngine == .robotisOnboard
+            && enableBalanceCorrection
+            && !onboardBalanceSchemaVerified
+    }
 
     // MARK: - Preflight (사이클 112 Phase 10 — extension 이동)
     //

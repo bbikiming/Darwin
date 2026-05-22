@@ -73,12 +73,11 @@ public struct OnboardHealthIndicator: View {
                     .lineLimit(2)
             }
             Spacer(minLength: DFSpace.xs2)
-            // 사이클 169: 사용자가 robot 측 daemon v2 확인 후 dismiss.
+            // 사이클 169 + 172: 사용자가 robot 측 daemon v2 확인 후 dismiss.
+            // 사이클 172: warningActive 가 computed property 로 전환 — verified set 만으로
+            // 자동 dismiss. UserDefaults persist 로 다음 session 도 유지.
             Button("v2 확인") {
                 session.onboardBalanceSchemaVerified = true
-                // 다음 currentWalkingEngineCommand 호출 시 warningActive=false.
-                // 즉시 dismiss 위해 manual update.
-                session.onboardBalanceSchemaWarningActive = false
             }
             .font(DFFont.micro.weight(.semibold))
             .buttonStyle(.borderedProminent)
