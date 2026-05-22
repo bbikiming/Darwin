@@ -86,4 +86,62 @@ final class OfficialCatalogReferenceTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - 사이클 155 (codex MINOR #2 fix): canonical ID set 검증
+
+    /// safeIDs ∪ placeholderCautionIDs ∪ placeholderHighRiskIDs ∪ highRiskIDs = 16 entries.
+    /// 4 set 가 disjoint (overlap 없음).
+    func testCanonicalIDSetsDisjointAnd16Total() {
+        let safe = OfficialCatalogReference.safeIDs
+        let placeholderCaution = OfficialCatalogReference.placeholderCautionIDs
+        let placeholderHighRisk = OfficialCatalogReference.placeholderHighRiskIDs
+        let highRisk = OfficialCatalogReference.highRiskIDs
+
+        // pairwise disjoint
+        XCTAssertTrue(safe.isDisjoint(with: placeholderCaution))
+        XCTAssertTrue(safe.isDisjoint(with: placeholderHighRisk))
+        XCTAssertTrue(safe.isDisjoint(with: highRisk))
+        XCTAssertTrue(placeholderCaution.isDisjoint(with: placeholderHighRisk))
+        XCTAssertTrue(placeholderCaution.isDisjoint(with: highRisk))
+        XCTAssertTrue(placeholderHighRisk.isDisjoint(with: highRisk))
+
+        // total
+        XCTAssertEqual(safe.count + placeholderCaution.count
+                       + placeholderHighRisk.count + highRisk.count, 16,
+                       "4 set 합집합 = 16 (ROBOTIS 공식 카탈로그)")
+    }
+
+    /// allOfficialIDs 가 allPages 의 실제 ID 와 일치 — drift 차단.
+    func testAllOfficialIDsMatchesActualPages() {
+        let pages = OfficialCatalogReference.allPages(startId: 1)
+        let actualIDs = Set(pages.map { Int($0.id) })
+        XCTAssertEqual(actualIDs, OfficialCatalogReference.allOfficialIDs,
+                       "canonical allOfficialIDs 가 실제 등록 ID 와 일치해야 함")
+    }
+
+    /// placeholderIDs convenience 가 caution ∪ highRisk.
+    func testPlaceholderIDsConvenience() {
+        XCTAssertEqual(OfficialCatalogReference.placeholderIDs,
+                       OfficialCatalogReference.placeholderCautionIDs
+                            .union(OfficialCatalogReference.placeholderHighRiskIDs))
+    }
+
+    /// allHighRiskIDs convenience 가 highRisk ∪ placeholderHighRisk.
+    func testAllHighRiskIDsConvenience() {
+        XCTAssertEqual(OfficialCatalogReference.allHighRiskIDs,
+                       OfficialCatalogReference.highRiskIDs
+                            .union(OfficialCatalogReference.placeholderHighRiskIDs))
+    }
+
+    /// ID 17 (Hand Standing) 은 placeholder + highRisk — 양쪽 collection 에 모두 포함.
+    /// 사이클 154 review codex MINOR #1 — 안전 우선 표시 (highRisk section).
+    func testID17IsPlaceholderAndHighRisk() {
+        XCTAssertTrue(OfficialCatalogReference.placeholderHighRiskIDs.contains(17))
+        XCTAssertTrue(OfficialCatalogReference.placeholderIDs.contains(17))
+        XCTAssertTrue(OfficialCatalogReference.allHighRiskIDs.contains(17))
+        // ID 17 은 safe / placeholderCaution / highRisk(원본 set) 에는 없음.
+        XCTAssertFalse(OfficialCatalogReference.safeIDs.contains(17))
+        XCTAssertFalse(OfficialCatalogReference.placeholderCautionIDs.contains(17))
+        XCTAssertFalse(OfficialCatalogReference.highRiskIDs.contains(17))
+    }
 }
