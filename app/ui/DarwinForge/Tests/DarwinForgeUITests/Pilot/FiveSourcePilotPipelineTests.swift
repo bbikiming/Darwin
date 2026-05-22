@@ -177,18 +177,25 @@ final class FiveSourcePilotPipelineTests: XCTestCase {
                        "sourcesUsed 가 정확히 5 (.djiRC 미포함)")
     }
 
-    /// **사이클 79 — `.djiRC` placeholder**: 미래 DJI 컨트롤러 SDK integration 시 wiring 추가.
-    /// 현재는 production code 가 어디서도 `.djiRC` 를 emit 안 함 — 본 placeholder 가
-    /// 향후 adapter 추가 시 회귀 가드 역할.
+    /// **사이클 79 — `.djiRC` placeholder + 사이클 83 — 코덱스 LOW-2 hint 보강**.
+    /// 미래 DJI 컨트롤러 SDK integration 시 wiring 추가. 현재는 production code 가
+    /// 어디서도 `.djiRC` 를 emit 안 함 — 본 placeholder 가 향후 adapter 추가 시 회귀 가드.
+    ///
+    /// **fail 시 갱신 절차** (LOW-2 — 미래 개발자 안내):
+    /// 1. DJIControllerAdapter 신규 (Sources/DarwinForgeUI/WalkLab/Pilot/DJI/ 권장).
+    /// 2. RootView 또는 WalkLabView 에 adapter alloc + start.
+    /// 3. `testAllSourcesPassThroughBridge` 의 wiredSources 에 `.djiRC` 추가 → 5 → 6.
+    /// 4. 본 testCase 삭제 또는 unwired = [] 로 update.
+    /// 5. FiveSourcePilotPipelineTests 클래스 이름을 SixSourcePilotPipelineTests 로 rename.
     func testDJIRCSourceIsPlaceholderNotYetWired() {
-        // DJI controller adapter 가 wiring 되면 본 test 의 XCTSkip 제거 후 testAllSourcesPassThroughBridge
-        // 에 `.djiRC` 추가. 그 전까지는 enum case 만 존재 — 실 사용 path 없음.
         let allCases = InputSource.allCases
         let wiredCases: [InputSource] = [.keyboard, .tello, .gamepad, .voice, .ui]
         let unwired = allCases.filter { !wiredCases.contains($0) }
-        // 현재 unwired = [.djiRC]. 미래 wiring 시 unwired = [] → 본 assertion fail → 5-source test 갱신.
         XCTAssertEqual(unwired, [.djiRC],
-                       "현재 unwired source = .djiRC (cycle 79 placeholder)")
+                       """
+                       현재 unwired source = .djiRC (cycle 79 placeholder).
+                       wiring 시 docstring 의 5단계 절차 따라 본 test + testAllSourcesPassThroughBridge 갱신.
+                       """)
     }
 
     // MARK: - 5. Preset 변경 source diversity

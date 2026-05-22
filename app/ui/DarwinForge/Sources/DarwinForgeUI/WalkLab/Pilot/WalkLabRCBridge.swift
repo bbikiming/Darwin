@@ -471,7 +471,10 @@ public final class WalkLabRCBridge {
         // 일관성 (intent 이미 record 됐으므로 추가 record 불요).
         guard session.pilotApplyAmplitude(final) else {
             latencyTracker?.cancel()
-            safetyMessage = "긴급 정지 race — 입력 무시 (recovery 후 재시도)"
+            // **사이클 83 — 코덱스 LOW-1 fix**: 메시지 표현 정제. 종전 "race" 단어가
+            // @MainActor 격리상 동일 actor race 는 발생 불가 (reentrancy edge case 만 가능)
+            // → 사용자 mental model 혼란. 단순 "긴급 정지 활성" 표현으로 변경.
+            safetyMessage = "긴급 정지 활성 — 입력 무시 (recovery 후 재시도)"
             return
         }
         // **v1.20.45 사이클 59** — slider mutation 완료. engine sync 직전.
