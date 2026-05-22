@@ -459,3 +459,95 @@ scenarios. 모든 신규 test 는 implementation 변경 시 fail 보장.
 - [PILOT_PRODUCTION_ENTITLEMENTS.md](./PILOT_PRODUCTION_ENTITLEMENTS.md) — production 배포 권한 가이드
 - [V1_DESIGN.md](./V1_DESIGN.md) — WalkLab v1 설계 문서
 - [WALK_PROGRESSION_TEST.md](./WALK_PROGRESSION_TEST.md) — 보행 진행 테스트
+
+---
+
+## 사이클 134-147 — DARWIN_UX_AUDIT v4 closure + IMPLEMENTATION audit (2026-05-22)
+
+> **v1.23.0 (2026-05-22)** — DARWIN_UX_AUDIT v4 100% closure (cycles 119-140) +
+> 신규 IMPLEMENTATION_FAKE_DATA_PLACEHOLDER_AUDIT 처리 (cycles 141-147).
+
+### Cycles 134-140 — DARWIN_UX_AUDIT v4 마무리
+
+| Cycle | 작업 | 영향 |
+|---|---|---|
+| 134 | USER_PILOT_GUIDE 처리 결과 doc | -  |
+| 135 | #7 ComingSoonOverlay stage 단일 일관성 | UX 일관성 |
+| 136-137 | WalkLabV1114 flaky test polling fix + codex MINOR #7 case-insensitive | CI 안정성 |
+| 138 | codex MAJOR sweep #8 — 30+ hardcoded endpoint sites → DFConnectionConstants | 단일 source of truth |
+| 139 | codex MAJOR sweep #24 — 10 Button("닫기") role: .cancel | a11y 일관성 |
+| 140 | #22 codex MINOR — masterSetupRollback UI wire-up | 안전 fallback |
+
+**최종 cycle 119-140 총평**: 36/36 audit findings 처리. codex final review (cycles 135-140)
+VERDICT: **ACCEPT-WITH-RESERVATIONS** — 1 MAJOR (testAutoLoopE2EProducesVerdict 잔여
+sleep race) → cycle 142 즉시 fix.
+
+### Cycle 141 — Swift 6 warning cleanup batch (6 warnings)
+
+DARWIN_UX_AUDIT 100% 후 다음 단계 — Swift 6 strict concurrency / deprecation warnings.
+
+| File | Warning | Fix |
+|---|---|---|
+| ConnectionStore.swift:1513 | var imu never mutated | var → let |
+| RootView.swift:170 | onChange 1-param deprecated | 2-param closure |
+| WalkPresetCatalog.swift:15 | MotionDescriptor Sendable 전파 | + Sendable conformance |
+| HarnessLiveAlerts.swift:41 | MainActor-isolated default param | + nonisolated |
+| HarnessInspectorView.swift:357 | onChange 1-param deprecated | 0-param closure |
+| HarnessInspectorView.swift:916-929 | var capture in Task closure | var → let immediate-invoke |
+
+**검증**: swift build 0 warnings / 1300 tests pass.
+
+### Cycle 142 — codex MAJOR flaky test polling fix
+
+codex final review 식별 — WalkLabV1114FeedbackLoopTests.swift:960 의 Task.sleep(500ms)
+가 cycle 136 polling fix 누락. 동일 패턴 적용 + line 832 (rollback) 도 선제 fix.
+
+**검증**: 3회 연속 full suite 1300/1300 pass under heavy parallel load.
+
+### Cycles 143-147 — IMPLEMENTATION_FAKE_DATA_PLACEHOLDER_AUDIT (18 findings)
+
+신규 audit 문서: `docs/diagnosis/IMPLEMENTATION_FAKE_DATA_PLACEHOLDER_AUDIT_2026-05-22.md`
+
+#### 처리 매핑
+
+| Audit # | 위험도 | 처리 사이클 | 변경 요약 |
+|---|---|---|---|
+| #1 Ctrl+C torque OFF | P0 | cycle 120 (사전) | ctrlc crate + RAII guard |
+| #2 Onboard balance 미송신 | P0 | cycle 145 (부분) | enableBalanceCorrection / correctorIntensityLevel doc ApplyScope |
+| #3 D-pad 단발 자세 라벨 | P0 | cycle 143 | pressBehaviorKo property + tooltip "연속 보행 아님" |
+| #4 MotionBlender preview msg | P0 | cycle 143 | "preview blend" 명시 (송출 진행 → preview blend) |
+| #5 Remote Pilot estimated badge | P1 | cycle 146 | usesRealPolling: false 시 orange clock.badge.checkmark |
+| #6 Recommender realRobotOnly | P1 | cycle 144 | pilotBiased(for:realRobotOnly:) overload |
+| #7 공식 모션 placeholder 이름 | P1 | cycle 143 | OfficialCatalogReference / MotionCatalog / SynthModel 에 `[placeholder]` |
+| #8 DJI Controller SDK stub | P1 | cycle 92/94 (사전) | unavailable production constructor + UI label |
+| #9 Initial Setup Wizard VNC 수동 | P1 | cycle 130 (사전) | "수동 확인" 분리 |
+| #10 Static Stability proxy | P1 | cycle 119 (사전) | Pass → Warn("proxy 검증") |
+| #11 TORQUE_OFF preview placeholder | P1 | cycle 124 (사전) | preview semantics 주석 |
+| #12 SynthInspectorPanel 미검증 | P2 | cycle 127-128 (사전) | "미검증" warning 강화 |
+| #13 PilotFeatureFlags v1_5 주석 | P2 | cycle 124 (사전) | dpadRealMotor / hsvTuning 활성 명시 |
+| #14 WalkLab tuning mode별 주석 | P2 | cycle 145 + cycle 124 (사전) | ApplyScope 명시 |
+| #15 MotionBuilder random ID | P2 | cycle 126 (사전) | placeholder ID 명시 |
+| #16 Synthetic IMU source badge | P2 | cycle 147 | SourceBreakdown struct + 카드 badge |
+| #17 WalkComparisonTag / claudeCritic | P2 | cycle 127 (사전) | "추후 통합" 라벨 + UI 미생성 |
+| #18 SwiftPM resource warning | P2 | cycle 128 (사전) | Package.swift resources 명시 |
+
+**남음**: #2 full Onboard UI ApplyScope badge (UI 변경 대형 작업 — 별도 사이클 후보).
+
+#### Multi-agent 검증
+
+- **codex final review cycles 141-142**: VERDICT ACCEPT — 0 CRITICAL / 0 MAJOR / 0 MINOR
+  (Sendable / nonisolated / var→let closure / polling pattern 모두 검증 통과)
+- 1300 swift tests + 368 rust tests (13+312+11+32) 유지
+
+### 최종 상태 (cycles 119-147)
+
+| 영역 | Before | After (cycle 147) |
+|---|---|---|
+| User-misleading labels | 11 instances | 0 (annotated) |
+| 공식 모션 placeholder | 3 무표시 | `[placeholder]` prefix 3 entries × 3 files |
+| Recommender sim/real | 무표시 | SourceBreakdown badge + realRobotOnly 3 strategies |
+| Remote Pilot progress | 모두 동일 아이콘 | estimated/real 분리 (clock badge / checkmark) |
+| D-pad 단발 self-doc | 없음 | "단발 자세 · 700ms 후 walkReady" tooltip |
+| MotionBlender label | "송출 진행" 오해 | "preview blend" 명시 |
+| Swift 6 warnings | 6 | 0 |
+| Flaky tests | 1 active | 0 |
