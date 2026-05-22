@@ -107,17 +107,32 @@ public struct PilotLatencyPanel: View {
 
     private var sampleCountRow: some View {
         let capacity = bridge.latencyTracker?.capacity ?? 30
-        return HStack(spacing: 4) {
-            Image(systemName: "chart.bar.fill")
-                .font(.caption2)
-                .foregroundStyle(DFColor.textSecondary)
-            Text("\(stats.count)/\(capacity) samples")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(DFColor.textSecondary)
-            Spacer()
-            Text(legend)
-                .font(.caption2)
-                .foregroundStyle(DFColor.textSecondary.opacity(0.7))
+        let rejected = bridge.latencyTracker?.rejectedCount ?? 0
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.caption2)
+                    .foregroundStyle(DFColor.textSecondary)
+                Text("\(stats.count)/\(capacity) samples")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(DFColor.textSecondary)
+                Spacer()
+                Text(legend)
+                    .font(.caption2)
+                    .foregroundStyle(DFColor.textSecondary.opacity(0.7))
+            }
+            // **사이클 75 — 코덱스 CRITICAL-1 후속 UI**: rejectedCount 시각화.
+            // emergency / blocked / disabled path 의 거부 입력 수 — 사용자가 stats 신뢰도 평가.
+            if rejected > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(DFColor.warning)
+                    Text("\(rejected) 거부 (emergency/blocked)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(DFColor.warning)
+                }
+            }
         }
     }
 
