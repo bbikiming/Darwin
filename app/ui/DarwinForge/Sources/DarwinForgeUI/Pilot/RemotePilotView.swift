@@ -202,6 +202,9 @@ public struct RemotePilotView: View {
                 title: transitionTitle,
                 steps: transitionSteps,
                 activeIndex: transitionActiveIndex,
+                // **사이클 119 (audit #15, P0)**: patched demo 설치 → 실 진행 polling.
+                // 그 외 → `Task.sleep(estimatedSeconds)` 만 → "추정 진행" 사용자 명시.
+                usesRealPolling: (mode == .ballFollow && patchedDemoInstalled == true),
                 onAdvance: { advanceUserStep() },
                 onCancel: { cancelTransition() }
             )

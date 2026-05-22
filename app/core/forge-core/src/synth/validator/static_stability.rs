@@ -68,9 +68,17 @@ impl Validator for StaticStabilityValidator {
             .map(|m| m.single_foot_ok)
             .unwrap_or(false);
 
+        // **사이클 119 (audit #32, P0 safety fix)**: proxy validation 명시.
+        // 종전 `Pass` 반환 → 호출자가 "정적 안정성 검증 완료" 로 오해 (실 CoM 계산 아님).
+        // 신규: `Warn` 반환 + 명시 메시지 — 안전 critical 결정은 사용자 명시 동의 필요.
+
         if single_foot_ok {
-            // 한 발 지지 허용 — proxy 검사 skip
-            return Ok(ValidatorReport::Pass(self.stage()));
+            // 한 발 지지 허용 — proxy 검사 skip. 안전 critical 위험 명시.
+            return Ok(ValidatorReport::Warn(
+                self.stage(),
+                "단발 지지 모션 (single_foot_ok=true) — proxy 검사 skip. \
+                 실 CoM 검증 안 됨, 낙상 위험 사용자 동의 필요.".to_string()
+            ));
         }
 
         let mut violations: Vec<String> = Vec::new();
@@ -92,7 +100,14 @@ impl Validator for StaticStabilityValidator {
         }
 
         if violations.is_empty() {
-            Ok(ValidatorReport::Pass(self.stage()))
+            // **사이클 119**: proxy heuristic 통과 → Warn (not Pass).
+            // 실 CoM 계산이 아니라 hip_pitch 좌우 대칭성만 검사. 호출자가 실 안정성으로
+            // 오해 방지 위해 명시.
+            Ok(ValidatorReport::Warn(
+                self.stage(),
+                "정적 안정성 proxy 검사 통과 (hip_pitch 좌우 대칭). \
+                 실 CoM 검증 아님 — 본격 검증은 미구현.".to_string()
+            ))
         } else {
             Ok(ValidatorReport::Fail(self.stage(), violations.join("; ")))
         }
@@ -153,11 +168,17 @@ mod tests {
     }
 
     #[test]
-    fn symmetric_two_foot_passes() {
-        // r=2000, l=2100 → diff 100 << threshold
+    fn symmetric_two_foot_returns_warn_not_pass() {
+        // **사이클 119 (audit #32 fix)**: proxy 검증 통과 → Warn (not Pass).
+        // 실 CoM 계산 아님 명시.
         let v = StaticStabilityValidator::default();
         let p = page_with_hip_pitch(2000, 2100);
-        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
+        let report = v.validate(&p).unwrap();
+        assert!(matches!(report, ValidatorReport::Warn(_, _)),
+                "proxy 통과는 Warn 반환 — Pass 면 호출자가 실 CoM 검증으로 오해");
+        if let ValidatorReport::Warn(_, msg) = report {
+            assert!(msg.contains("proxy"), "Warn 메시지에 'proxy' 포함");
+        }
     }
 
     #[test]
@@ -170,21 +191,31 @@ mod tests {
     }
 
     #[test]
-    fn single_foot_ok_metadata_skips_check() {
+    fn single_foot_ok_metadata_returns_warn_not_pass() {
+        // **사이클 119 (audit #32 fix)**: skip path 도 Warn — 호출자가 단발 모션 위험 인지.
         let meta = PageMetadata {
             single_foot_ok: true,
             ..Default::default()
         };
         let v = StaticStabilityValidator::with_metadata(meta);
-        // 매우 비대칭이지만 single_foot_ok=true 이라 통과
         let p = page_with_hip_pitch(200, 3900);
-        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
+        let report = v.validate(&p).unwrap();
+        assert!(matches!(report, ValidatorReport::Warn(_, _)),
+                "single_foot_ok skip 은 Warn 반환 (사용자 위험 인지)");
+        if let ValidatorReport::Warn(_, msg) = report {
+            assert!(msg.contains("single_foot") || msg.contains("단발"),
+                    "Warn 메시지에 단발 지지 명시");
+        }
     }
 
     #[test]
-    fn skip_marker_is_ignored() {
+    fn skip_marker_returns_warn_not_pass() {
+        // **사이클 119 (audit #32 fix)**: SKIP_MARKER → step iteration 통과지만 proxy 검증 자체는
+        // Warn — 호출자가 실 CoM 검증이 아닌 proxy 임을 인지.
         let v = StaticStabilityValidator::default();
         let p = page_with_hip_pitch(SKIP_MARKER, 3900);
-        assert!(matches!(v.validate(&p).unwrap(), ValidatorReport::Pass(_)));
+        let report = v.validate(&p).unwrap();
+        assert!(matches!(report, ValidatorReport::Warn(_, _)),
+                "proxy 통과 → Warn (Pass 면 호출자가 실 검증으로 오해)");
     }
 }

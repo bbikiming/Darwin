@@ -65,11 +65,19 @@ public final class WalkTrialRecommender {
     /// 같은 case 도 overall=0.755 라 제외 → OK 이지만, 가중치 (0.5/0.3/0.2) 로 stability
     /// 절반 가중이 약함. **명시 minStabilityScore=0.7 추가** — 실 robot fall 차단.
     public func ruleBased(for preset: String) -> WalkTrialRecommendation? {
+        return ruleBased(for: preset, realRobotOnly: false)
+    }
+
+    /// **사이클 119 (audit #31, P0)**: realRobotOnly 명시 overload.
+    /// sim/real trial 구분 — 추천 카드 rationale 에 비율 표시 + 실 로봇 데이터만으로
+    /// 추천 받고 싶을 때 `realRobotOnly: true`.
+    public func ruleBased(for preset: String, realRobotOnly: Bool) -> WalkTrialRecommendation? {
         let filter = TrialFilter(
             preset: preset,
             minOverallScore: 0.8,
             minStabilityScore: 0.7,   // critic MAJOR #1 fix — fall 위험 차단.
-            noFallsOnly: true
+            noFallsOnly: true,
+            realRobotOnly: realRobotOnly  // 사이클 119 audit #31.
         )
         let goodEntries = store.query(filter: filter, sort: .overallDesc)
         guard goodEntries.count >= 3 else { return nil }
@@ -86,6 +94,13 @@ public final class WalkTrialRecommender {
         let avgIntensity = Int((Double(intensitySum) / Double(topTrials.count)).rounded())
         let avgOverall = topTrials.map { $0.outcome.overallScore }.reduce(0, +) / Double(topTrials.count)
 
+        // **사이클 119 (audit #31)**: sim/real 비율 명시. 호출자/UI 가 "데이터 출처 신뢰" 판정.
+        let realCount = topTrials.filter { $0.config.isRealRobot }.count
+        let simCount = topTrials.count - realCount
+        let breakdown = realRobotOnly
+            ? "실로봇 \(realCount)개 (sim 제외)"
+            : "실로봇 \(realCount)개 / 시뮬 \(simCount)개"
+
         return WalkTrialRecommendation(
             strategy: .ruleBased,
             preset: preset,
@@ -93,7 +108,7 @@ public final class WalkTrialRecommender {
             intensityLevel: avgIntensity,
             balanceConfig: topTrials.first?.config.balanceConfig ?? .defaultRobotis,
             dataMaturity: min(1.0, Double(topTrials.count) / 5.0),
-            rationale: "상위 \(topTrials.count) good trial 평균 (avg score \(Int(avgOverall * 100))/100)",
+            rationale: "상위 \(topTrials.count) good trial 평균 (avg score \(Int(avgOverall * 100))/100, \(breakdown))",
             sourceSampleIds: topIds
         )
     }

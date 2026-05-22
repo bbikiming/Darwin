@@ -447,7 +447,14 @@ public final class WalkLabRCBridge {
         switch result {
         case .accepted, .acceptedFullBody:
             safetyMessage = nil
-            session?.pilotPostEvent("motion '\(descriptor.displayLabel)' 적용", source: source)
+            // **사이클 119 (audit #30, P0)**: MotionBlender 는 sim-only (blendedPose 반환만).
+            // 종전 "적용" → 사용자가 실 hardware 송출로 오해. robot 연결 상태 동반 표시.
+            let robotConnected = session?.store?.bus != nil
+            let suffix = robotConnected
+                ? "(motion 송출 진행)"
+                : "(motion preview — sim only, robot 미연결)"
+            session?.pilotPostEvent("motion '\(descriptor.displayLabel)' \(suffix)",
+                                     source: source)
         case .rejectedSafety(let reason):
             safetyMessage = reason
         case .rejectedEmptyChannels:
