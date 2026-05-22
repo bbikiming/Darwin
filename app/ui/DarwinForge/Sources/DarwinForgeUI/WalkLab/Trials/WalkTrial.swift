@@ -308,6 +308,58 @@ public struct TrialOutcome: Codable, Sendable, Equatable {
     /// sample 수 (timeseries 길이).
     public let sampleCount: Int
 
+    /// 사이클 163 (P1-3, gyro closed-loop review): 자이로 보정 효과 metric.
+    /// nil = 미수집 (legacy trial 또는 보정 disabled 전체 구간).
+    public let correctionEffectMetric: CorrectionEffectMetric?
+
+    /// 사이클 163: 보정 효과 측정 결과.
+    /// 보정 ON 구간 vs OFF 구간 의 peak abs roll/pitch 비교.
+    public struct CorrectionEffectMetric: Codable, Sendable, Equatable {
+        /// 보정 활성 sample 수 (lastCorrectionApplied == true).
+        public let correctedSampleCount: Int
+        /// 보정 비활성 sample 수.
+        public let uncorrectedSampleCount: Int
+        /// 보정 적용 비율 (correctedSampleCount / total).
+        public let correctionApplyRatio: Double
+        /// 보정 ON 구간 의 peak abs roll (deg). nil = correctedSampleCount = 0.
+        public let correctedPeakAbsRollDeg: Double?
+        /// 보정 ON 구간 의 peak abs pitch (deg).
+        public let correctedPeakAbsPitchDeg: Double?
+        /// 보정 OFF 구간 의 peak abs roll. nil = uncorrectedSampleCount = 0.
+        public let uncorrectedPeakAbsRollDeg: Double?
+        /// 보정 OFF 구간 의 peak abs pitch.
+        public let uncorrectedPeakAbsPitchDeg: Double?
+        /// freshness gate 의 .blocked / .degraded sample 수 (cycle 160).
+        public let blockedSampleCount: Int
+        public let degradedSampleCount: Int
+
+        public init(correctedSampleCount: Int, uncorrectedSampleCount: Int,
+                    correctionApplyRatio: Double,
+                    correctedPeakAbsRollDeg: Double?, correctedPeakAbsPitchDeg: Double?,
+                    uncorrectedPeakAbsRollDeg: Double?, uncorrectedPeakAbsPitchDeg: Double?,
+                    blockedSampleCount: Int, degradedSampleCount: Int) {
+            self.correctedSampleCount = correctedSampleCount
+            self.uncorrectedSampleCount = uncorrectedSampleCount
+            self.correctionApplyRatio = correctionApplyRatio
+            self.correctedPeakAbsRollDeg = correctedPeakAbsRollDeg
+            self.correctedPeakAbsPitchDeg = correctedPeakAbsPitchDeg
+            self.uncorrectedPeakAbsRollDeg = uncorrectedPeakAbsRollDeg
+            self.uncorrectedPeakAbsPitchDeg = uncorrectedPeakAbsPitchDeg
+            self.blockedSampleCount = blockedSampleCount
+            self.degradedSampleCount = degradedSampleCount
+        }
+
+        /// 보정 효과 한국어 요약 — Recommender / UI 가 사용.
+        public var summaryLabel: String {
+            let total = correctedSampleCount + uncorrectedSampleCount
+            guard total > 0 else { return "보정 데이터 없음" }
+            let pct = Int(correctionApplyRatio * 100)
+            if pct == 0 { return "보정 비활성 (\(uncorrectedSampleCount) sample)" }
+            if pct == 100 { return "보정 활성 \(pct)% (\(correctedSampleCount) sample)" }
+            return "보정 활성 \(pct)% (ON \(correctedSampleCount) / OFF \(uncorrectedSampleCount))"
+        }
+    }
+
     public init(
         stabilityScore: Double,
         smoothnessScore: Double,
@@ -323,7 +375,8 @@ public struct TrialOutcome: Codable, Sendable, Equatable {
         peakMotorTempC: Double,
         busWriteFailures: Int,
         stepsExecuted: Int,
-        sampleCount: Int
+        sampleCount: Int,
+        correctionEffectMetric: CorrectionEffectMetric? = nil
     ) {
         self.stabilityScore = stabilityScore
         self.smoothnessScore = smoothnessScore
@@ -340,6 +393,7 @@ public struct TrialOutcome: Codable, Sendable, Equatable {
         self.busWriteFailures = busWriteFailures
         self.stepsExecuted = stepsExecuted
         self.sampleCount = sampleCount
+        self.correctionEffectMetric = correctionEffectMetric
     }
 
     /// "good trial" 판정 — rule-based recommender 의 baseline.
