@@ -395,13 +395,17 @@ public final class WalkLabRCBridge {
     /// **사이클 44**: handleMotion(id:) 와 동일 safety gate 적용 — descriptor 직접 호출 시도 차단.
     @discardableResult
     public func handleMotion(_ descriptor: MotionDescriptor, from source: InputSource) -> BlendResult {
-        // **사이클 44**: safety gate (handleMotion(id:) 와 일치).
+        // **사이클 44 + 사이클 82 코덱스 HIGH-1 fix**: safety gate (handleMotion(id:) 와 일치)
+        // + latency cancel coverage. 종전 cycle 79 가 handleMotion(id:) 만 cover —
+        // descriptor 직접 caller (음성 adapter, MCP, 테스트) 가 본 entry 사용 → hole 잔존.
         if !enabled {
             safetyMessage = "Bridge 비활성 — motion 차단"
+            latencyTracker?.cancel()
             return .rejectedSafety(reason: "bridge disabled")
         }
         if let session = session, session.pilotIsEmergency {
             safetyMessage = "긴급 정지 상태 — motion 차단 (recovery 필요)"
+            latencyTracker?.cancel()
             return .rejectedSafety(reason: "emergency active")
         }
         let intent = PilotIntent(kind: .motion(descriptor.id), source: source)

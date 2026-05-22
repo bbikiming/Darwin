@@ -136,9 +136,11 @@ public struct PilotHQStatusRow: View {
         return DFColor.textSecondary.opacity(0.2)
     }
 
-    /// event rate 색상 단계 — 0 회색 / 1-5 보통 / 6+ 활발.
+    /// event rate 색상 단계 — eventsPerSecond 가 1초 window 정수 quantization 이라
+    /// 가능 값: 0, 1, 2, ... → `< 1` (사실상 == 0) 회색 / 1-5 보통 / 6+ 활발.
+    /// **사이클 82 — 코덱스 MEDIUM-1 fix**: 종전 `< 0.1` fence-post 가 quantization 와 어긋남.
     private func rateColor(_ rate: Double) -> Color {
-        if rate < 0.1 { return DFColor.textSecondary.opacity(0.5) }
+        if rate < 1 { return DFColor.textSecondary.opacity(0.5) }
         if rate < 6 { return DFColor.textSecondary }
         return DFColor.accent
     }

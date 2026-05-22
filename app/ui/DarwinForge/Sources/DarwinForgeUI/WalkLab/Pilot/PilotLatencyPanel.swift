@@ -121,18 +121,26 @@ public struct PilotLatencyPanel: View {
                     .font(.caption2)
                     .foregroundStyle(DFColor.textSecondary.opacity(0.7))
             }
-            // **사이클 75 + 사이클 80 — 코덱스 CRITICAL-1 후속 UI + MEDIUM-2 강화**:
-            // rejectedCount 시각화 + 임계 색상 분리 (normal vs anomalous).
-            // - 1-10 rejected: 정상 (emergency 1-2 회 발화 가능) — warning 색.
-            // - 11+ rejected: race storm 의심 (사용자 입력이 emergency 와 자주 충돌) — danger 색 + 안내.
+            // **사이클 75 + 사이클 80 + 사이클 82 — 코덱스 CRITICAL-1 후속 UI + MEDIUM-2 강화**:
+            // rejectedCount 시각화 + 비율 기반 임계 (capacity-blind 절대 임계 해소).
+            //
+            // 사이클 82 (MEDIUM-2 fix): rejected > 10 절대 임계 → reject 비율 (rejected / (rejected + accepted))
+            // 사용. capacity 변경 / 장시간 trial 에도 의미 보존.
+            // - reject ratio < 30%: warning (정상 emergency 사용 시 자연 발생).
+            // - reject ratio ≥ 30% AND stats.count ≥ 5: danger ("race storm" 진단 hint).
+            //
+            // **주의**: rejectedCount 는 monotonic counter — reset 호출 전까지 누적.
+            // 장시간 trial 시 자연스럽게 10 초과. 비율 기반은 capacity 변경 영향 X.
             if rejected > 0 {
-                let isAnomalous = rejected > 10
+                let total = rejected + stats.count
+                let ratio = total > 0 ? Double(rejected) / Double(total) : 0
+                let isAnomalous = stats.count >= 5 && ratio > 0.3
                 let color: Color = isAnomalous ? DFColor.danger : DFColor.warning
                 HStack(spacing: 4) {
                     Image(systemName: isAnomalous ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
                         .font(.caption2)
                         .foregroundStyle(color)
-                    Text("\(rejected) 거부\(isAnomalous ? " — race storm 의심" : "")")
+                    Text("\(rejected) 거부\(isAnomalous ? " (\(Int(ratio * 100))% — race storm 의심)" : "")")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(color)
                 }
