@@ -236,6 +236,14 @@ public struct TelloPilotHud: View {
         return String(format: "%.0fm", age / 60)
     }
 
+    /// **사이클 76 — 코덱스 CRITICAL-2 fix**: Tello state freshness 판정 (5초 임계).
+    /// telloAdvisoryMessage 가 stale state (Tello disconnect 등) 에서 잔존하는 버그 차단.
+    /// `lastTelloState` 가 nil 이거나 5초+ 오래된 경우 advisory 도 hide.
+    private var isTelloStateFresh: Bool {
+        guard let s = bridge.lastTelloState else { return false }
+        return Date().timeIntervalSince(s.receivedAt) < 5.0
+    }
+
     // MARK: - Listener status banner (사이클 73 — 코덱스 HIGH-2 fix)
 
     /// **사이클 73**: silent fail visibility — owner.health() 분류에 따라 banner.
@@ -375,6 +383,26 @@ public struct TelloPilotHud: View {
                 Text("아직 입력 없음")
                     .font(.caption)
                     .foregroundStyle(DFColor.textSecondary.opacity(0.6))
+            }
+
+            // **사이클 76 — 코덱스 CRITICAL-2 fix**: telloAdvisoryMessage UI 렌더.
+            // 사이클 72 의 채널 분리 후 UI 미연결 → 사용자가 low battery 안내 못 받음.
+            // 별도 row — safetyMessage / emergency / lastIntent 와 독립 표시.
+            // stale 처리: Tello state 5초+ 미수신 시 advisory hide (state 신뢰성 손실).
+            if let advisory = bridge.telloAdvisoryMessage, isTelloStateFresh {
+                HStack(spacing: 4) {
+                    Image(systemName: "battery.25")
+                        .font(.caption2)
+                        .foregroundStyle(DFColor.warning)
+                    Text(advisory)
+                        .font(.caption2)
+                        .foregroundStyle(DFColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(DFColor.warning.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
             }
         }
     }

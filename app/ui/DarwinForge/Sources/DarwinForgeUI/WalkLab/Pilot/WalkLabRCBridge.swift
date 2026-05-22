@@ -453,7 +453,12 @@ public final class WalkLabRCBridge {
         }
         // facade — emergency 가드 / advanced 자동 활성 / slider write.
         // false 반환 시 emergency 상태 — engine sync / 메시지 모두 skip.
+        // **사이클 76 — 코덱스 CRITICAL-1 fix**: false (race emergency) 시 latency cycle
+        // 도 cancel — 종전 cycle 71 cancel coverage 가 6 early-return 만 — 본 race window
+        // (process → safetyGated 통과 후 applyAmplitude 안에서 emergency 발화) 누락.
+        // 결과: orphan cycle 잔존 → 다음 inputReceived 가 자동 폐기되지만 rejectedCount 누락.
         guard session.pilotApplyAmplitude(final) else {
+            latencyTracker?.cancel()
             return
         }
         // **v1.20.45 사이클 59** — slider mutation 완료. engine sync 직전.
