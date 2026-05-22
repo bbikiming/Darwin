@@ -171,16 +171,21 @@ public final class WalkLabRCBridge {
     @discardableResult
     public func handleMotion(id: String, from source: InputSource) -> BlendResult {
         // 사이클 36-fix HIGH 1 (코덱스): safety gate.
+        // **사이클 79 — 코덱스 HIGH-1 fix**: 모든 early-return 에 latencyTracker.cancel() 추가.
+        // 사이클 76 의 cancel coverage 가 process() 만 — 본 method 의 early-return 누락.
         if !enabled {
             safetyMessage = "Bridge 비활성 — motion 차단"
+            latencyTracker?.cancel()
             return .rejectedSafety(reason: "bridge disabled")
         }
         if let session = session, session.pilotIsEmergency {
             safetyMessage = "긴급 정지 상태 — motion 차단 (recovery 필요)"
+            latencyTracker?.cancel()
             return .rejectedSafety(reason: "emergency active")
         }
         guard let descriptor = pilotMotionCatalog.resolve(id) else {
             safetyMessage = "모션 '\(id)' — 등록 안 됨. 가능한 id: \(pilotMotionCatalog.knownIds.prefix(3).joined(separator: ", "))…"
+            latencyTracker?.cancel()
             return .rejectedSafety(reason: "motion id \"\(id)\" not in catalog")
         }
         return handleMotion(descriptor, from: source)
@@ -192,6 +197,8 @@ public final class WalkLabRCBridge {
     public func handleRecovery(from source: InputSource) {
         guard let session else {
             safetyMessage = "WalkLabSession 미연결"
+            // 사이클 79 코덱스 HIGH-1 — recovery early-return 도 cancel.
+            latencyTracker?.cancel()
             return
         }
         // **v1.20.22.1 사이클 28-fix LOW (코덱스)** — 이미 비 emergency 면 silent no-op.

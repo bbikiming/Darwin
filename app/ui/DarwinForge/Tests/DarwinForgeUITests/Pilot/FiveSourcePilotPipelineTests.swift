@@ -151,12 +151,17 @@ final class FiveSourcePilotPipelineTests: XCTestCase {
         }
     }
 
-    /// 모든 InputSource case 가 bridge 의 process pipeline 에 안전하게 전달.
-    /// 신규 source 추가 시 본 test 가 fail → enum case 추가만 하고 bridge 누락 catch.
+    /// **사이클 79 코덱스 CRITICAL-1 fix**: 실제 wired 5 source 만 명시 — 사이클 73 의
+    /// `InputSource.allCases` (6 cases — `.djiRC` 포함) iteration 은 false-positive.
+    /// `.djiRC` 는 production wiring 부재 (cycle 67 이후 keyboard/tello/voice/gamepad/ui 만 wire)
+    /// → enum iteration 으로 fake-pass. 본 test 는 실 wired 5 source 만 검증.
     func testAllSourcesPassThroughBridge() {
         session.start(.march)
+        // 사이클 79 — 명시 5 source array (cycle 67 wired). `.djiRC` 는 별도 placeholder test.
+        let wiredSources: [InputSource] = [.keyboard, .tello, .gamepad, .voice, .ui]
+        XCTAssertEqual(wiredSources.count, 5, "5-source 명시")
 
-        for (idx, source) in InputSource.allCases.enumerated() {
+        for (idx, source) in wiredSources.enumerated() {
             let stride = Double(10 + idx)
             bridge.handleMove(WalkingCommand(strideMm: stride, sideMm: 0, turnDeg: 0), from: source)
             // 각 source 의 마지막 intent 가 bridge.lastIntent 에 반영됨.
@@ -164,10 +169,26 @@ final class FiveSourcePilotPipelineTests: XCTestCase {
                            "source \(source) → bridge.lastIntent 반영")
         }
 
-        // 모든 5+ source 가 accumulator 기록.
+        // 5 wired source 가 accumulator 기록 (allCases 6 와 분리).
         let summary = bridge.accumulator.summarize()
-        XCTAssertEqual(summary.totalEvents, InputSource.allCases.count,
-                       "InputSource.allCases 와 totalEvents 일치")
+        XCTAssertEqual(summary.totalEvents, 5,
+                       "5 wired source events 기록 (사이클 79 — allCases 6 와 명시 분리)")
+        XCTAssertEqual(summary.sourcesUsed.count, 5,
+                       "sourcesUsed 가 정확히 5 (.djiRC 미포함)")
+    }
+
+    /// **사이클 79 — `.djiRC` placeholder**: 미래 DJI 컨트롤러 SDK integration 시 wiring 추가.
+    /// 현재는 production code 가 어디서도 `.djiRC` 를 emit 안 함 — 본 placeholder 가
+    /// 향후 adapter 추가 시 회귀 가드 역할.
+    func testDJIRCSourceIsPlaceholderNotYetWired() {
+        // DJI controller adapter 가 wiring 되면 본 test 의 XCTSkip 제거 후 testAllSourcesPassThroughBridge
+        // 에 `.djiRC` 추가. 그 전까지는 enum case 만 존재 — 실 사용 path 없음.
+        let allCases = InputSource.allCases
+        let wiredCases: [InputSource] = [.keyboard, .tello, .gamepad, .voice, .ui]
+        let unwired = allCases.filter { !wiredCases.contains($0) }
+        // 현재 unwired = [.djiRC]. 미래 wiring 시 unwired = [] → 본 assertion fail → 5-source test 갱신.
+        XCTAssertEqual(unwired, [.djiRC],
+                       "현재 unwired source = .djiRC (cycle 79 placeholder)")
     }
 
     // MARK: - 5. Preset 변경 source diversity
