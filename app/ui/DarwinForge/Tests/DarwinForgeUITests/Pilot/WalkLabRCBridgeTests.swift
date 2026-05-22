@@ -317,6 +317,16 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
+    /// **v1.20.42 사이클 56** — accumulator.eventsPerSecond window 0 이면 0 반환 (defensive).
+    func testEventsPerSecondZeroWindow() {
+        let acc = PilotInputAccumulator()
+        acc.record(.move(WalkingCommand(strideMm: 10, sideMm: 0, turnDeg: 0), from: .keyboard))
+        XCTAssertEqual(acc.eventsPerSecond(window: 0), 0, accuracy: 1e-9,
+                       "window 0 → divide by zero 방지 (defensive)")
+        XCTAssertEqual(acc.eventsPerSecond(window: -1), 0, accuracy: 1e-9,
+                       "음수 window 도 0")
+    }
+
     /// **v1.20.41 사이클 55** — bridge.snapshotAndReset 후 모든 통계 zero.
     func testSnapshotAndResetClearsAllStats() {
         session.start(.march)
