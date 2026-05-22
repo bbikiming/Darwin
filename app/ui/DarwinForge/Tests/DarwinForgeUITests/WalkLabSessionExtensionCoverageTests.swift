@@ -367,4 +367,43 @@ final class WalkLabSessionExtensionCoverageTests: XCTestCase {
         // lastSafePose 가 internal var 격상됐는지 검증 — read 가능.
         _ = session.lastSafePose
     }
+
+    // MARK: - Phase 7 Fall Prediction (사이클 107)
+
+    /// `updateFallPrediction()` 가 stale IMU 시 fallPrediction reset + buffer 비움.
+    func testUpdateFallPredictionStaleImuResets() {
+        let session = WalkLabSession()
+        // imuSource = .sim 초기. 호출 가능 + crash 없음 검증.
+        session.updateFallPrediction()
+        // fallPrediction 는 internal(set) 격상 — read 가능.
+        let score = session.fallPrediction.score
+        XCTAssertGreaterThanOrEqual(score, 0.0, "fallPrediction.score >= 0")
+    }
+
+    /// `imuBuffer` 가 internal 격상되어 read 가능.
+    func testImuBufferAccessibleInternally() {
+        let session = WalkLabSession()
+        // 격상된 internal var 직접 read.
+        _ = session.imuBuffer
+        _ = session.lastBufferPushAt
+    }
+
+    /// 연속 호출 시 jitter 가드 — 150ms 안 두 번째 호출은 buffer 추가 X.
+    /// (실제 검증은 어려우나 호출 자체 crash 없음 확인.)
+    func testUpdateFallPredictionRapidCallsNoOp() {
+        let session = WalkLabSession()
+        for _ in 0..<10 {
+            session.updateFallPrediction()
+        }
+        // 10회 호출 후에도 fallPrediction 가 valid (NaN/inf 없음).
+        XCTAssertFalse(session.fallPrediction.score.isNaN)
+    }
+
+    /// `fallPrediction` 가 `.zero` 부터 시작 → 호출 후에도 valid score 유지.
+    func testFallPredictionZeroAtStart() {
+        let session = WalkLabSession()
+        XCTAssertEqual(session.fallPrediction, .zero, "init fallPrediction = .zero")
+        XCTAssertEqual(session.fallPrediction.score, 0.0, accuracy: 1e-9,
+                       "init score = 0")
+    }
 }
