@@ -25,6 +25,10 @@
     <string>DarwinForge</string>
     <key>CFBundleDisplayName</key>
     <string>DarwinForge</string>
+    <!-- ===== 사이클 76 코덱스 MEDIUM-1 fix ===== -->
+    <!-- CFBundleVersion (build number): release 마다 bump 필요. CI 자동화 -->
+    <!-- (build phase): `agvtool next-version -all` 또는 git commit count: -->
+    <!--   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" Info.plist -->
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>
@@ -33,12 +37,22 @@
     <string>DarwinForgeApp</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>© 2026 ROBOTIS. All rights reserved.</string>
+
+    <!-- App Store 카테고리 (notarization 외에 launchctl-based 자동 실행 시 경고 회피) -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+
+    <!-- NSApplication principal class — main entry point 명시 -->
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
 
     <!-- macOS UI 환경 — Sonoma+ 다크 모드 native -->
     <key>NSRequiresAquaSystemAppearance</key>
