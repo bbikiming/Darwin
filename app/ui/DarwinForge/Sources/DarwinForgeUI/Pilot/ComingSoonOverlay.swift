@@ -91,15 +91,15 @@ public struct ComingSoonOverlay: ViewModifier {
         .frame(width: 480, height: 320)
     }
 
-    /// **사이클 135 (audit #7, P2)**: stage 단일 일관성 — 두 케이스 분리 표시.
-    /// - `"v1.5"` / `"v2"` 같은 version tag → "v1.5 활성 예정"
-    /// - `"준비 중"` 같은 generic phrase → 그대로 (이중 의미 회피).
-    /// 종전 `"\(stage) 활성 예정"` 항상 적용 → "준비 중 활성 예정" 어색 회귀.
+    /// **사이클 135 (audit #7, P2) + 137 (codex MINOR)**: stage 단일 일관성.
+    /// - version tag pattern (regex `^[Vv]?\d+`) → "v1.5 활성 예정" / "1.0 활성 예정"
+    /// - generic phrase → 그대로 (이중 의미 회피).
+    /// 종전 `hasPrefix("v")` 만 검사 → "V1.5" / "ver1.0" / "1.5" 누락 (codex MINOR).
+    /// 신규: 첫 character 가 'v'/'V' 또는 digit 이면 version tag 로 판정.
     private var stageDisplayText: String {
-        if stage.lowercased().hasPrefix("v") {
-            return "\(stage) 활성 예정"
-        }
-        return stage
+        guard let first = stage.first else { return stage }
+        let isVersionTag = (first == "v" || first == "V" || first.isNumber)
+        return isVersionTag ? "\(stage) 활성 예정" : stage
     }
 
     private func detailRow(label: String, value: String) -> some View {

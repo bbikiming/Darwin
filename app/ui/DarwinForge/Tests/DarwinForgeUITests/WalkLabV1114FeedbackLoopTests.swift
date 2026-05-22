@@ -645,7 +645,15 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
 
         let historyBefore = await readSharedHistoryFile()
         session.triggerAutoLoopIfActive(summaryId: experimentSessionId, baseDir: tempDir)
-        try await Task.sleep(nanoseconds: 500_000_000)
+
+        // **사이클 136 (flaky fix)**: 종전 500ms sleep — async chain (5 hops + disk IO)
+        // 이 heavy parallel test load 에서 timing 부족 → 3 assertion fail.
+        // polling 방식으로 변경 — verdict 도착 또는 2초 timeout. isolated 실행 시 빠르게
+        // 통과, 부하 시 최대 2초 대기.
+        let deadline = Date().addingTimeInterval(2.0)
+        while controller.lastComparison?.verdict == nil, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)  // 50ms polling
+        }
 
         XCTAssertEqual(controller.lastComparison?.verdict, .failRollback,
                        "peakPitch +12 → failRollback")
