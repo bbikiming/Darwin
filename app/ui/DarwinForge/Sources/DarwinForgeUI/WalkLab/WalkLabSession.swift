@@ -75,9 +75,15 @@ public final class WalkLabSession {
     /// 회전 (°/cycle). -20..20. a_rad = turnDeg * π/180.
     public var turnDeg: Double = 0
     public var customPeriodMs: Double = 600
-    /// 발 들기 높이 (mm). sim 영향 — 엔진 미반영 (BLOCKER C3 까지).
+    /// 발 들기 높이 (mm). **사이클 124 audit #1/#14 fix**: 종전 주석 "엔진 미반영
+    /// (BLOCKER C3 까지)" 는 stale 정보 (사용자 비공개 issue tag).
+    /// 현재 동작: WalkLabSession 의 Mac sparse engine 은 본 값 사용 (3D 시각화 반영).
+    /// Onboard mode 의 실 robot daemon 은 본 필드 미전송 (별도 PRD).
+    /// ApplyScope: 시뮬 + 시각화 ✓ / Onboard 송출 ✗.
     public var footHeightMm: Double = 40
-    /// 균형 게인 (NimbRo lean_fb_gain 등가). sim 영향 — 엔진 미반영.
+    /// 균형 게인 (NimbRo lean_fb_gain 등가). **사이클 124 audit #2 fix**:
+    /// Mac sparse engine 사용 ✓ / Onboard send 미반영 — ApplyScope.simOnly 명시.
+    /// UI 가 ApplyScope badge 로 사용자 동작 범위 시각화 필요.
     public var balanceGain: Double = 1.0
     /// 사용자 명시적 안전 한도 해제. Smart-clamp 무시, 단 critical 점수는 여전히 차단.
     /// v1.11.25 audit log-F — 안전 우회는 영구 기록 필수 (warn level + SE).

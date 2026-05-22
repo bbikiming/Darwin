@@ -183,7 +183,11 @@ public struct MotionStep: Codable, Sendable, Equatable {
             if masked != 0 || v == 32767 {
                 dict[j] = previous.raw(j)
             } else if (v & Self.torqueOffBitMask) != 0 {
-                // TORQUE_OFF 비트: 자세 변경 없이 이전 target 유지 (공식 동작 X — placeholder).
+                // **사이클 124 (audit #33, P1)**: TORQUE_OFF 비트 preview placeholder 명시.
+                // 본 구현은 "이전 target 유지" — ROBOTIS Action 공식 동작 (실제 토크 OFF
+                // → 자세 자연 free fall) 과 다름. preview 시각화용으로만 정확.
+                // 실 robot 송출은 motion_play CLI 가 별도 처리 (torque OFF 비트 해석).
+                // 호출자는 본 method 가 preview semantics 임을 명시 가정해야 함.
                 dict[j] = previous.raw(j)
             } else {
                 dict[j] = Int(v & 0x0FFF)

@@ -106,9 +106,12 @@ public struct PilotFeatureFlags: Sendable, Equatable {
     ///
     /// **여전히 OFF** (별도 FFI / 외부 데몬 필요, "작동하는 것처럼 보이는" 위험 차단):
     ///   - `autoRecovery`: IMU 는 있으나 page 10/11 chain 재생 = motion_play 라이브러리 추출 필요.
-    ///   - `hsvTuning`: httpd command UI/검출 파라미터 write 는 별도 검증 필요.
-    ///   - `dpadRealMotor`: BLOCKER C3 (실 IK) 미해결 — D-pad 는 lock visual 유지.
     ///   - `pageChain` / `mp3Playback`: motion_play 라이브러리 추출 필요 + 라이선스.
+    ///
+    /// **v1.7 (2026-05-17)** — 본 docstring 의 OFF list 가 stale 했음 (audit #25 fix, 사이클 124).
+    /// 실제로 v1_5 는 `dpadRealMotor=true` + `hsvTuning=true` 로 활성:
+    ///   - `dpadRealMotor`: BLOCKER C3 (실 IK) 우회 — WalkLab turnLeft/turnRight preset 트리거
+    ///   - `hsvTuning`: Phase E 검출 파라미터 sync (별도 검증 완료)
     public static let v1_5: PilotFeatureFlags = {
         var f = v1_0
         f.actionBarMore = true
