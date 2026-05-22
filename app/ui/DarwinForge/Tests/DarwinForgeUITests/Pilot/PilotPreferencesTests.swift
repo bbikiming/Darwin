@@ -81,6 +81,57 @@ final class PilotPreferencesTests: XCTestCase {
                        "부분 key 만 있으면 default — 일부 corrupt 시 안전 fallback")
     }
 
+    /// **사이클 88 — 코덱스 MEDIUM-1 fix**: String corruption 시 silent 0.0 차단.
+    /// 종전: defaults.double(forKey:) 가 String 으로 corrupt 된 값을 0.0 으로 silent 처리 →
+    /// scale.fb = 0 → stick 무효화 + 사용자 진단 불가.
+    /// 신규: `as? Double` 캐스트 실패 시 default fallback.
+    func testUserDefaultsStoreStringCorruptFallsBackToDefault() {
+        let isolated = makeIsolatedDefaults()
+        // 4 key 모두 존재하지만 1개가 String corrupt (사용자가 직접 plist 편집 시나리오).
+        isolated.set(0.5, forKey: "pilot.scaleLR.v1")
+        isolated.set("CORRUPT", forKey: "pilot.scaleFB.v1")  // String — Double 아님
+        isolated.set(0.3, forKey: "pilot.scaleYaw.v1")
+        isolated.set(0.8, forKey: "pilot.smoothingFactor.v1")
+        let store = UserDefaultsPilotPreferencesStore(defaults: isolated)
+        XCTAssertEqual(store.load(), .defaultValues,
+                       "1개라도 Double 아닌 type → 전체 default fallback (silent 0.0 차단)")
+    }
+
+    // MARK: - 사이클 88 — 코덱스 HIGH-3 회귀 (concurrent save/load NSLock 검증)
+
+    /// **사이클 88 — 코덱스 HIGH-3 fix**: NSLock 의 race-safety 실증.
+    /// concurrent save → load 가 어떤 saved value 든 정확히 반환 (data race / 부분 write 없음).
+    func testInMemoryStoreConcurrentSaveLoadIsThreadSafe() {
+        let store = InMemoryPilotPreferencesStore()
+        let iterations = 100
+        let queue = DispatchQueue.global(qos: .userInitiated)
+        let group = DispatchGroup()
+
+        // 100 concurrent save + 100 concurrent load.
+        for i in 0..<iterations {
+            group.enter()
+            queue.async {
+                let lr = Double(i) / Double(iterations)
+                store.save(PilotPreferences(scaleLR: lr, scaleFB: 0.4, scaleYaw: 0.2, smoothingFactor: 1.0))
+                group.leave()
+            }
+            group.enter()
+            queue.async {
+                _ = store.load()  // crash 없이 정상 반환 (NSLock 동기화).
+                group.leave()
+            }
+        }
+        group.wait()
+
+        // 최종 load 는 어떤 saved value (race winner) — 단 부분 write 없음.
+        let final = store.load()
+        XCTAssertGreaterThanOrEqual(final.scaleLR, 0.0,
+                                    "scaleLR 정상 range — 부분 write 부재")
+        XCTAssertLessThanOrEqual(final.scaleLR, 1.0)
+        // 다른 field 는 변경 안 했으므로 default 유지 확인.
+        XCTAssertEqual(final.scaleFB, 0.4, accuracy: 1e-9)
+    }
+
     /// Codable roundtrip — 향후 JSON export 또는 다른 backend 용.
     func testCodableRoundtrip() throws {
         let original = PilotPreferences(scaleLR: 0.5, scaleFB: 0.6, scaleYaw: 0.7, smoothingFactor: 0.8)

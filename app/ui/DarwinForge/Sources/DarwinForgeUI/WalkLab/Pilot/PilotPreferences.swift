@@ -86,18 +86,18 @@ public final class UserDefaultsPilotPreferencesStore: PilotPreferencesStore, @un
     }
 
     public func load() -> PilotPreferences {
-        // 모든 4 key 가 정확히 존재 + Double 변환 가능 → custom 값. 그 외 → default.
-        guard defaults.object(forKey: Self.keyLR)  != nil,
-              defaults.object(forKey: Self.keyFB)  != nil,
-              defaults.object(forKey: Self.keyYaw) != nil,
-              defaults.object(forKey: Self.keySmooth) != nil else {
+        // **사이클 88 — 코덱스 MEDIUM-1 fix**: type-safe Double cast.
+        // 종전: `defaults.double(forKey:)` 가 String corrupt 시 silent 0.0 반환 →
+        // scale.fb = 0 → stick 입력 무효화 (게임 캐릭터 멈춤). 사용자 진단 불가.
+        // 신규: `object(forKey:) as? Double` 패턴 — Double 아니면 nil → default fallback.
+        guard let lr     = defaults.object(forKey: Self.keyLR)     as? Double,
+              let fb     = defaults.object(forKey: Self.keyFB)     as? Double,
+              let yaw    = defaults.object(forKey: Self.keyYaw)    as? Double,
+              let smooth = defaults.object(forKey: Self.keySmooth) as? Double else {
             return .defaultValues
         }
         return PilotPreferences(
-            scaleLR:         defaults.double(forKey: Self.keyLR),
-            scaleFB:         defaults.double(forKey: Self.keyFB),
-            scaleYaw:        defaults.double(forKey: Self.keyYaw),
-            smoothingFactor: defaults.double(forKey: Self.keySmooth)
+            scaleLR: lr, scaleFB: fb, scaleYaw: yaw, smoothingFactor: smooth
         )
     }
 
