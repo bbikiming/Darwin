@@ -225,6 +225,10 @@ public final class WalkLabRCBridge {
         // 종전: lastIntent 는 emergency 그대로 → HUD sourceChip 가 stale ("긴급" 표시 유지).
         // 신규: nil 로 reset → HUD "대기" 로 복귀, recovery 완료 시각화.
         lastIntent = nil
+        // **사이클 95 — cycle 94 throttle bug fix**: recovery 후 throttle 도 reset.
+        // 종전: recovery → 새 emergency 0.4초 안에 발화 시 silent (안전 신호 누락).
+        // 신규: recovery 가 throttle window 도 reset → 다음 emergency 즉시 beep.
+        lastEmergencyBeepAt = nil
         session.pilotPostEvent("emergency recovery — preset 입력 활성", source: source)
     }
 

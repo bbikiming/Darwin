@@ -47,6 +47,21 @@ public struct PilotSettingsPanel: View {
     /// "저장됨" 임시 표시 — 사용자가 save 클릭 후 1.5초간 visual feedback.
     @State private var savedFlash: Bool = false
 
+    // MARK: - 사이클 89 — 코덱스 HIGH-2 fix: slider drag throttle (observability storm 방지)
+    //
+    // **문제**: slider drag 매 frame (~60Hz) 에 `bridge.scale` 전체 교체 →
+    // TelloPilotHud / PilotHQStatusRow 등 다수 view 가 매 frame re-render 폭주.
+    // lr 만 조절해도 fb/yaw setter 까지 발화.
+    //
+    // **비유**: 카메라 노출 다이얼을 돌릴 때 매 1도마다 사진을 재현상하는 셈 —
+    // 다이얼이 0.05s 안정될 때까지 모아서 한 번만 현상하는 것이 합리적.
+    //
+    // **fix**: `lastSliderUpdate` 타임스탬프로 50ms (20Hz) 이하 호출 drop.
+    // 슬라이더 mouse-up 등 마지막 값은 `onChange` 의 후행 호출이 보장 — UX 손실 0.
+    @State private var lastSliderUpdate: Date = .distantPast
+    /// internal — test 가 default 값 검증 가능. 50ms = 20Hz cap.
+    static let sliderThrottleInterval: TimeInterval = 0.05
+
     // MARK: - Init
 
     public init(bridge: WalkLabRCBridge, store: PilotPreferencesStore) {
@@ -89,6 +104,11 @@ public struct PilotSettingsPanel: View {
                 .stroke(DFColor.textSecondary.opacity(DFOpacity.o30),
                         lineWidth: DFSize.borderHairline)
         )
+        // **사이클 89 — 코덱스 HIGH-1 fix**: `@State` 가 view identity 같으면 init 값에
+        // 동결 → 다른 source (예: keyboard panel `±` 클릭, 별 세션에서 store.save)
+        // 가 store 갱신해도 panel slider 가 stale. 본 onAppear 가 매 진입 시 store 의
+        // 최신값을 @State 로 reload — single source of truth = store, view = mirror.
+        .onAppear { reload() }
     }
 
     // MARK: - Subviews
@@ -161,13 +181,39 @@ public struct PilotSettingsPanel: View {
 
     // MARK: - Actions
 
-    /// 슬라이더 변경 시 bridge 에 즉시 반영 (real-time preview). store.save 는 안 함.
+    /// 슬라이더 변경 시 bridge 에 반영 (real-time preview). store.save 는 안 함.
+    ///
+    /// **throttle (사이클 89 — HIGH-2 fix)**: 50ms 이내 연속 호출은 drop —
+    /// slider drag 가 60Hz frame 으로 호출돼도 20Hz 로 cap. UX 손실 0:
+    /// SwiftUI slider 는 mouse-up 시 최종 값에 대해 마지막 `onChange` 를 보장 →
+    /// throttle 로 drop 된 intermediate 값은 view re-render 비용만 절약하고
+    /// 최종 정착값은 항상 적용. observability storm (HUD / status row 매 frame
+    /// re-render) 60Hz → 20Hz 로 감소.
     private func applyToBridge() {
+        let now = Date()
+        guard now.timeIntervalSince(lastSliderUpdate) >= Self.sliderThrottleInterval else {
+            return
+        }
+        lastSliderUpdate = now
         Self.apply(
             PilotPreferences(scaleLR: scaleLR, scaleFB: scaleFB,
                              scaleYaw: scaleYaw, smoothingFactor: smoothingFactor),
             to: bridge
         )
+    }
+
+    /// **사이클 89 — HIGH-1 fix**: view 진입 / 재진입 시 store 의 최신 값을 @State
+    /// 로 동기화 + bridge 에도 즉시 반영. `@State` 의 init-time 동결 문제 회피.
+    /// throttle bypass — view appear 는 single-shot event 라 storm 위험 없음.
+    private func reload() {
+        let prefs = store.load()
+        scaleLR = prefs.scaleLR
+        scaleFB = prefs.scaleFB
+        scaleYaw = prefs.scaleYaw
+        smoothingFactor = prefs.smoothingFactor
+        // throttle reset — onAppear 후 첫 slider drag 는 즉시 반영되도록.
+        lastSliderUpdate = .distantPast
+        Self.apply(prefs, to: bridge)
     }
 
     /// "저장" — 현재 슬라이더 조합을 store 에 영속.
@@ -209,5 +255,31 @@ public struct PilotSettingsPanel: View {
             yaw: prefs.scaleYaw
         )
         bridge.smoothingFactor = prefs.smoothingFactor
+    }
+
+    /// **사이클 89 — HIGH-2 throttle test seam**. SwiftUI 없이 @State drag loop 시뮬
+    /// 불가 → 본 helper 가 throttle 규칙 (50ms cap) 의 순수 함수를 노출. view 의
+    /// `applyToBridge()` 가 같은 조건문을 사용 — single source of truth.
+    ///
+    /// - returns: `(shouldApply, nextTimestamp)` — `shouldApply == true` 면 caller 가
+    ///   bridge.apply 호출 + `nextTimestamp` 로 lastSliderUpdate 교체.
+    static func shouldApplySliderUpdate(
+        now: Date,
+        lastUpdate: Date,
+        throttle: TimeInterval = PilotSettingsPanel.sliderThrottleInterval
+    ) -> (shouldApply: Bool, nextTimestamp: Date) {
+        guard now.timeIntervalSince(lastUpdate) >= throttle else {
+            return (false, lastUpdate)
+        }
+        return (true, now)
+    }
+
+    /// **사이클 89 — HIGH-1 reload test seam**. view onAppear path 의 reload 효과를
+    /// SwiftUI host 없이 검증할 수 있도록 분리. store.load → bridge.apply 동시 발화.
+    /// view 의 `reload()` 가 본 helper 와 동일 동작 — single source of truth.
+    static func reload(from store: PilotPreferencesStore, into bridge: WalkLabRCBridge) -> PilotPreferences {
+        let prefs = store.load()
+        apply(prefs, to: bridge)
+        return prefs
     }
 }

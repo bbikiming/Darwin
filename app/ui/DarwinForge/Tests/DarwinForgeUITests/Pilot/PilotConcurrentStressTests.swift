@@ -122,6 +122,24 @@ final class PilotConcurrentStressTests: XCTestCase {
                        "audio beep 는 0.5초 throttle — 1회만")
     }
 
+    /// **사이클 95 — cycle 94 throttle bug fix 회귀 가드**:
+    /// recovery 후 throttle window 도 reset → 다음 emergency (0.5초 이내) 즉시 beep.
+    /// 종전 cycle 94: recovery 후 timestamp 잔존 → 새 emergency silent (안전 신호 누락).
+    func testRecoveryResetsEmergencyAudioThrottle() {
+        let audio = MockAudioFeedback()
+        bridge.audioFeedback = audio
+
+        bridge.handleEmergency(from: .keyboard)
+        XCTAssertEqual(audio.emergencyPlayCount, 1, "첫 emergency beep")
+
+        // recovery — throttle 도 reset 해야.
+        bridge.handleRecovery(from: .ui)
+        // 즉시 새 emergency (0.5초 이내) — throttle reset 됐으면 beep.
+        bridge.handleEmergency(from: .keyboard)
+        XCTAssertEqual(audio.emergencyPlayCount, 2,
+                       "recovery 후 emergency 즉시 beep (사이클 95 fix)")
+    }
+
     /// updateTelloState 폭발 — telloAdvisoryMessage 가 정확히 last state 반영.
     func testTelloStateStormConvergesToLastBattery() {
         for i in 0..<100 {
