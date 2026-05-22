@@ -64,6 +64,10 @@ public enum InputSource: String, Sendable, Equatable, Hashable, CaseIterable, Co
     case djiRC
     /// SwiftUI 버튼 클릭 (PresetButton / PilotHud emergency 버튼 등).
     case ui
+    /// **v1.22.0 (2026-05-22) — 음성 인식 (Apple Speech.framework)**.
+    /// 한국어/영어 keyword spotting → bridge.handleMotion / handleEmergency / handleRecovery.
+    /// telemetry 에서 voice 입력 비중 추적 → UX 개선 신호.
+    case voice
 
     public var label: String {
         switch self {
@@ -72,6 +76,7 @@ public enum InputSource: String, Sendable, Equatable, Hashable, CaseIterable, Co
         case .gamepad:   return "게임패드"
         case .djiRC:     return "DJI RC"
         case .ui:        return "UI 버튼"
+        case .voice:     return "음성"
         }
     }
 
@@ -82,6 +87,7 @@ public enum InputSource: String, Sendable, Equatable, Hashable, CaseIterable, Co
         case .gamepad:   return "gamecontroller"
         case .djiRC:     return "antenna.radiowaves.left.and.right"
         case .ui:        return "hand.tap"
+        case .voice:     return "mic.fill"
         }
     }
 }
