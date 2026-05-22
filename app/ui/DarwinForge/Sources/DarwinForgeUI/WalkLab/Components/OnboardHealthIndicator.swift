@@ -25,11 +25,18 @@ public struct OnboardHealthIndicator: View {
             // 비교: session @Published 변화만 봐서는 시간 경과 자체를 감지 못 함 → stale
             // 표시 X. 1Hz 는 cost 가 미미 (단순 HStack 4 요소 재합성).
             TimelineView(.periodic(from: .now, by: 1.0)) { _ in
-                HStack(spacing: DFSpace.xs) {
-                    statusIcon
-                    statusLabel
-                    Spacer(minLength: DFSpace.xs)
-                    fallbackToggle
+                VStack(alignment: .leading, spacing: DFSpace.xs2) {
+                    HStack(spacing: DFSpace.xs) {
+                        statusIcon
+                        statusLabel
+                        Spacer(minLength: DFSpace.xs)
+                        fallbackToggle
+                    }
+                    // 사이클 168 (cycle 162/164 wire-up): 옛 daemon balance schema silent
+                    // 차단 경고. Onboard mode + balance ON + version 미확인 시 빨간 banner.
+                    if session.onboardBalanceSchemaWarningActive {
+                        schemaWarningBanner
+                    }
                 }
                 .padding(.horizontal, DFSpace.sm)
                 .padding(.vertical, DFSpace.xs2)
@@ -43,6 +50,35 @@ public struct OnboardHealthIndicator: View {
                 .accessibilityLabel("ROBOTIS Onboard 상태: \(statusText)")
             }
         }
+    }
+
+    /// 사이클 168 (cycle 164 wire-up): 옛 daemon (v1 patch, sscanf 7 필드) 는 balance
+    /// 필드 silent ignore — Mac UI 가 "보정 활성" 표시했지만 robot 무동작 위험.
+    /// 사용자가 daemon v2 확인 후 onboardBalanceSchemaVerified 토글로 dismiss.
+    @ViewBuilder
+    private var schemaWarningBanner: some View {
+        HStack(spacing: DFSpace.xs2) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .font(.system(size: DFFontSize.s11, weight: .bold))
+                .foregroundStyle(DFColor.warning)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("⚠ daemon v2 미확인 — balance 미적용 가능")
+                    .font(DFFont.micro.weight(.semibold))
+                    .foregroundStyle(DFColor.warning)
+                Text("옛 firmware 는 balance 필드 무시. robot 측 확인 후 verified 토글.")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.horizontal, DFSpace.xs2)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .fill(DFColor.warning.opacity(0.10))
+        )
+        .accessibilityLabel("경고 — daemon v2 미확인, balance 보정 robot 미적용 가능")
+        .accessibilityIdentifier("onboard.schema.warning.banner")
     }
 
     /// 상태 분류 — 4 단계.

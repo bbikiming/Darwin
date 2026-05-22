@@ -213,6 +213,18 @@ extension WalkLabSession {
             //   → handoff §4 의 `candidateDeltas` 정확한 의미.
             // - lastCorrections = ramp 적용 후 (legacy 호환, UI 표시 + applied 후보).
             // - v1.11.1 HIGH-3: freshnessGate (200-500ms stale 감쇠) 적용 → ramp 곱.
+            //
+            // **사이클 168 (P1-2, gyro closed-loop review #3.2 명시)**:
+            // effectiveScale = ramp × freshnessGate — **곱 의미 명시**:
+            //   - ramp (0..1, 1초 ramp-in): corrector ON 직후 안정 진입.
+            //   - freshnessGate (0..1, 250~500ms IMU age 따라 감쇠): IMU stale 시 보정 약화.
+            // 두 신호는 **독립**적으로 곱해짐 — 둘 중 하나라도 0 이면 effective 0.
+            //   - "ramp 가 진행 중이지만 IMU stale" → 보정 약화 (안전 우선).
+            //   - "IMU fresh 지만 ramp 1초 미경과" → 부드러운 ramp-in (oscillation 방지).
+            //   - "둘 다 1.0" → full corrections 적용.
+            // 우선순위 X — 곱셈은 commutative. 사용자가 효과 분리 분석 시 lastRawCandidate
+            // (corrections / no scale) 와 lastCorrections (corrections × ramp × freshnessGate)
+            // 비교.
             lastRawCandidate = result.corrections
             let effectiveScale = ramp * freshnessGate
             let rampedCorr = Self.scaleCorrections(result.corrections, by: effectiveScale)
