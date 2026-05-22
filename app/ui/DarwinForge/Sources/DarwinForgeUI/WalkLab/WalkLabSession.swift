@@ -2096,7 +2096,7 @@ public final class WalkLabSession {
     /// `.robotisOnboard` 모드에서 trim slider 변경이 robot 에 전달 안 되던 버그 fix.
     public func currentWalkingEngineCommand(enabled: Bool) -> WalkingEngineCommand {
         let tuning = currentWalkTuning() ?? WalkMotionLibrary.defaultTuning(for: current)
-        return WalkingEngineCommand(
+        let cmd = WalkingEngineCommand(
             enabled: enabled && current != .idle,
             xMm: tuning.strideMm,
             yMm: tuning.sideMm,
@@ -2110,7 +2110,26 @@ public final class WalkLabSession {
             balanceEnable: enableBalanceCorrection,
             correctorIntensityLevel: correctorIntensityLevel
         )
+        // 사이클 164 (codex MAJOR fix, cycle 162 review): silent failure 차단 — Onboard
+        // mode 에서 balance ON 인데 daemon version 확인 안 됐으면 사용자 명시 경고.
+        if walkingEngine == .robotisOnboard && cmd.balanceEnable
+           && !onboardBalanceSchemaVerified {
+            onboardBalanceSchemaWarningActive = true
+        } else {
+            onboardBalanceSchemaWarningActive = false
+        }
+        return cmd
     }
+
+    /// 사이클 164 (codex MAJOR fix): Onboard daemon version (v2 patch) 확인됐는가.
+    /// 종전: ACK / version handshake 없음 — Mac 가 10 필드 송신, 옛 daemon (v1) 은 7 만 사용.
+    /// 사용자가 명시 토글 (UI 의 "Onboard v2 firmware 확인됨" 체크박스) 후 true 로 set.
+    /// nil/false = 미확인. Mac UI 가 balance 활성 시 경고 표시.
+    public var onboardBalanceSchemaVerified: Bool = false
+
+    /// 사이클 164: HUD 가 표시할 active warning — currentWalkingEngineCommand 가 갱신.
+    /// true = Onboard mode + balance ON + version 미확인 → 사용자가 의도와 다른 동작 가능.
+    public internal(set) var onboardBalanceSchemaWarningActive: Bool = false
 
     // MARK: - Preflight (사이클 112 Phase 10 — extension 이동)
     //

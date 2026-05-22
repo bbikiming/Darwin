@@ -141,4 +141,13 @@ public struct WalkingEngineCommand: Equatable, Sendable {
     public static let stop = WalkingEngineCommand(
         enabled: false, xMm: 0, yMm: 0, aDeg: 0, periodMs: 0, footHeightMm: 0
     )
+
+    /// 사이클 164 (codex MAJOR fix, cycle 162 review): 옛 daemon backward compat 경고.
+    /// daemon version 확인 전까지 balance 필드는 robot 측 silent ignore 가능 (sscanf 7 필드).
+    /// Mac UI 가 "balance ON" 으로 표시했지만 robot 측 무동작 — 사용자 silent failure 위험.
+    /// **Mac 측 권고**: Onboard mode HUD 에 본 메시지 영구 표시.
+    public static let onboardSchemaWarning: String =
+        "⚠ 옛 펌웨어 (v1 patch) 는 balance 필드 (gain/enable/intensity) 무시. " +
+        "Robot 측 v2 patch (sscanf 10 필드) 필수. " +
+        "현재 ACK 검증 없음 — 사용자가 robot 측 버전 확인 후 보정 활성 권장."
 }

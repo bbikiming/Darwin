@@ -72,6 +72,9 @@ extension WalkLabSession {
             lastCorrections = nil
             lastRawCandidate = nil
             lastCorrectionApplied = false
+            // 사이클 164 (codex MINOR fix, cycle 160 review): danger early-return 도
+            // freshness 명시 — UI 가 "안전 lockdown 중" 으로 인지 (이전 stale state 잔존 X).
+            balanceCorrectionFreshness = .normal
             return lastSafePose ?? pose
         }
 
