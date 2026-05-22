@@ -317,6 +317,21 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
+    /// **v1.20.41 사이클 55** — bridge.snapshotAndReset 후 모든 통계 zero.
+    func testSnapshotAndResetClearsAllStats() {
+        session.start(.march)
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        bridge.handleTelloStick(lr: 25, fb: 0, ud: 0, yaw: 0)
+        XCTAssertGreaterThan(bridge.accumulator.summarize().totalEvents, 0)
+        XCTAssertGreaterThan(bridge.accumulator.summarize().peakStrideMm, 0)
+
+        let snap = bridge.snapshotAndReset()
+
+        XCTAssertGreaterThan(snap.totalEvents, 0, "snapshot 자체는 정보 보존")
+        XCTAssertEqual(bridge.accumulator.summarize().totalEvents, 0, "reset 후 0")
+        XCTAssertEqual(bridge.accumulator.summarize().peakStrideMm, 0)
+    }
+
     /// **v1.20.40 사이클 54** — bridge default 값 검증 (회귀 가드).
     func testBridgeDefaultValues() {
         XCTAssertTrue(bridge.enabled, "default enabled=true")
