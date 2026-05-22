@@ -109,7 +109,10 @@ public final class WalkTrialRecommender {
             balanceConfig: topTrials.first?.config.balanceConfig ?? .defaultRobotis,
             dataMaturity: min(1.0, Double(topTrials.count) / 5.0),
             rationale: "상위 \(topTrials.count) good trial 평균 (avg score \(Int(avgOverall * 100))/100, \(breakdown))",
-            sourceSampleIds: topIds
+            sourceSampleIds: topIds,
+            // 사이클 147 (IMPLEMENTATION audit #16): UI 가 sim/real 비율 badge 표시.
+            sourceBreakdown: WalkTrialRecommendation.SourceBreakdown(
+                realRobotCount: realCount, simCount: simCount)
         )
     }
 
@@ -207,7 +210,11 @@ public final class WalkTrialRecommender {
             balanceConfig: best.config.balanceConfig,
             dataMaturity: min(1.0, Double(allEntries.count) / 10.0),
             rationale: "좌표 하강: \(rationale). 베이스라인 score \(Int(best.outcome.overallScore * 100))/100 (\(baselineSource))",
-            sourceSampleIds: [bestId]
+            sourceSampleIds: [bestId],
+            // 사이클 147 (IMPLEMENTATION audit #16): 단일 baseline → real=1 or sim=1.
+            sourceBreakdown: WalkTrialRecommendation.SourceBreakdown(
+                realRobotCount: best.config.isRealRobot ? 1 : 0,
+                simCount: best.config.isRealRobot ? 0 : 1)
         )
     }
 
@@ -280,6 +287,10 @@ public final class WalkTrialRecommender {
         let avgIntensity = Int((Double(intensitySum) / n).rounded())
         let totalMoveSum = topPiloted.map { $0.pilot.moveEventCount }.reduce(0, +)
 
+        // 사이클 147 (IMPLEMENTATION audit #16): sim/real breakdown 계산.
+        let pilotRealCount = topPiloted.filter { $0.trial.config.isRealRobot }.count
+        let pilotSimCount = topPiloted.count - pilotRealCount
+
         return WalkTrialRecommendation(
             strategy: .pilotBiased,
             preset: preset,
@@ -290,7 +301,9 @@ public final class WalkTrialRecommender {
             // **MEDIUM 2 fix**: dataMaturity cap 상향 (5→10), pilot noisy 라 더 보수적.
             dataMaturity: min(1.0, n / 10.0),
             rationale: "\(Int(n))개 advanced+piloted trial — abs peak avg: stride \(Int(avgAbsPeakStride))mm / side \(Int(avgAbsPeakSide))mm / turn \(Int(avgAbsPeakTurn))° (총 \(totalMoveSum) move events)",
-            sourceSampleIds: topPiloted.map { $0.trial.id }
+            sourceSampleIds: topPiloted.map { $0.trial.id },
+            sourceBreakdown: WalkTrialRecommendation.SourceBreakdown(
+                realRobotCount: pilotRealCount, simCount: pilotSimCount)
         )
     }
 
@@ -327,6 +340,35 @@ public struct WalkTrialRecommendation: Equatable, Sendable, Identifiable {
     public let rationale: String
     /// 추천 근거가 된 trial ID 목록 — 사용자가 클릭 시 원본 trial 로 이동.
     public let sourceSampleIds: [String]
+    /// 사이클 147 (IMPLEMENTATION audit #16, #6): 실로봇/시뮬 trial 비율.
+    /// 사용자가 추천을 적용하기 전 "이 추천이 시뮬 데이터 기반인가" 확인할 수 있음.
+    /// nil = 분류 정보 미수집 (legacy / Phase 4 이전 추천). 대안 호환을 위해 optional.
+    public let sourceBreakdown: SourceBreakdown?
+
+    public struct SourceBreakdown: Equatable, Sendable, Codable {
+        public let realRobotCount: Int
+        public let simCount: Int
+        public init(realRobotCount: Int, simCount: Int) {
+            self.realRobotCount = realRobotCount
+            self.simCount = simCount
+        }
+        public var total: Int { realRobotCount + simCount }
+        /// 실로봇 비율 (0..1). total == 0 일 때 0.
+        public var realRatio: Double {
+            guard total > 0 else { return 0 }
+            return Double(realRobotCount) / Double(total)
+        }
+        /// 사용자 표시 라벨 — "실 로봇 N · 시뮬 M".
+        public var displayLabel: String {
+            if realRobotCount == 0 && simCount > 0 {
+                return "시뮬 \(simCount) (실 로봇 데이터 없음)"
+            }
+            if simCount == 0 && realRobotCount > 0 {
+                return "실 로봇 \(realRobotCount)"
+            }
+            return "실 로봇 \(realRobotCount) · 시뮬 \(simCount)"
+        }
+    }
 
     public enum Strategy: String, Sendable, Equatable, CaseIterable {
         case ruleBased
@@ -368,7 +410,8 @@ public struct WalkTrialRecommendation: Equatable, Sendable, Identifiable {
         balanceConfig: BalanceExperimentConfig,
         dataMaturity: Double,
         rationale: String,
-        sourceSampleIds: [String]
+        sourceSampleIds: [String],
+        sourceBreakdown: SourceBreakdown? = nil
     ) {
         self.id = id
         self.strategy = strategy
@@ -379,6 +422,7 @@ public struct WalkTrialRecommendation: Equatable, Sendable, Identifiable {
         self.dataMaturity = dataMaturity
         self.rationale = rationale
         self.sourceSampleIds = sourceSampleIds
+        self.sourceBreakdown = sourceBreakdown
     }
 }
 

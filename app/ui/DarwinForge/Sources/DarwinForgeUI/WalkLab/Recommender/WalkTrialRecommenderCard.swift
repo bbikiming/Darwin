@@ -113,6 +113,23 @@ public struct WalkTrialRecommenderCard: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+            // 사이클 147 (IMPLEMENTATION audit #16): sim/real breakdown badge.
+            // 사용자가 추천 적용 전 데이터 출처 확인.
+            if let breakdown = recommendation.sourceBreakdown {
+                HStack(spacing: 4) {
+                    Image(systemName: breakdown.realRobotCount > 0
+                          ? (breakdown.simCount > 0 ? "circle.lefthalf.filled" : "checkmark.circle.fill")
+                          : "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(breakdown.realRobotCount > 0
+                                         ? (breakdown.simCount > 0 ? .blue : .green)
+                                         : .orange)
+                    Text(breakdown.displayLabel)
+                        .font(.caption2)
+                        .foregroundStyle(breakdown.realRobotCount == 0 ? .orange : .secondary)
+                }
+                .accessibilityIdentifier("recommender.card.source.breakdown")
+            }
         }
     }
 
