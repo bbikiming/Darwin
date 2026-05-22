@@ -567,13 +567,16 @@ private struct TrialDetailView: View {
     }
 
     /// **v1.16.0 (2026-05-21) Phase 2**: 추천 카드 (각 strategy 별).
+    /// **사이클 153**: robotConnected 전달 — sim only 추천 적용 시 confirmation.
     private var recommenderSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("같은 preset (\(trial.config.preset)) 추천")
                 .font(.headline)
+            let robotConnected = session.store?.bus != nil
             ForEach(recommendations) { rec in
                 WalkTrialRecommenderCard(
                     recommendation: rec,
+                    robotConnected: robotConnected,
                     onApply: { applyRecommendation(rec) }
                 )
             }

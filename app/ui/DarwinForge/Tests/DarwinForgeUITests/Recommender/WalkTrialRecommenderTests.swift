@@ -365,6 +365,75 @@ final class WalkTrialRecommenderTests: XCTestCase {
         XCTAssertEqual(realOnly?.sourceBreakdown?.simCount, 0)
     }
 
+    // MARK: - 사이클 153 (사용자 권고 #3): sim 추천 confirmation predicate
+
+    /// robot 미연결 → confirmation 불필요 (sim 추천이어도).
+    func testSimConfirmationNotNeededWhenRobotDisconnected() {
+        let rec = WalkTrialRecommendation(
+            strategy: .ruleBased, preset: "march",
+            tuning: TuningSnapshot(strideMm: 20, sideMm: 0, turnDeg: 0,
+                                   periodMs: 600, footHeightMm: 40, balanceGain: 1.0),
+            intensityLevel: 2, balanceConfig: .defaultRobotis,
+            dataMaturity: 1.0, rationale: "test",
+            sourceSampleIds: [],
+            sourceBreakdown: WalkTrialRecommendation.SourceBreakdown(
+                realRobotCount: 0, simCount: 5)
+        )
+        XCTAssertFalse(WalkTrialRecommenderCard.needsSimConfirmation(
+            recommendation: rec, robotConnected: false),
+            "robot 미연결 → confirmation skip")
+    }
+
+    /// robot 연결됨 + sim only breakdown → confirmation 필요.
+    func testSimConfirmationNeededWhenRobotConnectedAndSimOnly() {
+        let rec = WalkTrialRecommendation(
+            strategy: .ruleBased, preset: "march",
+            tuning: TuningSnapshot(strideMm: 20, sideMm: 0, turnDeg: 0,
+                                   periodMs: 600, footHeightMm: 40, balanceGain: 1.0),
+            intensityLevel: 2, balanceConfig: .defaultRobotis,
+            dataMaturity: 1.0, rationale: "test",
+            sourceSampleIds: [],
+            sourceBreakdown: WalkTrialRecommendation.SourceBreakdown(
+                realRobotCount: 0, simCount: 5)
+        )
+        XCTAssertTrue(WalkTrialRecommenderCard.needsSimConfirmation(
+            recommendation: rec, robotConnected: true),
+            "robot 연결 + sim only → 명시 동의 필요")
+    }
+
+    /// robot 연결됨 + 혼합 (sim + real) → confirmation 불필요 (real 데이터 있음).
+    func testSimConfirmationNotNeededWhenMixed() {
+        let rec = WalkTrialRecommendation(
+            strategy: .ruleBased, preset: "march",
+            tuning: TuningSnapshot(strideMm: 20, sideMm: 0, turnDeg: 0,
+                                   periodMs: 600, footHeightMm: 40, balanceGain: 1.0),
+            intensityLevel: 2, balanceConfig: .defaultRobotis,
+            dataMaturity: 1.0, rationale: "test",
+            sourceSampleIds: [],
+            sourceBreakdown: WalkTrialRecommendation.SourceBreakdown(
+                realRobotCount: 2, simCount: 3)
+        )
+        XCTAssertFalse(WalkTrialRecommenderCard.needsSimConfirmation(
+            recommendation: rec, robotConnected: true),
+            "real 데이터 1+ 있으면 confirmation skip")
+    }
+
+    /// sourceBreakdown nil (legacy) → confirmation skip (보수적 — 정보 없으면 차단 안 함).
+    func testSimConfirmationSkippedWhenBreakdownNil() {
+        let rec = WalkTrialRecommendation(
+            strategy: .ruleBased, preset: "march",
+            tuning: TuningSnapshot(strideMm: 20, sideMm: 0, turnDeg: 0,
+                                   periodMs: 600, footHeightMm: 40, balanceGain: 1.0),
+            intensityLevel: 2, balanceConfig: .defaultRobotis,
+            dataMaturity: 1.0, rationale: "test",
+            sourceSampleIds: [],
+            sourceBreakdown: nil
+        )
+        XCTAssertFalse(WalkTrialRecommenderCard.needsSimConfirmation(
+            recommendation: rec, robotConnected: true),
+            "breakdown nil = legacy / 정보 없음 → confirmation skip")
+    }
+
     /// recommend(for:realRobotOnly:) aggregator 가 3 strategy 모두 일관 전파하는지 검증.
     func testRecommendAggregatorPropagatesRealRobotOnly() {
         // sim 5개 + real 5개 — rule 가 둘 다 활성, pilot 도 advanced+piloted.
