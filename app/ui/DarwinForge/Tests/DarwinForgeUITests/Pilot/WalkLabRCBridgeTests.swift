@@ -317,6 +317,18 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
+    /// **v1.20.39 사이클 53** — emergencyCount 누적 검증.
+    func testEmergencyCountAccumulates() {
+        XCTAssertEqual(bridge.emergencyCount, 0)
+        session.start(.march)
+        bridge.handleEmergency(from: .ui)
+        XCTAssertEqual(bridge.emergencyCount, 1)
+        bridge.handleRecovery(from: .ui)
+        session.start(.march)
+        bridge.handleEmergency(from: .keyboard)
+        XCTAssertEqual(bridge.emergencyCount, 2, "두 번째 emergency 카운트")
+    }
+
     /// **v1.20.37 사이클 49** — handleStop 반복 호출 idempotent.
     func testHandleStopIdempotent() {
         session.start(.march)
