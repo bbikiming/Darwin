@@ -317,6 +317,19 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
+    /// **v1.20.37 사이클 49** — handleStop 반복 호출 idempotent.
+    func testHandleStopIdempotent() {
+        session.start(.march)
+        bridge.handleTelloStick(lr: 0, fb: 100, ud: 0, yaw: 0)
+        XCTAssertEqual(session.strideMm, 40, accuracy: 1e-9)
+        bridge.handleStop(from: .keyboard)
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "1차 stop")
+        bridge.handleStop(from: .keyboard)
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "2차 stop idempotent")
+        bridge.handleStop(from: .keyboard)
+        XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "3차 stop idempotent")
+    }
+
     /// **v1.20.33 사이클 41** — lastInputAt + lastInputAge.
     func testBridgeLastInputTracking() {
         XCTAssertNil(bridge.lastInputAt)
