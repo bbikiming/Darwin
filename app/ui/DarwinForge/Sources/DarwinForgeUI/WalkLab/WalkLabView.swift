@@ -252,6 +252,9 @@ public struct WalkLabView: View {
                 .help("닫기")
             }
             if let bridge = session.pilotBridge {
+                // **사이클 78**: Pilot HQ 통합 status row — 5 panel 위에 한 줄 요약.
+                // (emergency / active source / event rate / bridge enabled) glanceable.
+                PilotHQStatusRow(bridge: bridge, session: session)
                 KeyboardPilotPanel()
                 // **사이클 73**: owner reference 전달 — HUD 가 silent fail 시
                 // banner 표시 + 사용자가 "Tello 활성화" / "다시 시도" 클릭 가능.
