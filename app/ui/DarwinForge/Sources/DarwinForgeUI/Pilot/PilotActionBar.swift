@@ -303,11 +303,14 @@ public struct PilotActionBar: View {
             .background(
                 RoundedRectangle(cornerRadius: DFRadius.sm).fill(DFColor.elev2)
             )
+            // **사이클 127 (audit #13, P1)**: ComingSoonOverlay 3사용처 일관성 — "when" 형식
+            // 통일. 종전 "Sprint 17" (내부 개발 일정 누설) → 사용자 친화 "다음 업데이트" 채택.
+            // PilotHudStrip 2건과 동일.
             .comingSoon(
                 "v1.5",
                 title: "9 추가 페이지 (끄덕임 / 가로젓기 / 박수 요청 / 등)",
                 why: "메인 7 페이지로 v1.0 의 사용성 안정 후 확장",
-                when: "Sprint 17",
+                when: "다음 업데이트",
                 alternative: "지금: 메인 7 페이지 + Motion Studio 의 사용자 모션"
             )
         }
