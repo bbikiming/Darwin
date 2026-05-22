@@ -317,6 +317,20 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
+    /// **v1.20.40 사이클 54** — bridge default 값 검증 (회귀 가드).
+    func testBridgeDefaultValues() {
+        XCTAssertTrue(bridge.enabled, "default enabled=true")
+        XCTAssertEqual(bridge.scale, .default, "default scale = Tello default")
+        XCTAssertEqual(bridge.smoothingFactor, 1.0, "default smoothingFactor=1.0")
+        XCTAssertEqual(bridge.pilotAutoStartPreset, .march, "default auto-start=.march")
+        XCTAssertEqual(bridge.emergencyCount, 0)
+        XCTAssertEqual(bridge.presetChangeMirror, 0)
+        XCTAssertNil(bridge.lastIntent)
+        XCTAssertNil(bridge.safetyMessage)
+        XCTAssertFalse(bridge.isActive)
+        XCTAssertFalse(bridge.isInputFresh)
+    }
+
     /// **v1.20.39 사이클 53** — emergencyCount 누적 검증.
     func testEmergencyCountAccumulates() {
         XCTAssertEqual(bridge.emergencyCount, 0)
