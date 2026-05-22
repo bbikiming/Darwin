@@ -1,7 +1,8 @@
 import Foundation
 import ForgeCore
 
-/// **v1.22.0 (2026-05-22) — 사이클 90: god object Phase 1C 분할 (architect agent plan)**.
+/// **v1.22.0 (2026-05-22) — 사이클 91: god object Phase 1C 분할 (architect agent plan)**.
+/// (사이클 103 코덱스 M2 fix: 사이클 90 → 91 — 실 commit cycle 정합).
 ///
 /// `WalkLabSession.swift` (4431 line) 의 Static Tilt Calibration method (~74 line) 를 본
 /// extension 으로 이동. stored property `calibrationCaptures` 는 Swift extension 제약으로
