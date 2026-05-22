@@ -118,7 +118,15 @@ public final class WalkTrialRecommender {
     /// 4-D config space (period × stride × intensity × balanceGain) 의 한 axis 를 +10% 또는 -10%
     /// 탐색. baseline = 같은 preset 의 best trial. trial < 5 일 때 nil.
     public func coordinateDescent(for preset: String) -> WalkTrialRecommendation? {
-        let filter = TrialFilter(preset: preset)
+        return coordinateDescent(for: preset, realRobotOnly: false)
+    }
+
+    /// **사이클 129 (codex MAJOR fix — audit #31 partial)**: realRobotOnly overload.
+    /// 종전 ruleBased 만 realRobotOnly 분기 — coordinateDescent 가 fallback path 인데
+    /// sim/real 구분 0 → 사용자가 sim 데이터 기반 탐색을 실 데이터로 오해.
+    /// rationale 에 sim/real count + 출처 명시.
+    public func coordinateDescent(for preset: String, realRobotOnly: Bool) -> WalkTrialRecommendation? {
+        let filter = TrialFilter(preset: preset, realRobotOnly: realRobotOnly)
         let allEntries = store.query(filter: filter, sort: .overallDesc)
         guard allEntries.count >= 5 else { return nil }
 
@@ -184,6 +192,13 @@ public final class WalkTrialRecommender {
             rationale = "균형 게인 \(String(format: "%.2f", best.config.tuning.balanceGain)) → \(String(format: "%.2f", newVal)) (\(sign > 0 ? "+" : "")10%)"
         }
 
+        // **사이클 129 (codex MAJOR fix — audit #31 partial)**: sim/real 비율 명시.
+        // baseline trial 의 출처가 시뮬인지 실 로봇인지 사용자가 즉시 인지.
+        // realRobotOnly=true 면 "실로봇 데이터 기반 (sim 제외)" 단정, false 면 실 출처 표시.
+        let baselineSource = realRobotOnly
+            ? "실로봇 데이터 기반 (sim 제외)"
+            : (best.config.isRealRobot ? "실로봇 baseline" : "시뮬 baseline")
+
         return WalkTrialRecommendation(
             strategy: .coordinateDescent,
             preset: preset,
@@ -191,7 +206,7 @@ public final class WalkTrialRecommender {
             intensityLevel: newIntensity,
             balanceConfig: best.config.balanceConfig,
             dataMaturity: min(1.0, Double(allEntries.count) / 10.0),
-            rationale: "좌표 하강: \(rationale). 베이스라인 score \(Int(best.outcome.overallScore * 100))/100",
+            rationale: "좌표 하강: \(rationale). 베이스라인 score \(Int(best.outcome.overallScore * 100))/100 (\(baselineSource))",
             sourceSampleIds: [bestId]
         )
     }
