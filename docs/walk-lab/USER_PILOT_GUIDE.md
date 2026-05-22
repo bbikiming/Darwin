@@ -612,3 +612,83 @@ codex final review 식별 — WalkLabV1114FeedbackLoopTests.swift:960 의 Task.s
 | sim 추천 confirmation | 없음 | needsSimConfirmation 정적 predicate |
 | 공식 카탈로그 그룹 분리 | 16 단일 section | 3 status-based subsection |
 | ID set canonical reference | 3 곳 drift 위험 | OfficialCatalogReference 단일 source |
+
+---
+
+## 사이클 158-165 — WalkLab 자이로 closed-loop 솔직 리뷰 + P0/P1 처리 (2026-05-23)
+
+> **v1.25.0 (2026-05-23)** — 사용자 명시 요청: "자이로 기반으로 원활하게 수정/보정 하면서
+> 로봇이 제대로 걷는 시스템 인지 솔직하게 코드단에서 리뷰" + 이슈 전부 소거.
+
+### Cycle 158 — 정밀 코드 리뷰 문서
+
+`docs/diagnosis/WALKLAB_GYRO_CLOSED_LOOP_REVIEW_2026-05-23.md` 작성.
+
+**결론**: "부분만 작동". Mac sparse engine 은 closed-loop 가 구성됐으나 IMU 가 5Hz 라
+ROBOTIS 권장 125Hz 의 1/25. Onboard mode 는 자이로 보정 자체가 Mac → robot 미송신.
+
+**P0 4건 식별**:
+- P0-1 IMU 5Hz 가 freshness gate 250ms 와 50ms 마진만 — bus jitter 시 보정 0 감쇠.
+- P0-2 Onboard schema 부재 — WalkingEngineCommand 가 balanceGain/Enable/Intensity 누락.
+- P0-3 IMU stale silent — 사용자 UI 표시 부재.
+- P0-4 roll 부호 정규화 옵션 부재 (pitch 만 있음).
+
+### Cycles 159-162 — P0 4건 처리
+
+| Cycle | P0 # | 변경 핵심 | Tests |
+|---|---|---|---|
+| **159** | P0-1 | `imuFastPollActive` Bool flag — walk 활성 시 5Hz → 20Hz (50ms). idle 시 5Hz 유지. WalkLabSession 가 walk start/stop 시 toggle. | 1325 |
+| **160** | P0-3 | `balanceCorrectionFreshness` enum (.normal/.degraded/.blocked) public publish. UI HUD 가 IMU stale silent 차단 인지 가능. | +6 (1331) |
+| **161** | P0-4 | `BalanceRollInputConvention` enum (.imuRaw / .negateLeftIsNegative) — pitch 와 동일 패턴. | 1331 |
+| **162** | P0-2 | `WalkingEngineCommand` 7→10 필드 (balanceGain/Enable/IntensityLevel 추가). 옛 daemon sscanf 7 필드 backward compat. | 1331 |
+
+### Cycles 163-165 — 보정 효과 metric
+
+| Cycle | 작업 | 변경 핵심 | Tests |
+|---|---|---|---|
+| **163** | P1-3 data model | `TrialOutcome.CorrectionEffectMetric` nested struct — ON/OFF sample count + peak abs roll/pitch + freshness count. | 1331 |
+| **164** | codex review fix | MAJOR (cycle 162 silent failure 경고) + MINOR (cycle 160 danger early-return freshness). `onboardBalanceSchemaWarningActive` flag. | 1331 |
+| **165** | metric wire-up | `WalkTrialAnalyzer.correctionEffectMetric()` static 함수 + analyze() 통합. ON/OFF group 별 peak abs 계산. | +6 (1337) |
+
+### Multi-agent 검증
+
+- **codex review cycles 159-162**: VERDICT ACCEPT-WITH-RESERVATIONS.
+  - 1 MAJOR (옛 daemon silent failure) → cycle 164 fix (`onboardBalanceSchemaWarningActive`).
+  - 4 MINOR — 1 fixed (danger freshness), 나머지 acceptable.
+
+### before/after (cycle 158 review 갱신)
+
+| 영역 | Before | After (cycle 165) |
+|---|---|---|
+| IMU polling rate (walk) | 5Hz (200ms) | **20Hz (50ms)** — freshness gate 250ms 와 4-step 마진 |
+| IMU polling rate (idle) | 5Hz | 5Hz (perf 유지) |
+| Onboard schema | 7 필드 (자이로 미송신) | **10 필드** (balanceGain/Enable/Intensity 추가) |
+| Silent failure 경고 | 없음 | `onboardBalanceSchemaWarningActive` HUD signal |
+| IMU stale UI 표시 | 없음 | `balanceCorrectionFreshness` enum 3-state |
+| roll 부호 정규화 | raw 만 | `BalanceRollInputConvention` opt-in |
+| 보정 효과 측정 | 없음 | `TrialOutcome.CorrectionEffectMetric` ON/OFF 비교 |
+| Swift tests | 1325 | **1337** (+12) |
+| Build warnings | 0 | 0 (유지) |
+
+### 솔직한 평가
+
+**개선됨**:
+- ✓ Mac sparse engine: closed-loop + 20Hz IMU + freshness publish + roll/pitch 정규화.
+- ✓ Onboard mode: balanceGain/Enable/Intensity 3 필드 송신 + 옛 daemon 호환 + silent failure 경고.
+- ✓ 측정: TrialOutcome.CorrectionEffectMetric — Recommender 가 보정 효과 정량 학습 가능.
+
+**미해결 (실 robot 검증 필요)**:
+- ✗ ROBOTIS 권장 125Hz 의 1/6 (USB bus 한계 — bus level batching 후속).
+- ✗ Onboard mode 의 robot-side v2 patch (sscanf 10 필드) — Mac 측 schema 만 준비, daemon 작업 필요.
+- ✗ 실 robot 에서 보정 효과 측정 (handoff doc 영역).
+
+**남은 P1/P2** (deferred):
+- P1-2 ramp + freshness gate 우선순위 명시 — 현재 effectiveScale = ramp * freshnessGate 곱 일관.
+- P2-1 GyroCorrector / BalanceCorrector / FallPredictor 책임 통합 — 장기 refactor.
+- P2-2 Mac sparse vs Onboard timing 동기 — 별도 sprint.
+
+### Git 상태
+
+- 68 commits ahead origin (cycles 119-165).
+- 1337 swift + 368 rust tests pass.
+- 0 build warnings.
