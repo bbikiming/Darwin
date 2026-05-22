@@ -271,11 +271,13 @@ final class GamepadPilotAdapterTests: XCTestCase {
 
     /// **사이클 62 코덱스 HIGH**: stick + emergency 같은 frame → emergency 가 stick 보다 먼저.
     ///
-    /// 종전: stick → button 순서 → stick 의 amplitude write 가 emergency 가드보다 먼저
-    /// 발생 → 1 frame 의 race window (사용자가 panic + stick 을 동시 입력 시 robot 이
-    /// 마지막으로 stride 적용 후 정지).
-    ///
-    /// 수정 후: button 의 emergency edge 가 먼저 처리 → fire 시 stick 처리 skip → write 차단.
+    /// **주의 (사이클 68 — 코덱스 MEDIUM-2 검토 결과)**: 본 test 의 `strideMm == 0` /
+    /// `lastActionLabel == "emergency"` assertion 은 양쪽 모두 false positive 가능 —
+    /// 종전 (stick-first) 코드도 emergency.emergencyStop 이 stride 를 0 으로 reset 하고
+    /// lastActionLabel 의 final 값은 마지막 처리된 event 따라 어차피 "emergency". 본 test
+    /// 는 final state 일관성 가드 — 진짜 race regression 검증은
+    /// `testStickEmergencySameFrameNoMoveEventDispatched` 가 담당 (accumulator 의
+    /// moveEventCount delta = stick `.move` dispatch 차단의 객관 증거).
     func testStickAndEmergencySameFrameStickIsSkipped() {
         session.start(.march)
         XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9, "사전: stride 0")
@@ -285,14 +287,43 @@ final class GamepadPilotAdapterTests: XCTestCase {
         mock.buttons.faceTop = true
         adapter.pollOnce()
 
-        // 핵심: emergency 가 먼저 fire → stick 처리 skip → strideMm 0 유지.
-        // 종전 (stick → button): strideMm 40 적용 → emergency → strideMm 0 으로 재초기화.
-        // 수정 후 (button → stick early return): strideMm 0 유지 (write 자체가 없음).
-        XCTAssertEqual(bridge.emergencyCount, 1, "emergency fire")
+        // final state 일관성 가드 (양 코드 경로 모두 통과 — 진짜 race 검증은 별 test).
+        XCTAssertEqual(bridge.emergencyCount, 1, "emergency fire 1회")
         XCTAssertTrue(session.emergencyStopActive, "emergency 활성")
         XCTAssertEqual(session.current, .idle, "emergency 후 idle")
         XCTAssertEqual(session.strideMm, 0, accuracy: 1e-9,
-                       "stick write skip — emergency 와 같은 frame 의 stride 0 유지")
+                       "stride 0 (race 미해결 시에도 emergencyStop 이 reset 하므로 동일 결과)")
+    }
+
+    /// **사이클 68 — 코덱스 MEDIUM-2 진짜 회귀 가드**: emergency frame 의 stick `.move`
+    /// 가 bridge.handleMove 까지 도달 안 함을 `accumulator.moveEventCount` delta 로 검증.
+    ///
+    /// # 가드 동작 (현재 코드)
+    /// processButtons (emergency edge) → return true → processSticks skip → 어떤 .move 도
+    /// dispatch 안 됨 → moveEventCount 증가 0.
+    ///
+    /// # 가드 미동작 (cycle 62 reverse 시)
+    /// processSticks (.move) → handleMove → bridge.process → accumulator.record(intent .move)
+    /// → moveEventCount +1. 그 후 emergency 가 fire 해도 .move 는 이미 누적됨.
+    ///
+    /// 즉 본 test 는 cycle 62 fix 의 회귀 detection 정확 — false positive 없음.
+    func testStickEmergencySameFrameNoMoveEventDispatched() {
+        session.start(.march)
+        let movesBefore = bridge.accumulator.summarize().moveEventCount
+
+        // 사용자가 emergency + stick 동시 입력.
+        mock.sticks = GamepadStickState(leftX: 0, leftY: 1.0, rightX: 0, rightY: 0)
+        mock.buttons.faceTop = true
+        adapter.pollOnce()
+
+        let summary = bridge.accumulator.summarize()
+        let movesAfter = summary.moveEventCount
+
+        // 핵심: moveEventCount 가 1 증가 안 함 — stick.move 가 dispatch 자체 안 됨.
+        // 본 assertion 은 cycle 62 fix 가 reverse 되면 즉시 fail (강한 회귀 가드).
+        XCTAssertEqual(movesAfter, movesBefore,
+                       "MEDIUM-2 진짜 회귀 가드: emergency frame 의 stick .move 가 accumulator 까지 도달 안 함")
+        XCTAssertEqual(bridge.emergencyCount, 1, "emergency 는 정상 dispatch")
     }
 
     /// **사이클 62 회귀**: emergency edge frame 의 stick 은 silent. 다음 frame 에서 정상 재개.
