@@ -540,10 +540,20 @@ CI 가 검출 못 하는 항목 — release manager 가 macOS 14+ clean install 
 mock source (`MockTelloStateListener`, `MockVoiceRecognizer`, `MockGamepad`) 만 사용 →
 실제 권한 요청 안 일어남.
 
-**production 전 체크리스트** (사이클 63 MEDIUM-4 보강):
+**production 전 체크리스트** (사이클 63 MEDIUM-4 + 사이클 77 MEDIUM-1 보강):
 
 - [ ] `Info.plist` 생성 — **5개** usage description 키 포함 (Local Network / Speech /
       Microphone / USB / Bluetooth).
+- [ ] Info.plist 표준 키 검수 (사이클 77 추가): `CFBundleInfoDictionaryVersion` /
+      `NSPrincipalClass` (= NSApplication) / `LSApplicationCategoryType` —
+      App Store 또는 launchctl 자동 실행 시 경고 회피.
+- [ ] **CFBundleVersion 자동 bump** (사이클 77 — 코덱스 MEDIUM-1): build phase 또는 CI:
+      ```bash
+      /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" \
+          Sources/DarwinForgeApp/Info.plist
+      ```
+      또는 `xcrun agvtool next-version -all`.
+- [ ] CFBundleShortVersionString 도 release 마다 bump (예: 1.22.0 → 1.23.0).
 - [ ] `DarwinForge.entitlements` 생성 — sandbox 활성 시 **9개** entitlement 포함
       (sandbox / network.server / network.client / audio-input / usb / bluetooth +
       Hardened Runtime 4종).
