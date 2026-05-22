@@ -828,6 +828,11 @@ public struct WalkLabView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(DFColor.textSecondary)
                 }
+                // 사이클 167 (cycle 160 wire-up): IMU stale 신호 — 사용자가 보정 silent
+                // 차단 인지. .normal 은 노출 X (이미 algorithm 라벨 표시).
+                if session.balanceCorrectionFreshness != .normal {
+                    freshnessBadge
+                }
             }
         }
         .padding(.horizontal, 10)
@@ -841,6 +846,36 @@ public struct WalkLabView: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(isWalking ? "보행 \(session.current.label) 진행 중" : "보행 대기")
+    }
+
+    /// 사이클 167 (cycle 160 HUD wire-up): IMU freshness 신호 inline badge.
+    /// 사용자가 보정 ON 인데 robot 측 stale IMU 로 차단/감쇠 된 상태를 즉시 인지.
+    /// .normal 은 별도 표시 안 함 (algorithm mode 라벨이 이미 있음).
+    @ViewBuilder
+    private var freshnessBadge: some View {
+        let state = session.balanceCorrectionFreshness
+        let (icon, color): (String, Color) = {
+            switch state {
+            case .normal:   return ("checkmark.circle", DFColor.success)
+            case .degraded: return ("clock.badge.exclamationmark", DFColor.warning)
+            case .blocked:  return ("xmark.octagon.fill", DFColor.danger)
+            }
+        }()
+        HStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+            Text(state.koreanLabel)
+                .font(.system(size: 9, weight: .medium))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+        .background(
+            RoundedRectangle(cornerRadius: 3)
+                .fill(color.opacity(0.12))
+        )
+        .help("자이로 보정 상태: \(state.koreanLabel)")
+        .accessibilityLabel("자이로 보정 \(state.koreanLabel)")
     }
 
     /// **Stage 2 (v1.1 fall prevention)**: 안전 상태 카드 + 자동 보정 토글.
