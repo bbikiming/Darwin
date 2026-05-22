@@ -141,8 +141,8 @@ public enum NetworkProbe {
             }
         }
         // OP2 e-Manual 표준은 항상 후보에 포함.
-        if !seen.contains("192.168.123.1") {
-            candidates.append("192.168.123.1")
+        if !seen.contains(DFConnectionConstants.robotEthernetIP) {
+            candidates.append(DFConnectionConstants.robotEthernetIP)
         }
         return candidates
     }

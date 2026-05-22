@@ -273,12 +273,10 @@ public struct RootView: View {
         .help("명령 팔레트 (⌘K)")
     }
 
-    /// **사이클 132 (audit #8, P2)**: Quick Connect endpoint 상수화.
-    /// 종전 `"192.168.123.1"` / `5530` 매직 number 가 RootView / ConnectionDashboard /
-    /// NetworkProbe 등 5+ 곳에 hardcoded. 본 상수로 단일 source of truth 정립.
-    /// 향후 endpoint 변경 시 한 곳만 수정.
-    public static let quickConnectHost: String = "192.168.123.1"
-    public static let quickConnectPort: UInt16 = 5530
+    /// **사이클 137 (audit #8, codex MAJOR sweep)**: quickConnectHost/Port 는
+    /// `DFConnectionConstants` 로 이전. 호환성을 위한 typealiases.
+    public static var quickConnectHost: String { DFConnectionConstants.robotEthernetIP }
+    public static var quickConnectPort: UInt16 { DFConnectionConstants.bridgePort }
 
     /// CTA 액션 — Task로 감싸 메인 스레드 block 회피. connect()의 boardSnapshot 동기 호출이
     /// 메인 스레드에서 ~1초 block되면 UI freeze로 "동작 안 함"으로 인식됨.
@@ -809,7 +807,7 @@ public struct RootView: View {
         let host: String = {
             if let ep = store.activeEndpoint, case .network(let h, _) = ep { return h }
             if let ep = store.lastSuccessfulEndpoint, case .network(let h, _) = ep { return h }
-            return "192.168.123.1"
+            return DFConnectionConstants.robotEthernetIP
         }()
         return VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("원격 도구")

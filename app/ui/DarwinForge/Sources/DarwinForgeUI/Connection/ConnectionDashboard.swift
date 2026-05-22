@@ -148,7 +148,7 @@ public struct ConnectionDashboardView: View {
     /// 활성 host 추론 — TCP endpoint면 그 host, 그렇지 않으면 OP2 표준 IP.
     private var remoteHost: String {
         if let ep = store.activeEndpoint, case .network(let h, _) = ep { return h }
-        return "192.168.123.1"
+        return DFConnectionConstants.robotEthernetIP
     }
 
     /// VNC / Web / SMB 가 모두 같은 host에 동시에 떠 있는 ROBOTIS-OP2 standard 이미지를
@@ -525,7 +525,8 @@ public struct ConnectionDashboardView: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
             Spacer()
-            Button("닫기") { isPresented = false }
+            // 사이클 138 (audit #24 codex sweep)
+            Button("닫기", role: .cancel) { isPresented = false }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(DFSpace.md)

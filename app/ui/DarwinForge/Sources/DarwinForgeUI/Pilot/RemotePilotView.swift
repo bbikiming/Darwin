@@ -680,7 +680,7 @@ public struct RemotePilotView: View {
         if !manualHost.isEmpty {
             return PilotCameraEndpoint(host: manualHost)
         }
-        return PilotCameraEndpoint(host: "192.168.123.1")
+        return PilotCameraEndpoint(host: DFConnectionConstants.robotEthernetIP)
     }
 
     // MARK: - HUD panel

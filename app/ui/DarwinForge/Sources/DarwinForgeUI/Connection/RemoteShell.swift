@@ -60,7 +60,7 @@ public final class RemoteShell: ObservableObject {
     @Published public private(set) var isSending: Bool = false
     @Published public private(set) var lastMountPath: String?
     @Published public private(set) var activeChannel: Channel = .unknown
-    @Published public var host: String = "192.168.123.1"
+    @Published public var host: String = DFConnectionConstants.robotEthernetIP
     @Published public var shareName: String = "robotis"
     @Published public var username: String = "robotis"
 

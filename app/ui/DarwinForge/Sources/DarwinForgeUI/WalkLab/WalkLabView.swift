@@ -110,7 +110,8 @@ public struct WalkLabView: View {
                     .frame(minWidth: 800, minHeight: 600)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("닫기") { showingTrialLibrary = false }
+                            // 사이클 138 (audit #24 codex sweep)
+                            Button("닫기", role: .cancel) { showingTrialLibrary = false }
                         }
                     }
             }
@@ -673,7 +674,8 @@ public struct WalkLabView: View {
             Text(message)
                 .font(DFFont.bodyEmph)
             Spacer()
-            Button("닫기") {
+            // 사이클 138 (audit #24 codex sweep)
+            Button("닫기", role: .cancel) {
                 session.balanceLost = false
                 session.thermalAlarm = false
             }

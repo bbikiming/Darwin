@@ -28,7 +28,7 @@ public struct PilotCameraView: View {
     @EnvironmentObject private var store: ConnectionStore
 
     public init(flags: PilotFeatureFlags,
-                endpoint: PilotCameraEndpoint = PilotCameraEndpoint(host: "192.168.123.1"),
+                endpoint: PilotCameraEndpoint = PilotCameraEndpoint(host: DFConnectionConstants.robotEthernetIP),
                 demoStatus: PilotDemoStatus = .idle,
                 headTracker: PilotHeadTracker,
                 hsvPreset: Binding<VisionHsvPreset>,
@@ -632,7 +632,8 @@ public struct PilotCameraView: View {
                 Image(systemName: "doc.text.fill").foregroundStyle(DFColor.accent)
                 Text("로봇 측 카메라 셋업").font(DFFont.title)
                 Spacer()
-                Button("닫기") { showSetupSheet = false }
+                // 사이클 138 (audit #24 codex sweep)
+                Button("닫기", role: .cancel) { showSetupSheet = false }
                     .keyboardShortcut(.cancelAction)
             }
             Divider()

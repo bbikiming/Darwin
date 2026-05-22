@@ -18,7 +18,8 @@ struct ErrorEnvelopeSheet: View {
                 Text("\(envelopes.count) envelope")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("닫기") { onClose() }
+                // 사이클 138 (audit #24 codex sweep)
+                Button("닫기", role: .cancel) { onClose() }
                     .keyboardShortcut(.escape, modifiers: [])
             }
             .padding()

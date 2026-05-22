@@ -60,7 +60,8 @@ public struct PilotHeadTrackerSettingsSheet: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
             Spacer(minLength: 0)
-            Button("닫기") { onClose() }
+            // 사이클 138 (audit #24 codex sweep)
+            Button("닫기", role: .cancel) { onClose() }
                 .keyboardShortcut(.cancelAction)
         }
     }

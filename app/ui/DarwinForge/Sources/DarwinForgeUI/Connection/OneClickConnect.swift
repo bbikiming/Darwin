@@ -380,7 +380,7 @@ public final class OneClickConnect: ObservableObject {
     private static func lanCandidates() -> [CandidateState] {
         var out: [CandidateState] = []
         let candidates = NetworkProbe.likelyRobotCandidates()
-        for (i, host) in candidates.enumerated() where host != "192.168.123.1" && i < 3 {
+        for (i, host) in candidates.enumerated() where host != DFConnectionConstants.robotEthernetIP && i < 3 {
             out.append(CandidateState(
                 id: "lan-\(i)", kind: .lan,
                 label: "같은 LAN — \(host)",
@@ -392,9 +392,9 @@ public final class OneClickConnect: ObservableObject {
     }
 
     private static func tcpProbeTargets() -> [(id: String, host: String)] {
-        var targets: [(String, String)] = [("tcp-op2", "192.168.123.1")]
+        var targets: [(String, String)] = [("tcp-op2", DFConnectionConstants.robotEthernetIP)]
         let candidates = NetworkProbe.likelyRobotCandidates()
-        for (i, host) in candidates.enumerated() where host != "192.168.123.1" && i < 3 {
+        for (i, host) in candidates.enumerated() where host != DFConnectionConstants.robotEthernetIP && i < 3 {
             targets.append(("lan-\(i)", host))
         }
         return targets

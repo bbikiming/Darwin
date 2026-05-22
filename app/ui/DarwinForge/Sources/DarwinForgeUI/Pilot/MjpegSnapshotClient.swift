@@ -67,7 +67,7 @@ public struct PilotCameraEndpoint: Equatable, Sendable {
     /// - `2001:db8::1` (bare IPv6 with multiple `:` — heuristic: 2+ colons & no `]` ⇒ IPv6, port 분리 안 함)
     private static func normalizeHost(_ raw: String) -> String {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.isEmpty { return "192.168.123.1" }
+        if value.isEmpty { return DFConnectionConstants.robotEthernetIP }
 
         // scheme-ful URL — URL.host 가 IPv6 / IPv4 / hostname 자동 추출.
         if let url = URL(string: value),
@@ -80,7 +80,7 @@ public struct PilotCameraEndpoint: Equatable, Sendable {
         if value.hasPrefix("[") {
             if let closing = value.firstIndex(of: "]") {
                 let inner = String(value[value.index(after: value.startIndex)..<closing])
-                return inner.isEmpty ? "192.168.123.1" : inner
+                return inner.isEmpty ? DFConnectionConstants.robotEthernetIP : inner
             }
         }
 
@@ -99,7 +99,7 @@ public struct PilotCameraEndpoint: Equatable, Sendable {
         if colonCount == 1, let colon = value.lastIndex(of: ":") {
             value = String(value[..<colon])
         }
-        return value.isEmpty ? "192.168.123.1" : value
+        return value.isEmpty ? DFConnectionConstants.robotEthernetIP : value
     }
 }
 

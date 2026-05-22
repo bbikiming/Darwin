@@ -329,7 +329,7 @@ public struct ConnectionWizardView: View {
 
     /// Mac이 보이는 인접 .1 후보 + OP2 표준을 빠른 버튼으로.
     private func quickPresets() -> [String] {
-        var set: [String] = ["192.168.123.1"]
+        var set: [String] = [DFConnectionConstants.robotEthernetIP]
         for h in NetworkProbe.likelyRobotCandidates() where !set.contains(h) {
             set.append(h)
         }
@@ -1004,7 +1004,7 @@ public struct ConnectionWizardView: View {
                     .foregroundStyle(DFColor.textSecondary)
                 HStack(spacing: DFSpace.sm) {
                     Button {
-                        manualHost = "192.168.123.1"
+                        manualHost = DFConnectionConstants.robotEthernetIP
                         manualPort = "5530"
                     } label: {
                         Label("OP2 표준 (192.168.123.1)", systemImage: "wand.and.stars")
@@ -1357,7 +1357,8 @@ public struct ConnectionWizardView: View {
         HStack {
             footerStatus
             Spacer()
-            Button("닫기") { isPresented = false }
+            // 사이클 138 (audit #24 codex sweep)
+            Button("닫기", role: .cancel) { isPresented = false }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(DFSpace.md)

@@ -118,7 +118,7 @@ public enum SSHShell {
     /// 흐름:
     ///   1. ~/.ssh/id_ed25519 가 없으면 생성 (passphrase 없이)
     ///   2. ssh-copy-id 로 public key 를 로봇에 등록 (password 한 번 입력)
-    public static func keyAuthSetupCommand(host: String = "192.168.123.1",
+    public static func keyAuthSetupCommand(host: String = DFConnectionConstants.robotEthernetIP,
                                            user: String = "robotis") -> String {
         return """
         # ── DarwinForge SSH 무인증 셋업 (Mac 터미널에서 한 번만 실행) ──

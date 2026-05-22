@@ -56,7 +56,7 @@ public final class InitialSetupState: ObservableObject {
         .vnc: .pending, .robotSetup: .pending,
         .macSSHKey: .pending, .connect: .pending
     ]
-    @Published public var host: String = "192.168.123.1"
+    @Published public var host: String = DFConnectionConstants.robotEthernetIP
     @Published public var username: String = "robotis"
 
     private var pollTask: Task<Void, Never>?
@@ -336,6 +336,32 @@ public struct InitialSetupWizardView: View {
                     .font(.system(size: DFFontSize.s10))
             }
             .foregroundStyle(DFColor.textSecondary)
+
+            // **사이클 140 (audit #22 codex follow-up)**: rollback UI wire-up.
+            // cycle 131 에서 const 만 정의, UI 미연결 (codex MINOR) → 사용자가 발견 불가.
+            // 본 disclosureGroup 으로 노출 — 명시 expand 시만 복사 가능 (사고 방지).
+            DisclosureGroup("⚠️ 셋업 원상복구 (rollback) — 부분 실패 시") {
+                Text("masterSetup 도중 단계 5 (df-inbox) 실패 등으로 partial state 발생 시\n실행. SSH/dialout 은 보존 — 다른 용도 가능성.")
+                    .font(.system(size: DFFontSize.s10))
+                    .foregroundStyle(DFColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(RobotSetupCommand.masterSetupRollback, forType: .string)
+                    copyToast = "✓ rollback 명령 복사 — VNC 터미널 붙여넣기"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { copyToast = nil }
+                } label: {
+                    Label("rollback 복사", systemImage: "arrow.uturn.backward")
+                        .font(.system(size: DFFontSize.s10))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.orange.opacity(0.15))
+                        .foregroundStyle(.orange)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .font(DFFont.caption)
         }
     }
 

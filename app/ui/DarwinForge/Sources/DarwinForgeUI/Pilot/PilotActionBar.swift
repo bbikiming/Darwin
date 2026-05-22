@@ -322,7 +322,8 @@ public struct PilotActionBar: View {
             HStack {
                 Text("추가 페이지").font(DFFont.title)
                 Spacer()
-                Button("닫기") { showMoreSheet = false }
+                // 사이클 138 (audit #24 codex sweep)
+                Button("닫기", role: .cancel) { showMoreSheet = false }
                     .keyboardShortcut(.cancelAction)
             }
             Divider()

@@ -144,7 +144,8 @@ public struct WalkTrialAutoGeneratorSheet: View {
                     isGenerating = false
                 }
             } else {
-                Button("닫기") { dismiss() }
+                // 사이클 138 (audit #24 codex sweep)
+                Button("닫기", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
             Spacer()
