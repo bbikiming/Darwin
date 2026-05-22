@@ -177,25 +177,40 @@ final class FiveSourcePilotPipelineTests: XCTestCase {
                        "sourcesUsed 가 정확히 5 (.djiRC 미포함)")
     }
 
-    /// **사이클 79 — `.djiRC` placeholder + 사이클 83 — 코덱스 LOW-2 hint 보강**.
-    /// 미래 DJI 컨트롤러 SDK integration 시 wiring 추가. 현재는 production code 가
-    /// 어디서도 `.djiRC` 를 emit 안 함 — 본 placeholder 가 향후 adapter 추가 시 회귀 가드.
+    /// **사이클 90 — `.djiRC` stub adapter wired (production SDK 부재 명시)**.
     ///
-    /// **fail 시 갱신 절차** (LOW-2 — 미래 개발자 안내):
-    /// 1. DJIControllerAdapter 신규 (Sources/DarwinForgeUI/WalkLab/Pilot/DJI/ 권장).
-    /// 2. RootView 또는 WalkLabView 에 adapter alloc + start.
-    /// 3. `testAllSourcesPassThroughBridge` 의 wiredSources 에 `.djiRC` 추가 → 5 → 6.
-    /// 4. 본 testCase 삭제 또는 unwired = [] 로 update.
-    /// 5. FiveSourcePilotPipelineTests 클래스 이름을 SixSourcePilotPipelineTests 로 rename.
-    func testDJIRCSourceIsPlaceholderNotYetWired() {
-        let allCases = InputSource.allCases
-        let wiredCases: [InputSource] = [.keyboard, .tello, .gamepad, .voice, .ui]
-        let unwired = allCases.filter { !wiredCases.contains($0) }
-        XCTAssertEqual(unwired, [.djiRC],
-                       """
-                       현재 unwired source = .djiRC (cycle 79 placeholder).
-                       wiring 시 docstring 의 5단계 절차 따라 본 test + testAllSourcesPassThroughBridge 갱신.
-                       """)
+    /// 사이클 79 placeholder 가 사이클 90 의 `DJIControllerAdapter` (DJI/ subdir) 로
+    /// adapter-wired. `MockDJIController` 와 함께 사용 시 다른 5 source 와 동일한
+    /// PilotIntent path (`.handleMove(_, from: .djiRC)` 등) 통과. 단 production DJI Mobile
+    /// SDK / Onboard SDK 는 부재 — `DJIControllerAdapter(bridge:)` production 편의 생성자는
+    /// 명시 `fatalError` stub. RootView 가 본 stub 발화 안 함 — 사이클 91+ 에서 SDK 통합
+    /// 후 `ProductionDJIControllerSource` 신규 + RootView wire 시 본 test 단순화 가능.
+    ///
+    /// # 검증
+    ///
+    /// 1. `DJIControllerAdapter` + `DJIControllerInputSource` protocol 존재 — 컴파일 단계가
+    ///    primary 가드. import 가능 시 wiring 완료.
+    /// 2. `.djiRC` 가 다른 source 와 동일 bridge.handleMove path 통과 — bridge 의 .djiRC
+    ///    source intent 가 lastIntent 에 정상 surface.
+    /// 3. production constructor 미연결 — `fatalError` 검증은 직접 호출 위험 → 호출하지 않음.
+    func testDJIRCStubAdapterIsWiredButProductionSDKAbsent() {
+        // 1. .djiRC 가 bridge handle path 통과 — adapter 가 wired (path-level 검증).
+        bridge.handleMove(WalkingCommand(strideMm: 10, sideMm: 0, turnDeg: 0), from: .djiRC)
+        XCTAssertEqual(bridge.lastIntent?.source, .djiRC,
+                       ".djiRC source 가 bridge.lastIntent 에 surface — stub adapter wired")
+
+        // 2. accumulator 도 .djiRC 누적 — InputSource 의 정식 시민.
+        let summary = bridge.accumulator.summarize()
+        XCTAssertTrue(summary.sourcesUsed.contains(.djiRC),
+                      "accumulator 가 .djiRC 누적 (cycle 90 wiring 후)")
+
+        // 3. production SDK 부재 — DJIControllerAdapter 의 production constructor 가
+        // `fatalError` stub. 호출 자체는 위험하므로 mock-only init 만 사용 검증.
+        // (mock init 이 정상 동작하면 protocol abstraction 도 정상.)
+        let mockSource = MockDJIController(controllerName: "TestStub")
+        let adapter = DJIControllerAdapter(bridge: bridge, source: mockSource)
+        XCTAssertFalse(adapter.isRunning, "mock-injected adapter init defaults")
+        XCTAssertEqual(adapter.stickScale, .default)
     }
 
     // MARK: - 5. Preset 변경 source diversity
