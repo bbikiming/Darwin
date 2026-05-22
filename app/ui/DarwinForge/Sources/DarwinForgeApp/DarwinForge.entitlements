@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ===== 사이클 69 — production entitlements (LOW-3 ground truth) ===== -->
+    <!-- docs/walk-lab/PILOT_PRODUCTION_ENTITLEMENTS.md 의 deployment guide 대응 source. -->
+    <!-- SwiftPM 개발 환경에서는 sandbox 비활성 → 본 파일 무관. -->
+    <!-- Xcode app project 또는 notarization wrapper 가 codesign 시 attach. -->
+
+    <!-- App Sandbox 활성 (notarization 강력 권장) -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Tello UDP receive (8890) + send (8889) — TelloStateListener + TelloLink -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Voice — SFSpeechRecognizer + audio input -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- USB serial (ROBOTIS DARwIn-OP2) — active 필수 (deferred 아님) -->
+    <!-- robot bus 연결의 핵심 — 미설정 시 sandbox 환경에서 USB serial 접근 차단. -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
+
+    <!-- 카메라 — 미래 vision-based 보행 보정 (현재 미사용, 활성화 시점에 enable) -->
+    <!--
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    -->
+
+    <!-- 사용자 선택 파일 접근 (motion 페이지 import / export) -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- ===== Hardened Runtime (notarization 강제 요건) ===== -->
+    <!-- Speech.framework + GameController + Network 의 일부 API 가 JIT / runtime patch 사용 -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <false/>
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <false/>
+    <!-- DYLD_INSERT_LIBRARIES 같은 env 변수 무시 (보안 강화) -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <false/>
+</dict>
+</plist>
