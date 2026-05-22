@@ -281,11 +281,52 @@ session.exitEmergencyMode()
 
 ---
 
+## v1.22 신규 기능 (cycles 84-98)
+
+### Audio 안전 피드백 (cycle 86 + 96)
+
+- emergency 발화 시 **NSBeep (시스템 알림음)** 자동 재생.
+- 정책: `session.pilotIsEmergency` 가 inactive → active 전환 시 1회만 발화.
+- 사용자 청각 피로 방지 — 이미 emergency 상태 (재발화 / 연타) 는 silent.
+- recovery (state inactive) 후 새 emergency = 다시 1회 발화 (source 무관).
+
+### Pilot Settings Panel (cycle 87)
+
+WalkLab → Pilot 조종 toggle → 6번째 panel "Pilot Settings":
+- 4 dimension slider: scaleLR / scaleFB / scaleYaw / smoothingFactor (각 0.0-1.0)
+- **실시간 preview**: 슬라이더 onChange → bridge 즉시 갱신 (50ms throttle).
+- **저장**: 명시 버튼 → UserDefaults 영속.
+- **기본값**: 4 slider → defaultValues 즉시 복귀.
+
+설정 영속:
+- Key schema v1: `pilot.scaleLR.v1` / `pilot.scaleFB.v1` / `pilot.scaleYaw.v1` / `pilot.smoothingFactor.v1`
+- Type-safe Double cast (cycle 88) — String corruption 시 default fallback.
+- 다음 launch 자동 load (RootView.onAppear → bridge 적용).
+
+### DJI Controller Stub (cycle 92)
+
+`.djiRC` InputSource 의 5번째 enum case wiring 진입점:
+- `DJIControllerAdapter` (@MainActor @Observable) + `DJIControllerInputSource` protocol
+- Production DJI SDK 통합 전까지: `MockDJIController` 만 사용 가능
+- `init(bridge:)` 는 `@available(*, unavailable, ...)` — 외부 호출 시 compile error (안전 격상)
+- SDK 통합 시: `ProductionDJIControllerSource` 신규 추가 + init(bridge:source:) 사용
+
+### Pilot HQ Status Row (cycle 78) — 미정 사용자에게 강조
+
+5 panel 위 한 줄 요약:
+- 🟢 정상 / 🔴 비상 — emergency 상태 즉시 시각화
+- 마지막 active source + icon — 어떤 source 가 마지막 입력인지
+- event rate (events/s) — 입력 활동 강도
+- ⚡ 활성 / 비활성 — bridge enabled 토글
+
+---
+
 ## 안전 / 책임
 
 - **실 robot 사용 시**: 단일 stop 가 항상 우선. emergency 가 어떤 source 든 즉시 차단.
 - **시뮬 모드**: `session.store?.bus == nil` 인 경우 motor 송출 안 함 — 모든 입력은 UI state 만.
 - **권한 거부 시**: production silent fail → UI banner 안내 (cycle 72 HIGH-2 fix).
+- **emergency 자동 audio**: cycle 86 + 96 — state-based throttle. 사용자가 음 안 들리면 이미 emergency 상태 (recovery 필요).
 
 ---
 
