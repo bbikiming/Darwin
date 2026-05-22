@@ -458,4 +458,10 @@ public final class WalkLabRCBridge {
         guard let t = lastInputAt else { return nil }
         return Date().timeIntervalSince(t)
     }
+
+    /// **v1.20.37 사이클 48** — 입력이 최근 (< 2초) 인지 — HUD freshness 표시.
+    public var isInputFresh: Bool {
+        guard let age = lastInputAge else { return false }
+        return age < 2.0
+    }
 }
