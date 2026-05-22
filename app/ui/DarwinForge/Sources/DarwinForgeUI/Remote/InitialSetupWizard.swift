@@ -265,6 +265,13 @@ public struct InitialSetupWizardView: View {
             Text("로봇 데스크톱을 Mac에 띄워 가상 키보드로 명령을 입력합니다.")
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
+            // **사이클 130 (audit #23, P0)**: 수동 확인 명시 — VNC 연결 자체는 자동 검증 안 됨.
+            // 종전 "VNC 데스크톱 열기" 클릭 → 즉시 .completed → 사용자가 "Mac이 VNC 연결을
+            // 검증했다" 로 오해. 신규 라벨로 "수동 확인 — 화면 표시되면 클릭" 강조.
+            Text("⚠️ 자동 검증 X — 화면 표시 후 사용자가 수동 확인")
+                .font(DFFont.caption)
+                .foregroundStyle(.orange)
+                .padding(.bottom, 2)
             HStack(spacing: DFSpace.sm) {
                 Button {
                     if let u = URL(string: "vnc://\(state.host):5900") {
@@ -272,7 +279,7 @@ public struct InitialSetupWizardView: View {
                     }
                     state.mark(.vnc, .completed)
                 } label: {
-                    Label("VNC 데스크톱 열기", systemImage: "display")
+                    Label("VNC 열고 — 화면 표시 시 수동 확인", systemImage: "display")
                         .padding(.horizontal, 12).padding(.vertical, 6)
                         .background(DFColor.accent)
                         .foregroundStyle(.white)
