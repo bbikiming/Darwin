@@ -23,6 +23,13 @@ final class MeshRig {
     private var allMeshNodes: [SCNNode] = []
     private var originalEmissions: [ObjectIdentifier: NSColor] = [:]
 
+    /// **사이클 125 (audit #19/#36, P1/P2)**: 개별 STL 로드 실패 카운트. 호출자 (Robot3DViewport)
+    /// 가 본 count 를 구독 → ≥1 이면 사용자에게 "일부 mesh 실패 (plain cube fallback)" overlay.
+    /// 종전 silent fallback (OSLog only) → caller flag 구독 안 하면 사용자 통지 0.
+    private(set) var stlLoadFailureCount: Int = 0
+    /// **사이클 125 (audit #36)**: 실패 mesh 이름 — debugging + UI 표시용.
+    private(set) var stlLoadFailureNames: [String] = []
+
     /// URDF axis (ROBOTIS world): 회전 부호와 축 방향.
     /// 방향이 음수면 양수 명령에 음 방향 회전.
     private var jointAxes: [JointID: SCNVector3] = [:]
@@ -270,6 +277,12 @@ final class MeshRig {
             // mesh 로드 실패 시 그냥 plain color cube placeholder.
             // v1.11.23: print → OSLog (subsystem "com.darwinforge" / category "visualization").
             // Codex HIGH fix: privacy=.public — name + error 명시 공개 (Console 에서 표시).
+            // **사이클 125 (audit #19/#36, P1/P2)**: stlLoadFailureCount 누적 — caller 가 구독
+            // 가능한 flag. plain cube fallback 도 명시 — 종전 silent fallback 위험.
+            stlLoadFailureCount += 1
+            if !stlLoadFailureNames.contains(name) {
+                stlLoadFailureNames.append(name)
+            }
             DFLog.visualization.warning("STL load failed for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }

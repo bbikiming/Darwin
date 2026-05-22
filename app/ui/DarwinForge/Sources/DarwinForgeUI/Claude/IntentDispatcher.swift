@@ -45,6 +45,9 @@ public final class IntentDispatcher: ObservableObject {
         case offline        // USB 미연결
     }
 
+    /// **사이클 125 (audit #16, P1)**: 기본값 `.simulation` — 처음 앱 실행 시 사용자가 명시
+    /// 연결하기 전까지 dry-run only. UI 가 본 mode 를 명시 표시해야 사용자 오해 차단.
+    /// ConnectionStore 가 bus 연결 감지 시 IntentDispatcher.mode 를 `.hardware` 로 갱신.
     @Published public var mode: Mode = .simulation
 
     /// `ConnectionStore`가 보유한 Bus를 받아서 사용 — DI.
