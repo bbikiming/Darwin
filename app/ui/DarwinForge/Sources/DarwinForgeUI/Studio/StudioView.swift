@@ -69,7 +69,8 @@ public struct StudioView: View {
         .alert(
             "로봇에 보내는 중 문제가 생겼어요",
             isPresented: Binding(get: { lastError != nil }, set: { if !$0 { lastError = nil } }),
-            actions: { Button("닫기") { lastError = nil } },
+            // **사이클 133 (audit #24, P2)**: role: .cancel — Esc + VoiceOver 접근성.
+            actions: { Button("닫기", role: .cancel) { lastError = nil } },
             message: { Text(lastError ?? "") }
         )
         // 티칭 모드 → Studio 자세 전달 받음.

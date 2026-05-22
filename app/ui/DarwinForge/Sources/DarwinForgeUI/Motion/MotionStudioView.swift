@@ -92,7 +92,9 @@ public struct MotionStudioView: View {
         .alert(
             "동작 처리 중 문제가 생겼어요",
             isPresented: Binding(get: { lastError != nil }, set: { if !$0 { lastError = nil } }),
-            actions: { Button("닫기") { lastError = nil } },
+            // **사이클 133 (audit #24, P2)**: role: .cancel 추가 — Esc 키 dismiss + VoiceOver
+            // 접근성 개선. "닫기" 단어 자체는 Apple HIG 준수 (informational alert dismiss).
+            actions: { Button("닫기", role: .cancel) { lastError = nil } },
             message: { Text(lastError ?? "") }
         )
         .onAppear {
