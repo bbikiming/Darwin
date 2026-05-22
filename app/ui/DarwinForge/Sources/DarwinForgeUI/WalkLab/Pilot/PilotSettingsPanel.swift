@@ -60,7 +60,9 @@ public struct PilotSettingsPanel: View {
     // 슬라이더 mouse-up 등 마지막 값은 `onChange` 의 후행 호출이 보장 — UX 손실 0.
     @State private var lastSliderUpdate: Date = .distantPast
     /// internal — test 가 default 값 검증 가능. 50ms = 20Hz cap.
-    static let sliderThrottleInterval: TimeInterval = 0.05
+    /// `nonisolated` — `@MainActor` struct 안에서도 static constant 라 actor hop 불필요 +
+    /// default param expression (nonisolated context) 에서 안전하게 참조 가능.
+    nonisolated static let sliderThrottleInterval: TimeInterval = 0.05
 
     // MARK: - Init
 

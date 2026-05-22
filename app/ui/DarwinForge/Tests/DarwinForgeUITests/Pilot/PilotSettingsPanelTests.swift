@@ -149,4 +149,87 @@ final class PilotSettingsPanelTests: XCTestCase {
         XCTAssertEqual(store.load(), stored,
                        "init 의 store.load() 가 save 발화 안 함 — read-only path")
     }
+
+    // MARK: - Test 6 (사이클 89 — HIGH-2 회귀 가드): slider drag throttle
+
+    /// **HIGH-2 회귀 가드**: 50ms 이내 연속 slider drag 호출은 drop 되어야 함.
+    /// 본 테스트가 깨지면 observability storm 재발 — TelloPilotHud / PilotHQStatusRow
+    /// 가 매 frame (60Hz) re-render 됨.
+    func testSliderUpdateThrottleDropsRapidSuccessiveCalls() {
+        let base = Date(timeIntervalSinceReferenceDate: 1_000_000.0)
+
+        // 첫 호출 — distantPast 부터 충분히 떨어짐 → 통과.
+        let first = PilotSettingsPanel.shouldApplySliderUpdate(
+            now: base, lastUpdate: .distantPast
+        )
+        XCTAssertTrue(first.shouldApply,
+                      "초기 (lastUpdate=distantPast) 첫 호출은 항상 통과")
+        XCTAssertEqual(first.nextTimestamp, base,
+                       "통과 시 nextTimestamp 는 now 로 갱신")
+
+        // 49ms 후 호출 — throttle (50ms) 미만이라 drop.
+        let dropped = PilotSettingsPanel.shouldApplySliderUpdate(
+            now: base.addingTimeInterval(0.049), lastUpdate: base
+        )
+        XCTAssertFalse(dropped.shouldApply,
+                       "49ms < 50ms throttle — drop. 60Hz drag 폭주 방지.")
+        XCTAssertEqual(dropped.nextTimestamp, base,
+                       "drop 시 lastUpdate 보존 (다음 호출이 같은 기준으로 평가)")
+
+        // 50ms 후 호출 — 경계값. 통과 (>=).
+        let boundary = PilotSettingsPanel.shouldApplySliderUpdate(
+            now: base.addingTimeInterval(0.050), lastUpdate: base
+        )
+        XCTAssertTrue(boundary.shouldApply,
+                      "정확히 50ms 경계는 통과 (>= throttle)")
+
+        // 51ms 후 호출 — 통과.
+        let passed = PilotSettingsPanel.shouldApplySliderUpdate(
+            now: base.addingTimeInterval(0.051), lastUpdate: base
+        )
+        XCTAssertTrue(passed.shouldApply, "51ms > 50ms 통과")
+        XCTAssertEqual(passed.nextTimestamp, base.addingTimeInterval(0.051),
+                       "통과 시 nextTimestamp = now")
+    }
+
+    /// **HIGH-2 회귀 가드**: throttle constant 가 50ms (20Hz cap) 유지. 본 값이
+    /// 변하면 observability storm 영향 — 1ms 로 줄이면 60Hz storm 재발.
+    func testSliderThrottleIntervalIs50ms() {
+        XCTAssertEqual(PilotSettingsPanel.sliderThrottleInterval, 0.05, accuracy: 1e-9,
+                       "throttle = 50ms 고정 (20Hz cap) — 변경 시 storm 위험 검토 필요")
+    }
+
+    // MARK: - Test 7 (사이클 89 — HIGH-1 회귀 가드): onAppear reload from store
+
+    /// **HIGH-1 회귀 가드**: view 재진입 시 store 의 최신 값을 bridge 에 반영.
+    /// `@State` init-time 동결 문제로 다른 source 가 store 갱신 시 panel slider 가
+    /// stale 했던 결함 — 본 reload helper 가 fix path.
+    func testReloadAppliesLatestStoreValueToBridge() {
+        // 사전 — panel 이 한 번 init 됐다고 가정 (default state).
+        XCTAssertEqual(bridge.scale, .default, "사전: bridge default")
+
+        // 다른 source (예: keyboard panel ± 클릭 / 별 세션의 save) 가 store 갱신.
+        let externalUpdate = PilotPreferences(
+            scaleLR: 0.42, scaleFB: 0.31, scaleYaw: 0.58, smoothingFactor: 0.66
+        )
+        store.save(externalUpdate)
+
+        // bridge 는 아직 stale — panel 의 @State 도 stale 했을 것.
+        XCTAssertEqual(bridge.scale, .default,
+                       "store 갱신만으로 bridge 자동 동기화 안 됨 (reload 필요)")
+
+        // panel.onAppear 가 호출하는 reload path — store.load → bridge.apply.
+        let reloaded = PilotSettingsPanel.reload(from: store, into: bridge)
+
+        XCTAssertEqual(reloaded, externalUpdate,
+                       "reload 반환값 = store 최신")
+        XCTAssertEqual(bridge.scale.lr, externalUpdate.scaleLR, accuracy: 1e-9,
+                       "reload 후 bridge.scale.lr 가 store 최신값 반영")
+        XCTAssertEqual(bridge.scale.fb, externalUpdate.scaleFB, accuracy: 1e-9,
+                       "reload 후 bridge.scale.fb 가 store 최신값 반영")
+        XCTAssertEqual(bridge.scale.yaw, externalUpdate.scaleYaw, accuracy: 1e-9,
+                       "reload 후 bridge.scale.yaw 가 store 최신값 반영")
+        XCTAssertEqual(bridge.smoothingFactor, externalUpdate.smoothingFactor, accuracy: 1e-9,
+                       "reload 후 bridge.smoothingFactor 가 store 최신값 반영")
+    }
 }

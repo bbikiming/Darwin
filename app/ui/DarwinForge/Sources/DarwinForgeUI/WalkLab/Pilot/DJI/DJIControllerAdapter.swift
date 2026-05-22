@@ -118,14 +118,14 @@ public final class DJIControllerAdapter {
     ///    ProductionDJIControllerSource())` 로 교체.
     /// 3. `FiveSourcePilotPipelineTests.testDJIRCSourceIsPlaceholderNotYetWired` 갱신
     ///    (사이클 79 placeholder docstring 의 5단계 절차).
+    /// **사이클 96 — 코덱스 HIGH-2 fix**: 종전 fatalError 던지는 convenience init →
+    /// `@available(*, unavailable, ...)` 으로 compile-time error 격상. 외부 module 이
+    /// 실수로 호출 시 runtime crash 가 아닌 compile error → 안전.
+    /// 향후 DJI SDK 통합 시 본 attribute 제거 + 실제 ProductionDJIControllerSource 주입.
+    @available(*, unavailable, message: "DJI SDK 미통합 — init(bridge:source:) 와 MockDJIController 사용. SDK 통합 시 cycle 91+ 의 절차 따라 적용.")
     public convenience init(bridge: WalkLabRCBridge?) {
-        fatalError(
-            """
-            DJIControllerAdapter 의 production constructor 는 사이클 90 부터 stub 입니다 —
-            DJI Mobile SDK / Onboard SDK 통합 전 까지 명시 init(bridge:source:) 와
-            MockDJIController 또는 신규 ProductionDJIControllerSource 만 사용하세요.
-            """
-        )
+        // unavailable 어트리뷰트로 compile 차단 — 본 body 는 unreachable.
+        fatalError("unreachable")
     }
 
     /// 테스트 / 통합 진입점 — MockDJIController 또는 미래 production source 주입.

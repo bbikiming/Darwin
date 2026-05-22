@@ -137,11 +137,9 @@ public final class WalkLabRCBridge {
     /// production RootView 가 NSBeepFeedbackPlayer() 주입.
     public var audioFeedback: AudioFeedbackPlayer?
 
-    /// **사이클 94 — 코덱스 HIGH-3 fix**: emergency beep throttle (사용자 청각 피로 차단).
-    /// emergency 연타 시 system beep queue 폭주 방지. 마지막 beep 후 N초 이내 추가 발화 skip.
-    /// 안전 신호 의미 보존 — 첫 1회만 "전환 신호", 이후는 redundant.
-    private var lastEmergencyBeepAt: Date?
-    private static let emergencyBeepThrottleSec: TimeInterval = 0.5
+    // 사이클 96 — 코덱스 HIGH-1: cycle 94 timestamp throttle 제거.
+    // state-based 로 대체 — `session.pilotIsEmergency` 가 already true 면 silent.
+    // recovery (state inactive) 후 새 emergency 진입 시 다시 beep — source 무관.
 
     // MARK: - Init
 
@@ -225,10 +223,9 @@ public final class WalkLabRCBridge {
         // 종전: lastIntent 는 emergency 그대로 → HUD sourceChip 가 stale ("긴급" 표시 유지).
         // 신규: nil 로 reset → HUD "대기" 로 복귀, recovery 완료 시각화.
         lastIntent = nil
-        // **사이클 95 — cycle 94 throttle bug fix**: recovery 후 throttle 도 reset.
-        // 종전: recovery → 새 emergency 0.4초 안에 발화 시 silent (안전 신호 누락).
-        // 신규: recovery 가 throttle window 도 reset → 다음 emergency 즉시 beep.
-        lastEmergencyBeepAt = nil
+        // 사이클 96: cycle 94/95 의 timestamp throttle 제거 — state-based throttle (cycle 96)
+        // 이 session.pilotIsEmergency 만 사용. recovery → state inactive → 다음 emergency
+        // 자동으로 beep (reset 작업 불요).
         session.pilotPostEvent("emergency recovery — preset 입력 활성", source: source)
     }
 
@@ -329,19 +326,20 @@ public final class WalkLabRCBridge {
         if intent.kind == .emergency {
             accumulator.record(intent)
             emergencyCount += 1
+            // emergency 는 engineSynced 까지 안 감 → cancel 로 cycle 정리 (rejectedCount +1).
+            latencyTracker?.cancel()
+            // **사이클 86 + 사이클 96 코덱스 HIGH-1 (cycle 94 timestamp throttle 대체)**:
+            // 안전 critical event 청각 피드백 + state-based throttle.
+            // 종전 timestamp throttle: 다른 source 의 emergency 0.4초 안에 silent → source 별 신호 누락.
+            // 신규 state-based: emergency 첫 진입 시만 beep (이미 emergency 면 silent).
+            // 이미 정지 상태에서 다른 source emergency 는 redundant — 사용자 인식에 의미 없음.
+            // emergency 해제 (recovery) 후 새 emergency = state 다시 inactive → active 전환 → beep.
+            let wasAlreadyEmergency = session.pilotIsEmergency
             session.emergencyStop(trigger: .externalEStop)
             Task { [tello] in await tello.emergency() }
             safetyMessage = "긴급 정지 발화 — 모든 채널 차단"
-            // emergency 는 engineSynced 까지 안 감 → cancel 로 cycle 정리 (rejectedCount +1).
-            latencyTracker?.cancel()
-            // **사이클 86 + 사이클 94 코덱스 HIGH-3**: 안전 critical event 청각 피드백 + throttle.
-            // 종전: 매 emergency intent 마다 NSBeep — 연타 시 system queue 폭주 → 사용자 청각 피로.
-            // 신규: 0.5초 throttle — 첫 발화만 의미, 이후는 redundant (이미 정지 상태).
-            let now = Date()
-            if lastEmergencyBeepAt == nil ||
-               now.timeIntervalSince(lastEmergencyBeepAt!) >= Self.emergencyBeepThrottleSec {
+            if !wasAlreadyEmergency {
                 audioFeedback?.playEmergency()
-                lastEmergencyBeepAt = now
             }
             return
         }
