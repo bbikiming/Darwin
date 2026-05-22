@@ -149,10 +149,125 @@ public final class MotionBlender {
 
     /// blended pose 산출 — walkBasePose (walking module 결과) 위에 upper motion overlay.
     /// **주의**: arm swing (rShoulderPitch/lShoulderPitch) 는 upper motion 이 override.
+    ///
+    /// **Deprecated (v1.20.31)**: `blendedPose(walkingPose:alpha:)` 사용 권장 —
+    /// 새 method 가 실 joint-wise overlay 구현 + alpha 지원. 본 method 는 caller
+    /// 호환을 위해 유지, 내부는 동일 구현 위임.
     public func blendedPose(walkBasePose: RobotPose) -> RobotPose {
-        // Phase 3 sim: lower = walkBasePose 그대로, upper motion 의 joint 가 있다면 override.
-        // 본격 motion overlay (page joint angle 추출 등) 는 별도 phase — 현재 base 만 반환.
-        return walkBasePose
+        return blendedPose(walkingPose: walkBasePose, alpha: 1.0)
+    }
+
+    /// **v1.20.31 (2026-05-22) — joint-wise blending 실 구현**.
+    ///
+    /// 보행 base pose 위에 upper motion descriptor 의 target joint 를 덮어쓰거나
+    /// (alpha=1.0) 선형 보간 (0<alpha<1) 한다.
+    ///
+    /// # 비유
+    ///
+    /// DJ 의 mixer crossfader — `alpha=1.0` 이면 upper deck 만 출력, `alpha=0` 이면
+    /// lower deck (walking) 만. 그 사이는 두 신호의 선형 합성. **단**, override 는
+    /// upper motion 이 점유한 joint 에만 적용 — 점유 안 한 joint 는 walkingPose 그대로.
+    ///
+    /// # 동작
+    ///
+    /// 1. **teach 자세** (전신 점유) — walkingPose 무시, teach pose 자체 반환.
+    /// 2. **upper 채널 nil** — walkingPose 그대로.
+    /// 3. **upper 가 page** — `v1TargetPoseID` 가 `PoseLibrary` 의 자세를 가리키면
+    ///    그 자세의 joint 중 page `bodyRegions` 가 점유한 joint 만 override.
+    ///    v1TargetPoseID nil 이면 (e.g., chain page) override skip.
+    /// 4. **upper 가 walk** — 발생 불가 (walk 는 lower channel) — walkingPose 그대로.
+    /// 5. **lower 채널 (walk preset)** — walkingPose 가 이미 그 결과이므로 그대로
+    ///    base 로 사용. 추가 처리 없음.
+    ///
+    /// - Parameters:
+    ///   - walkingPose: 보행 module 의 현 step pose (lower body 결정).
+    ///   - alpha: upper override 강도 (0..1). 1.0 = full override, 0 = walking 만,
+    ///            0.5 = 중간. 범위 밖은 자동 clamp.
+    /// - Returns: blended `RobotPose` — 새 인스턴스 (immutable).
+    public func blendedPose(walkingPose: RobotPose, alpha: Double = 1.0) -> RobotPose {
+        let blend = alpha.clamped(to: 0.0...1.0)
+
+        // 1) teach 자세 — 전신 점유 (lower 에 저장됨). walkingPose 무시.
+        if let lowerDescriptor = lower, case .teach(let snap) = lowerDescriptor {
+            return snap.pose
+        }
+        // 2) page 가 lower 에 저장된 경우 (acceptedFullBody 분기) — page 전신 점유.
+        //    v1TargetPoseID 매핑이 있으면 그 pose 사용, 없으면 walking 유지.
+        if let lowerDescriptor = lower, case .page(let meta) = lowerDescriptor,
+           !meta.bodyRegions.isEmpty,
+           Set(meta.bodyRegions).contains(.rightLeg) || Set(meta.bodyRegions).contains(.leftLeg),
+           !isUpperOnlyPage(meta) {
+            // 전신 또는 lower 점유 page — v1TargetPoseID 없으면 walking 유지.
+            guard let poseID = meta.v1TargetPoseID,
+                  let named = PoseLibrary.get(poseID) else {
+                return walkingPose
+            }
+            // page 가 점유한 joint 만 override.
+            return overlay(base: walkingPose, target: named.pose, regions: Set(meta.bodyRegions), alpha: blend)
+        }
+
+        // 3) upper 채널 nil → walking 그대로.
+        guard let upperDescriptor = upper else {
+            return walkingPose
+        }
+
+        // 4) upper descriptor → target pose 추출.
+        guard let targetPose = upperTargetPose(for: upperDescriptor) else {
+            // 매핑 안 됨 (chain page 등) — walking 유지.
+            return walkingPose
+        }
+
+        // 5) upper 가 점유한 joint 만 overlay.
+        let regions = upperDescriptor.bodyRegions
+        return overlay(base: walkingPose, target: targetPose, regions: regions, alpha: blend)
+    }
+
+    /// upper descriptor 의 target RobotPose 추출.
+    /// - walk: nil (walk 는 lower channel, upper 가 walk 인 경우는 비정상).
+    /// - page: `v1TargetPoseID` → `PoseLibrary` 매핑. nil 이면 nil 반환.
+    /// - teach: snapshot pose 그대로.
+    private func upperTargetPose(for descriptor: MotionDescriptor) -> RobotPose? {
+        switch descriptor {
+        case .walk:
+            return nil
+        case .page(let meta):
+            guard let poseID = meta.v1TargetPoseID else { return nil }
+            return PoseLibrary.get(poseID)?.pose
+        case .teach(let snap):
+            return snap.pose
+        }
+    }
+
+    /// page 가 upper-only (lower joint 점유 X) 인지 — 즉 lower 에 저장될 일 없는 경우.
+    /// 본 helper 는 `blendedPose` 의 분기에서 lower channel 의 page 가 진짜 lower
+    /// 점유 page 인지 (e.g., get-up chain) 구분 용.
+    private func isUpperOnlyPage(_ meta: MotionPageMetadata) -> Bool {
+        let regions = Set(meta.bodyRegions)
+        return !regions.contains(.rightLeg) && !regions.contains(.leftLeg)
+    }
+
+    /// joint-wise overlay — `regions` 에 속한 joint 만 base 와 target 의 alpha 보간.
+    /// regions 밖 joint 는 base 그대로.
+    private func overlay(
+        base: RobotPose,
+        target: RobotPose,
+        regions: Set<JointID.BodyPart>,
+        alpha: Double
+    ) -> RobotPose {
+        // alpha == 0 → base 그대로 (early exit, 새 인스턴스 회피).
+        if alpha <= 0 { return base }
+        var updates: [JointID: Int] = [:]
+        for joint in JointID.allCases where regions.contains(joint.bodyPart) {
+            let baseRaw = base.raw(joint)
+            let targetRaw = target.raw(joint)
+            if alpha >= 1.0 {
+                updates[joint] = targetRaw
+            } else {
+                let blended = Double(baseRaw) + (Double(targetRaw) - Double(baseRaw)) * alpha
+                updates[joint] = Int(blended.rounded())
+            }
+        }
+        return base.with(updates)
     }
 
     // MARK: - Internal validation

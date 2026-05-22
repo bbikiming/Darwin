@@ -1111,6 +1111,15 @@ public final class WalkLabSession {
     /// 진행 중 sim 에 현재 슬라이더/프리셋 값을 재밀어넣는다.
     /// advanced 슬라이더가 움직였을 때 view 측에서 호출.
     public func syncCommandToEngine() {
+        // **v1.20.44 사이클 58 — security-auditor CRITICAL fix**:
+        // emergencyStopActive 동안 engine 송출 hard-reject. 종전: 모든 호출 (외부 자동화 /
+        // slider didSet / 미래 voice path) 이 무조건 engine.setCommand 송출 → emergency 후
+        // robot 자동 깨어남 위험.
+        // 신규: emergency 상태에서는 setCommand(0,0,0,false) 만 송출하고 즉시 return.
+        if emergencyStopActive {
+            engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
+            return
+        }
         let cmd = effectiveCommand
         engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
         engine.setPeriodMs(effectivePeriodMs)

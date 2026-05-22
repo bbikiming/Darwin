@@ -278,6 +278,16 @@ public final class WalkLabRCBridge {
             safetyMessage = "Bridge 비활성 — emergency 만 허용"
             return
         }
+        // **v1.20.44 사이클 58 — security-auditor HIGH 1 fix**:
+        // emergencyStopActive 동안 move/stop/motion intent 차단. emergency intent 만 통과.
+        // 종전: handleMove 의 auto-start path 가 emergency 상태에서도 session.start 호출 → robot 재작동.
+        // emergency Space → W → autostart .march 로 robot 깨어남. 큰 안전 hole.
+        // 신규: 모든 non-emergency intent 차단 + 사용자에게 recovery 안내.
+        if intent.kind != .emergency && session.emergencyStopActive {
+            accumulator.record(intent)
+            safetyMessage = "긴급 정지 상태 — recovery 필요 (R 키 또는 Recover 버튼)"
+            return
+        }
         // emergency 는 무조건 통과.
         if intent.kind == .emergency {
             accumulator.record(intent)
@@ -401,6 +411,12 @@ public final class WalkLabRCBridge {
     /// - **CRITICAL fix**: advanced=true 자동 활성 + syncCommandToEngine 호출 → 실 walking 에 반영.
     private func applyAmplitude(_ cmd: WalkingCommand, in session: WalkLabSession,
                                  applyHardZero: Bool = false) {
+        // **v1.20.44 사이클 58 — security-auditor HIGH 2 fix**:
+        // emergency 상태에서 applyAmplitude 호출 차단 — race 로 process() 우회 시 invariant 보장.
+        // 호출자 (handleMotion 등) 의 가드가 우회되더라도 marginal layer 차단.
+        if session.emergencyStopActive {
+            return  // emergency 중 amplitude write 차단.
+        }
         // **사이클 20-fix CRITICAL (코덱스)** — advanced=true 자동 활성 (amplitude 쓰기 전에!).
         // 이유: `advanced` didSet 가 `loadPresetDefaultsToSliders(current)` 호출 →
         // 기존 strideMm 0 으로 reset. 따라서 amplitude 적용 BEFORE 가 아닌 advanced AFTER 면
