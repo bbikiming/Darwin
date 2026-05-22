@@ -107,6 +107,24 @@ public final class ConnectionStore: ObservableObject {
     /// 5Hz IMU polling × tau=0.5s — alpha ≈ 0.71. 정적 tilt 보다 약간 개선.
     @Published public private(set) var imuFilter: ImuFilter = ImuFilter()
 
+    /// 사이클 159 (P0-1, gyro closed-loop review fix):
+    /// IMU polling 동적 모드. walk 활성 시 fast (50ms = 20Hz), idle 시 slow (200ms = 5Hz).
+    ///
+    /// # 비유
+    ///
+    /// 운전 중에는 거울을 자주 보고, 주차 중에는 가끔 본다. IMU 도 walk 중 자주 read 해야
+    /// 보정 closed-loop 가 즉각 반응. idle 시는 5Hz 면 UI 게이지 충분 + CPU 절약.
+    ///
+    /// # 정책
+    ///
+    /// - `false` (default): 200ms = 5Hz — UI 표시 + fall-risk detection 용도.
+    /// - `true` (WalkLabSession 가 walk 활성 시 set): 50ms = 20Hz — applyBalanceCorrection 의
+    ///   freshness gate (250ms) 와 4 step 마진.
+    ///
+    /// 본 사이클은 종전 cycle 64 의 "perf optimization 5Hz" 결정을 walk-active 동안만 부분
+    /// 무효화. idle 시 perf 유지.
+    @Published public var imuFastPollActive: Bool = false
+
     /// **v1.11.17 (2026-05-19) — LiveGyroPanel 용**: 최신 raw IMU sample.
     /// 종전: imuFilter 만 expose 라 gyro 각속도 (X/Y/Z dps) UI 노출 불가.
     /// runImuLoop 가 매 polling 마다 갱신. UI 가 자이로 패널에서 직접 read.
@@ -1388,8 +1406,13 @@ public final class ConnectionStore: ObservableObject {
         //       충분. IMU sensor 자체는 200-500Hz 출력이지만 SwiftUI 표시는
         //       5Hz 면 사람 눈으로 부드러움. fall risk 는 별도 board IMU 직접
         //       read 로 보완 (telemetryLoop 안에서).
+        //
+        // **사이클 159 (P0-1 gyro closed-loop review fix)**: walk 활성 시 imuFastPollActive
+        // = true 면 50ms (20Hz) 로 동적 증속 — applyBalanceCorrection 의 freshness gate
+        // (250ms) 와 4 step 마진. idle 시 200ms (5Hz) 유지 → perf 영향 최소.
+        // runImuLoop 안에서 flag 매 iter 확인. 시작 period 는 slow default.
         imuPollTask = Task { [weak self] in
-            await self?.runImuLoop(periodNs: 200_000_000)  // 200ms = 5Hz (perf v1.14.8)
+            await self?.runImuLoop()
         }
     }
 
@@ -1405,12 +1428,16 @@ public final class ConnectionStore: ObservableObject {
     private var imuPollTask: Task<Void, Never>?
 
     /// IMU 전용 polling loop. joint/board read 와 분리되어 bus contention 회피.
-    private func runImuLoop(periodNs: UInt64) async {
+    /// 사이클 159 (P0-1 fix): period 는 imuFastPollActive flag 에 따라 동적 — fast 시 50ms,
+    /// slow 시 200ms. WalkLabSession 가 walk start/stop 시 flag toggle.
+    private func runImuLoop() async {
         // **v1.14.2 (2026-05-21) — IMU 상태 전환 트래킹**.
         // 매 iter 진입 전 직전 상태를 보고, 전환 발생 시 telemetry 발화.
         var prevImuUnavailable: Bool = false
         var prevImuStale: Bool = false
         var prevScaleSuspicion: ImuScaleSuspicion = .unknown
+        // 사이클 159: 모드 전환 telemetry — fast↔slow 첫 전환에 .imuPollRateChanged 발화.
+        var prevFastMode: Bool = self.imuFastPollActive
         while !Task.isCancelled, let bus = self.bus {
             let imuResult: Result<ImuRaw, Error> = await Task.detached(priority: .userInitiated) {
                 do { return .success(try bus.readImu()) }
@@ -1490,6 +1517,19 @@ public final class ConnectionStore: ObservableObject {
                     prevImuStale = true
                 }
             }
+            // 사이클 159 (P0-1 fix): 동적 polling period — walk 활성 시 50ms, idle 시 200ms.
+            // flag 변경 telemetry — 전환 시 한 번.
+            let fastNow = self.imuFastPollActive
+            if fastNow != prevFastMode {
+                Harness.shared.record(
+                    .imuPollRateChanged, level: .info, actor: .robot,
+                    data: ["fast_mode": AnyCodable(fastNow),
+                           "period_ms": AnyCodable(fastNow ? 50 : 200)],
+                    context: harnessContext()
+                )
+                prevFastMode = fastNow
+            }
+            let periodNs: UInt64 = fastNow ? 50_000_000 : 200_000_000
             try? await Task.sleep(nanoseconds: periodNs)
         }
     }

@@ -1352,6 +1352,8 @@ public final class WalkLabSession {
         // v1.11.24 audit P1-1 — invariant: stop() 후엔 항상 isRobotWalking=false.
         // cancelWalkCycle 은 walkCycleTask 가 nil 이면 reset 안 함 (test/sim 경로).
         isRobotWalking = false
+        // 사이클 159 (P0-1 fix): stop() 도 IMU slow polling 복원 — finalize race 회피.
+        store?.imuFastPollActive = false
         // v1.11.24 audit iter2-B — 진단 필드 reset. 종전: 다음 session 의 로그 헤더에
         // 이전 session 의 requestedPreset / startBlockedReason 등이 leak.
         motorWriteStarted = false
@@ -1688,6 +1690,9 @@ public final class WalkLabSession {
                        "advanced": AnyCodable(advanced)]
             )
             onboardWalkingActive = true
+            // 사이클 159 (P0-1 fix): onboard mode 도 IMU fast polling — robot 측 보정 외에도
+            // Mac UI 의 LiveGyroPanel / FallPredictor 가 빠르게 반응. 단 Mac 보정은 미적용.
+            store.imuFastPollActive = true
             activeRobotPreset = preset
             motorWriteStarted = false        // bridge 가 ACK ok 도착 시 set
             motorWriteStepCount = 0
@@ -1801,6 +1806,9 @@ public final class WalkLabSession {
         // 연속 보행 plan 시도.
         if let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: currentWalkTuning()) {
             isRobotWalking = true
+            // 사이클 159 (P0-1 fix): 실 robot 송출 path → IMU fast polling (50ms = 20Hz).
+            // freshness gate (250ms) 와 4 step 마진. stop 시 finalize 에서 false 복원.
+            store.imuFastPollActive = true
             // v1.11.24 audit P1-1 — 실 motor task 시작 시점에 activeRobotPreset 갱신.
             // 로거 sample.preset 은 이 값을 우선 → 보행 중 사용자가 다른 preset 클릭해도
             // 실 task 가 안 바뀌면 로그는 변경 전 preset 유지.
@@ -1847,6 +1855,8 @@ public final class WalkLabSession {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.isRobotWalking = false
+                    // 사이클 159 (P0-1 fix): walk 종료 → IMU slow polling 복원 (perf).
+                    self.store?.imuFastPollActive = false
                     // v1.11.24 audit P1-1 — cycle 정상/비정상 종료 시 활성 preset clear.
                     self.activeRobotPreset = nil
                     self.lastCycleResult = result
@@ -1867,6 +1877,8 @@ public final class WalkLabSession {
             return
         }
         isRobotWalking = true
+        // 사이클 159 (P0-1 fix): jog kick chain 도 IMU fast polling 활성.
+        store.imuFastPollActive = true
         // v1.11.24 audit P1-1 — jog 같은 single-page cycle 도 동일.
         activeRobotPreset = preset
         motorWriteStarted = false
@@ -1907,6 +1919,8 @@ public final class WalkLabSession {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.isRobotWalking = false
+                // 사이클 159 (P0-1 fix): jog 종료 → IMU slow polling 복원.
+                self.store?.imuFastPollActive = false
                 // v1.11.24 audit iter3-A — jog 단발 cycle 도 cleanup 일치.
                 self.activeRobotPreset = nil
                 self.lastCycleResult = result

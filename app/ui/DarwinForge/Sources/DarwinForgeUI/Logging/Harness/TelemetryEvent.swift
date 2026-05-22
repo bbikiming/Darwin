@@ -80,6 +80,8 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let imuUnavailable: TelemetryKind = "imu.unavailable"
     public static let imuRecovered: TelemetryKind = "imu.recovered"
     public static let imuScaleChanged: TelemetryKind = "imu.scale_changed"
+    /// 사이클 159 (P0-1 fix): walk 활성 시 IMU polling 5Hz ↔ 20Hz 전환.
+    public static let imuPollRateChanged: TelemetryKind = "imu.poll_rate_changed"
 
     // UI
     public static let uiSectionChanged: TelemetryKind = "ui.section_changed"
