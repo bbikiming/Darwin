@@ -103,8 +103,10 @@ public final class IntentDispatcher: ObservableObject {
                         speak: speakForPose(r, displayName: fallback.displayName, fallbackFrom: id)
                     )
                 }
+                // **사이클 122 (audit #17, P0)**: bus nil → [시뮬] prefix 명시.
+                // 종전 "적용했어요" → 사용자가 실 robot 동작으로 오해. 실 송출은 안 함.
                 return ExecutionResult(
-                    speak: "'\(id)' 정확한 ID 가 없어 '\(fallback.displayName)' 으로 적용했어요."
+                    speak: "[시뮬] '\(id)' 정확한 ID 가 없어 '\(fallback.displayName)' 으로 미리보기 (실 robot 미연결)."
                 )
             }
             throw DispatcherError.invalidArgs("자세 '\(id)' 를 찾지 못했어요")
@@ -113,8 +115,9 @@ public final class IntentDispatcher: ObservableObject {
             let r = await store.applyPoseSmoothly(named.pose)
             return ExecutionResult(speak: speakForPose(r, displayName: named.displayName, description: named.description))
         }
+        // **사이클 122 (audit #17, P0)**: bus nil → [시뮬] prefix 명시.
         return ExecutionResult(
-            speak: "✓ 자세 '\(named.displayName)' 적용 — \(named.description)"
+            speak: "[시뮬] 자세 '\(named.displayName)' 미리보기 (실 robot 미연결) — \(named.description)"
         )
     }
 

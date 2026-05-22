@@ -131,8 +131,11 @@ public struct PilotDpad: View {
     public var body: some View {
         DFPanel(
             "방향 조작 (D-pad)",
+            // **사이클 122 (audit #26, P0)**: continuous 보행 아닌 단발 pose 명시.
+            // 종전 "방향 실 송출 활성" → 사용자가 연속 보행으로 오해. 실제 동작은
+            // walkReady 베이스에 단일 zone override 적용 (one-shot pose).
             subtitle: dpadDirectionsActive
-                ? "방향 실 송출 활성 — Stop 은 항상 walkReady 송출"
+                ? "단일 자세 송출 — 연속 보행 아님 (walkReady 베이스 + zone 자세). Stop = walkReady."
                 : "방향 비활성 — \(directionUnavailableReason())",
             icon: "dpad",
             tint: PilotColor.dpadActive,
