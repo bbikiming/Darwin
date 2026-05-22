@@ -1104,6 +1104,44 @@ public enum RobotSetupCommand {
     echo "🎉 마스터 셋업 완료. Mac DarwinForge로 돌아가서 다음 단계 진행."
     """#
 
+    /// **사이클 131 (audit #22, P0 safety)**: masterSetup rollback 스크립트.
+    /// masterSetup 중 일부 단계 실패 시 또는 사용자가 시스템 원상복구 필요 시 실행.
+    ///
+    /// 종전 masterSetup 은 `set +e` 로 에러 무시 — 단계 3 (SSH) 성공 후 단계 5 (df-inbox)
+    /// 실패 시 partial state (SSH 활성 + bridge 미설정 + df-inbox 부분 활성) 잔존.
+    /// 본 스크립트는 모든 4가지 영구 등록 항목을 명시 해제 + 검증.
+    ///
+    /// **안전 정책**: rollback 도 `set +e` — 부분 실패해도 진행 (이미 stop 한 서비스 등).
+    /// 사용자가 명시 실행해야 함 (자동 trigger X) — masterSetup 의 verification 화면에
+    /// "rollback 필요 시 복사" 버튼 노출 권장.
+    public static let masterSetupRollback: String = #"""
+    # ── DarwinForge 마스터 셋업 rollback (수동 실행) ──
+    # masterSetup 으로 등록된 4가지 영구 항목을 모두 해제.
+    set +e
+    echo "▶ 1/4 forge-bridge 서비스 정지 + 부팅 자동시작 해제"
+    sudo /etc/init.d/forge-bridge stop 2>/dev/null
+    sudo update-rc.d -f forge-bridge remove 2>/dev/null
+    sudo rm -f /etc/init.d/forge-bridge /var/run/forge-bridge.pid
+
+    echo "▶ 2/4 df-inbox watcher 정지 + 부팅 자동시작 해제"
+    sudo /etc/init.d/df-inbox stop 2>/dev/null
+    sudo update-rc.d -f df-inbox remove 2>/dev/null
+    sudo rm -f /etc/init.d/df-inbox
+
+    echo "▶ 3/4 inbox/outbox 디렉토리 보존 (사용자 데이터 — 수동 삭제 권장)"
+    echo "   필요 시: rm -rf \$HOME/.df_inbox \$HOME/.df_outbox"
+
+    echo "▶ 4/4 SSH/dialout 보존 — 다른 용도로 쓰일 수 있어 자동 해제 안 함"
+    echo "   완전 원상복구 필요 시:"
+    echo "     sudo service ssh stop"
+    echo "     sudo update-rc.d -f ssh remove"
+    echo "     sudo gpasswd -d \$USER dialout"
+
+    echo
+    echo "🔄 rollback 완료. forge-bridge / df-inbox 서비스 해제됨."
+    echo "   재설치 필요 시 masterSetup 다시 실행."
+    """#
+
     // MARK: - Remote command channel (SMB-based)
 
     /// 로봇 측 inbox watcher 셋업 — SMB로 떨어트린 .sh 파일을 자동 실행 + 결과 outbox에.
