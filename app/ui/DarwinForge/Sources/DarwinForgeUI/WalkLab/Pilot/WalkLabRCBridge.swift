@@ -137,6 +137,12 @@ public final class WalkLabRCBridge {
     /// production RootView 가 NSBeepFeedbackPlayer() 주입.
     public var audioFeedback: AudioFeedbackPlayer?
 
+    /// **사이클 94 — 코덱스 HIGH-3 fix**: emergency beep throttle (사용자 청각 피로 차단).
+    /// emergency 연타 시 system beep queue 폭주 방지. 마지막 beep 후 N초 이내 추가 발화 skip.
+    /// 안전 신호 의미 보존 — 첫 1회만 "전환 신호", 이후는 redundant.
+    private var lastEmergencyBeepAt: Date?
+    private static let emergencyBeepThrottleSec: TimeInterval = 0.5
+
     // MARK: - Init
 
     public init(tello: TelloLinkProtocol) {
@@ -324,8 +330,15 @@ public final class WalkLabRCBridge {
             safetyMessage = "긴급 정지 발화 — 모든 채널 차단"
             // emergency 는 engineSynced 까지 안 감 → cancel 로 cycle 정리 (rejectedCount +1).
             latencyTracker?.cancel()
-            // **사이클 86**: 안전 critical event 청각 피드백 (시각 UI 가려져도 인지).
-            audioFeedback?.playEmergency()
+            // **사이클 86 + 사이클 94 코덱스 HIGH-3**: 안전 critical event 청각 피드백 + throttle.
+            // 종전: 매 emergency intent 마다 NSBeep — 연타 시 system queue 폭주 → 사용자 청각 피로.
+            // 신규: 0.5초 throttle — 첫 발화만 의미, 이후는 redundant (이미 정지 상태).
+            let now = Date()
+            if lastEmergencyBeepAt == nil ||
+               now.timeIntervalSince(lastEmergencyBeepAt!) >= Self.emergencyBeepThrottleSec {
+                audioFeedback?.playEmergency()
+                lastEmergencyBeepAt = now
+            }
             return
         }
         // bus / cradle 검사 — preset 시작 path 와 동일.

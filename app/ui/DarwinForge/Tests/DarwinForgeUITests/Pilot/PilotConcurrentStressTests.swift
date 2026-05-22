@@ -104,6 +104,24 @@ final class PilotConcurrentStressTests: XCTestCase {
         XCTAssertEqual(session.turnDeg, 0, accuracy: 1e-9)
     }
 
+    /// **사이클 94 — 코덱스 HIGH-3 회귀 가드**: emergency 연타 시 NSBeep throttle.
+    /// 사용자 청각 피로 방지 — 0.5초 이내 중복 emergency intent 는 audio 1회만.
+    func testRapidEmergencyAudioThrottle() {
+        let audio = MockAudioFeedback()
+        bridge.audioFeedback = audio
+
+        // 같은 frame (0.5초 이내) 에 5번 emergency.
+        for _ in 0..<5 {
+            bridge.handleEmergency(from: .keyboard)
+        }
+
+        // emergencyCount 는 5회 누적 (telemetry 정확), 그러나 audio 는 1회만 (throttle).
+        XCTAssertEqual(bridge.emergencyCount, 5,
+                       "telemetry count 는 정확 누적 (5회)")
+        XCTAssertEqual(audio.emergencyPlayCount, 1,
+                       "audio beep 는 0.5초 throttle — 1회만")
+    }
+
     /// updateTelloState 폭발 — telloAdvisoryMessage 가 정확히 last state 반영.
     func testTelloStateStormConvergesToLastBattery() {
         for i in 0..<100 {
