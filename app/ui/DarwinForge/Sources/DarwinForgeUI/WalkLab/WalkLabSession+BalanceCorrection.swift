@@ -139,8 +139,15 @@ extension WalkLabSession {
             case .negateForwardIsNegative: return -imuPitchDeg
             }
         }()
-        // roll 정규화는 P1.0 측정 후 도입 (현재는 raw 유지 — 데이터상 roll 부호는 정상 분포).
-        let normalizedImuRollDeg = imuRollDeg
+        // 사이클 161 (P0-4, gyro closed-loop review fix): roll 정규화 도입.
+        // 종전: raw 만 사용 — 실 robot 의 roll 부호가 ROBOTIS Walking.cpp 코드 컨벤션 과
+        // 다르면 보정 방향 반대. 사용자가 정적 캘리브레이션 후 토글 가능.
+        let normalizedImuRollDeg: Double = {
+            switch config.rollInputConvention {
+            case .imuRaw: return imuRollDeg
+            case .negateLeftIsNegative: return -imuRollDeg
+            }
+        }()
 
         // Mode .off → identity (corrections 비움, log 도 0).
         if config.algorithmMode == .off {
