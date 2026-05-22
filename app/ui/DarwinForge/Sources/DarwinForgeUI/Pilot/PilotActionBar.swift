@@ -19,6 +19,12 @@ public struct PilotActionBar: View {
 
     @State private var pendingConfirm: MotionPageMetadata?
     @State private var showMoreSheet: Bool = false
+    /// **사이클 121 (audit #11, P0)**: send 실패 시 사용자 보이게 표시. 종전 silent fail
+    /// (Task 결과 `_ = await`) → 사용자가 "왜 안 움직이지?" 혼동. 본 state 가 lastError
+    /// observe → banner 표시 + auto-dismiss.
+    @State private var displayedError: String?
+    /// 본 banner 자동 dismiss task — 재발화 시 cancel + 재시작.
+    @State private var errorDismissTask: Task<Void, Never>?
 
     public init(channel: TeleopChannel, gate: PilotSafetyGate, flags: PilotFeatureFlags,
                 demoOccupiesBus: Bool = false) {
@@ -42,6 +48,11 @@ public struct PilotActionBar: View {
             }
         ) {
             VStack(alignment: .leading, spacing: DFSpace.sm) {
+                // **사이클 121 (audit #11, P0)**: 송출 실패 시 사용자 명시 banner.
+                if let err = displayedError {
+                    errorBanner(err)
+                }
+
                 LazyVGrid(columns: gridColumns, spacing: DFSpace.sm) {
                     ForEach(Array(MotionCatalog.actionBarMain.enumerated()), id: \.element.slot) { idx, meta in
                         actionButton(meta, keyIndex: idx + 1)
@@ -49,6 +60,18 @@ public struct PilotActionBar: View {
                 }
 
                 moreButton
+            }
+        }
+        // **사이클 121 (audit #11)**: channel.lastError observer — 비-nil 변경 시 banner 표시 + 5초 후 dismiss.
+        .onChange(of: channel.lastError) { newError in
+            guard let err = newError, !err.isEmpty else { return }
+            displayedError = err
+            errorDismissTask?.cancel()
+            errorDismissTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if !Task.isCancelled, displayedError == err {
+                    displayedError = nil
+                }
             }
         }
         .alert(item: $pendingConfirm) { meta in
@@ -74,6 +97,41 @@ public struct PilotActionBar: View {
     /// 적응형 컬럼 — 110pt 미만으로 좁아지지 않음. 윈도우 폭에 따라 2~4 컬럼.
     private var gridColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 110, maximum: 200), spacing: 8, alignment: .top)]
+    }
+
+    /// **사이클 121 (audit #11, P0)**: 송출 실패 banner. orange tint, dismiss 버튼 포함.
+    /// 5초 후 자동 사라지지만 사용자가 명시 dismiss 가능.
+    @ViewBuilder
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: DFSpace.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(DFFont.caption)
+                .foregroundStyle(.orange)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                displayedError = nil
+                errorDismissTask?.cancel()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, DFSpace.sm)
+        .padding(.vertical, DFSpace.xs2)
+        .background(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 0.5)
+        )
+        .transition(.opacity.combined(with: .move(edge: .top)))
+        .accessibilityIdentifier("pilot.actionbar.error.banner")
     }
 
     /// Action Bar 의 상태별 부제목 — sim 미연결 / demo 점유 / ARM 전/후 분리.
