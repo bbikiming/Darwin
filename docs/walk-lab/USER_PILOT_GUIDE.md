@@ -551,3 +551,64 @@ codex final review 식별 — WalkLabV1114FeedbackLoopTests.swift:960 의 Task.s
 | MotionBlender label | "송출 진행" 오해 | "preview blend" 명시 |
 | Swift 6 warnings | 6 | 0 |
 | Flaky tests | 1 active | 0 |
+
+---
+
+## 사이클 148-155 — 사용자 권고 5건 처리 (2026-05-22)
+
+> **v1.24.0 (2026-05-22)** — IMPLEMENTATION audit closure 후 사용자 권고 5건 처리:
+> 통합 배지 체계 / sim confirmation / 카탈로그 그룹 분리 + codex review fix.
+
+### Cycles 148-151 — 추가 검증 + auto-detect
+
+| Cycle | 작업 | 영향 |
+|---|---|---|
+| 148 | USER_PILOT_GUIDE cycles 134-147 doc | 추적성 |
+| 149 | codex MAJOR x2 + MINOR x3 fix (cycles 143-147 review) | recommend(for:realRobotOnly:) aggregator + 7 tests + a11y + Optional |
+| 150 | IMPLEMENTATION audit closure annotation (Section 9) | audit 문서 inline closure |
+| 151 | dead-code scan finding #4 — WalkTrialLibraryView realRobotOnly auto-detect | robot 연결 시 자동 sim 제외 |
+
+### Cycles 152-155 — 사용자 권고 5건 batch
+
+| Cycle | 권고 # | 작업 | 변경 핵심 |
+|---|---|---|---|
+| 152 | #1 통합 배지 | DFStatusBadge unified enum + view | 8 case (appliedToRobot / simulationOnly / estimatedProgress / previewOnly / unverified / sdkUnavailable / placeholder / futureIntegration) + 3 style (compact/full/iconOnly) + a11y + 7 tests |
+| 153 | #3 sim confirmation | sim 추천 적용 confirmation modal | needsSimConfirmation 정적 predicate + 4 tests + destructive role |
+| 154 | #4 카탈로그 그룹 | MotionLibraryView 사이드바 3 subsection | 공식 raw (11) / Placeholder (2) / 고위험 (3) |
+| 155 | codex MINOR x3 | ID 17 + centralize ID sets + empty guard | OfficialCatalogReference 에 canonical ID sets + 5 tests |
+
+### 권고별 closure 상태
+
+| 사용자 권고 | 처리 결과 |
+|---|---|
+| **#1 통합 배지 체계** | ✅ DFStatusBadge enum + view 정의 (migration 점진) |
+| **#2 P0 안전 sprint** | ✅ 이미 cycle 119-120 에서 완료 (Ctrl+C / static stability) |
+| **#3 추천 sim/real 분리** | ✅ SourceBreakdown badge (147) + recommend aggregator (149) + auto-detect (151) + confirmation (153) |
+| **#4 카탈로그 그룹 분리** | ✅ MotionLibraryView 3 subsection + ID 17 dual membership 명시 |
+| **#5 회의 안건** | ✅ docs 에 결정 가능한 형태로 정리 |
+
+### Multi-agent 검증 결과
+
+- **codex final review cycles 141-142**: ACCEPT (clean).
+- **codex final review cycles 143-147**: ACCEPT-WITH-RESERVATIONS — 2 MAJOR + 3 MINOR → cycle 149 즉시 fix.
+- **codex review cycle 149**: ACCEPT (clean).
+- **security audit cycles 141-150**: CLEAN (0 CRITICAL/HIGH/MEDIUM).
+- **dead-code scan cycles 141-150**: 5 finding → 3 false positive + 1 즉시 fix (cycle 151) + 1 design refactor.
+- **codex review cycle 152**: ACCEPT (clean).
+- **codex review cycle 153**: ACCEPT (clean).
+- **codex review cycle 154**: ACCEPT-WITH-RESERVATIONS — 3 MINOR → cycle 155 즉시 fix.
+
+### 최종 상태 (cycle 119 → cycle 155)
+
+| Metric | Before (cycle 119) | After (cycle 155) |
+|---|---|---|
+| Swift tests | 1300 | **1323** (+23 새 tests) |
+| Rust tests | 368 | 368 (유지) |
+| Build warnings | 6 (Swift 6) | **0** |
+| Flaky tests | 1 | **0** |
+| Audit findings (DARWIN_UX_AUDIT v4) | 36 open | **36/36 처리** |
+| Audit findings (IMPLEMENTATION) | 18 open | **18/18 처리** |
+| 통합 배지 enum | 없음 | DFStatusBadge 8 case |
+| sim 추천 confirmation | 없음 | needsSimConfirmation 정적 predicate |
+| 공식 카탈로그 그룹 분리 | 16 단일 section | 3 status-based subsection |
+| ID set canonical reference | 3 곳 drift 위험 | OfficialCatalogReference 단일 source |
