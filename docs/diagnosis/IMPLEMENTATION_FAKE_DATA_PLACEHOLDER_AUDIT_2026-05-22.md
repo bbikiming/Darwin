@@ -384,3 +384,44 @@
 현재 구현은 테스트 기준으로 안정적이지만, “보여주기식 구현”으로 오해될 수 있는 지점이 아직 있다. 특히 **sim 기반 추천**, **추정 progress**, **stub adapter**, **placeholder 공식 모션**, **실로봇 긴급정지 미완성**은 사용자에게 명확히 분리해서 보여줘야 한다.
 
 이번 감사의 핵심은 “기능을 숨기자”가 아니라, **실제 로봇에 적용되는 것 / 시뮬레이션인 것 / 향후 연결 예정인 것 / 검증되지 않은 것**을 UI와 문서에서 분명히 갈라야 한다는 점이다.
+
+---
+
+## 9. 처리 closure (2026-05-22 cycles 143-149)
+
+본 audit 18 finding 의 처리 결과 종합 (1307 swift tests + 368 rust tests 통과).
+
+| # | 처리 사이클 | 변경 핵심 |
+|---|---|---|
+| 1 | cycle 120 (사전) | ctrlc crate + RAII guard — Ctrl+C 실 torque OFF + SHOULD_EXIT flag. |
+| 2 | cycle 145 + 91-94 (UI badge) | enableBalanceCorrection / correctorIntensityLevel docstring `ApplyScope` 명시 + 기존 `WalkLabApplyScopeBadge` UI 가 disabled / .macSparseOnly 시각화. |
+| 3 | cycle 143 | `DpadZone.pressBehaviorKo` property 추가 — "단발 자세 · 700ms 후 walkReady 복귀 (연속 보행 아님)" tooltip. cycle 149 에서 Optional → String 정리. |
+| 4 | cycle 143 | MotionBlender accepted 메시지 "송출 진행" → "preview blend (blender 자체는 sim only)" — 송출 오해 차단. |
+| 5 | cycle 146 + 149 | usesRealPolling: false 시 completed icon green checkmark → orange `clock.badge.checkmark` + accessibilityLabel "추정 완료 — 로봇 미확인" (WCAG 1.4.1). |
+| 6 | cycle 144 + 149 | `pilotBiased(for:realRobotOnly:)` overload (cycle 144) + `recommend(for:realRobotOnly:)` aggregator (cycle 149) — 3 strategies 일관 전파. |
+| 7 | cycle 143 | OfficialCatalogReference / MotionCatalog / SynthModel 의 displayName 에 `[placeholder]` prefix (Get Up Front/Back/Hand Standing). |
+| 8 | cycle 92 + 94 (사전) | DJI Controller SDK stub — production constructor unavailable + UI "DJI SDK 미통합" 라벨. |
+| 9 | cycle 130 (사전) | InitialSetupWizard VNC 단계 "수동 확인" 분리 라벨링. |
+| 10 | cycle 119 (사전) | StaticStabilityValidator `Pass` → `Warn("정적 안정성 proxy")` — 실 CoM 검증 아님 명시. |
+| 11 | cycle 124 (사전) | MotionDoc TORQUE_OFF bit preview placeholder 주석 명시 — ROBOTIS Action 실제 동작 (free fall) 과 다름. |
+| 12 | cycle 127 + 128 (사전) | SynthInspectorPanel "미검증" warning 강화 — CLI `forge synth validate` 안내. |
+| 13 | cycle 124 (사전) | PilotFeatureFlags v1_5 docstring 갱신 — dpadRealMotor / hsvTuning 활성 명시. |
+| 14 | cycle 145 + 124 (사전) | WalkLab tuning footHeightMm / balanceGain / enableBalanceCorrection / correctorIntensityLevel docstring 에 ApplyScope (Mac sparse / sim / Onboard) 명시. |
+| 15 | cycle 126 (사전) | MotionBuilder random ID fallback → placeholder ID 명시. |
+| 16 | cycle 147 + 149 | `SourceBreakdown` struct (realRobotCount / simCount / displayLabel / realRatio div-by-zero guard) + 카드 badge (혼합 / real only / sim only 아이콘 분기) + 7 신규 tests. |
+| 17 | cycle 127 (사전) | WalkComparisonTag / claudeCritic "추후 통합" 라벨 + UI 미생성. |
+| 18 | cycle 128 (사전) | SwiftPM resource 경고 — Package.swift resources 명시. |
+
+### Multi-agent 검증
+
+- **codex final review cycles 141-142**: VERDICT ACCEPT — 0 finding.
+- **codex final review cycles 143-147**: VERDICT ACCEPT-WITH-RESERVATIONS — 2 MAJOR + 3 MINOR
+  → cycle 149 즉시 fix (recommend aggregator propagation + 7 tests + a11y label + Optional 정리).
+
+### 최종 결과
+
+- 18/18 finding 처리 완료.
+- swift tests: 1300 → 1307 (+7 신규 — SourceBreakdown / pilotBiased realRobotOnly).
+- rust tests: 368 유지.
+- 0 build warnings.
+- 사용자 오해 가능 라벨: 모두 annotated 또는 fixed.
