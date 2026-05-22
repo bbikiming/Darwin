@@ -214,12 +214,16 @@ public final class WalkLabSession {
     // MARK: - Stage 3 (v1.1 fall prevention): 예측 fall detection
 
     /// 최근 IMU sample ring buffer (최대 1초 / 5 sample).
-    private var imuBuffer: [FallPredictor.Sample] = []
+    /// **사이클 107 (Phase 7)**: `private` → `internal` — `WalkLabSession+FallPrevention`
+    /// 의 `updateFallPrediction()` 가 read/write.
+    internal var imuBuffer: [FallPredictor.Sample] = []
     /// 마지막 buffer push 시각 — 5Hz polling 동기화.
-    private var lastBufferPushAt: Date?
+    /// **사이클 107 (Phase 7)**: `private` → `internal` — extension write 허용.
+    internal var lastBufferPushAt: Date?
 
     /// 예측 결과 — UI 게이지·countdown 용.
-    public private(set) var fallPrediction: FallPredictor.Prediction = .zero
+    /// **사이클 107 (Phase 7)**: `private(set)` → `internal(set)` — extension write 허용.
+    public internal(set) var fallPrediction: FallPredictor.Prediction = .zero
 
     // MARK: - Stage 4 (v1.1 fall prevention): 실 balance feedback
 
@@ -2706,64 +2710,11 @@ public final class WalkLabSession {
     // loadAllExperimentSummaries / readFirstLine 는 `WalkLabSession+Logging.swift`
     // extension 으로 이동.
 
-    /// **Stage 3 (v1.1 fall prevention)**: IMU ring buffer 갱신 + predictor 호출.
-    ///
-    /// 5Hz IMU polling 동기화 — `lastBufferPushAt` 기준 ≥ 150ms 경과 시에만 push.
-    /// (50ms tick × 4 ≈ 200ms 의미. 150ms 임계는 polling jitter 허용).
-    /// sim mode 에서도 호출 — sim IMU 의 sin 흔들림으로 predictor 동작 검증 가능.
-    ///
-    /// gyro 데이터:
-    /// - 실 mode (`imuSource == .real`): `store.lastTelemetry.imu` 의 gyroXDps/YDps
-    /// - sim mode: derivative — `(roll_now - roll_prev) / dt` 를 gyro 로 근사
-    private func updateFallPrediction() {
-        let now = Date()
-
-        // 2026-05-17 stale gate (Codex/agent #6 권고): IMU 가 5초+ 지연 시 predictor 우회.
-        // 위험 시나리오: real → stale 전환 시 imuRollDeg/Pitch 가 freeze 되며 buffer 에
-        // mixed (real + frozen) sample 누적 → 일시적으로 false positive emergency trigger.
-        // L3 30° hard gate 는 imuRollDeg/Pitch 자체로 작동 (mitigationForState 분기) —
-        // 본 predictor 만 차단해도 안전 net 손실 없음. C4 balance corrector 와 동일 원칙.
-        if imuSource == .stale {
-            if fallPrediction != .zero { fallPrediction = .zero }
-            if !imuBuffer.isEmpty {
-                imuBuffer.removeAll(keepingCapacity: true)
-                lastBufferPushAt = nil
-            }
-            return
-        }
-
-        // Polling jitter 허용 — 너무 잦은 push 회피.
-        if let last = lastBufferPushAt, now.timeIntervalSince(last) < 0.15 {
-            // 그대로 마지막 prediction 유지 (재계산 X — score 변동 줄임).
-            return
-        }
-
-        // Gyro 추출 — 실 IMU 우선, sim 은 derivative 근사.
-        var gyroX: Double = 0
-        var gyroY: Double = 0
-        if imuSource == .real, let s = store, let imu = s.lastTelemetry?.imu {
-            gyroX = Double(imu.gyroXDps)
-            gyroY = Double(imu.gyroYDps)
-        } else if let prev = imuBuffer.last {
-            let dt = now.timeIntervalSince(prev.timestamp)
-            if dt > 0.001 {
-                gyroX = (imuRollDeg - prev.rollDeg) / dt    // deg / sec
-                gyroY = (imuPitchDeg - prev.pitchDeg) / dt
-            }
-        }
-
-        let sample = FallPredictor.Sample(
-            timestamp: now,
-            rollDeg: imuRollDeg,
-            pitchDeg: imuPitchDeg,
-            gyroXDps: gyroX,
-            gyroYDps: gyroY
-        )
-        FallPredictor.append(sample, to: &imuBuffer)
-        lastBufferPushAt = now
-
-        fallPrediction = FallPredictor.predict(samples: imuBuffer, now: now)
-    }
+    // MARK: - Fall Prediction (사이클 107 Phase 7 — extension 이동)
+    //
+    // `updateFallPrediction()` (~50 line) 은 `WalkLabSession+FallPrevention.swift` 로
+    // 이동. `imuBuffer / lastBufferPushAt / fallPrediction` 은 `internal/internal(set)`
+    // 격상 — extension write 허용. 호출 site `tick()` 의 `updateFallPrediction()` 동일.
 
     /// **Stage 2 + Phase C/D (v1.1 fall prevention)**: 다단계 임계 별 자동 mitigation.
     /// v1.11.19 (2026-05-20) 정합: 25/35/45/50° BalanceState 임계.
