@@ -57,6 +57,13 @@ let package = Package(
             name: "DarwinForgeApp",
             dependencies: ["DarwinForgeUI"],
             path: "Sources/DarwinForgeApp",
+            // **사이클 128 (audit #29, P2 fix)**: SwiftPM "unhandled file(s)" warning 제거.
+            // Info.plist / .entitlements 는 Xcode build 시 별도 처리되지만 SwiftPM 빌드는
+            // unhandled 로 표시. 명시 exclude 로 노이즈 제거.
+            exclude: [
+                "Info.plist",
+                "DarwinForge.entitlements",
+            ],
             resources: [
                 // 2026-05-16: PNG 앱 아이콘 영구 적용 — 사용자 지정 자산.
                 // `option/ChatGPT Image ... 10_57_32 (1).png` 사본. 사용자 명시 변경
