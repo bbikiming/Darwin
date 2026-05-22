@@ -273,15 +273,23 @@ public struct RootView: View {
         .help("명령 팔레트 (⌘K)")
     }
 
+    /// **사이클 132 (audit #8, P2)**: Quick Connect endpoint 상수화.
+    /// 종전 `"192.168.123.1"` / `5530` 매직 number 가 RootView / ConnectionDashboard /
+    /// NetworkProbe 등 5+ 곳에 hardcoded. 본 상수로 단일 source of truth 정립.
+    /// 향후 endpoint 변경 시 한 곳만 수정.
+    public static let quickConnectHost: String = "192.168.123.1"
+    public static let quickConnectPort: UInt16 = 5530
+
     /// CTA 액션 — Task로 감싸 메인 스레드 block 회피. connect()의 boardSnapshot 동기 호출이
     /// 메인 스레드에서 ~1초 block되면 UI freeze로 "동작 안 함"으로 인식됨.
     private func triggerQuickConnect() {
         Task { @MainActor in
             // 즉시 status .connecting 으로 전환 (사용자 피드백).
-            store.status = .connecting("192.168.123.1:5530")
+            store.status = .connecting("\(Self.quickConnectHost):\(Self.quickConnectPort)")
             // 짧은 yield 후 실제 connect — UI 가 .connecting 상태로 한 번 그려진 후 진행.
             try? await Task.sleep(nanoseconds: 50_000_000)
-            store.connect(endpoint: .network(host: "192.168.123.1", port: 5530))
+            store.connect(endpoint: .network(host: Self.quickConnectHost,
+                                              port: Self.quickConnectPort))
         }
     }
 
@@ -307,7 +315,7 @@ public struct RootView: View {
             .shadow(color: tint.opacity(DFOpacity.strong), radius: DFSpace.xs, y: DFSpace.micro)
         }
         .buttonStyle(.plain)
-        .help("이더넷 직결 192.168.123.1:5530 으로 즉시 연결")
+        .help("이더넷 직결 \(Self.quickConnectHost):\(Self.quickConnectPort) 으로 즉시 연결")
     }
 
     // MARK: - Quick connect CTA
