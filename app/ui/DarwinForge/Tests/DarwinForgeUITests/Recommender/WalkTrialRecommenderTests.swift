@@ -242,7 +242,8 @@ final class WalkTrialRecommenderTests: XCTestCase {
         stride: Double = 20, periodMs: Double = 600,
         pilotPeakStride: Double? = nil, pilotPeakNegStride: Double = 0,
         pilotEvents: Int = 0,
-        advanced: Bool = false, emergency: Bool = false
+        advanced: Bool = false, emergency: Bool = false,
+        isRealRobot: Bool = false
     ) -> WalkTrial {
         let pilotInputs: PilotInputSummary? = {
             guard let peak = pilotPeakStride else { return nil }
@@ -257,13 +258,14 @@ final class WalkTrialRecommenderTests: XCTestCase {
         }()
         return _makeTrialCore(id: id, preset: preset, score: score, falls: falls,
                               stride: stride, periodMs: periodMs,
-                              pilotInputs: pilotInputs, advanced: advanced)
+                              pilotInputs: pilotInputs, advanced: advanced,
+                              isRealRobot: isRealRobot)
     }
 
     private func _makeTrialCore(
         id: String, preset: String, score: Double, falls: Int,
         stride: Double, periodMs: Double, pilotInputs: PilotInputSummary?,
-        advanced: Bool = false
+        advanced: Bool = false, isRealRobot: Bool = false
     ) -> WalkTrial {
         WalkTrial(
             id: id,
@@ -278,7 +280,7 @@ final class WalkTrialRecommenderTests: XCTestCase {
                 tuning: TuningSnapshot(strideMm: stride, sideMm: 0, turnDeg: 0,
                                        periodMs: periodMs, footHeightMm: 40, balanceGain: 1.0),
                 walkingEngine: "macSparseKeyframe",
-                isRealRobot: false,
+                isRealRobot: isRealRobot,
                 pilotInputs: pilotInputs,
                 wasAdvancedMode: advanced
             ),
@@ -293,5 +295,103 @@ final class WalkTrialRecommenderTests: XCTestCase {
             label: nil,
             timeseries: nil
         )
+    }
+
+    // MARK: - 사이클 149 (codex MAJOR #2 fix): SourceBreakdown + realRobotOnly 테스트
+
+    /// SourceBreakdown displayLabel 3 분기 검증.
+    func testSourceBreakdownDisplayLabelRealOnly() {
+        let b = WalkTrialRecommendation.SourceBreakdown(realRobotCount: 3, simCount: 0)
+        XCTAssertEqual(b.displayLabel, "실 로봇 3")
+        XCTAssertEqual(b.total, 3)
+        XCTAssertEqual(b.realRatio, 1.0, accuracy: 1e-9)
+    }
+
+    func testSourceBreakdownDisplayLabelSimOnly() {
+        let b = WalkTrialRecommendation.SourceBreakdown(realRobotCount: 0, simCount: 5)
+        XCTAssertEqual(b.displayLabel, "시뮬 5 (실 로봇 데이터 없음)")
+        XCTAssertEqual(b.total, 5)
+        XCTAssertEqual(b.realRatio, 0.0, accuracy: 1e-9)
+    }
+
+    func testSourceBreakdownDisplayLabelMixed() {
+        let b = WalkTrialRecommendation.SourceBreakdown(realRobotCount: 2, simCount: 3)
+        XCTAssertEqual(b.displayLabel, "실 로봇 2 · 시뮬 3")
+        XCTAssertEqual(b.total, 5)
+        XCTAssertEqual(b.realRatio, 0.4, accuracy: 1e-9)
+    }
+
+    /// realRatio 의 division-by-zero guard.
+    func testSourceBreakdownRealRatioWithZeroTotal() {
+        let b = WalkTrialRecommendation.SourceBreakdown(realRobotCount: 0, simCount: 0)
+        XCTAssertEqual(b.total, 0)
+        XCTAssertEqual(b.realRatio, 0.0, accuracy: 1e-9, "div-by-zero guard → 0")
+    }
+
+    /// ruleBased 가 sourceBreakdown 을 populate 하는지 검증.
+    func testRuleBasedPopulatesSourceBreakdown() {
+        store.append(makeTrial(id: "r1", preset: "march", score: 0.9, falls: 0, isRealRobot: true))
+        store.append(makeTrial(id: "r2", preset: "march", score: 0.9, falls: 0, isRealRobot: true))
+        store.append(makeTrial(id: "s1", preset: "march", score: 0.9, falls: 0, isRealRobot: false))
+        let rec = recommender.ruleBased(for: "march")
+        XCTAssertNotNil(rec?.sourceBreakdown)
+        XCTAssertEqual(rec?.sourceBreakdown?.realRobotCount, 2)
+        XCTAssertEqual(rec?.sourceBreakdown?.simCount, 1)
+    }
+
+    /// pilotBiased(for:realRobotOnly: true) 가 sim trial 제외하는지 검증.
+    func testPilotBiasedRealRobotOnlyFiltersSim() {
+        // sim 3개 + real 3개 모두 advanced+piloted.
+        for i in 0..<3 {
+            store.append(makeTrial(id: "sim\(i)", preset: "march", score: 0.85, falls: 0,
+                                    pilotPeakStride: 25, pilotEvents: 15,
+                                    advanced: true, isRealRobot: false))
+        }
+        for i in 0..<3 {
+            store.append(makeTrial(id: "real\(i)", preset: "march", score: 0.85, falls: 0,
+                                    pilotPeakStride: 30, pilotEvents: 15,
+                                    advanced: true, isRealRobot: true))
+        }
+        // realRobotOnly: false → 6개 모두 사용 → sim+real breakdown.
+        let mixed = recommender.pilotBiased(for: "march", realRobotOnly: false)
+        XCTAssertNotNil(mixed)
+        XCTAssertEqual(mixed?.sourceBreakdown?.realRobotCount, 3)
+        XCTAssertEqual(mixed?.sourceBreakdown?.simCount, 3)
+
+        // realRobotOnly: true → 3개 real 만 사용 → sim 0.
+        let realOnly = recommender.pilotBiased(for: "march", realRobotOnly: true)
+        XCTAssertNotNil(realOnly)
+        XCTAssertEqual(realOnly?.sourceBreakdown?.realRobotCount, 3)
+        XCTAssertEqual(realOnly?.sourceBreakdown?.simCount, 0)
+    }
+
+    /// recommend(for:realRobotOnly:) aggregator 가 3 strategy 모두 일관 전파하는지 검증.
+    func testRecommendAggregatorPropagatesRealRobotOnly() {
+        // sim 5개 + real 5개 — rule 가 둘 다 활성, pilot 도 advanced+piloted.
+        for i in 0..<5 {
+            store.append(makeTrial(id: "sim\(i)", preset: "march", score: 0.9, falls: 0,
+                                    pilotPeakStride: 25, pilotEvents: 15,
+                                    advanced: true, isRealRobot: false))
+        }
+        for i in 0..<5 {
+            store.append(makeTrial(id: "real\(i)", preset: "march", score: 0.9, falls: 0,
+                                    pilotPeakStride: 30, pilotEvents: 15,
+                                    advanced: true, isRealRobot: true))
+        }
+
+        // 기본 (false) — sim 포함.
+        let mixed = recommender.recommend(for: "march", realRobotOnly: false)
+        for r in mixed {
+            XCTAssertNotNil(r.sourceBreakdown, "각 strategy 가 sourceBreakdown populate")
+            let total = (r.sourceBreakdown?.realRobotCount ?? 0) + (r.sourceBreakdown?.simCount ?? 0)
+            XCTAssertGreaterThan(total, 0)
+        }
+
+        // realRobotOnly: true — sim 제외.
+        let realOnly = recommender.recommend(for: "march", realRobotOnly: true)
+        for r in realOnly {
+            XCTAssertEqual(r.sourceBreakdown?.simCount, 0,
+                           "realRobotOnly=true: strategy \(r.strategy) 의 sim count 가 0 이어야")
+        }
     }
 }

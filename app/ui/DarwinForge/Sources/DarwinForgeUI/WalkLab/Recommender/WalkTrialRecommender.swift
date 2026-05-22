@@ -39,16 +39,26 @@ public final class WalkTrialRecommender {
     // MARK: - Public entry — 통합 추천
 
     /// 현재 시도 중인 preset 에 대해 N개 strategy 의 추천을 모두 받고 voting (가중치 기반).
+    /// 기본은 realRobotOnly: false (sim 포함) — legacy 호환. 호출자가 robot 연결 알면
+    /// `realRobotOnly: true` 로 안전 모드.
     public func recommend(for preset: String) -> [WalkTrialRecommendation] {
+        return recommend(for: preset, realRobotOnly: false)
+    }
+
+    /// 사이클 149 (codex MAJOR #1 fix): realRobotOnly 명시 overload.
+    /// 종전 cycle 144 가 pilotBiased(for:realRobotOnly:) overload 만 추가 — recommend(for:)
+    /// aggregator 는 default false 로만 호출 → cycle 144 사실상 dead code.
+    /// 본 overload 가 3 strategies 모두 realRobotOnly 일관 전파 → audit #6 의 의도 충족.
+    public func recommend(for preset: String, realRobotOnly: Bool) -> [WalkTrialRecommendation] {
         var results: [WalkTrialRecommendation] = []
 
-        if let rule = ruleBased(for: preset) {
+        if let rule = ruleBased(for: preset, realRobotOnly: realRobotOnly) {
             results.append(rule)
         }
-        if let coord = coordinateDescent(for: preset) {
+        if let coord = coordinateDescent(for: preset, realRobotOnly: realRobotOnly) {
             results.append(coord)
         }
-        if let pilot = pilotBiased(for: preset) {
+        if let pilot = pilotBiased(for: preset, realRobotOnly: realRobotOnly) {
             results.append(pilot)
         }
         // Claude strategy 는 Phase 2 에선 placeholder. ExperimentLoopController 와 통합 후 별도.

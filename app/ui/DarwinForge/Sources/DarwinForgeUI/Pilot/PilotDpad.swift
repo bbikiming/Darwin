@@ -66,7 +66,8 @@ public enum DpadZone: String, CaseIterable, Sendable {
     /// 사이클 143 (IMPLEMENTATION audit #3): D-pad 단일 누름 의 실제 동작 설명.
     /// 게임 연속 보행 오해 차단용 — tooltip / accessibility 에서 사용.
     /// 본 구현은 단발 pose 1회 적용 후 700ms 뒤 walkReady 복귀.
-    public var pressBehaviorKo: String? {
+    /// 사이클 149 (codex MINOR #3 fix): Optional → 비-Optional — 모든 case 가 non-nil.
+    public var pressBehaviorKo: String {
         switch self {
         case .stop:        return "walkReady 자세로 복귀"
         case .up, .down, .left, .right, .rotateLeft, .rotateRight:
@@ -280,8 +281,7 @@ public struct PilotDpad: View {
         // 게임 연속 보행 오해 차단 — tooltip 에 "단발 자세" 명시.
         .help(isDirectionDisabled
               ? "\(zone.koreanLabel) — 현재 비활성 (\(directionUnavailableReason()))"
-              : zone.pressBehaviorKo.map { "\(zone.koreanLabel) — 키 \(zone.keyChar ?? "") · \($0)" }
-                ?? "\(zone.koreanLabel) — 키 \(zone.keyChar ?? "")")
+              : "\(zone.koreanLabel) — 키 \(zone.keyChar ?? "") · \(zone.pressBehaviorKo)")
         .accessibilityLabel(zone.koreanLabel)
         .accessibilityHint(zone.keyChar.map { "단축키 \($0)" } ?? "")
         // 2026-05-17 a11y CRITICAL fix (WCAG 2.1.1 keyboard): 키보드 전용 사용자

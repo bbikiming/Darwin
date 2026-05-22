@@ -203,6 +203,8 @@ public struct PilotTransitionOverlay: View {
             // 사이클 146 (IMPLEMENTATION audit #5): estimated 모드에서는 checkmark 대신
             // clock badge — "추정 진행 — 실 robot 확인 아님" 명시. green 그대로면 사용자가
             // robot 측 검증 완료로 오해 가능. orange clock = "timer 종료, robot 확인 안 됨".
+            // 사이클 149 (codex MINOR #1 fix): accessibility label 추가 — 색맹 사용자
+            // 위한 WCAG 1.4.1 보강 (shape 변경만으로는 부족).
             if usesRealPolling {
                 ZStack {
                     Circle().fill(DFColor.success.opacity(DFOpacity.o15))
@@ -210,6 +212,7 @@ public struct PilotTransitionOverlay: View {
                         .font(.system(size: DFFontSize.s14, weight: .bold))
                         .foregroundStyle(DFColor.success)
                 }
+                .accessibilityLabel("로봇 확인 완료")
             } else {
                 ZStack {
                     Circle().fill(Color.orange.opacity(DFOpacity.o15))
@@ -217,6 +220,7 @@ public struct PilotTransitionOverlay: View {
                         .font(.system(size: DFFontSize.s14, weight: .bold))
                         .foregroundStyle(.orange)
                 }
+                .accessibilityLabel("추정 완료 — 로봇 미확인")
             }
         case .failed:
             ZStack {
