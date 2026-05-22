@@ -4,8 +4,8 @@ import ForgeCore
 /// **v1.22.0 (2026-05-22) — 사이클 107: god object Phase 7 분할 (Fall Prediction)**.
 ///
 /// `WalkLabSession.swift` (2942 line) 의 `updateFallPrediction()` (~50 line) 만
-/// 본 extension 으로 이동. `applyBalanceMitigation` 은 `cancelWalkCycle` (private)
-/// 의존으로 본체 잔존.
+/// 본 extension 으로 이동. (사이클 109 에서 `applyBalanceMitigation` 도 `+BalanceMitigation`
+/// extension 으로 후속 분할 — `cancelWalkCycle` 도 internal 격상하여 호출.)
 ///
 /// # 비유
 ///

@@ -606,13 +606,16 @@ public final class WalkLabSession {
     // 2026-05-17 T3.1 partial split: SafetySample / SafetyEvent → WalkLabSession+Types.swift.
 
     /// 시계열 안전 sample buffer — 최근 10초 (10Hz tick × 100, max 250).
-    public private(set) var safetyTimeline: [SafetySample] = []
+    /// **사이클 111 (Phase 9)**: `private(set)` → `internal(set)` — `WalkLabSession+SafetySampling`
+    /// 의 `recordSafetySampleAndEvents()` 가 write 필요.
+    public internal(set) var safetyTimeline: [SafetySample] = []
     /// **v1.14.8 (2026-05-21) perf #6**: 정규화 캐시.
     /// FallPreventionMonitor.timeSeriesRow 가 body 마다 250×3 = 750 atan/asin 호출
     /// 하던 비용을 sample 추가 시 1회로 amortize. View 는 directly read.
     /// balanceExperimentConfig.pitchInputConvention 변경 시 rebuildNormalizedTimeline()
     /// 호출로 일관성 유지.
-    public private(set) var normalizedSafetyTimeline: [NormalizedSafetySample] = []
+    /// **사이클 111 (Phase 9)**: `private(set)` → `internal(set)` — extension write 허용.
+    public internal(set) var normalizedSafetyTimeline: [NormalizedSafetySample] = []
     /// 안전 이벤트 로그 — 최근 50건 (가장 최신이 last). 별도 보존 — start() reset 시에도 유지.
     public private(set) var safetyEvents: [SafetyEvent] = []
     /// 모니터링 대시보드 펼침 상태 — UI 토글. 앱 재시작 후에도 유지 (UserDefaults).
@@ -638,20 +641,27 @@ public final class WalkLabSession {
         }
     }
 
-    private static let safetyTimelineMaxWindowSec: Double = 10.0
-    private static let safetyTimelineMaxSamples: Int = 250
+    /// **사이클 111 (Phase 9)**: `private` → `internal` — `WalkLabSession+SafetySampling` 의 prune 정책.
+    internal static let safetyTimelineMaxWindowSec: Double = 10.0
+    internal static let safetyTimelineMaxSamples: Int = 250
     private static let safetyEventsMaxCount: Int = 50
 
     /// 이전 tick 의 balanceState — 전환 검출용.
-    private var previousBalanceState: BalanceState = .normal
+    /// **사이클 111 (Phase 9)**: `private` → `internal` — `WalkLabSession+SafetySampling`
+    /// 의 state transition 이벤트 비교 + 갱신.
+    internal var previousBalanceState: BalanceState = .normal
     /// 이전 tick 의 imuSource — 전환 검출용.
-    private var previousImuSource: ImuSource = .sim
+    /// **사이클 111 (Phase 9)**: `private` → `internal` — extension event 발화 시 비교.
+    internal var previousImuSource: ImuSource = .sim
     /// 이전 tick 의 motorTempSource — 전환 검출용.
-    private var previousMotorTempSource: MotorTempSource = .sim
+    /// **사이클 111 (Phase 9)**: `private` → `internal` — extension event 발화 시 비교.
+    internal var previousMotorTempSource: MotorTempSource = .sim
     /// 이전 tick 의 predictor recommendEmergency — rising-edge 만 이벤트.
-    private var previousRecommendEmergency: Bool = false
+    /// **사이클 111 (Phase 9)**: `private` → `internal` — extension event 발화 시 rising-edge 비교.
+    internal var previousRecommendEmergency: Bool = false
     /// 이전 tick 의 ramp 완료 여부 — 한 번만 이벤트 발행.
-    private var rampCompletedLogged: Bool = false
+    /// **사이클 111 (Phase 9)**: `private` → `internal` — extension ramp 완료 1회 로그 가드.
+    internal var rampCompletedLogged: Bool = false
 
     /// **현재 ramp 진행률** (0..1). corrector OFF 또는 미시작 시 nil.
     public var rampProgress: Double? {
@@ -2439,126 +2449,11 @@ public final class WalkLabSession {
         recordSafetySampleAndEvents()
     }
 
-    /// **Monitoring dashboard (2026-05-16)**: 매 tick 시계열 sample 기록 + 상태 전환
-    /// 이벤트 감지. tick() 마지막에 호출.
-    ///
-    /// - sample: 매 tick 마다 1건 append, 10초 윈도우 + 250 sample 상한.
-    /// - 이벤트:
-    ///   - balanceState 변경 (rising/falling 모두) → `.stateChange`
-    ///   - predictor recommendEmergency rising-edge → `.predictorRecommend`
-    ///   - imuSource 변경 → `.imuSourceChange`
-    ///   - ramp 0..1 완료 (rising-edge) → `.rampComplete`
-    private func recordSafetySampleAndEvents() {
-        let now = Date()
-        let maxDelta = lastCorrections?.maxAbs ?? 0
-        let sample = SafetySample(
-            timestamp: now,
-            rollDeg: imuRollDeg,
-            pitchDeg: imuPitchDeg,
-            predictionScore: fallPrediction.score,
-            balanceState: balanceState,
-            correctorMaxDelta: maxDelta
-        )
-        // **2026-05-16 최적화 (Phase 2)**: 매 tick 의 3-step @Published 변경을
-        // 단일 assignment 로 batch — publisher notification 3 → 1.
-        // 이전: append + removeFirst (expired) + removeFirst (cap) = 3 mutations
-        // 정정: local var 에서 작업 후 1회 assign — SwiftUI subscriber 부담 ↓.
-        //
-        // chronological 정렬 invariant 유지 — append always at end, prune from front.
-        var newTimeline = safetyTimeline
-        newTimeline.append(sample)
-        let cutoff = now.addingTimeInterval(-Self.safetyTimelineMaxWindowSec)
-        var firstValidIdx = 0
-        while firstValidIdx < newTimeline.count,
-              newTimeline[firstValidIdx].timestamp < cutoff {
-            firstValidIdx += 1
-        }
-        if firstValidIdx > 0 {
-            newTimeline.removeFirst(firstValidIdx)
-        }
-        if newTimeline.count > Self.safetyTimelineMaxSamples {
-            newTimeline.removeFirst(newTimeline.count - Self.safetyTimelineMaxSamples)
-        }
-        safetyTimeline = newTimeline
-
-        // **v1.14.8 (2026-05-21) perf #6** — normalized 캐시도 parallel batch.
-        // raw 와 동일한 prune 정책 (시간 + cap). 새 sample 만 normalizeConvention
-        // 1회 호출 → O(1) per tick (vs FallPreventionMonitor 의 O(N) per body redraw).
-        let convention = balanceExperimentConfig.pitchInputConvention
-        let mapped = ImuAttitudeDisplayMapping.normalizeConvention(
-            rawRoll: sample.rollDeg,
-            rawPitch: sample.pitchDeg,
-            convention: convention
-        )
-        let normalized = NormalizedSafetySample(
-            timestamp: sample.timestamp,
-            rollDeg: mapped.roll,
-            pitchDeg: mapped.pitch,
-            predictionScore: sample.predictionScore
-        )
-        var newNormalized = normalizedSafetyTimeline
-        newNormalized.append(normalized)
-        if firstValidIdx > 0 && firstValidIdx <= newNormalized.count {
-            newNormalized.removeFirst(firstValidIdx)
-        }
-        if newNormalized.count > Self.safetyTimelineMaxSamples {
-            newNormalized.removeFirst(newNormalized.count - Self.safetyTimelineMaxSamples)
-        }
-        normalizedSafetyTimeline = newNormalized
-        // **v1.14.8.1 (2026-05-21) — code-reviewer HIGH fix**: raw vs normalized 동기 invariant.
-        // 두 배열은 동일 prune 정책 (시간/cap) + 동일 reset 지점 (start) 으로 항상 동일 길이
-        // 유지. 미래 외부 mutation 시 mismatch 차단용 defensive assert. Release 빌드에선
-        // no-op (assert) — perf 영향 없음.
-        assert(safetyTimeline.count == normalizedSafetyTimeline.count,
-               "safetyTimeline / normalizedSafetyTimeline 길이 동기 invariant 위반")
-
-        // 이벤트 — balanceState 전환.
-        if balanceState != previousBalanceState {
-            logSafetyEvent(
-                kind: .stateChange,
-                message: "안전 상태: \(previousBalanceState.label) → \(balanceState.label)"
-            )
-            previousBalanceState = balanceState
-        }
-
-        // 이벤트 — predictor rising-edge.
-        let recommend = fallPrediction.recommendEmergency
-        if recommend, !previousRecommendEmergency {
-            let etaStr = fallPrediction.etaMs.map { String(format: " (ETA %.0fms)", $0) } ?? ""
-            logSafetyEvent(
-                kind: .predictorRecommend,
-                message: String(format: "예측 fall — score %.0f%@", fallPrediction.score, etaStr)
-            )
-        }
-        previousRecommendEmergency = recommend
-
-        // 이벤트 — IMU 출처 변경.
-        if imuSource != previousImuSource {
-            logSafetyEvent(
-                kind: .imuSourceChange,
-                message: "IMU 출처: \(previousImuSource.label) → \(imuSource.label)"
-            )
-            previousImuSource = imuSource
-        }
-
-        // 이벤트 — 모터 온도 출처 변경 (2026-05-16).
-        if motorTempSource != previousMotorTempSource {
-            logSafetyEvent(
-                kind: .motorTempSourceChange,
-                message: "모터 온도 출처: \(previousMotorTempSource.label) → \(motorTempSource.label)"
-            )
-            previousMotorTempSource = motorTempSource
-        }
-
-        // 이벤트 — ramp 완료 (rising-edge, OFF→ON 후 1초 도달 시 1회만).
-        if enableBalanceCorrection,
-           let progress = rampProgress,
-           progress >= 1.0,
-           !rampCompletedLogged {
-            logSafetyEvent(kind: .rampComplete, message: "자세 보정 ramp 100% 도달 — 풀 적용")
-            rampCompletedLogged = true
-        }
-    }
+    // MARK: - Safety Sampling (사이클 111 Phase 9 — extension 이동)
+    //
+    // `recordSafetySampleAndEvents()` (~110 line) 은 `WalkLabSession+SafetySampling.swift`
+    // 로 이동. 7개 stored property `private(set)/private` → `internal(set)/internal` 격상.
+    // 호출 site `tick()` 동일.
 
     /// 안전 이벤트 추가 — `safetyEvents` 에 append + 50건 상한.
     /// MainActor 보장 — caller (tick / start / stop / didSet 등) 모두 MainActor.
