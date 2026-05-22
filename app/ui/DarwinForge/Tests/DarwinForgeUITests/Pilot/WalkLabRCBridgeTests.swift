@@ -317,6 +317,15 @@ final class WalkLabRCBridgeTests: XCTestCase {
         XCTAssertTrue(session.advanced, "pilot move 후 advanced=true 자동 활성")
     }
 
+    /// **v1.20.43 사이클 57** — handlePreset 가 session 없으면 즉시 safe error.
+    func testHandlePresetWithoutSessionReturnsSafetyMessage() {
+        let lonely = WalkLabRCBridge(tello: MockTelloLink())
+        // session 미연결 — 의도된 race / 미사용 경로.
+        lonely.handlePreset(.march, from: .ui)
+        XCTAssertNotNil(lonely.safetyMessage)
+        XCTAssertTrue(lonely.safetyMessage?.contains("WalkLabSession") ?? false)
+    }
+
     /// **v1.20.42 사이클 56** — accumulator.eventsPerSecond window 0 이면 0 반환 (defensive).
     func testEventsPerSecondZeroWindow() {
         let acc = PilotInputAccumulator()
