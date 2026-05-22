@@ -280,7 +280,9 @@ public enum OfficialCatalogReference {
     public static func getUpFront(id: Int) -> MotionPage {
         MotionPage(
             id: UInt8(clamping: id),
-            name: "공식 10 — Get Up Front (앞 낙상 복구) ⚠ Caution",
+            // 사이클 143 (IMPLEMENTATION audit #7): placeholder 라벨 명시화.
+            // 실 robot 송출은 `forge motion play --slot 10 --engage`. UI 목록은 preview only.
+            name: "공식 10 — [placeholder] Get Up Front (앞 낙상 복구) ⚠ Caution",
             steps: [
                 .from(pose: .walkReady, playMs: 1500, pauseMs: 200)
             ]
@@ -291,7 +293,8 @@ public enum OfficialCatalogReference {
     public static func getUpBack(id: Int) -> MotionPage {
         MotionPage(
             id: UInt8(clamping: id),
-            name: "공식 11 — Get Up Back (뒤 낙상 복구) ⚠ Caution",
+            // 사이클 143 (IMPLEMENTATION audit #7): placeholder 라벨.
+            name: "공식 11 — [placeholder] Get Up Back (뒤 낙상 복구) ⚠ Caution",
             steps: [
                 .from(pose: .walkReady, playMs: 1500, pauseMs: 200)
             ]
@@ -369,7 +372,8 @@ public enum OfficialCatalogReference {
     public static func handStanding(id: Int) -> MotionPage {
         MotionPage(
             id: UInt8(clamping: id),
-            name: "공식 17 — Hand Standing (물구나무) 🔴 HighRisk",
+            // 사이클 143 (IMPLEMENTATION audit #7): placeholder 라벨.
+            name: "공식 17 — [placeholder] Hand Standing (물구나무) 🔴 HighRisk",
             steps: [
                 .from(pose: .walkReady, playMs: 2000, pauseMs: 500)
             ]

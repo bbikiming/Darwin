@@ -449,10 +449,14 @@ public final class WalkLabRCBridge {
             safetyMessage = nil
             // **사이클 119 (audit #30, P0)**: MotionBlender 는 sim-only (blendedPose 반환만).
             // 종전 "적용" → 사용자가 실 hardware 송출로 오해. robot 연결 상태 동반 표시.
+            // **사이클 143 (IMPLEMENTATION audit #4)**: MotionBlender 자체가 모터 명령
+            // 송출 미구현 — robot 연결돼도 "송출 진행" 표현은 부정확. 명확히 "preview/blend 적용".
+            // 실 motor 송출이 별도 path (e.g. WalkLab onboard command) 로 들어가는 경우에만
+            // bus suffix 가 의미 가지므로 here-only label 은 항상 "preview blend".
             let robotConnected = session?.store?.bus != nil
             let suffix = robotConnected
-                ? "(motion 송출 진행)"
-                : "(motion preview — sim only, robot 미연결)"
+                ? "(motion preview blend — robot 연결됨, blender 자체는 sim only)"
+                : "(motion preview blend — sim only, robot 미연결)"
             session?.pilotPostEvent("motion '\(descriptor.displayLabel)' \(suffix)",
                                      source: source)
         case .rejectedSafety(let reason):

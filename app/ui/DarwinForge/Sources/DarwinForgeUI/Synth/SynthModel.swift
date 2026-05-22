@@ -93,12 +93,14 @@ public final class SynthModel: ObservableObject {
         SynthCatalogEntry(id: 3,  displayName: "No",             rawName: "no",         safetyClass: "Safe",     tags: ["gesture"], stepCount: 5),
         SynthCatalogEntry(id: 4,  displayName: "Thank You",      rawName: "hi",         safetyClass: "Safe",     tags: ["gesture","greeting"], stepCount: 4),
         SynthCatalogEntry(id: 9,  displayName: "Walk Ready",     rawName: "walkready",  safetyClass: "Safe",     tags: ["pose","anchor","locomotion"], stepCount: 1),
-        SynthCatalogEntry(id: 10, displayName: "Get Up (Front)", rawName: "f up",       safetyClass: "Caution",  tags: ["recovery","balance_critical"], stepCount: 5),
-        SynthCatalogEntry(id: 11, displayName: "Get Up (Back)",  rawName: "b up",       safetyClass: "Caution",  tags: ["recovery","balance_critical"], stepCount: 6),
+        // 사이클 143 (IMPLEMENTATION audit #7): [placeholder] — 현재 OfficialCatalogReference 도 walkReady hold.
+        SynthCatalogEntry(id: 10, displayName: "[placeholder] Get Up (Front)", rawName: "f up",       safetyClass: "Caution",  tags: ["recovery","balance_critical"], stepCount: 5),
+        SynthCatalogEntry(id: 11, displayName: "[placeholder] Get Up (Back)",  rawName: "b up",       safetyClass: "Caution",  tags: ["recovery","balance_critical"], stepCount: 6),
         SynthCatalogEntry(id: 12, displayName: "Right Kick",     rawName: "rk",         safetyClass: "HighRisk", tags: ["kick","balance_critical"], stepCount: 7),
         SynthCatalogEntry(id: 13, displayName: "Left Kick",      rawName: "lk",         safetyClass: "HighRisk", tags: ["kick","balance_critical"], stepCount: 7),
         SynthCatalogEntry(id: 15, displayName: "Sit Down",       rawName: "sit down",   safetyClass: "Safe",     tags: ["posture","idle"], stepCount: 1),
-        SynthCatalogEntry(id: 17, displayName: "Hand Standing",  rawName: "mul1",       safetyClass: "HighRisk", tags: ["acrobatics","balance_critical"], stepCount: 7),
+        // 사이클 143 (IMPLEMENTATION audit #7): [placeholder] — HighRisk + 실제 raw 데이터 없음.
+        SynthCatalogEntry(id: 17, displayName: "[placeholder] Hand Standing",  rawName: "mul1",       safetyClass: "HighRisk", tags: ["acrobatics","balance_critical"], stepCount: 7),
         SynthCatalogEntry(id: 23, displayName: "Yes Go!",        rawName: "d1",         safetyClass: "Safe",     tags: ["gesture"], stepCount: 4),
         SynthCatalogEntry(id: 24, displayName: "Wow!",            rawName: "d2",         safetyClass: "Safe",     tags: ["gesture"], stepCount: 5),
         SynthCatalogEntry(id: 27, displayName: "Oops",           rawName: "d3",         safetyClass: "Safe",     tags: ["gesture"], stepCount: 5),
