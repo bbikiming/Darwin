@@ -36,6 +36,11 @@ public struct RootView: View {
     /// 이 MainActor hop 후 bridge.updateTelloState 호출.
     /// nil = bridge alloc 전 (onAppear 후 일괄 alloc).
     @State private var telloStateOwner: TelloStateListenerOwner? = nil
+
+    /// **사이클 85 — PilotPreferences 영속 store**: UserDefaults (.standard) 기반.
+    /// app launch 시 bridge alloc 직후 load → sensitivity / smoothing 사용자 설정 적용.
+    /// 향후 settings UI panel 이 store.save() 호출해서 update.
+    @State private var pilotPreferencesStore: PilotPreferencesStore = UserDefaultsPilotPreferencesStore()
     // **v1.11.15 (2026-05-19)** — 테마 매니저. DarwinForgeApp 이 environmentObject 로 주입.
     @EnvironmentObject private var themeManager: DFThemeManager
     private let commander: ClaudeCommander
@@ -130,6 +135,14 @@ public struct RootView: View {
                 bridge.session = walkLabSession
                 walkLabSession.pilotBridge = bridge
                 pilotBridge = bridge
+                // **사이클 85 — PilotPreferences 영속 wire-up**: 저장된 사용자 sensitivity /
+                // smoothing 을 launch 시점에 bridge 에 적용. 첫 실행 시 default 값 (TelloRCMapper
+                // .Scale.default 와 일치) — backward compat.
+                let prefs = pilotPreferencesStore.load()
+                bridge.scale = TelloRCMapper.Scale(
+                    fb: prefs.scaleFB, lr: prefs.scaleLR, yaw: prefs.scaleYaw
+                )
+                bridge.smoothingFactor = prefs.smoothingFactor
             }
             // **v1.20.35 사이클 18 + 사이클 73 (코덱스 HIGH-2 fix)** — Tello listener owner alloc.
             // 종전: onAppear 에서 owner.start() 즉시 호출 → macOS 가 의도 없이 권한 다이얼로그
