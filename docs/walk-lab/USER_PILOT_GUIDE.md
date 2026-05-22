@@ -692,3 +692,67 @@ ROBOTIS 권장 125Hz 의 1/25. Onboard mode 는 자이로 보정 자체가 Mac �
 - 68 commits ahead origin (cycles 119-165).
 - 1337 swift + 368 rust tests pass.
 - 0 build warnings.
+
+---
+
+## 사이클 167-172 — UI wire-up + persistence + codex review (2026-05-23 후속)
+
+> **v1.25.1 (2026-05-23)** — cycles 158-165 의 자이로 closed-loop 변경을 실제 UI 에 노출 +
+> 사용자 명시 dismiss path + persist + 실 robot smoke test 시나리오.
+
+### Cycles 167-170 — UI wire-up + smoke test
+
+| Cycle | 작업 | 영향 |
+|---|---|---|
+| **167** | `balanceCorrectionFreshness` HUD inline badge (.degraded orange / .blocked red) | 사용자가 IMU stale silent 차단 즉시 인지 |
+| **168** | P1-2 ramp×freshness 곱 docstring + OnboardHealthIndicator schemaWarningBanner | "daemon v2 미확인" 경고 UI |
+| **169** | "v2 확인" 토글 button (사용자 명시 dismiss) | banner 즉시 사라짐 |
+| **170** | docs/harness/walklab-gyro-smoke-test-2026-05-23.md (243 lines) | 실 robot step-by-step 검증 시나리오 |
+
+### Cycle 171 — codex review of 167-170
+
+**VERDICT**: ACCEPT (0 CRITICAL/MAJOR). 4 MINOR:
+- #1 `.normal` invisible — design choice OK.
+- #2 badge label length — graceful truncate.
+- #3 `onboardBalanceSchemaWarningActive` stale on first UI entry → cycle 172 fix.
+- #4 `onboardBalanceSchemaVerified` 매 session 재확인 → cycle 172 fix.
+
+### Cycle 172 — codex MINOR #3 + #4 fix
+
+- `onboardBalanceSchemaVerified` → UserDefaults persist (key: "df.walklab.onboardBalanceSchemaVerified").
+- `onboardBalanceSchemaWarningActive` → computed property (매 read 즉시 평가).
+- currentWalkingEngineCommand() 의 manual flag set 제거.
+- Button action 에서 manual warningActive=false 제거.
+- **+7 tests**: WalkLabOnboardSchemaWarningTests (각 분기 + persistence + computed evaluation).
+
+### before/after (cycle 158 → cycle 172)
+
+| 영역 | Before (cycle 158) | After (cycle 172) |
+|---|---|---|
+| IMU rate (walk) | 5Hz | **20Hz** (cycle 159) |
+| IMU stale UI signal | 없음 | **inline orange/red badge** (cycle 167) |
+| Onboard schema | 7 필드 | **10 필드** (cycle 162) |
+| Silent failure 경고 | 없음 | **banner + "v2 확인" 토글** (cycles 168-169) |
+| Verified persistence | 없음 | **UserDefaults persist** (cycle 172) |
+| Warning 평가 timing | currentWalkingEngineCommand 의존 | **computed (즉시)** (cycle 172) |
+| 보정 효과 측정 | 없음 | **CorrectionEffectMetric ON/OFF 비교** (cycles 163-165) |
+| 실 robot smoke test | 없음 | **243-line 시나리오 doc** (cycle 170) |
+| Swift tests | 1325 | **1344** (+19 new) |
+
+### Multi-agent 검증 누적
+
+- codex review cycles 159-162: ACCEPT-WITH-RESERVATIONS → cycle 164 fix.
+- codex review cycles 163-165: ACCEPT (clean).
+- codex review cycles 167-170: ACCEPT — 2 MINOR fixed (172) + 2 MINOR design choice.
+
+### 남은 항목 (deferred)
+
+- P2-1 GyroCorrector / BalanceCorrector / FallPredictor 책임 통합 (장기 refactor).
+- P2-2 Mac sparse vs Onboard timing 동기 (별도 sprint).
+- daemon version automated handshake (옛 v1 daemon detection).
+
+### Git 상태 (cycle 172 종료 시점)
+
+- **78 commits ahead origin** (cycles 119-172).
+- **1344 swift + 368 rust tests pass**.
+- **0 build warnings**.
