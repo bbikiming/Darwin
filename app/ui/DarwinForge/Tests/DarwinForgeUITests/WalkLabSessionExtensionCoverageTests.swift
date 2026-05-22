@@ -444,4 +444,66 @@ final class WalkLabSessionExtensionCoverageTests: XCTestCase {
         // 명시 read 검증.
         _ = session.engine
     }
+
+    // MARK: - Phase 9 Safety Sampling (사이클 111)
+
+    /// `recordSafetySampleAndEvents()` 호출 시 safetyTimeline 에 sample append.
+    /// internal(set) 격상 검증 — extension write 후 module-internal read 가능.
+    func testRecordSafetySampleAppendsToTimeline() {
+        let session = WalkLabSession()
+        let priorCount = session.safetyTimeline.count
+        session.recordSafetySampleAndEvents()
+        XCTAssertEqual(session.safetyTimeline.count, priorCount + 1,
+                       "1 tick → 1 sample append (사이클 111 회귀 가드)")
+        XCTAssertEqual(session.normalizedSafetyTimeline.count, session.safetyTimeline.count,
+                       "normalized 와 raw 길이 동기 invariant (HIGH fix)")
+    }
+
+    /// 10초 윈도우 + 250 sample 상한 — Self.safetyTimelineMaxSamples / MaxWindowSec 격상.
+    func testSafetyTimelineConstantsAccessible() {
+        XCTAssertEqual(WalkLabSession.safetyTimelineMaxSamples, 250,
+                       "250 sample 상한 (사이클 111 회귀 가드)")
+        XCTAssertEqual(WalkLabSession.safetyTimelineMaxWindowSec, 10.0,
+                       "10초 윈도우 (사이클 111 회귀 가드)")
+    }
+
+    /// previousBalanceState 등 격상된 internal var 접근 가능.
+    func testSafetySamplingInternalVarsAccessible() {
+        let session = WalkLabSession()
+        // 모든 격상된 var 가 module-internal read 가능 검증.
+        _ = session.previousBalanceState
+        _ = session.previousImuSource
+        _ = session.previousMotorTempSource
+        _ = session.previousRecommendEmergency
+        _ = session.rampCompletedLogged
+    }
+
+    // MARK: - Phase 10 Preflight (사이클 112)
+
+    /// `quickPreflight(for:)` idle preset → 항상 nil (정지는 차단되면 안 됨).
+    func testQuickPreflightIdleAlwaysPassesNil() {
+        let session = WalkLabSession()
+        let failure = session.quickPreflight(for: .idle)
+        XCTAssertNil(failure, "idle preset 차단 없음 (사이클 112 회귀 가드)")
+    }
+
+    /// `quickPreflight(for:)` 시뮬 모드 (bus 미연결) + march → cradle skip → nil.
+    func testQuickPreflightSimModeMarchNoFailure() {
+        let session = WalkLabSession()
+        // store = nil → bus 미연결 → cradle skip.
+        let failure = session.quickPreflight(for: .march)
+        XCTAssertNil(failure,
+                     "시뮬 모드 march 차단 없음 (사이클 112 + v1.14.7 회귀 가드)")
+    }
+
+    /// `quickPreflight(for:)` advanced + critical stability → blocked.
+    /// 단 stabilityScore 의 critical 발생 조건 (sliders) 이 다양 — 본 test 는 simple guard 만.
+    func testQuickPreflightAdvancedCriticalGuard() {
+        let session = WalkLabSession()
+        // advanced=true 만 강제, stabilityScore 는 default → critical 아닐 수 있음.
+        // method 호출 자체가 crash 없음 검증.
+        session.advanced = true
+        _ = session.quickPreflight(for: .march)
+        // 검증: failure 가 nil 또는 valid Cause — 둘 다 OK (crash 없음이 핵심).
+    }
 }
