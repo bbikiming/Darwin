@@ -819,6 +819,9 @@ final class PilotIntentTests: XCTestCase {
     func testEmptySummary() {
         XCTAssertFalse(PilotInputSummary.empty.hasData)
         XCTAssertEqual(PilotInputSummary.empty.totalEvents, 0)
+        // **사이클 52** — hasMoveData (Cycle 42) 도 false.
+        XCTAssertFalse(PilotInputSummary.empty.hasMoveData,
+                       "empty → hasMoveData false")
     }
 
     /// **v1.20.30.1 사이클 36-fix MEDIUM 1 (코덱스)** — comfortLevel 100% 초과 차단.
