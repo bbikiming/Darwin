@@ -235,8 +235,17 @@ public final class WalkTrialRecommender {
     ///
     /// trial 부족 (< 3 개) 시 nil (상향 — 2 → 3).
     public func pilotBiased(for preset: String) -> WalkTrialRecommendation? {
+        return pilotBiased(for: preset, realRobotOnly: false)
+    }
+
+    /// 사이클 144 (IMPLEMENTATION audit #6): realRobotOnly 명시 overload.
+    /// 종전 pilotBiased 는 ruleBased / coordinateDescent 와 달리 realRobotOnly 분기 없음
+    /// → sim 자동 생성 piloted trial 이 추천에 섞임. cycle 119/129 패턴 일치.
+    /// 호출자가 robot 연결 상태 알고 있을 때 `realRobotOnly: true` 로 안전 모드 추천.
+    public func pilotBiased(for preset: String, realRobotOnly: Bool) -> WalkTrialRecommendation? {
         let filter = TrialFilter(preset: preset, minOverallScore: 0.75,
-                                  minStabilityScore: 0.7, noFallsOnly: true)
+                                  minStabilityScore: 0.7, noFallsOnly: true,
+                                  realRobotOnly: realRobotOnly)
         let allEntries = store.query(filter: filter, sort: .overallDesc)
         // **MEDIUM 1 fix**: filter 먼저, prefix 나중 — non-pilot trial 이 top 10 점유 시 손실 차단.
         // **LOW 2 fix**: tuple (trial, pilot) 으로 force unwrap 제거.
