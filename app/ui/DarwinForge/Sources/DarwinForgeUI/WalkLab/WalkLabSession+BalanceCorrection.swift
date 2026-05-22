@@ -1,0 +1,313 @@
+import Foundation
+import ForgeCore
+
+/// **v1.22.0 (2026-05-22) — 사이클 90: god object Phase 5 분할 (architect agent plan)**.
+///
+/// `WalkLabSession.swift` 의 balance correction code (~280 line) 를 본 extension 으로 이동.
+/// 본 분할은 architect plan 의 **중간 위험** — 213-line `applyBalanceCorrectionIfEnabled`
+/// 가 본체의 많은 private state 를 read/write 한다.
+///
+/// # 비유
+///
+/// 거대한 공장의 "균형 제어실" 만 별도 동으로 이전. 제어 회로 (state) 는 본 공장에 잔존,
+/// 제어 콘솔 (method) 만 이전. 콘솔은 본 공장의 회로 카탈로그 (internal(set)) 로 접근.
+///
+/// # 분할 정책
+///
+/// - **stored property 본체 잔존** (Swift 제약): `lastCorrections` / `lastRawCandidate` /
+///   `lastHybridResult` / `correctorFilteredRoll` / `correctorFilteredPitch` /
+///   `hybridBalanceState` / `lastWalkCycleElapsedMs` / `lastWalkPeriodMs` /
+///   `lastCorrectionApplied` / `cycleStartedAt` / `lastSafePose` / `correctionEnabledAt`.
+/// - 본 cycle 에서 access 격상 (private → internal 또는 private(set) → internal(set)):
+///   `correctionEnabledAt` (private → internal),
+///   `lastCorrections` (private(set) → internal(set)),
+///   `lastSafePose` (private → internal),
+///   `lastImuSampleAt` (private → internal),
+///   `correctorFilteredRoll/Pitch` (private → internal),
+///   `hybridBalanceState` (private(set) → internal(set)),
+///   `cycleStartedAt` (private(set) → internal(set)),
+///   `lastCorrectionApplied` (private(set) → internal(set)),
+///   `lastRawCandidate` (private(set) → internal(set)),
+///   `lastHybridResult` (private(set) → internal(set)),
+///   `lastWalkCycleElapsedMs` (private(set) → internal(set)),
+///   `lastWalkPeriodMs` (private(set) → internal(set)).
+/// - 이동 method/static: `applyBalanceCorrectionIfEnabled` (public),
+///   `scaleCorrections` (internal static), `applyCorrections` (internal static).
+///
+/// # 의존성 (본체 잔존, extension 이 read)
+///
+/// `autoFallPrevention` (public) / `balanceState` (public private(set), read 만) /
+/// `balanceExperimentConfig` (public) / `imuRollDeg/PitchDeg` (public) /
+/// `enableBalanceCorrection` (public) / `balanceCorrector` (public) /
+/// `effectiveWalkPeriodMs()` (public) / `current` (public) / `store` (internal).
+///
+/// # 회귀
+///
+/// 1267 tests 회귀 0 — 외부 API 변경 0 (`applyBalanceCorrectionIfEnabled` signature 동일).
+extension WalkLabSession {
+
+    /// **Stage 4 + Phase C (v1.1 fall prevention)**: Balance corrector + balanceState
+    /// 둘 다 실 motor 송출 경로에 적용. sim/실 일관.
+    ///
+    /// 2026-05-16 Phase C 정정 (Agent 4 발견): 이전엔 Stage 2 의 warning 70% 감속 /
+    /// danger 자세 동결이 sim engine 만 영향. 실 motor 경로는 미적용. 이번 정정에서
+    /// **transformPose 가 balanceState 별로 pose 변환** 으로 실 motor 에도 적용:
+    /// - `.danger` (45° 이상): 마지막 안전 pose (lastSafePose) 반환 = 자세 동결
+    /// - 그 외: corrector 만 적용 (default false 면 identity)
+    /// `.warning` (35° 이상) 의 속도 감속은 pose 변환으로는 표현 불가 → engine 감속만 유지
+    /// (실 motor 의 cycle plan 은 미리 합성됨, 동적 stride 변경은 추후 Sprint).
+    ///
+    /// 입력 pose 는 보통 보행 cycle 의 phase target. roll/pitch error 는 현재 IMU.
+    ///
+    /// **v1.11 (2026-05-17 사용자 prompt) 분기**:
+    /// `balanceExperimentConfig.algorithmMode` 별 corrections 계산 + `applyToRobot` 게이팅.
+    ///   - `.off` → identity (corrections 0)
+    ///   - `.robotisPControl` → LPF + deadband + P-control (v1.9.x 기존)
+    ///   - `.hybridBA` → slow EMA + phase-locked residual (v1.10 시뮬 권장)
+    ///   - `.observeOnly` → corrections 계산하고 lastCorrections 에 기록 + 로그만, pose 적용 X
+    /// `applyToRobot=false` (observeOnly 외에도) → corrections 기록만, pose 적용 X.
+    public func applyBalanceCorrectionIfEnabled(to pose: RobotPose) -> RobotPose {
+        if autoFallPrevention, balanceState == .danger {
+            // **Codex 3rd review fix**: danger return 도 candidate stale 방지.
+            lastCorrections = nil
+            lastRawCandidate = nil
+            lastCorrectionApplied = false
+            return lastSafePose ?? pose
+        }
+
+        // **v1.11.1 (2026-05-18 사용자 review HIGH-3 + Codex #2/#5) — IMU freshness gate**:
+        // 워킹 보정은 20Hz (50ms tick) 제어. 150-250ms 이상 stale IMU 로 corrections
+        // 적용 시 제어 lag → oscillation / fall 가속 위험. 종전 stale 기준 5초는
+        // UI 표시용으론 충분하지만 보정 제어용으론 위험.
+        //
+        // 정책 (Codex #2 권고 — IMU 5Hz polling jitter 흡수 위해 250ms 부터 감쇠):
+        //   - imuSampleAgeMs > 250 → corrections 감쇠 (linear 250→500ms 동안 1.0→0.0)
+        //   - imuSampleAgeMs ≥ 500 → corrections 강제 0 + apply 차단
+        //   - sim 모드 (store?.bus == nil + lastImuSampleAt nil) → gate 미적용
+        //
+        // **Codex #5 추가 발견**: bus 연결됐는데 lastImuSampleAt 가 nil (IMU 한 번도
+        // 안 옴) → 가장 위험. 보정 들어가면 fall 위험. → 차단.
+        let imuAgeMs: Double? = lastImuSampleAt.map {
+            Date().timeIntervalSince($0) * 1000.0
+        }
+        let freshnessGate: Double
+        let busConnected = (store?.bus != nil)
+        if busConnected && lastImuSampleAt == nil {
+            // 실 robot 연결됐지만 IMU 한 번도 안 옴 → 가장 위험 (보정 불가).
+            lastCorrections = nil
+            lastRawCandidate = nil
+            lastCorrectionApplied = false
+            lastSafePose = pose
+            return pose
+        }
+        if let age = imuAgeMs {
+            if age >= 500 {
+                // 매우 stale — corrections 0 + apply 차단.
+                lastCorrections = nil
+                lastRawCandidate = nil
+                lastCorrectionApplied = false
+                lastSafePose = pose
+                return pose
+            } else if age > 250 {
+                // 부분 stale — linear 감쇠 (250→500ms : 1.0→0.0).
+                freshnessGate = max(0, 1.0 - (age - 250) / 250)
+            } else {
+                freshnessGate = 1.0
+            }
+        } else {
+            // sim 모드 (bus 없음) — IMU 가 즉시 갱신되는 simulation 신뢰.
+            freshnessGate = 1.0
+        }
+
+        let config = balanceExperimentConfig
+
+        // **v1.11.3 (2026-05-18) — P1.1 부호 정규화 (opt-in)**.
+        // GPT 검증 (2026-05-18) 권고: `imuFilter.pitchDeg` 자체는 건드리지 않고 corrector
+        // 입력에서 명시적 정규화 → blast radius 최소 (UI 게이지·fall predictor·safety
+        // state 등 IMU 소비자 영향 X). default `.imuRaw` 이면 변경 없음.
+        let normalizedImuPitchDeg: Double = {
+            switch config.pitchInputConvention {
+            case .imuRaw: return imuPitchDeg
+            case .negateForwardIsNegative: return -imuPitchDeg
+            }
+        }()
+        // roll 정규화는 P1.0 측정 후 도입 (현재는 raw 유지 — 데이터상 roll 부호는 정상 분포).
+        let normalizedImuRollDeg = imuRollDeg
+
+        // Mode .off → identity (corrections 비움, log 도 0).
+        if config.algorithmMode == .off {
+            lastCorrections = nil
+            lastRawCandidate = nil  // **Codex 2nd review MEDIUM-A fix**: stale candidate 방지.
+            lastSafePose = pose
+            lastCorrectionApplied = false
+            return pose
+        }
+
+        // Legacy toggle 차단 (UI 의 enableBalanceCorrection 와 호환).
+        guard enableBalanceCorrection else {
+            lastCorrections = nil
+            lastRawCandidate = nil  // **Codex 2nd review MEDIUM-A fix**: stale candidate 방지.
+            lastSafePose = pose
+            lastCorrectionApplied = false
+            return pose
+        }
+
+        let now = Date()
+        let startedAt = correctionEnabledAt ?? now
+        if correctionEnabledAt == nil { correctionEnabledAt = startedAt }
+        let ramp = max(0, min(1, now.timeIntervalSince(startedAt)))
+
+        // observeOnly 또는 applyToRobot=false → corrections 계산만, pose 적용 X.
+        let shouldApplyToPose = config.applyToRobot && config.algorithmMode != .observeOnly
+
+        // Hybrid B+A 또는 observeOnly 가 hybrid 알고리즘을 미리보기 하는 케이스.
+        // observeOnly + hybrid corrector → hybrid corrections 계산.
+        // observeOnly + P-control corrector → P-control corrections 계산.
+        let useHybridPath = balanceCorrector.enableHybrid
+            && (config.algorithmMode == .hybridBA || config.algorithmMode == .observeOnly)
+
+        if useHybridPath {
+            // **v1.11 phase fix (사용자 prompt + 5 agent 검증)**:
+            // 종전: sessionStartedAt 기준 elapsed → walking cycle phase 와 무관.
+            // 신규: cycleStartedAt 기준 + truncatingRemainder(periodMs) → cycle 안 phase.
+            // periodMs: currentWalkTuning() nil 이면 WalkMotionLibrary.defaultTuning fallback.
+            let periodMs = effectiveWalkPeriodMs()
+            let elapsedMs: Double
+            if let cycleStart = cycleStartedAt, current != .idle, periodMs > 0 {
+                let total = Date().timeIntervalSince(cycleStart) * 1000.0
+                elapsedMs = total.truncatingRemainder(dividingBy: periodMs)
+            } else {
+                elapsedMs = 0
+            }
+
+            // **v1.11.3 P1.1**: normalizedImuPitchDeg 사용 (default `.imuRaw` 면 imuPitchDeg 그대로).
+            let result = balanceCorrector.hybridCorrections(
+                imuRollDeg: normalizedImuRollDeg,
+                imuPitchDeg: normalizedImuPitchDeg,
+                elapsedMs: elapsedMs,
+                periodMs: periodMs,
+                state: &hybridBalanceState,
+                now: now,
+                signConvention: config.signConvention
+            )
+            // **Codex review (2026-05-18) HIGH-1 fix**: candidate vs applied 명확 분리.
+            // - lastRawCandidate = corrector 가 계산한 **raw** corrections (ramp 적용 전)
+            //   → handoff §4 의 `candidateDeltas` 정확한 의미.
+            // - lastCorrections = ramp 적용 후 (legacy 호환, UI 표시 + applied 후보).
+            // - v1.11.1 HIGH-3: freshnessGate (200-500ms stale 감쇠) 적용 → ramp 곱.
+            lastRawCandidate = result.corrections
+            let effectiveScale = ramp * freshnessGate
+            let rampedCorr = Self.scaleCorrections(result.corrections, by: effectiveScale)
+            lastCorrections = rampedCorr
+            // hybrid input for UI logging (correctorFilteredRoll/Pitch reuse).
+            correctorFilteredRoll = result.effectiveRollErr
+            correctorFilteredPitch = result.effectivePitchErr
+            // v1.11 logging fields
+            lastHybridResult = result
+            lastWalkCycleElapsedMs = elapsedMs
+            lastWalkPeriodMs = periodMs
+
+            if !shouldApplyToPose {
+                // observeOnly 또는 applyToRobot=false → pose 그대로.
+                lastCorrectionApplied = false
+                return pose
+            }
+            let corrected = Self.applyCorrections(rampedCorr, to: pose)
+            lastSafePose = corrected
+            lastCorrectionApplied = true
+            return corrected
+        }
+
+        // P-control 경로 (algorithmMode .robotisPControl 또는 observeOnly with P-control corrector).
+        // Legacy v1.9.1 LPF + deadband.
+        let isWalkingActive = (current != .idle)
+        let deadband: Double = isWalkingActive ? 2.5 : 1.0
+        let alpha = 0.5
+        // **v1.11.3 P1.1**: normalized 입력 (default `.imuRaw` 면 imuRollDeg/imuPitchDeg 그대로).
+        correctorFilteredRoll = alpha * normalizedImuRollDeg + (1 - alpha) * correctorFilteredRoll
+        correctorFilteredPitch = alpha * normalizedImuPitchDeg + (1 - alpha) * correctorFilteredPitch
+        let effRoll = abs(correctorFilteredRoll) > deadband
+            ? correctorFilteredRoll - copysign(deadband, correctorFilteredRoll)
+            : 0.0
+        let effPitch = abs(correctorFilteredPitch) > deadband
+            ? correctorFilteredPitch - copysign(deadband, correctorFilteredPitch)
+            : 0.0
+
+        // **Codex review (2026-05-18) HIGH-1 fix + v1.11.1 HIGH-3 freshness gate**.
+        // P-control 경로의 raw candidate = ramp 적용 전 corrections (effRoll/effPitch 그대로).
+        let rawCorr = balanceCorrector.corrections(
+            rollErrDeg: effRoll,
+            pitchErrDeg: effPitch,
+            signConvention: config.signConvention
+        )
+        lastRawCandidate = rawCorr
+        let effectiveScale = ramp * freshnessGate
+        let rampedCorr = balanceCorrector.corrections(
+            rollErrDeg: effRoll * effectiveScale,
+            pitchErrDeg: effPitch * effectiveScale,
+            signConvention: config.signConvention
+        )
+        lastCorrections = rampedCorr
+        lastHybridResult = nil
+        // **Codex review MEDIUM-4 fix**: P-control 경로도 walkPhase01 채움.
+        let periodMsLog = effectiveWalkPeriodMs()
+        if let cycleStart = cycleStartedAt, current != .idle, periodMsLog > 0 {
+            let total = Date().timeIntervalSince(cycleStart) * 1000.0
+            lastWalkCycleElapsedMs = total.truncatingRemainder(dividingBy: periodMsLog)
+            lastWalkPeriodMs = periodMsLog
+        } else {
+            lastWalkCycleElapsedMs = nil
+            lastWalkPeriodMs = nil
+        }
+
+        if !shouldApplyToPose {
+            // observeOnly 또는 applyToRobot=false → pose 그대로.
+            lastCorrectionApplied = false
+            return pose
+        }
+        let corrected = balanceCorrector.apply(
+            to: pose,
+            rollErrDeg: effRoll,
+            pitchErrDeg: effPitch,
+            enabled: true,
+            // v1.11.1 HIGH-3: freshnessGate 가 secondsSinceEnable 에 곱해져 corrections 감쇠.
+            // apply() 가 ramp 0..1 로 clamp → effectiveScale 도 안전.
+            secondsSinceEnable: ramp * freshnessGate,
+            signConvention: config.signConvention
+        )
+        lastSafePose = corrected
+        lastCorrectionApplied = true
+        return corrected
+    }
+
+    /// Corrections 를 ramp factor 로 scale.
+    /// **v1.22.0 사이클 90 (Phase 5)**: `private static` → `internal static` — extension
+    /// 의 `applyBalanceCorrectionIfEnabled` 가 file-level 분리됐기 때문에 file-private 불가.
+    static func scaleCorrections(_ c: BalanceCorrector.Corrections, by k: Double) -> BalanceCorrector.Corrections {
+        BalanceCorrector.Corrections(
+            rHipRoll: c.rHipRoll * k, lHipRoll: c.lHipRoll * k,
+            rKnee: c.rKnee * k,       lKnee: c.lKnee * k,
+            rAnklePitch: c.rAnklePitch * k, lAnklePitch: c.lAnklePitch * k,
+            rAnkleRoll: c.rAnkleRoll * k,   lAnkleRoll: c.lAnkleRoll * k
+        )
+    }
+
+    /// Corrections deg delta 를 pose 의 각 joint raw 에 적용.
+    /// **v1.22.0 사이클 90 (Phase 5)**: `private static` → `internal static`.
+    static func applyCorrections(_ c: BalanceCorrector.Corrections, to pose: RobotPose) -> RobotPose {
+        var dict = pose.positions
+        let deltas: [JointID: Double] = [
+            .rHipRoll: c.rHipRoll, .lHipRoll: c.lHipRoll,
+            .rKnee: c.rKnee, .lKnee: c.lKnee,
+            .rAnklePitch: c.rAnklePitch, .lAnklePitch: c.lAnklePitch,
+            .rAnkleRoll: c.rAnkleRoll, .lAnkleRoll: c.lAnkleRoll
+        ]
+        for (jid, delta) in deltas {
+            guard abs(delta) > 1e-6 else { continue }
+            guard let base = dict[jid] else { continue }
+            let baseDeg = Kinematics.degrees(fromRaw: base)
+            dict[jid] = Kinematics.raw(fromDegrees: baseDeg + delta)
+        }
+        return RobotPose(positions: dict)
+    }
+}
