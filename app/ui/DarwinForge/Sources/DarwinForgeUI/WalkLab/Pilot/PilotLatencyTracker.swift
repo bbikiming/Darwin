@@ -76,6 +76,12 @@ public final class PilotLatencyTracker {
     /// 완료된 cycle 의 delta. FIFO — 새 cycle 추가 시 capacity 초과면 oldest drop.
     private var _completedDeltas: [CompletedCycle] = []
 
+    /// **사이클 71 — 코덱스 CRITICAL-1 fix**: 거부 (rejected) 카운터.
+    /// process() 의 early-return path (emergency / blocked / disabled 등) 에서 호출되는
+    /// `cancel()` 가 +1. statistics 는 **accepted cycle 만** 산출 — 정확한 latency 의미 보존.
+    /// 사용자는 rejected 비율을 별도 visibility 로 확인 (UI 가 표시).
+    public private(set) var rejectedCount: Int = 0
+
     public init(capacity: Int = 30) {
         precondition(capacity > 0, "capacity must be > 0")
         self.capacity = capacity
@@ -127,10 +133,34 @@ public final class PilotLatencyTracker {
         )
     }
 
-    /// 모든 데이터 reset — trial 경계에서 호출.
+    /// **사이클 71 — 코덱스 CRITICAL-1 fix**: 현재 진행 중 cycle 의 명시 거부 (rejected).
+    ///
+    /// process() 의 early-return path (emergency / blocked / disabled 등) 에서 호출.
+    /// 종전 동작: orphan cycle 이 _currentCycle 에 잔존 → 다음 inputReceived 가 자동 폐기 →
+    /// statistics 에 영향 0. 그러나 사용자가 "rejected 비율" 을 알 수 없어 진단 어려움.
+    /// 신규: cancel() 호출 시 `rejectedCount += 1` + _currentCycle 즉시 clear. UI 가
+    /// rejected 비율을 별도 표시 가능 (예: "5 sample / 12 rejected").
+    ///
+    /// **호출 site (process / applyAmplitude 의 5+ early-return)**:
+    /// 1. no-session (line 266)
+    /// 2. disabled (line 271)
+    /// 3. emergency (line 281)
+    /// 4. idle-without-autostart (line 308)
+    /// 5. blocked auto-start (line 314)
+    /// 6. motion-id without descriptor (line 350)
+    /// 7. .emergency / .recovery / .stop kind (engineSynced 미도달)
+    public func cancel() {
+        if !_currentCycle.isEmpty {
+            rejectedCount += 1
+            _currentCycle.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// 모든 데이터 reset — trial 경계에서 호출. rejectedCount 도 0 으로 reset.
     public func reset() {
         _currentCycle.removeAll(keepingCapacity: true)
         _completedDeltas.removeAll(keepingCapacity: true)
+        rejectedCount = 0
     }
 
     // MARK: - Statistics helpers

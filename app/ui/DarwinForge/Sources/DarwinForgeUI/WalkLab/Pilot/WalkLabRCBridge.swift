@@ -265,11 +265,13 @@ public final class WalkLabRCBridge {
         guard let session else {
             accumulator.record(intent)  // session 없어도 사용자 의도 기록 (telemetry).
             safetyMessage = "WalkLabSession 미연결 — bridge.session 설정 필요"
+            latencyTracker?.cancel()  // 사이클 71 CRITICAL-1 — early-return orphan 차단.
             return
         }
         if !enabled && intent.kind != .emergency {
             accumulator.record(intent)  // disabled 라도 사용자 의도 기록.
             safetyMessage = "Bridge 비활성 — emergency 만 허용"
+            latencyTracker?.cancel()
             return
         }
         // **v1.20.44 사이클 58 — security-auditor HIGH 1 fix**:
@@ -280,6 +282,7 @@ public final class WalkLabRCBridge {
         if intent.kind != .emergency && session.pilotIsEmergency {
             accumulator.record(intent)
             safetyMessage = "긴급 정지 상태 — recovery 필요 (R 키 또는 Recover 버튼)"
+            latencyTracker?.cancel()
             return
         }
         // emergency 는 무조건 통과.
@@ -289,6 +292,8 @@ public final class WalkLabRCBridge {
             session.emergencyStop(trigger: .externalEStop)
             Task { [tello] in await tello.emergency() }
             safetyMessage = "긴급 정지 발화 — 모든 채널 차단"
+            // emergency 는 engineSynced 까지 안 감 → cancel 로 cycle 정리 (rejectedCount +1).
+            latencyTracker?.cancel()
             return
         }
         // bus / cradle 검사 — preset 시작 path 와 동일.
@@ -306,6 +311,7 @@ public final class WalkLabRCBridge {
                   !cmd.isStop else {
                 accumulator.record(intent)
                 safetyMessage = "보행 시작 후 stick 입력 가능 — preset 먼저 선택"
+                latencyTracker?.cancel()
                 return
             }
             session.start(autoStartPreset)
@@ -313,6 +319,7 @@ public final class WalkLabRCBridge {
             if !session.pilotIsWalking {
                 accumulator.record(intent)
                 safetyMessage = "Auto-start (\(autoStartPreset.rawValue)) 차단 — 안전 검사 미통과"
+                latencyTracker?.cancel()
                 return
             }
             // 성공 → 아래 일반 처리로 fall-through.
@@ -346,8 +353,11 @@ public final class WalkLabRCBridge {
             // **v1.20.22 사이클 28** — pilotMotionCatalog 가 id resolve → MotionDescriptor → handleMotion.
             if let descriptor = pilotMotionCatalog.resolve(id) {
                 _ = handleMotion(descriptor, from: intent.source)
+                // motion path: engineSynced 까지 안 감 (handleMotion 별 pipeline) → cancel.
+                latencyTracker?.cancel()
             } else {
                 safetyMessage = "motion '\(id)' — catalog 에 등록 없음 (catalog.knownIds 참조)"
+                latencyTracker?.cancel()
             }
         case .emergency:
             break  // emergency 위에서 처리.

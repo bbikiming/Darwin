@@ -86,7 +86,13 @@ final class WalkTrialAutoGeneratorTests: XCTestCase {
         XCTAssertTrue(gen.progress?.lastTrial?.contains("emergency") ?? false,
                       "lastTrial 에 emergency 사유 노출")
         XCTAssertTrue(session.lastRobotEvent?.contains("긴급 정지") ?? false,
-                      "session.lastRobotEvent 에 사용자 안내")
+                      "session.lastRobotEvent 에 사용자 안내 (pilotPostEvent facade 경유)")
+
+        // 사이클 71 CRITICAL-2: generator 의 guard 자체가 lastPreflightFailure 설정 검증.
+        XCTAssertEqual(session.lastPreflightFailure?.cause, .emergencyActive,
+                       "generator guard 가 lastPreflightFailure 명시 set")
+        XCTAssertEqual(session.startBlockedReason, "emergencyActive",
+                       "generator guard 가 diagnosticCode 명시 set")
     }
 
     /// **사이클 66 코덱스 HIGH-1**: generateSingle 도 동일 emergency 차단.
@@ -101,6 +107,8 @@ final class WalkTrialAutoGeneratorTests: XCTestCase {
         // session.start(_:) 호출 안 됨 → current 변경 없음.
         XCTAssertEqual(session.current, .idle, "emergency 차단 → start 미진행")
         XCTAssertTrue(session.lastRobotEvent?.contains("긴급 정지") ?? false)
+        // 사이클 71 CRITICAL-2: facade 일관성 — preflight 상태 동기.
+        XCTAssertEqual(session.lastPreflightFailure?.cause, .emergencyActive)
     }
 
     /// **사이클 66 회귀**: recovery 후 generateBatch 재호출 시 정상 진행 (가드 일회성 확인).

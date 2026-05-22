@@ -795,6 +795,18 @@ public final class WalkLabSession {
     /// `_lastPilotEventMessage` 와 함께 1초 dedup window 판정에 사용.
     var _lastPilotEventTime: Date?
 
+    /// **사이클 71 — 코덱스 CRITICAL-2**: facade extension 이 preflight failure 를
+    /// set 할 수 있도록 internal helper. `private(set)` 이라 extension 에서도 직접
+    /// write 불가 → 본 helper 가 유일한 module-internal entry. 본체 본 file 안에 위치 →
+    /// 직접 property 접근 OK.
+    ///
+    /// 호출 경로: `WalkLabSession+Pilot.pilotMarkPreflightFailure(_:)` 위임. 외부 caller
+    /// (다른 module) 는 public facade 만 사용.
+    internal func _internalSetPreflightFailure(_ failure: WalkPreflightFailure) {
+        lastPreflightFailure = failure
+        startBlockedReason = failure.diagnosticCode
+    }
+
     /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
     public private(set) var isRobotWalking: Bool = false
 

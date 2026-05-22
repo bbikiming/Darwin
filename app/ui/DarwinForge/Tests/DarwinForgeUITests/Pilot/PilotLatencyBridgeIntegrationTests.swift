@@ -158,4 +158,63 @@ final class PilotLatencyBridgeIntegrationTests: XCTestCase {
         XCTAssertEqual(tracker.statistics(for: .endToEnd).count, 1,
                        "reset 후 새 sample 정상 누적")
     }
+
+    // MARK: - 사이클 71 — 코덱스 CRITICAL-1 회귀 가드 (rejectedCount)
+
+    /// **사이클 71 CRITICAL-1**: emergency path 의 cycle 미완료 → rejectedCount 증가.
+    /// 종전 동작: orphan cycle 이 다음 inputReceived 자동 폐기 → 통계 영향 0 이지만 visibility 0.
+    /// 신규: cancel() 호출 시 rejectedCount +1 → UI 가 rejected 비율 표시 가능.
+    func testEmergencyIntentIncrementsRejectedCount() {
+        XCTAssertEqual(tracker.rejectedCount, 0, "초기: rejected 0")
+        XCTAssertEqual(tracker.statistics(for: .endToEnd).count, 0, "초기: 완료 sample 0")
+
+        bridge.handleEmergency(from: .keyboard)
+
+        // emergency 는 engineSynced 까지 안 감 → rejectedCount 1.
+        XCTAssertEqual(tracker.rejectedCount, 1,
+                       "emergency early-return → rejectedCount 1")
+        XCTAssertEqual(tracker.statistics(for: .endToEnd).count, 0,
+                       "emergency path 는 완료 sample 미생성 (engineSynced 누락)")
+    }
+
+    /// **사이클 71 CRITICAL-1**: emergency 후 recovery + 정상 move → mixed counter 검증.
+    /// rejected 와 accepted 가 독립 카운터 (둘 다 정확).
+    func testMixedEmergencyAndMoveCountsCorrectly() {
+        bridge.handleEmergency(from: .keyboard)
+        XCTAssertEqual(tracker.rejectedCount, 1)
+
+        bridge.handleRecovery(from: .ui)
+        session.start(.march)  // recovery 후 재시작.
+
+        // 정상 move 3회.
+        for _ in 0..<3 {
+            bridge.handleMove(WalkingCommand(strideMm: 10, sideMm: 0, turnDeg: 0),
+                              from: .keyboard)
+        }
+
+        // accepted = 3 (정상 완료), rejected = 1 (emergency).
+        XCTAssertEqual(tracker.statistics(for: .endToEnd).count, 3,
+                       "accepted cycles count 정확")
+        XCTAssertEqual(tracker.rejectedCount, 1,
+                       "rejected count 누적 (recovery 가 reset 안 함)")
+    }
+
+    /// **사이클 71 CRITICAL-1**: tracker.reset() 이 rejectedCount 도 0 으로.
+    func testResetClearsRejectedCount() {
+        bridge.handleEmergency(from: .keyboard)
+        XCTAssertEqual(tracker.rejectedCount, 1)
+        tracker.reset()
+        XCTAssertEqual(tracker.rejectedCount, 0,
+                       "reset → rejectedCount 도 0 (trial 경계 깨끗한 시작)")
+    }
+
+    /// **사이클 71 CRITICAL-1**: bridge disabled / no-session 같은 다른 early-return path 도
+    /// rejectedCount 증가. 모든 path 에서 cancel() 호출 검증.
+    func testDisabledBridgeRejectsCorrectly() {
+        bridge.enabled = false
+        bridge.handleMove(WalkingCommand(strideMm: 10, sideMm: 0, turnDeg: 0),
+                          from: .keyboard)
+        XCTAssertEqual(tracker.rejectedCount, 1,
+                       "disabled bridge → rejectedCount 1 (cycle 71 cancel)")
+    }
 }

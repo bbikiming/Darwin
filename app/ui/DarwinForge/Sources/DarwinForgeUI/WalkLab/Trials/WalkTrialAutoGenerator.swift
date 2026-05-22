@@ -45,16 +45,24 @@ public final class WalkTrialAutoGenerator {
             return  // 실 robot 연결 시 거부 (사용자 보호).
         }
 
-        // **v1.21.1 사이클 66 — 코덱스 HIGH-1 fix**: emergency 활성 시 silent breakage 차단.
-        // 종전 (사이클 61 root guard 도입 후): emergency 상태에서 generateBatch 호출 시
-        // 모든 session.start(preset) 가 silent reject → progress 는 증가하나 trial 0개 수집
-        // → 사용자는 "왜 자동 생성 안 되지?" 디버깅 불가.
-        // 신규: 진입 즉시 사용자 안내 + 진행 시작 안 함. recovery 후 재호출 요구.
+        // **v1.21.1 사이클 66 — 코덱스 HIGH-1 fix + 사이클 71 — 코덱스 CRITICAL-2 강화**:
+        // emergency 활성 시 silent breakage 차단 + facade 일관성.
+        //
+        // 사이클 71 변경:
+        // 1. lastRobotEvent 직접 write → `pilotPostEvent` facade 사용 (length cap / dedup /
+        //    source prefix 일관성). 종전 직접 write 는 cycle 60 facade 규칙 위반.
+        // 2. lastPreflightFailure / startBlockedReason 명시 set — root guard 의 invariant 와
+        //    일치 (test 가 generator 자체의 guard 만으로 cause 검증 가능).
         if session.emergencyStopActive {
-            session.lastRobotEvent = "🛑 긴급 정지 상태 — Auto Trial 생성 차단. recovery 후 재시도"
+            let f = WalkLabSession.WalkPreflightFailure(cause: .emergencyActive)
+            session.pilotMarkPreflightFailure(f)
+            session.pilotPostEvent(
+                "Auto Trial 생성 차단 — \(f.userMessage)",
+                source: .ui
+            )
             progress = Progress(
                 current: 0, total: 0,
-                lastTrial: "🛑 emergency 활성 — 차단됨"
+                lastTrial: "emergency 활성 — 차단됨"
             )
             onProgress?(progress!)
             return
@@ -100,9 +108,14 @@ public final class WalkTrialAutoGenerator {
         durationSec: Double = 5.0
     ) async {
         guard session.store?.bus == nil else { return }
-        // 사이클 66 — emergency silent breakage 차단 (generateBatch 와 동일 정책).
+        // 사이클 66 + 사이클 71 — emergency silent breakage 차단 + facade 일관성.
         if session.emergencyStopActive {
-            session.lastRobotEvent = "🛑 긴급 정지 상태 — Auto Trial single 차단. recovery 후 재시도"
+            let f = WalkLabSession.WalkPreflightFailure(cause: .emergencyActive)
+            session.pilotMarkPreflightFailure(f)
+            session.pilotPostEvent(
+                "Auto Trial single 차단 — \(f.userMessage)",
+                source: .ui
+            )
             return
         }
         session.correctorIntensityLevel = intensity

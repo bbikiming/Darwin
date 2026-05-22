@@ -228,6 +228,22 @@ extension WalkLabSession {
         lastRobotEvent = stamped
     }
 
+    // MARK: - Preflight failure facade (사이클 71 — 코덱스 CRITICAL-2)
+
+    /// **사이클 71 — 코덱스 CRITICAL-2 fix**: external caller (예: WalkTrialAutoGenerator)
+    /// 가 preflight failure 상태를 facade 경유로 일관성 있게 set.
+    ///
+    /// 종전: caller 가 `session.lastPreflightFailure = failure` + `startBlockedReason =
+    /// failure.diagnosticCode` 직접 write 필요 → `public private(set)` 이라 module 안에서도
+    /// 외부 접근 불가능. 신규 facade: 본 method 한 호출로 두 property 통일.
+    ///
+    /// **호출 사례**: WalkTrialAutoGenerator 의 emergency 가드 (root guard 우회 path).
+    /// 일반 caller 는 `session.start(_:)` 의 root guard 가 자동 처리 — 본 method 불요.
+    public func pilotMarkPreflightFailure(_ failure: WalkPreflightFailure) {
+        // 본체 helper 위임 (private(set) → extension 도 직접 접근 불가).
+        _internalSetPreflightFailure(failure)
+    }
+
     // MARK: - Walking lifecycle
 
     /// 현재 보행 중인지 — bridge 의 `session.current != .idle` 체크 대체.
