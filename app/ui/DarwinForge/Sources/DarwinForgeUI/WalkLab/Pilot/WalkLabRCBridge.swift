@@ -189,7 +189,7 @@ public final class WalkLabRCBridge {
         // 종전: lastIntent 는 emergency 그대로 → HUD sourceChip 가 stale ("긴급" 표시 유지).
         // 신규: nil 로 reset → HUD "대기" 로 복귀, recovery 완료 시각화.
         lastIntent = nil
-        session.pilotPostEvent("✅ \(source.label) → emergency recovery (preset 입력 활성)")
+        session.pilotPostEvent("emergency recovery — preset 입력 활성", source: source)
     }
 
     /// **v1.20.4 (2026-05-22) 사이클 10** — preset 직접 선택 (number key / future button).
@@ -215,7 +215,7 @@ public final class WalkLabRCBridge {
             // .idle == 정지. 현재 보행 중일 때만 의미 있음.
             if session.pilotIsWalking {
                 session.pilotStop()
-                session.pilotPostEvent("🎮 \(source.label) → 정지 (preset .idle)")
+                session.pilotPostEvent("정지 (preset .idle)", source: source)
                 safetyMessage = nil
             } else {
                 safetyMessage = "이미 정지 상태"
@@ -242,7 +242,7 @@ public final class WalkLabRCBridge {
             // mirror 는 reset 영향 안 받음 — bridge lifetime, 본 path 에서 첫 증가.
             accumulator.recordPresetChange(source: source)
             presetChangeMirror += 1
-            session.pilotPostEvent("🎮 \(source.label) → preset \(preset.rawValue) 시작")
+            session.pilotPostEvent("preset \(preset.rawValue) 시작", source: source)
             safetyMessage = nil
         case .blocked(let userMessage):
             // preflight failure 의 userMessage 또는 startBlockedReason 합성 메시지.
@@ -386,7 +386,7 @@ public final class WalkLabRCBridge {
         switch result {
         case .accepted, .acceptedFullBody:
             safetyMessage = nil
-            session?.pilotPostEvent("🎬 \(source.label) → motion '\(descriptor.displayLabel)' 적용")
+            session?.pilotPostEvent("motion '\(descriptor.displayLabel)' 적용", source: source)
         case .rejectedSafety(let reason):
             safetyMessage = reason
         case .rejectedEmptyChannels:
@@ -437,7 +437,7 @@ public final class WalkLabRCBridge {
         // 사용자 안내 — 어떤 source 가 명령했는지.
         if let source = lastIntent?.source {
             let now = session.pilotCurrentAmplitude
-            session.pilotPostEvent("🕹 \(source.label) → stride=\(Int(now.strideMm)) side=\(Int(now.sideMm)) turn=\(Int(now.turnDeg))")
+            session.pilotPostEvent("stride=\(Int(now.strideMm)) side=\(Int(now.sideMm)) turn=\(Int(now.turnDeg))", source: source)
         }
     }
 

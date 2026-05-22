@@ -785,6 +785,16 @@ public final class WalkLabSession {
     /// (예: `WalkLabSession+Recommender.swift`) 이 write 가능하면서 외부 (다른 module 의
     /// public API consumer) 는 read-only.
     public internal(set) var lastRobotEvent: String?
+
+    /// **사이클 69 — pilotPostEvent facade (LOW-2 코덱스)**: 직전 발행 메시지 캐시.
+    /// `WalkLabSession+Pilot.pilotPostEvent` 가 1초 내 동일 stamped 메시지 중복 발화 차단에 사용.
+    /// nil = 첫 발행 또는 dedup window 만료 후 reset. internal — facade extension 전용.
+    var _lastPilotEventMessage: String?
+
+    /// **사이클 69 — pilotPostEvent facade (LOW-2 코덱스)**: 직전 발행 시각.
+    /// `_lastPilotEventMessage` 와 함께 1초 dedup window 판정에 사용.
+    var _lastPilotEventTime: Date?
+
     /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
     public private(set) var isRobotWalking: Bool = false
 
@@ -836,6 +846,21 @@ public final class WalkLabSession {
     /// `walkCycleTask != nil` 은 private 이므로 view 에서 직접 못 보므로 published 두 값의 합.
     public var isWalkActive: Bool {
         isRobotWalking || onboardWalkingActive
+    }
+
+    /// **사이클 61 (codex HIGH-3 fix)** — "보행 중" 진짜 invariant. single source of truth.
+    ///
+    /// 종전 line 2064 / 2179 / 2232 의 중복 복합 술어:
+    ///   `current != .idle || walkCycleTask != nil || onboardWalkingActive`
+    /// 가 facade `pilotIsWalking` 의 단순화 (`current != .idle`) 와 어긋남 → race:
+    /// preflight 통과 후 `walkCycleTask` 시작 직전 짧은 frame 에서 facade 가 false negative.
+    /// bridge auto-start (`WalkLabRCBridge` line 295/313) 가 이 frame 에 stop 액션 받으면
+    /// silent drop. 본 property 가 모든 walking 판정의 단일 진입점.
+    ///
+    /// `walkCycleTask` 가 private 이므로 본 file 안에서 computed → 외부 site 는 본 property
+    /// 위임. `internal` — UI / test / facade 만 read.
+    internal var isActuallyWalking: Bool {
+        current != .idle || walkCycleTask != nil || onboardWalkingActive
     }
 
     /// **테스트 전용 helper** — bus 없이도 "보행 중" 상태를 시뮬해서 alreadyWalking 가드 검증.
@@ -2061,7 +2086,8 @@ public final class WalkLabSession {
         // **v1.11.14.7 (2026-05-19) — 사용자 평가 CRIT fix**: 보행 중 rollback 시
         // walkCycleTask 자동 stop + walkReady 복귀. 종전: rollback 이 config 만 복원,
         // walkCycleTask 는 이전 walkingEngine 으로 계속 진행 → 불일치 + 안전 위험.
-        let wasWalking = current != .idle || walkCycleTask != nil || onboardWalkingActive
+        // **사이클 61**: 중복 복합 술어 → `isActuallyWalking` 단일 source 로 위임.
+        let wasWalking = isActuallyWalking
         if wasWalking {
             stop()  // walkCycleTask cancel + walkReady 복귀 + onboard cleanup.
             logSafetyEvent(
@@ -2176,7 +2202,8 @@ public final class WalkLabSession {
             // 종전엔 onboardWalkingActive 만 reset → walkCycleTask 가 그대로 돌아 mixed-engine
             // 모터 송출이 발생할 수 있음. 안전 measure: 보행 중인 경우 stop() 호출로
             // 모든 cleanup 정렬 (walkCycleTask cancel + activeRobotPreset 클리어 + sample log finalize).
-            let wasWalking = isWalkActive || walkCycleTask != nil
+            // **사이클 61**: 중복 술어 → `isActuallyWalking` 단일 source 로 위임.
+            let wasWalking = isActuallyWalking
             if walkingEngine != .robotisOnboard, onboardWalkingActive {
                 onboardWalkingActive = false
                 onboardAckStatus = nil
@@ -2229,6 +2256,10 @@ public final class WalkLabSession {
         if preset == .idle { return nil }
 
         // 1. 이미 다른 보행이 active.
+        // **사이클 61 노트**: 본 site 는 `isActuallyWalking` 위임 안 함 — `current != .idle`
+        // 까지 검사하면 preset 전환 (march → slowWalk 등) 까지 차단되어 UX 깨짐.
+        // preset switch 는 cancelWalkCycle 이 cleanup 책임. 본 가드는 "실 motor task 또는
+        // onboard 활성" 만 차단 (semantic 의도가 isActuallyWalking 과 다름).
         if isWalkActive || walkCycleTask != nil {
             let activeLabel = activeRobotPreset?.label ?? current.label
             return WalkPreflightFailure(cause: .alreadyWalking(

@@ -152,19 +152,93 @@ extension WalkLabSession {
 
     // MARK: - Robot event channel
 
+    /// pilotPostEvent facade 의 단일 메시지 길이 한계 (character count).
+    /// 초과 시 절단 후 `pilotEventTruncationMarker` 부착.
+    public static let pilotEventMaxLength: Int = 120
+
+    /// length cap 적용 시 절단 표식. caller 가 detect 가능.
+    public static let pilotEventTruncationMarker: String = "..."
+
+    /// dedup window — 직전 stamped 메시지와 동일 시 silent drop.
+    /// 1.0초: 사용자가 시각적으로 인지 가능한 최소 단위.
+    public static let pilotEventDedupWindow: TimeInterval = 1.0
+
     /// bridge 가 사용자 안내 (preset 시작 / stop / amplitude 변경 등) 를 발행하는 채널.
     ///
     /// 종전 bridge 의 18+ `session.lastRobotEvent = "..."` 직접 write 를 facade method
     /// 한 곳으로 모음. bridge → facade 의존 명확화 (write 위치 추적 가능).
-    public func pilotPostEvent(_ message: String) {
-        lastRobotEvent = message
+    ///
+    /// # 강화 (사이클 69 — 코덱스 LOW-2)
+    ///
+    /// 종전 facade 는 단순 `lastRobotEvent = message` setter alias 에 불과 (코덱스 verbatim:
+    /// "진짜 facade 라면 source 자동 prefix, length cap, duplicate suppression 추가 가능").
+    /// 본 강화는 3개의 책임을 facade 로 흡수:
+    ///
+    /// 1. **source prefix 자동화**: `source` 가 non-nil 이면 `"[label] "` prefix 자동 부착.
+    ///    bridge call site 들이 종전 `"\(source.label) →"` 직접 합성하던 ad-hoc 패턴 일관화.
+    /// 2. **length cap**: stamped 메시지가 `pilotEventMaxLength` (120 char) 초과 시 절단 +
+    ///    `pilotEventTruncationMarker` ("...") 부착. lastRobotEvent 가 UI badge 용 — 매우 긴
+    ///    diagnostic 가 layout 깨뜨림 차단.
+    /// 3. **중복 suppression**: 직전 stamped 메시지와 정확히 동일하면서 1초
+    ///    (`pilotEventDedupWindow`) 이내 발화 시 silent drop. 사용자가 같은 stick 을 빠르게
+    ///    흔들면 동일 amplitude 메시지가 초당 10회 이상 발화 → HUD flicker. dedup 으로 1회로 압축.
+    ///
+    /// # 호출 호환성 (CRITICAL)
+    ///
+    /// `source: InputSource? = nil` default — 기존 callers (`session.pilotPostEvent("...")`)
+    /// 그대로 동작. 신규 callers 는 `session.pilotPostEvent("...", source: .ui)` 로 prefix
+    /// 위임 가능.
+    ///
+    /// - Parameter message: 사용자 안내 raw 텍스트.
+    /// - Parameter source: 발화 source (옵션). non-nil 이면 `"[label] "` prefix 자동 부착.
+    public func pilotPostEvent(_ message: String, source: InputSource? = nil) {
+        // 1. source prefix — non-nil 시 "[label] " 부착 (bridge 의 ad-hoc 패턴 통일).
+        let prefixed: String
+        if let source {
+            prefixed = "[\(source.label)] \(message)"
+        } else {
+            prefixed = message
+        }
+
+        // 2. length cap — pilotEventMaxLength 초과 시 절단 + "..." 부착.
+        // count 는 grapheme cluster 기준 (한글/이모지 1 unit) — 사용자 인지 단위와 일치.
+        let stamped: String
+        if prefixed.count > Self.pilotEventMaxLength {
+            let keep = Self.pilotEventMaxLength - Self.pilotEventTruncationMarker.count
+            // marker 자체가 cap 보다 길면 edge case 방어 — clamp 0.
+            let safeKeep = max(0, keep)
+            let head = String(prefixed.prefix(safeKeep))
+            stamped = head + Self.pilotEventTruncationMarker
+        } else {
+            stamped = prefixed
+        }
+
+        // 3. duplicate suppression — 직전 stamped 와 동일 + 1초 이내면 silent drop.
+        let now = Date()
+        if let lastMsg = _lastPilotEventMessage,
+           let lastAt = _lastPilotEventTime,
+           lastMsg == stamped,
+           now.timeIntervalSince(lastAt) < Self.pilotEventDedupWindow {
+            return
+        }
+
+        // 4. publish — lastRobotEvent + dedup state 동시 갱신.
+        _lastPilotEventMessage = stamped
+        _lastPilotEventTime = now
+        lastRobotEvent = stamped
     }
 
     // MARK: - Walking lifecycle
 
     /// 현재 보행 중인지 — bridge 의 `session.current != .idle` 체크 대체.
+    ///
+    /// **사이클 61 (codex HIGH-3 fix)**: 종전 `current != .idle` 단순 술어가 본체 line
+    /// 2064 / 2179 / 2232 의 복합 invariant (`current != .idle || walkCycleTask != nil ||
+    /// onboardWalkingActive`) 와 어긋남 → preflight 통과 후 walkCycleTask 시작 직전 frame
+    /// 에서 false negative → bridge auto-start 의 stop 액션 silent drop.
+    /// 본 facade 는 본체의 `isActuallyWalking` single source of truth 에 위임.
     public var pilotIsWalking: Bool {
-        current != .idle
+        isActuallyWalking
     }
 
     /// `stop()` wrap — bridge 의 `session.stop()` 직접 호출 대체.
