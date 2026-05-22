@@ -922,7 +922,10 @@ public final class WalkLabSession {
     /// Sim IMU 본체 흔들림 위상 (rad). tick 마다 ω·dt 누적.
     private var simSwayPhase: Double = 0
     /// 실 보행 cycle Task — start(preset) 시 시작, stop / emergency 시 cancel.
-    private var walkCycleTask: Task<Void, Never>?
+    /// **사이클 90 (Phase 1C)**: `private` → `internal` 격상 — `WalkLabSession+Calibration`
+    /// extension 의 `runStaticTiltCalibration` 이 본 Task 의 nil 여부로 보행 중 거부 판정
+    /// 필요. module 내부 접근만 허용, 외부 module 은 여전히 not visible.
+    internal var walkCycleTask: Task<Void, Never>?
     /// 고급 슬라이더 연속 drag 중 실 보행 page 재합성을 debounce.
     private var walkTuningRestartTask: Task<Void, Never>?
 
@@ -3232,48 +3235,13 @@ public final class WalkLabSession {
     }
 
     // MARK: - 영구 이벤트 로그 (2026-05-17 안전 강화)
-
-    /// UserDefaults 키 — 안전 이벤트 영구 저장 (최근 100건).
-    /// 앱 재시작 후에도 유지. 실 robot 사고 시 재현 가능한 trace 제공.
-    private static let persistentEventsKey = "df.walklab.persistentSafetyEvents"
-    private static let persistentEventsMaxCount = 100
-
-    /// 영구 저장된 이벤트 1건 — JSON serializable.
-    public struct PersistentEvent: Codable, Equatable, Sendable {
-        public let timestamp: Date
-        public let kindRaw: String  // SafetyEvent.Kind.rawValue
-        public let message: String
-    }
-
-    /// 이벤트 영구 저장 — UserDefaults 에 최근 100건 ring buffer.
-    private static func persistEvent(kind: SafetyEvent.Kind, message: String) {
-        var existing = loadPersistentEvents()
-        existing.append(PersistentEvent(
-            timestamp: Date(),
-            kindRaw: kind.rawValue,
-            message: message
-        ))
-        if existing.count > persistentEventsMaxCount {
-            existing.removeFirst(existing.count - persistentEventsMaxCount)
-        }
-        if let data = try? JSONEncoder().encode(existing) {
-            UserDefaults.standard.set(data, forKey: persistentEventsKey)
-        }
-    }
-
-    /// 영구 저장된 이벤트 로드 — 앱 시작 시 / postmortem UI 표시.
-    /// JSON decode 실패 시 빈 배열 반환 (storage 오염 안전 처리).
-    public static func loadPersistentEvents() -> [PersistentEvent] {
-        guard let data = UserDefaults.standard.data(forKey: persistentEventsKey),
-              let events = try? JSONDecoder().decode([PersistentEvent].self, from: data)
-        else { return [] }
-        return events
-    }
-
-    /// 영구 로그 전체 비우기 — 사용자 명시 액션 (privacy / disk 관리).
-    public static func clearPersistentEvents() {
-        UserDefaults.standard.removeObject(forKey: persistentEventsKey)
-    }
+    // **v1.22.1 (2026-05-22) 사이클 90 god object Phase 1B 분할**:
+    // PersistentEvent struct / persistentEventsKey / persistentEventsMaxCount /
+    // persistEvent / loadPersistentEvents / clearPersistentEvents →
+    // `WalkLabSession+PersistentLog.swift` 로 이동. `private static` → `internal
+    // static` 격상 — 본체 `logSafetyEvent` 의 호출 site 유지 (다른 file 의 extension
+    // 에서 호출하므로 file-level private 불가). 외부 API (loadPersistentEvents /
+    // clearPersistentEvents) signature 변경 0.
 
     /// **Stage 4 + Phase C (v1.1 fall prevention)**: Balance corrector + balanceState
     /// 둘 다 실 motor 송출 경로에 적용. sim/실 일관.
@@ -4317,80 +4285,12 @@ public final class WalkLabSession {
         }
     }
 
-    // MARK: - v1.11.3 (2026-05-18) — P1.0 정적 IMU 캘리브레이션
+    // MARK: - v1.11.3 (2026-05-18) — P1.0 정적 IMU 캘리브레이션 (사이클 90 Phase 1C: method 분할)
 
     /// 5축 캡처 보관소 — 앱 세션 중에만 유지. Disk 저장은 별도 helper.
-    public private(set) var calibrationCaptures: [StaticTiltCalibration.Capture] = []
-
-    /// 단일 자세의 IMU 캡처. 사용자가 robot 을 손으로 자세 잡고 호출.
-    /// **주의**: 보행 중 (`walkCycleTask != nil`) 호출 시 보행 데이터와 간섭 가능 — 거부.
-    /// - Parameters:
-    ///   - axis: 캡처 자세 (직립 / 앞·뒤·오·왼 30°)
-    ///   - durationSec: 캡처 시간 (기본 5초)
-    ///   - sampleIntervalMs: sample 간격 (기본 50ms = 20Hz)
-    /// - Returns: 캡처 결과 (samples + summary). nil 이면 보행 중 거부.
-    @discardableResult
-    public func runStaticTiltCalibration(
-        axis: StaticTiltCalibration.Axis,
-        durationSec: Double = 5.0,
-        sampleIntervalMs: Double = 50.0
-    ) async -> StaticTiltCalibration.Capture? {
-        guard walkCycleTask == nil else {
-            lastRobotEvent = "캘리브레이션 거부: 보행 중에는 자세 캡처 불가 (정지 후 재시도)"
-            return nil
-        }
-        let startDate = Date()
-        let iso = ISO8601DateFormatter().string(from: startDate)
-        let imuSrcLabel: String = {
-            switch imuSource {
-            case .real: return "real"
-            case .sim:  return "sim"
-            case .stale:return "stale"
-            }
-        }()
-
-        var samples: [StaticTiltCalibration.Sample] = []
-        let durationMs = max(100.0, durationSec * 1000.0)
-        let intervalMs = max(10.0, sampleIntervalMs)
-        let nanosPerSample = UInt64(intervalMs * 1_000_000)
-        var elapsedMs: Double = 0
-
-        while elapsedMs <= durationMs {
-            // tick() 가 imuRollDeg / imuPitchDeg 를 갱신 — 그 값 직접 read.
-            samples.append(StaticTiltCalibration.Sample(
-                rollDeg: imuRollDeg,
-                pitchDeg: imuPitchDeg,
-                tMs: elapsedMs
-            ))
-            try? await Task.sleep(nanoseconds: nanosPerSample)
-            elapsedMs += intervalMs
-            // Task cancellation 존중.
-            if Task.isCancelled { break }
-        }
-
-        let capture = StaticTiltCalibration.Capture(
-            axis: axis,
-            startTimeIso: iso,
-            durationSec: Date().timeIntervalSince(startDate),
-            samples: samples,
-            imuSource: imuSrcLabel
-        )
-        // 같은 axis 의 이전 캡처는 교체 (가장 최근만 보관) — 진단 시 by-axis grouping 의 .last 사용.
-        calibrationCaptures.removeAll { $0.axis == axis }
-        calibrationCaptures.append(capture)
-        lastRobotEvent = "✅ 캘리브레이션 [\(axis.label)] 캡처 완료 — \(samples.count) samples, meanPitch=\(String(format: "%.1f", capture.summary.meanPitch))°, meanRoll=\(String(format: "%.1f", capture.summary.meanRoll))°"
-        return capture
-    }
-
-    /// 현재까지 캡처된 5축 데이터로 부호 컨벤션 진단.
-    public func currentCalibrationDiagnosis() -> StaticTiltCalibration.Diagnosis {
-        StaticTiltCalibration.diagnose(captures: calibrationCaptures)
-    }
-
-    /// 모든 캘리브레이션 캡처 초기화.
-    public func resetCalibrationCaptures() {
-        calibrationCaptures = []
-    }
+    /// **사이클 90 (Phase 1C)**: setter `private(set)` → `internal(set)` 격상 —
+    /// `WalkLabSession+Calibration` extension method 가 write 필요. external API 는 read-only.
+    public internal(set) var calibrationCaptures: [StaticTiltCalibration.Capture] = []
 
     // MARK: - v1.11.9 (2026-05-19) — Claude CLI 보행 분석 (사이클 89: method 분할)
 
