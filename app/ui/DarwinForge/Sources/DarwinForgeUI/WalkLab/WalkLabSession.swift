@@ -2601,12 +2601,17 @@ public final class WalkLabSession {
 
     /// **테스트용 hooks (internal)** — 10x review P0 fix: hysteresis state machine 테스트.
     /// `applyBalanceMitigation` 가 private 이라 직접 호출 불가 → 카운터 inspection.
-    public func _testInspectWarningHysteresis() -> Int { warningStateConsecutiveSamples }
-    public func _testInspectDangerHysteresis() -> Int { dangerStateConsecutiveSamples }
+    /// **사이클 118 (security-auditor LOW-2 fix)**: `public` → `internal` —
+    /// 사이클 100+ 의 internal(set) 격상 후 hysteresis counter 가 internal 로 접근 가능 →
+    /// public 노출 redundant. 외부 module 노출 차단 (DarwinForgeApp 만 import 하지만 보안 격상).
+    internal func _testInspectWarningHysteresis() -> Int { warningStateConsecutiveSamples }
+    internal func _testInspectDangerHysteresis() -> Int { dangerStateConsecutiveSamples }
     // v1.11.25 audit dead-code #1 — `_testInspectL3Hysteresis` 제거 (Sources+Tests 0 사용).
 
     /// 테스트용 — IMU 값 강제 set 후 tick 한 번 실행 (hysteresis 동작 검증).
-    public func _testForceImuAndTick(rollDeg: Double, pitchDeg: Double) {
+    /// **사이클 118 (security-auditor LOW-2 fix)**: `public` → `internal` —
+    /// 외부 module noise reduction. test 가 same-module `@testable import` 라 internal 충분.
+    internal func _testForceImuAndTick(rollDeg: Double, pitchDeg: Double) {
         imuRollDeg = rollDeg
         imuPitchDeg = pitchDeg
         let maxTilt = max(abs(imuRollDeg), abs(imuPitchDeg))
