@@ -1002,6 +1002,32 @@ public final class WalkLabSession {
         // `requestedPreset` 는 시도 자체를 기록 (성공/실패 무관) — 사용자 진단용.
         requestedPreset = preset
 
+        // **v1.20.46 사이클 61 — 코덱스 CRITICAL fix (root-level emergency guard)**:
+        // 종전: bridge.handlePreset / handleMove / handleMotion 만 emergencyStopActive 검사 →
+        // WalkLabView 의 일반 preset 버튼 (tap()), risk sheet 등 bridge 우회 path 가 직접
+        // session.start 호출 시 emergency guard 우회. 게다가 본 메서드 line 1059 에서
+        // emergencyStopActive = false 로 자동 해제 → "Space (emergency) → preset 버튼 클릭"
+        // 시퀀스가 robot 재작동.
+        // 신규: 모든 public start entry 차단. 사용자 명시 recovery (exitEmergencyMode) 전까지
+        // 어떤 path 도 start 진행 불가. emergency guard 가 한 곳에 모임.
+        if emergencyStopActive {
+            let f = WalkPreflightFailure(cause: .noConnection)  // 임시 reuse (전용 case 신규 권장).
+            lastPreflightFailure = f
+            lastRobotEvent = "🛑 긴급 정지 상태 — recovery (R 키 또는 Recover 버튼) 후 재시작"
+            startBlockedReason = "emergencyStopActive"
+            logSafetyEvent(
+                kind: .preflightFailure,
+                message: "start 차단 — emergency 상태에서 recovery 없이 재시작 시도"
+            )
+            Harness.shared.record(
+                .walkLabStartBlocked, level: .warn, actor: .user,
+                data: ["requested_preset": AnyCodable(preset.label),
+                       "reason": AnyCodable("emergency_active"),
+                       "guard": AnyCodable("root_emergency_guard")]
+            )
+            return
+        }
+
         if let failure = quickPreflight(for: preset) {
             lastPreflightFailure = failure
             lastRobotEvent = failure.userMessage
