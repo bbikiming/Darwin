@@ -38,7 +38,11 @@ public final class UserPoseLibrary: ObservableObject {
 
     private static let storageKey = "df.userPoseLibrary.v1"
 
-    public init() {
+    private let defaults: UserDefaults
+
+    /// DI 지원 init — 테스트에서 격리된 UserDefaults 주입 가능.
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         load()
     }
 
@@ -82,7 +86,7 @@ public final class UserPoseLibrary: ObservableObject {
     // MARK: - Persistence
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Self.storageKey),
+        guard let data = defaults.data(forKey: Self.storageKey),
               let decoded = try? JSONDecoder().decode([Entry].self, from: data) else {
             return
         }
@@ -91,7 +95,7 @@ public final class UserPoseLibrary: ObservableObject {
 
     private func persist() {
         if let data = try? JSONEncoder().encode(entries) {
-            UserDefaults.standard.set(data, forKey: Self.storageKey)
+            defaults.set(data, forKey: Self.storageKey)
         }
     }
 }
