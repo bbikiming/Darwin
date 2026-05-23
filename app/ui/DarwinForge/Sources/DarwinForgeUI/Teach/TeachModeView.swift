@@ -12,6 +12,9 @@ public struct TeachModeView: View {
     @State private var torqueSidebarOpen: Bool = true
     @Environment(\.dfWindowWidth) private var winWidth
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     public var body: some View {
@@ -33,7 +36,7 @@ public struct TeachModeView: View {
         }
         .onAppear {
             // 사이클 197 (cycle 190 audit P2 #6): cross-menu 재진입 시 navigation telemetry.
-            Harness.shared.record(.uiViewAppeared, level: .trace, actor: .user,
+            harness.record(.uiViewAppeared, level: .trace, actor: .user,
                                   data: ["view": AnyCodable("teach")])
             if store.bus != nil {
                 capture.startCapture(store: store)
@@ -366,7 +369,7 @@ public struct TeachModeView: View {
             Button {
                 UserPoseLibrary.shared.save(name: s.name, pose: s.pose)
                 // v1.12.2 telemetry — 사용자 라이브러리 저장 (name redacted).
-                Harness.shared.record(
+                harness.record(
                     .poseLibrarySaved, level: .notice, actor: .user,
                     data: ["name_hash": AnyCodable(Harness.shortHash(s.name)),
                            "name_len": AnyCodable(s.name.count),

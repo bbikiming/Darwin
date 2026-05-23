@@ -94,6 +94,9 @@ public struct WalkDiagnosticsView: View {
     @State private var lastExportPath: String?
     @State private var showExportToast: Bool = false
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     /// `ConnectionStore.status == .connected(...)` pattern match helper.
@@ -224,7 +227,7 @@ public struct WalkDiagnosticsView: View {
                 .labelsHidden()
                 .frame(width: 200)
                 .onChange(of: source) { _, newSource in
-                    Harness.shared.record(
+                    harness.record(
                         .walklabDiagnosticsSourceChanged, level: .info, actor: .user,
                         data: ["source": AnyCodable(newSource.rawValue)]
                     )
@@ -495,7 +498,7 @@ public struct WalkDiagnosticsView: View {
                     ? "켜면 위 슬라이더·preset 의 명령이 100ms 마다 다리 12관절로 송출됩니다. 안전한 환경에서만 사용하세요."
                     : "로봇 연결 후 사용 가능합니다.")
                 .onChange(of: sendWalkToRobot) { _, newValue in
-                    Harness.shared.record(
+                    harness.record(
                         .walklabDiagnosticsSendToggle, level: newValue ? .warn : .info, actor: .user,
                         data: ["sending": AnyCodable(newValue)]
                     )
@@ -1110,7 +1113,7 @@ public struct WalkDiagnosticsView: View {
     private func toggleRun() {
         let willEnable = !enabled
         if enabled { stop() } else { start() }
-        Harness.shared.record(
+        harness.record(
             .walklabDiagnosticsRunToggle, level: .info, actor: .user,
             data: ["enabled": AnyCodable(willEnable),
                    "source": AnyCodable(source.rawValue)]
@@ -1162,7 +1165,7 @@ public struct WalkDiagnosticsView: View {
         liveStartedAt = nil
         lastLiveImuTimestamp = nil
         data.clear()
-        Harness.shared.record(
+        harness.record(
             .walklabDiagnosticsReset, level: .info, actor: .user,
             data: ["sample_count": AnyCodable(priorSampleCount)]
         )
@@ -1340,7 +1343,7 @@ public struct WalkDiagnosticsView: View {
             try csv.write(to: url, atomically: true, encoding: .utf8)
             lastExportPath = url.path
             withAnimation { showExportToast = true }
-            Harness.shared.record(
+            harness.record(
                 .walklabDiagnosticsExport, level: .info, actor: .user,
                 data: ["sample_count": AnyCodable(sampleCount),
                        "success": AnyCodable(true)]
@@ -1352,7 +1355,7 @@ public struct WalkDiagnosticsView: View {
         } catch {
             lastExportPath = "export 실패: \(error.localizedDescription)"
             withAnimation { showExportToast = true }
-            Harness.shared.record(
+            harness.record(
                 .walklabDiagnosticsExport, level: .error, actor: .user,
                 data: ["sample_count": AnyCodable(sampleCount),
                        "success": AnyCodable(false)]

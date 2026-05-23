@@ -18,6 +18,9 @@ public struct PilotHsvTuningSheet: View {
         var id: String { "writeRobot" }
     }
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(preset: Binding<VisionHsvPreset>,
                 remoteShell: RemoteShell,
                 onClose: @escaping () -> Void) {
@@ -219,7 +222,7 @@ public struct PilotHsvTuningSheet: View {
     private var actionsBar: some View {
         HStack(spacing: DFSpace.sm) {
             DFButton(.secondary, size: .medium) {
-                Harness.shared.record(.pilotHsvResetDefault, level: .info, actor: .user)
+                harness.record(.pilotHsvResetDefault, level: .info, actor: .user)
                 preset = .macDefault
                 lastOperationMessage = "Mac default 로 초기화"
             } label: {
@@ -254,7 +257,7 @@ public struct PilotHsvTuningSheet: View {
 
     @MainActor
     private func loadFromRobot() async {
-        Harness.shared.record(.pilotHsvLoadFromRobot, level: .info, actor: .user)
+        harness.record(.pilotHsvLoadFromRobot, level: .info, actor: .user)
         lastOperationMessage = "로봇에서 config.ini read 중…"
         let priorCount = remoteShell.history.count
         await remoteShell.send(RobotSetupCommand.readVisionConfig)
@@ -329,7 +332,7 @@ public struct PilotHsvTuningSheet: View {
 
     @MainActor
     private func writeToRobot() async {
-        Harness.shared.record(.pilotHsvWriteToRobot, level: .warn, actor: .user,
+        harness.record(.pilotHsvWriteToRobot, level: .warn, actor: .user,
                               data: ["tag_count": AnyCodable(MultiColorVision.Tag.allCases.count)])
         lastOperationMessage = "로봇에 write 중…"
         // DF_ARGS — 4색 × 7토큰 (tag h t sat val min_pct max_pct).

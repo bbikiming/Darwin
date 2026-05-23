@@ -60,6 +60,9 @@ public struct RemotePilotView: View {
         }
     }
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     public var body: some View {
@@ -223,7 +226,7 @@ public struct RemotePilotView: View {
                   transitionSteps.indices.contains(activeIdx) else { return "unknown" }
             return transitionSteps[activeIdx].id
         }()
-        Harness.shared.record(
+        harness.record(
             .pilotTransitionAdvance, level: .info, actor: .user,
             data: ["step_index": AnyCodable(transitionActiveIndex ?? -1),
                    "step_id": AnyCodable(stepId)])
@@ -233,7 +236,7 @@ public struct RemotePilotView: View {
 
     /// 사용자가 cancel 누름 — task 중단 + step UI 정리.
     private func cancelTransition() {
-        Harness.shared.record(
+        harness.record(
             .pilotTransitionCancel, level: .info, actor: .user,
             data: ["step_index": AnyCodable(transitionActiveIndex ?? -1),
                    "step_count": AnyCodable(transitionSteps.count)])
@@ -277,7 +280,7 @@ public struct RemotePilotView: View {
 
         pendingModeChange = newMode
 
-        Harness.shared.record(
+        harness.record(
             .pilotDemoModeRequested, level: .info, actor: .user,
             data: ["from_mode": AnyCodable(mode == .ballFollow ? "ballFollow" : "manual"),
                    "to_mode": AnyCodable(newMode == .ballFollow ? "ballFollow" : "manual"),
@@ -338,7 +341,7 @@ public struct RemotePilotView: View {
             !result.lowercased().contains("미설치")
 
         if success {
-            Harness.shared.record(
+            harness.record(
                 .pilotDemoModeResult, level: .info, actor: .system,
                 data: ["mode": AnyCodable(newMode == .ballFollow ? "ballFollow" : "manual"),
                        "success": AnyCodable(true)])
@@ -357,7 +360,7 @@ public struct RemotePilotView: View {
                 .first(where: { !$0.hasPrefix("DF_STATUS=") })
                 .map(String.init) ?? "원격 명령 실패"
             // PII-safe: SSH error 원문 대신 hash 만 telemetry 기록.
-            Harness.shared.record(
+            harness.record(
                 .pilotDemoModeResult, level: .warn, actor: .system,
                 data: ["mode": AnyCodable(newMode == .ballFollow ? "ballFollow" : "manual"),
                        "success": AnyCodable(false),
@@ -566,7 +569,7 @@ public struct RemotePilotView: View {
                 Button {
                     let oldLevel = level.rawValue
                     featureLevelRaw = lv.rawValue
-                    Harness.shared.record(
+                    harness.record(
                         .pilotFeatureLevelChanged, level: .info, actor: .user,
                         data: ["from": AnyCodable(oldLevel),
                                "to": AnyCodable(lv.rawValue)])
@@ -765,7 +768,7 @@ public struct RemotePilotView: View {
             if store.lastSuccessfulEndpoint != nil {
                 Button {
                     if let ep = store.lastSuccessfulEndpoint {
-                        Harness.shared.record(
+                        harness.record(
                             .pilotReconnectTapped, level: .info, actor: .user,
                             data: ["endpoint_hash": AnyCodable(
                                 Harness.shortHash(String(describing: ep)))])

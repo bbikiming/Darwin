@@ -26,6 +26,9 @@ public struct WalkTrialLibraryView: View {
 
     private let store: WalkTrialStore
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(store: WalkTrialStore = .shared) {
         self.store = store
     }
@@ -47,7 +50,7 @@ public struct WalkTrialLibraryView: View {
                 // **v1.19.1 (2026-05-21) 사이클 4**: AutoGenerator 진입점.
                 Button(action: {
                     showingAutoGenerator = true
-                    Harness.shared.record(
+                    harness.record(
                         .walklabTrialAutogenOpened, level: .info, actor: .user
                     )
                 }) {
@@ -99,7 +102,7 @@ public struct WalkTrialLibraryView: View {
                             .tag(store.load(id: entry.id))
                             .onTapGesture {
                                 selectedTrial = store.load(id: entry.id)
-                                Harness.shared.record(
+                                harness.record(
                                     .walklabTrialSelected, level: .info, actor: .user,
                                     data: ["trial_id_hash": AnyCodable(Harness.shortHash(entry.id)),
                                            "preset": AnyCodable(entry.preset),
@@ -225,7 +228,7 @@ public struct WalkTrialLibraryView: View {
     }
 
     private func recordFilterChange(_ f: TrialFilter, sort s: TrialSort? = nil) {
-        Harness.shared.record(
+        harness.record(
             .walklabTrialFilterChanged, level: .info, actor: .user,
             data: ["sort": AnyCodable((s ?? sort).rawValue),
                    "no_falls_only": AnyCodable(f.noFallsOnly),

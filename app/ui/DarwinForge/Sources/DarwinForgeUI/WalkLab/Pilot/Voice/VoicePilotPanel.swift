@@ -47,6 +47,9 @@ public struct VoicePilotPanel: View {
 
     // MARK: - Init
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     /// Production init — 기본 `SpeechFrameworkRecognizer` 사용 (실 마이크).
     public init(bridge: WalkLabRCBridge) {
         self.bridge = bridge
@@ -293,13 +296,13 @@ public struct VoicePilotPanel: View {
         guard let adapter else { return }
         if adapter.isListening {
             adapter.stop()
-            Harness.shared.record(
+            harness.record(
                 .pilotVoiceToggle, level: .info, actor: .user,
                 data: ["listening": AnyCodable(false)]
             )
         } else {
             adapter.start()
-            Harness.shared.record(
+            harness.record(
                 .pilotVoiceToggle, level: .info, actor: .user,
                 data: ["listening": AnyCodable(true)]
             )

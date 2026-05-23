@@ -36,6 +36,9 @@ public struct TelloPilotHud: View {
     /// 자동으로 stalled 전환됨. nil tick = 정적 (test / preview).
     @State private var nowTick: Date = Date()
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(bridge: WalkLabRCBridge,
                 listenerOwner: TelloStateListenerOwner? = nil,
                 stalledThresholdSec: TimeInterval = 5.0,
@@ -288,7 +291,7 @@ public struct TelloPilotHud: View {
             Spacer()
             Button("Tello 활성화") {
                 owner.start()
-                Harness.shared.record(
+                harness.record(
                     .pilotHudAction, level: .info, actor: .user,
                     data: ["action": AnyCodable("activate")]
                 )
@@ -313,7 +316,7 @@ public struct TelloPilotHud: View {
                 Spacer()
                 Button("다시 시도") {
                     owner.start()
-                    Harness.shared.record(
+                    harness.record(
                         .pilotHudAction, level: .info, actor: .user,
                         data: ["action": AnyCodable("retry")]
                     )
@@ -369,7 +372,7 @@ public struct TelloPilotHud: View {
                     Spacer()
                     Button("Recover") {
                         bridge.handleRecovery(from: .ui)
-                        Harness.shared.record(
+                        harness.record(
                             .pilotRecoveryRequested, level: .notice, actor: .user,
                             data: ["source": AnyCodable("hud")]
                         )
@@ -473,7 +476,7 @@ public struct TelloPilotHud: View {
                     .controlSize(.small)
                     .font(.caption)
                     .onChange(of: bridge.enabled) { _, newValue in
-                        Harness.shared.record(
+                        harness.record(
                             .pilotHudAction, level: .info, actor: .user,
                             data: [
                                 "action": AnyCodable("bridge_toggle"),
@@ -484,7 +487,7 @@ public struct TelloPilotHud: View {
                 Spacer()
                 Button(role: .destructive) {
                     bridge.handleEmergency(from: .ui)
-                    Harness.shared.record(
+                    harness.record(
                         .pilotEStop, level: .notice, actor: .user,
                         data: ["source": AnyCodable("hud")]
                     )

@@ -17,12 +17,21 @@ public final class PilotSafetyGate: ObservableObject {
     /// 사용자에게 표시할 마지막 게이트 거부 사유.
     @Published public private(set) var lastBlockReason: String?
 
-    public init() {}
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    //
+    // 종전: `Harness.shared.record(...)` 직접 호출 (4 사이트) → 테스트에서
+    //       RecordingHarness 주입 불가.
+    // 신규: init 시점 HarnessFacade 주입 (default = LiveHarness.shared — 기존 호출자 무손상).
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
+    }
 
     /// ARM 슬라이더 drag 완료 시 호출 — TeleopChannel.arm 의 종착점.
     public func arm() {
         armed = true
-        Harness.shared.record(.pilotSafetyArmed, level: .info, actor: .user)
+        harness.record(.pilotSafetyArmed, level: .info, actor: .user)
     }
 
     /// DISARM (ESC / 사용자 명시 / 연결 끊김 / 비상정지).
@@ -30,7 +39,7 @@ public final class PilotSafetyGate: ObservableObject {
     public func disarm(source: TelemetryActor = .user) {
         armed = false
         lastBlockReason = nil
-        Harness.shared.record(.pilotSafetyDisarmed, level: .info, actor: source)
+        harness.record(.pilotSafetyDisarmed, level: .info, actor: source)
     }
 
     /// E-stop 시각 시그널 — 0.3 s 후 자동 해제.
@@ -65,7 +74,7 @@ public final class PilotSafetyGate: ObservableObject {
     public func allowMotion(_ meta: MotionPageMetadata, confirmRisk: Bool) -> GateResult {
         if !armed {
             lastBlockReason = GateResult.blockUnarmed.message
-            Harness.shared.record(
+            harness.record(
                 .pilotSafetyGateBlocked, level: .warn, actor: .system,
                 data: ["reason": AnyCodable("blockUnarmed"),
                        "motion_name": AnyCodable(Harness.shortHash(meta.displayName))]
@@ -74,7 +83,7 @@ public final class PilotSafetyGate: ObservableObject {
         }
         if meta.safetyClass == .highRisk && !confirmRisk {
             lastBlockReason = GateResult.requireHighRiskConfirm.message
-            Harness.shared.record(
+            harness.record(
                 .pilotSafetyGateBlocked, level: .warn, actor: .system,
                 data: ["reason": AnyCodable("requireHighRiskConfirm"),
                        "motion_name": AnyCodable(Harness.shortHash(meta.displayName))]

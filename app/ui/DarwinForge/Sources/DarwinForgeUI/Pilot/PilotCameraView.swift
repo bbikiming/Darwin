@@ -27,6 +27,9 @@ public struct PilotCameraView: View {
     /// store 환경 객체 — IMU sheet 에 store 전달용.
     @EnvironmentObject private var store: ConnectionStore
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(flags: PilotFeatureFlags,
                 endpoint: PilotCameraEndpoint = PilotCameraEndpoint(host: DFConnectionConstants.robotEthernetIP),
                 demoStatus: PilotDemoStatus = .idle,
@@ -127,8 +130,8 @@ public struct PilotCameraView: View {
             Menu {
                 if flags.headTracking {
                     Button {
-                        Harness.shared.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
-                                              data: ["sheet": "head_tracker"])
+                        harness.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
+                                       data: ["sheet": "head_tracker"])
                         showHeadTrackerSheet = true
                     } label: {
                         Label("head 추적 PD 조정", systemImage: "slider.horizontal.below.rectangle")
@@ -136,8 +139,8 @@ public struct PilotCameraView: View {
                 }
                 if flags.imuTelemetry {
                     Button {
-                        Harness.shared.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
-                                              data: ["sheet": "imu"])
+                        harness.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
+                                       data: ["sheet": "imu"])
                         showImuSheet = true
                     } label: {
                         Label("IMU 진단 + scale 검증", systemImage: "gyroscope")
@@ -145,8 +148,8 @@ public struct PilotCameraView: View {
                 }
                 if flags.hsvTuning {
                     Button {
-                        Harness.shared.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
-                                              data: ["sheet": "hsv"])
+                        harness.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
+                                       data: ["sheet": "hsv"])
                         showHsvSheet = true
                     } label: {
                         Label("HSV 튜닝 + 로봇 동기", systemImage: "eyedropper.halffull")
@@ -254,8 +257,8 @@ public struct PilotCameraView: View {
 
         let on = headTracker.enabled
         let view = Button {
-            Harness.shared.record(.pilotCameraHeadTrackingToggle, level: .trace, actor: .user,
-                                  data: ["enabled": AnyCodable(!on)])
+            harness.record(.pilotCameraHeadTrackingToggle, level: .trace, actor: .user,
+                           data: ["enabled": AnyCodable(!on)])
             headTracker.setEnabled(!on, demoActive: false)
         } label: {
             HStack(spacing: DFSpace.xs) {
@@ -442,8 +445,8 @@ public struct PilotCameraView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, DFSpace.md)
                 Button {
-                    Harness.shared.record(.pilotCameraConnect, level: .info, actor: .user,
-                                          data: ["endpoint_hash": AnyCodable(Harness.shortHash(endpoint.displayName))])
+                    harness.record(.pilotCameraConnect, level: .info, actor: .user,
+                                   data: ["endpoint_hash": AnyCodable(Harness.shortHash(endpoint.displayName))])
                     configureClient()
                 } label: {
                     Label("카메라 연결", systemImage: "play.circle.fill")

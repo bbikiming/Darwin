@@ -57,8 +57,13 @@ public final class TeachCapture: ObservableObject {
         return f
     }()
 
-    public init(defaults: UserDefaults = .standard) {
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
+    public init(defaults: UserDefaults = .standard,
+                harness: (any HarnessFacade)? = nil) {
         self.defaults = defaults
+        self.harness = harness ?? LiveHarness.shared
         restorePersistedMetadata()
     }
 
@@ -68,7 +73,7 @@ public final class TeachCapture: ObservableObject {
     /// 실제 pose 는 복원하지 않음 (PII 경계).
     private func restorePersistedMetadata() {
         let count = persistedSnapshotCount
-        Harness.shared.record(
+        harness.record(
             .teachSnapshotMetaRestored, level: .info, actor: .system,
             data: ["count": AnyCodable(count)]
         )
@@ -82,7 +87,7 @@ public final class TeachCapture: ObservableObject {
         do {
             return try JSONDecoder().decode([PersistedSnapshotMeta].self, from: data)
         } catch {
-            Harness.shared.record(
+            harness.record(
                 .errorException, level: .error, actor: .system,
                 data: ["component": AnyCodable("TeachCapture.loadMeta"),
                        "error_type": AnyCodable(String(describing: type(of: error))),
@@ -103,7 +108,7 @@ public final class TeachCapture: ObservableObject {
             let data = try JSONEncoder().encode(list)
             defaults.set(data, forKey: Self.metaDefaultsKey)
         } catch {
-            Harness.shared.record(
+            harness.record(
                 .errorException, level: .error, actor: .system,
                 data: ["component": AnyCodable("TeachCapture.saveMeta"),
                        "error_type": AnyCodable(String(describing: type(of: error))),
@@ -170,7 +175,7 @@ public final class TeachCapture: ObservableObject {
             }
         }
         // v1.12.3 telemetry — 전체 토크 해제.
-        Harness.shared.record(
+        harness.record(
             .teachTorqueChanged, level: .info, actor: .user,
             data: ["action": AnyCodable("disable_all"),
                    "joint_count": AnyCodable(JointID.allCases.count)]
@@ -189,7 +194,7 @@ public final class TeachCapture: ObservableObject {
             }
         }
         // v1.12.3 telemetry — 전체 토크 ON.
-        Harness.shared.record(
+        harness.record(
             .teachTorqueChanged, level: .info, actor: .user,
             data: ["action": AnyCodable("enable_all"),
                    "joint_count": AnyCodable(JointID.allCases.count)]
@@ -207,7 +212,7 @@ public final class TeachCapture: ObservableObject {
             // ignore
         }
         // v1.12.3 telemetry — 단일 관절 토크 토글.
-        Harness.shared.record(
+        harness.record(
             .teachTorqueChanged, level: .info, actor: .user,
             data: ["action": AnyCodable("toggle"),
                    "joint": AnyCodable(joint.name),
@@ -224,7 +229,7 @@ public final class TeachCapture: ObservableObject {
         isCapturing = true
         consecutiveFailures = 0
         // v1.12.0 telemetry — 티칭 캡처 시작.
-        Harness.shared.record(
+        harness.record(
             .teachCaptureStart, level: .info, actor: .user,
             data: ["connected": AnyCodable(store.bus != nil)]
         )
@@ -240,7 +245,7 @@ public final class TeachCapture: ObservableObject {
         isCapturing = false
         if wasCapturing {
             // v1.12.0 telemetry — 티칭 캡처 정지.
-            Harness.shared.record(
+            harness.record(
                 .teachCaptureStop, level: .info, actor: .user,
                 data: ["snapshot_count": AnyCodable(snapshots.count),
                        "consec_failures": AnyCodable(consecutiveFailures)]
@@ -274,7 +279,7 @@ public final class TeachCapture: ObservableObject {
                 // v1.12.3 telemetry — 첫 auto-disable 전환만 기록 (루프 스팸 방지).
                 if !autoDisableFired {
                     autoDisableFired = true
-                    Harness.shared.record(
+                    harness.record(
                         .teachTorqueChanged, level: .info, actor: .user,
                         data: ["action": AnyCodable("capture_loop_auto_disable"),
                                "joint_count": AnyCodable(JointID.allCases.count)]
@@ -307,7 +312,7 @@ public final class TeachCapture: ObservableObject {
         snapshots.insert(snap, at: 0)
         appendMeta(for: snap)   // 사이클 206 — 메타데이터 영속화
         // v1.12.2 telemetry — 자세 스냅샷 저장 (사용자 이름은 길이+해시로 redact).
-        Harness.shared.record(
+        harness.record(
             .teachSnapshotCaptured, level: .notice, actor: .user,
             data: ["name_len": AnyCodable(finalName.count),
                    "name_hash": AnyCodable(Harness.shortHash(finalName)),
@@ -322,7 +327,7 @@ public final class TeachCapture: ObservableObject {
         snapshots.removeAll { $0.id == s.id }
         removeMeta(id: s.id)    // 사이클 206 — 메타데이터 동기화
         // v1.12.2 telemetry — 스냅샷 삭제 (name redacted).
-        Harness.shared.record(
+        harness.record(
             .teachSnapshotDeleted, level: .info, actor: .user,
             data: ["name_hash": AnyCodable(Harness.shortHash(s.name)),
                    "snapshot_id": AnyCodable(s.id.uuidString),
@@ -336,7 +341,7 @@ public final class TeachCapture: ObservableObject {
         clearPersistedMetadata()    // 사이클 206 — 메타데이터 전체 삭제
         if prev > 0 {
             // v1.12.0 telemetry — 전체 스냅샷 비움.
-            Harness.shared.record(
+            harness.record(
                 .teachSnapshotsCleared, level: .info, actor: .user,
                 data: ["count_before": AnyCodable(prev)]
             )
@@ -346,7 +351,7 @@ public final class TeachCapture: ObservableObject {
     /// 저장된 스냅샷을 로봇에 적용 — 토크 ON 상태에서 호출 권장.
     public func applySnapshot(_ s: PoseSnapshot, store: ConnectionStore) {
         // v1.12.2 telemetry — 자세 적용 (name redacted).
-        Harness.shared.record(
+        harness.record(
             .teachSnapshotApplied, level: .notice, actor: .user,
             data: ["name_hash": AnyCodable(Harness.shortHash(s.name)),
                    "snapshot_id": AnyCodable(s.id.uuidString),

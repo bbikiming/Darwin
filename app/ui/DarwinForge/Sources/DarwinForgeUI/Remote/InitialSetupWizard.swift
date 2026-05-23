@@ -67,6 +67,13 @@ public final class InitialSetupState: ObservableObject {
     /// 사이클 194: completed 이벤트 가 한 번만 발화 보장.
     private var completedFired: Bool = false
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
+    }
+
     public func startAutoVerification() {
         // 사이클 194: 첫 진입 시각 기록 (재진입 시 reset 안 함 — 누적 시간 정확).
         if wizardStartedAt == nil { wizardStartedAt = Date() }
@@ -90,7 +97,7 @@ public final class InitialSetupState: ObservableObject {
         let from = statuses[step] ?? .pending
         guard from != status else { return }  // no-op transition skip.
         statuses[step] = status
-        Harness.shared.record(
+        harness.record(
             .setupWizardStepChanged, level: .info, actor: .user,
             data: ["step": AnyCodable(String(describing: step)),
                    "from": AnyCodable(String(describing: from)),
@@ -102,7 +109,7 @@ public final class InitialSetupState: ObservableObject {
             let elapsedMs = wizardStartedAt.map {
                 Int(Date().timeIntervalSince($0) * 1000)
             } ?? 0
-            Harness.shared.record(
+            harness.record(
                 .setupWizardCompleted, level: .notice, actor: .user,
                 data: ["elapsed_ms": AnyCodable(elapsedMs)]
             )

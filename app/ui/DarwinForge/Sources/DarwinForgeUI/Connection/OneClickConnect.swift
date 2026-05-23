@@ -73,7 +73,12 @@ public final class OneClickConnect: ObservableObject {
     private var bonjour: BonjourBrowser?
     private var scanTask: Task<Void, Never>?
 
-    public init() {}
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
+    }
 
     public func bind(store: ConnectionStore, bonjour: BonjourBrowser) {
         self.store = store
@@ -99,7 +104,7 @@ public final class OneClickConnect: ObservableObject {
         candidates = Self.initialCandidates()
         lastDiagnosticAt = Date()
 
-        Harness.shared.record(
+        harness.record(
             .setupConnOneClickStarted, level: .info, actor: .user,
             data: ["has_last_endpoint": AnyCodable(store?.lastSuccessfulEndpoint != nil),
                    "candidate_count": AnyCodable(candidates.count)]
@@ -111,7 +116,7 @@ public final class OneClickConnect: ObservableObject {
                let last = store.lastSuccessfulEndpoint {
                 await self?.tryConnect(label: "마지막 — \(last.detail)", endpoint: last)
                 if case .connected = await MainActor.run(body: { store.status }) {
-                    Harness.shared.record(
+                    self?.harness.record(
                         .setupConnOneClickResult, level: .info, actor: .system,
                         data: ["success": AnyCodable(true),
                                "winning_kind": AnyCodable("last_successful")]
@@ -131,7 +136,7 @@ public final class OneClickConnect: ObservableObject {
         candidates = Self.initialCandidates()
         lastDiagnosticAt = Date()
 
-        Harness.shared.record(
+        harness.record(
             .setupConnDiagnosticsStarted, level: .info, actor: .user,
             data: ["candidate_count": AnyCodable(candidates.count)]
         )
@@ -162,7 +167,7 @@ public final class OneClickConnect: ObservableObject {
                 })
                 if allFailed {
                     self.phase = .allFailed
-                    Harness.shared.record(
+                    harness.record(
                         .setupConnOneClickResult, level: .warn, actor: .system,
                         data: ["success": AnyCodable(false)]
                     )
@@ -174,7 +179,7 @@ public final class OneClickConnect: ObservableObject {
                         if case .readyToConnect = $0.stage { return true }
                         return false
                     })?.kind.rawValue ?? "unknown"
-                Harness.shared.record(
+                harness.record(
                     .setupConnOneClickResult, level: .info, actor: .system,
                     data: ["success": AnyCodable(true),
                            "winning_kind": AnyCodable(winnerKind)]
@@ -230,7 +235,7 @@ public final class OneClickConnect: ObservableObject {
                     endpoint: .usbSerial(path: chosen),
                     detail: name
                 )
-                Harness.shared.record(
+                harness.record(
                     .setupConnCandidateProbed, level: .trace, actor: .system,
                     data: ["candidate_id": AnyCodable("usb"),
                            "candidate_kind": AnyCodable("usb"),
@@ -242,7 +247,7 @@ public final class OneClickConnect: ObservableObject {
                     stage: .failed(reason: "USB serial 디바이스 없음. 케이블·전원·드라이버 확인."),
                     detail: "케이블 미연결 추정"
                 )
-                Harness.shared.record(
+                harness.record(
                     .setupConnCandidateProbed, level: .trace, actor: .system,
                     data: ["candidate_id": AnyCodable("usb"),
                            "candidate_kind": AnyCodable("usb"),
@@ -313,7 +318,7 @@ public final class OneClickConnect: ObservableObject {
             if case .readyToConnect = stage { return "ready" }
             return "failed"
         }()
-        Harness.shared.record(
+        harness.record(
             .setupConnCandidateProbed, level: .trace, actor: .system,
             data: ["candidate_id": AnyCodable(id),
                    "candidate_kind": AnyCodable("tcp"),
@@ -491,7 +496,7 @@ public final class OneClickConnect: ObservableObject {
     public func manualProbe(host: String) {
         let trimmed = host.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        Harness.shared.record(
+        harness.record(
             .setupConnManualProbe, level: .info, actor: .user,
             data: ["host_hash": AnyCodable(Harness.shortHash(trimmed))]
         )

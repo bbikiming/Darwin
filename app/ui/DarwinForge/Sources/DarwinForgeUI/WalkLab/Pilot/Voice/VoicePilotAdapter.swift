@@ -83,15 +83,20 @@ public final class VoicePilotAdapter {
 
     // MARK: - Init
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
     /// Production init — 기본 `SpeechFrameworkRecognizer` 사용.
     public convenience init(bridge: WalkLabRCBridge?, locale: Locale = Locale(identifier: "ko-KR")) {
         self.init(bridge: bridge, recognizer: SpeechFrameworkRecognizer(locale: locale))
     }
 
     /// 테스트 init — `MockVoiceRecognizer` 등 임의 source 주입.
-    public init(bridge: WalkLabRCBridge?, recognizer: VoiceRecognizing) {
+    public init(bridge: WalkLabRCBridge?, recognizer: VoiceRecognizing,
+                harness: (any HarnessFacade)? = nil) {
         self.bridge = bridge
         self.recognizer = recognizer
+        self.harness = harness ?? LiveHarness.shared
     }
 
     // MARK: - Lifecycle
@@ -102,7 +107,7 @@ public final class VoicePilotAdapter {
         guard !isListening else { return }
         isListening = true
         // 사이클 213 telemetry — Voice adapter 활성화.
-        Harness.shared.record(
+        harness.record(
             .pilotAdapterStarted, level: .info, actor: .user,
             data: ["source": AnyCodable("voice")]
         )
@@ -121,7 +126,7 @@ public final class VoicePilotAdapter {
             isListening = false
             lastError = "음성 인식 시작 실패: \(error.localizedDescription)"
             // 사이클 213 telemetry — 음성 인식 시작 실패.
-            Harness.shared.record(
+            harness.record(
                 .pilotVoiceError, level: .error, actor: .system,
                 data: ["source": AnyCodable("voice"),
                        "error_type": AnyCodable(String(describing: type(of: error))),
@@ -135,7 +140,7 @@ public final class VoicePilotAdapter {
         guard isListening else { return }
         isListening = false
         // 사이클 213 telemetry — Voice adapter 비활성화.
-        Harness.shared.record(
+        harness.record(
             .pilotAdapterStopped, level: .info, actor: .user,
             data: ["source": AnyCodable("voice")]
         )
@@ -146,7 +151,7 @@ public final class VoicePilotAdapter {
     private func handleError(_ message: String) {
         lastError = message
         // 사이클 213 telemetry — 런타임 음성 인식 에러 (PII redacted).
-        Harness.shared.record(
+        harness.record(
             .pilotVoiceError, level: .error, actor: .system,
             data: ["source": AnyCodable("voice"),
                    "error_type": AnyCodable(Harness.shortHash(message)),
@@ -200,7 +205,7 @@ public final class VoicePilotAdapter {
         // unknown keyword — silent. lastMatchedKeyword nil 처리해서 "들리긴 했으나 매칭 X" 시각화.
         lastMatchedKeyword = nil
         // 사이클 213 telemetry — 음성 인식은 됐으나 키워드 미매칭.
-        Harness.shared.record(
+        harness.record(
             .pilotVoiceKeyword, level: .trace, actor: .system,
             data: ["matched": AnyCodable(false),
                    "keyword": AnyCodable("none")]
@@ -209,13 +214,13 @@ public final class VoicePilotAdapter {
 
     /// 사이클 214 critic MINOR-1: 키워드 매칭 성공 시에도 telemetry 발화 — match/miss ratio 분석 가능.
     private func recordKeywordMatch(_ keyword: String) {
-        Harness.shared.record(
+        harness.record(
             .pilotVoiceKeyword, level: .trace, actor: .system,
             data: ["matched": AnyCodable(true),
                    "keyword": AnyCodable(keyword)]
         )
         // 키워드 매칭 + bridge dispatch 완료 — 음성 명령 빈도 분석용.
-        Harness.shared.record(
+        harness.record(
             .pilotVoiceDispatched, level: .info, actor: .user,
             data: ["keyword": AnyCodable(keyword),
                    "text_hash": AnyCodable(Harness.shortHash(lastRecognized ?? ""))]

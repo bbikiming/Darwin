@@ -64,7 +64,11 @@ public final class RemoteShell: ObservableObject {
     @Published public var shareName: String = "robotis"
     @Published public var username: String = "robotis"
 
-    public init() {
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
         // 진입 즉시 SSH 가능 여부 probe — 백그라운드.
         Task { await probeChannel() }
     }
@@ -77,7 +81,7 @@ public final class RemoteShell: ObservableObject {
         activeChannel = to
         // 사이클 182 (P1 #3.6 fix): probe 결과 telemetry. 사용자 환경 별 channel
         // 분포 분석 (key 미셋업 vs 정상 비율 등). host 는 redaction — 마지막 옥텟 mask.
-        Harness.shared.record(
+        harness.record(
             .remoteChannelChanged, level: .info, actor: .system,
             data: ["from": AnyCodable(String(describing: from)),
                    "to": AnyCodable(String(describing: to)),
@@ -103,7 +107,7 @@ public final class RemoteShell: ObservableObject {
         // 사이클 182 (P1 #3.6 fix): 명령 송신 telemetry. PII 회피 — 명령 본문 X,
         // 길이 + hash 만. hash 로 동일 명령 반복 분석 가능.
         let channelAtSend = activeChannel
-        Harness.shared.record(
+        harness.record(
             .remoteCommandSent, level: .info, actor: .user,
             data: ["channel": AnyCodable(String(describing: channelAtSend)),
                    "cmd_len": AnyCodable(trimmed.count),
@@ -121,7 +125,7 @@ public final class RemoteShell: ObservableObject {
                 if index < history.count { history[index] = exchange }
                 activeChannel = .ssh
                 // 사이클 182: SSH 응답 성공 telemetry.
-                Harness.shared.record(
+                harness.record(
                     .remoteCommandResponded, level: .info, actor: .system,
                     data: ["channel": AnyCodable("ssh"),
                            "elapsed_ms": AnyCodable(exchange.elapsedMs ?? 0),
@@ -132,7 +136,7 @@ public final class RemoteShell: ObservableObject {
             } catch SSHShell.SSHError.keyAuthRequired {
                 // key 미셋업 — 명확한 안내 + SMB fallback.
                 activeChannel = .smb
-                Harness.shared.record(
+                harness.record(
                     .remoteCommandError, level: .warn, actor: .system,
                     data: ["channel": AnyCodable("ssh"),
                            "error_case": AnyCodable("key_auth_required"),
@@ -141,7 +145,7 @@ public final class RemoteShell: ObservableObject {
             } catch {
                 // 일반 SSH 실패 — SMB fallback.
                 activeChannel = .smb
-                Harness.shared.record(
+                harness.record(
                     .remoteCommandError, level: .warn, actor: .system,
                     data: ["channel": AnyCodable("ssh"),
                            "error_case": AnyCodable("ssh_generic"),
@@ -181,7 +185,7 @@ public final class RemoteShell: ObservableObject {
                     exchange.receivedAt = Date()
                     if index < history.count { history[index] = exchange }
                     // 사이클 182: SMB 응답 성공 telemetry.
-                    Harness.shared.record(
+                    harness.record(
                         .remoteCommandResponded, level: .info, actor: .system,
                         data: ["channel": AnyCodable("smb"),
                                "elapsed_ms": AnyCodable(exchange.elapsedMs ?? 0),
@@ -197,7 +201,7 @@ public final class RemoteShell: ObservableObject {
             exchange.receivedAt = Date()
             if index < history.count { history[index] = exchange }
             // 사이클 182: SMB ShellError telemetry — error_case enum 매핑.
-            Harness.shared.record(
+            harness.record(
                 .remoteCommandError, level: .error, actor: .system,
                 data: ["channel": AnyCodable("smb"),
                        "error_case": AnyCodable(Self.shellErrorCase(err)),
@@ -207,7 +211,7 @@ public final class RemoteShell: ObservableObject {
             exchange.error = error.localizedDescription
             exchange.receivedAt = Date()
             if index < history.count { history[index] = exchange }
-            Harness.shared.record(
+            harness.record(
                 .remoteCommandError, level: .error, actor: .system,
                 data: ["channel": AnyCodable("smb"),
                        "error_case": AnyCodable("smb_generic"),

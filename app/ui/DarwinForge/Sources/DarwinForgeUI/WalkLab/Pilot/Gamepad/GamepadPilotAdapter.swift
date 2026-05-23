@@ -98,15 +98,20 @@ public final class GamepadPilotAdapter {
 
     // MARK: - Init
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
     /// Production init — 기본 `GCControllerInputSource` 사용.
     public convenience init(bridge: WalkLabRCBridge?) {
         self.init(bridge: bridge, source: GCControllerInputSource())
     }
 
     /// 테스트 init — MockGamepad 등 임의 source 주입.
-    public init(bridge: WalkLabRCBridge?, source: GamepadInputSource) {
+    public init(bridge: WalkLabRCBridge?, source: GamepadInputSource,
+                harness: (any HarnessFacade)? = nil) {
         self.bridge = bridge
         self.source = source
+        self.harness = harness ?? LiveHarness.shared
     }
 
     // MARK: - Lifecycle
@@ -122,7 +127,7 @@ public final class GamepadPilotAdapter {
 
         // 사이클 213 telemetry — Gamepad adapter 활성화.
         // 사이클 214 critic MINOR-3: refreshConnectedController 후 호출 → 정확한 controller_name.
-        Harness.shared.record(
+        harness.record(
             .pilotAdapterStarted, level: .info, actor: .user,
             data: ["source": AnyCodable("gamepad"),
                    "controller_name": AnyCodable(connectedControllerName ?? "none")]
@@ -158,7 +163,7 @@ public final class GamepadPilotAdapter {
         isRunning = false
 
         // 사이클 213 telemetry — Gamepad adapter 비활성화.
-        Harness.shared.record(
+        harness.record(
             .pilotAdapterStopped, level: .info, actor: .user,
             data: ["source": AnyCodable("gamepad")]
         )
@@ -293,7 +298,7 @@ public final class GamepadPilotAdapter {
         connectedControllerName = source.controllerName
         // 사이클 213 telemetry — 컨트롤러 연결/해제 변경 감지.
         if prev != connectedControllerName {
-            Harness.shared.record(
+            harness.record(
                 .pilotControllerChanged, level: .info, actor: .system,
                 data: ["source": AnyCodable("gamepad"),
                        "controller_name": AnyCodable(connectedControllerName ?? "none"),

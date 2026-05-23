@@ -17,6 +17,9 @@ struct StaticTiltCalibrationPanel: View {
     @State private var captureProgress: Double = 0
     @State private var captureTask: Task<Void, Never>? = nil
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.xs2) {
             // 헤더
@@ -53,7 +56,7 @@ struct StaticTiltCalibrationPanel: View {
                 HStack {
                     Spacer()
                     Button(role: .destructive) {
-                        Harness.shared.record(
+                        harness.record(
                             .walklabCalibrationReset, level: .info, actor: .user,
                             data: ["cleared_count": AnyCodable(session.calibrationCaptures.count)]
                         )
@@ -194,7 +197,7 @@ struct StaticTiltCalibrationPanel: View {
         activeAxis = axis
         captureProgress = 0
 
-        Harness.shared.record(
+        harness.record(
             .walklabCalibrationCaptureStart, level: .info, actor: .user,
             data: ["axis": AnyCodable(axis.rawValue)]
         )
@@ -213,7 +216,7 @@ struct StaticTiltCalibrationPanel: View {
             let result = await session.runStaticTiltCalibration(axis: axis, durationSec: 5.0)
             progressTask.cancel()
 
-            Harness.shared.record(
+            harness.record(
                 .walklabCalibrationCaptureDone, level: .info, actor: .user,
                 data: [
                     "axis": AnyCodable(axis.rawValue),

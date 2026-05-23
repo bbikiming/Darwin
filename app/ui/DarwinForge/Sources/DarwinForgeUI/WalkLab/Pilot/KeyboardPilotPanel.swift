@@ -49,6 +49,9 @@ public struct KeyboardPilotPanel: View {
     /// 사용자가 별도 UI 로 변경 가능 (미래).
     @AppStorage("df.pilot.motionKeyId") private var motionKeyId: String = "page.1"
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(autoFocusOnAppear: Bool = true) {
         self.autoFocusOnAppear = autoFocusOnAppear
     }
@@ -264,7 +267,7 @@ public struct KeyboardPilotPanel: View {
 
     private func applySensitivity(_ multiplier: Double) {
         guard let bridge = session.pilotBridge else { return }
-        Harness.shared.record(
+        harness.record(
             .pilotSensitivityChanged, level: .info, actor: .user,
             data: ["value": AnyCodable(multiplier),
                    "label": AnyCodable(sensitivityLabel)]
@@ -291,7 +294,7 @@ public struct KeyboardPilotPanel: View {
                     .foregroundStyle(DFColor.danger)
                 Spacer()
                 Button("Recover") {
-                    Harness.shared.record(
+                    harness.record(
                         .pilotKeyboardAction, level: .info, actor: .user,
                         data: ["key": AnyCodable("recover"), "phase": AnyCodable("tap")]
                     )
@@ -384,7 +387,7 @@ public struct KeyboardPilotPanel: View {
         }
         // emergency 는 down 즉시 발화 (up 은 무시 — 한 번 발화하면 끝).
         if pilotKey == .emergency && press.phase == .down {
-            Harness.shared.record(
+            harness.record(
                 .pilotKeyboardAction, level: .info, actor: .user,
                 data: ["key": AnyCodable("emergency"), "phase": AnyCodable("down")]
             )
@@ -396,7 +399,7 @@ public struct KeyboardPilotPanel: View {
             return .handled
         }
         if press.phase == .down {
-            Harness.shared.record(
+            harness.record(
                 .pilotKeyboardAction, level: .trace, actor: .user,
                 data: ["key": AnyCodable(pilotKey.label), "phase": AnyCodable("down")]
             )

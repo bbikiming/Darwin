@@ -19,6 +19,9 @@ public struct WalkTrialRecommenderCard: View {
     /// 사이클 153 (사용자 권고 #3): sim 추천을 실 robot 에 적용하려 할 때 confirmation.
     @State private var showingSimConfirmation = false
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(
         recommendation: WalkTrialRecommendation,
         robotConnected: Bool = false,
@@ -200,7 +203,7 @@ public struct WalkTrialRecommenderCard: View {
                     titleVisibility: .visible
                 ) {
                     Button("그래도 적용", role: .destructive) {
-                        Harness.shared.record(
+                        harness.record(
                             .walklabRecommenderSimConfirmed, level: .info, actor: .user,
                             data: [
                                 "strategy": AnyCodable(recommendation.strategy.rawValue),
@@ -233,7 +236,7 @@ public struct WalkTrialRecommenderCard: View {
 
     /// 사이클 153: confirmation 통과 후 실제 apply (또는 sim/disconnected 시 직접 호출).
     private func performApply() {
-        Harness.shared.record(
+        harness.record(
             .walklabRecommenderApplied, level: .info, actor: .user,
             data: [
                 "strategy": AnyCodable(recommendation.strategy.rawValue),

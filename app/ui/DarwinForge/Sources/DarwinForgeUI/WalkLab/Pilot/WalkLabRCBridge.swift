@@ -143,8 +143,12 @@ public final class WalkLabRCBridge {
 
     // MARK: - Init
 
-    public init(tello: TelloLinkProtocol) {
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
+    public init(tello: TelloLinkProtocol, harness: (any HarnessFacade)? = nil) {
         self.tello = tello
+        self.harness = harness ?? LiveHarness.shared
     }
 
     // MARK: - 주 entry point
@@ -239,7 +243,7 @@ public final class WalkLabRCBridge {
         // 자동으로 beep (reset 작업 불요).
         session.pilotPostEvent("emergency recovery — preset 입력 활성", source: source)
         // 사이클 186: recovery telemetry. PII X — source 만.
-        Harness.shared.record(
+        harness.record(
             .pilotRecoveryRequested, level: .info, actor: .user,
             data: ["source": AnyCodable(source.rawValue)]
         )
@@ -298,7 +302,7 @@ public final class WalkLabRCBridge {
             session.pilotPostEvent("preset \(preset.rawValue) 시작", source: source)
             safetyMessage = nil
             // 사이클 186: preset 변경 telemetry — 종전 dead code 활성. PII X.
-            Harness.shared.record(
+            harness.record(
                 .pilotModeChanged, level: .info, actor: .user,
                 data: ["preset": AnyCodable(preset.rawValue),
                        "source": AnyCodable(source.rawValue),
@@ -308,7 +312,7 @@ public final class WalkLabRCBridge {
             // preflight failure 의 userMessage 또는 startBlockedReason 합성 메시지.
             safetyMessage = userMessage
             // 사이클 186: blocked 도 telemetry — 실패율 분석. message 본문은 PII 회피 (hash).
-            Harness.shared.record(
+            harness.record(
                 .pilotModeChanged, level: .warn, actor: .user,
                 data: ["preset": AnyCodable(preset.rawValue),
                        "source": AnyCodable(source.rawValue),
@@ -341,7 +345,7 @@ public final class WalkLabRCBridge {
             safetyMessage = "Bridge 비활성 — emergency 만 허용"
             latencyTracker?.cancel()
             // 사이클 186: bridge disabled telemetry.
-            Harness.shared.record(
+            harness.record(
                 .pilotBridgeDisabled, level: .info, actor: .user,
                 data: ["source": AnyCodable(intent.source.rawValue),
                        "intent_kind": AnyCodable(Self.intentKindLabel(intent.kind))]
@@ -358,7 +362,7 @@ public final class WalkLabRCBridge {
             safetyMessage = "긴급 정지 상태 — recovery 필요 (R 키 또는 Recover 버튼)"
             latencyTracker?.cancel()
             // 사이클 186: intent blocked by emergency state telemetry.
-            Harness.shared.record(
+            harness.record(
                 .pilotIntentBlocked, level: .info, actor: .system,
                 data: ["source": AnyCodable(intent.source.rawValue),
                        "intent_kind": AnyCodable(Self.intentKindLabel(intent.kind))]
@@ -385,7 +389,7 @@ public final class WalkLabRCBridge {
                 audioFeedback?.playEmergency()
             }
             // 사이클 186: emergency stop telemetry — 종전 dead code 활성. PII X — source 만.
-            Harness.shared.record(
+            harness.record(
                 .pilotEStop, level: .warn, actor: .user,
                 data: ["source": AnyCodable(intent.source.rawValue),
                        "was_already_active": AnyCodable(wasAlreadyEmergency)]

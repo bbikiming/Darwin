@@ -6,6 +6,9 @@ public struct JointControlView: View {
     @EnvironmentObject var store: ConnectionStore
     @State private var selected: JointID = .headPan
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     public var body: some View {
@@ -55,6 +58,9 @@ struct JointDetailView: View {
     @State private var isAdjusting: Bool = false
     @State private var lastError: String?
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     /// 보수적 한계: 1024..3072. forge-core JointLimits::default()와 동일.
     private let positionRange: ClosedRange<Double> = 1024...3072
 
@@ -89,7 +95,7 @@ struct JointDetailView: View {
                 Button("Refresh") {
                     // 사이클 203 (cycle 199 critic missing #2): refresh 버튼 telemetry.
                     // jointActionRequested 패턴 일관 — action="refresh".
-                    Harness.shared.record(
+                    harness.record(
                         .jointActionRequested, level: .info, actor: .user,
                         data: ["action": AnyCodable("refresh"),
                                "joint_id": AnyCodable(joint.rawValue),
@@ -187,7 +193,7 @@ struct JointDetailView: View {
             lastError = "Not connected"
             return
         }
-        Harness.shared.record(
+        harness.record(
             .jointActionRequested, level: .info, actor: .user,
             data: [
                 "action": AnyCodable(actionName),
@@ -205,7 +211,7 @@ struct JointDetailView: View {
             // raw `error.localizedDescription` 전송 X — 파일 경로 / 호스트명 / IP /
             // username 등 PII 노출 위험. cycle 182 shellErrorCase / cycle 187
             // DispatcherError.telemetryCase 패턴 일관 — type 만 + hash.
-            Harness.shared.record(
+            harness.record(
                 .jointActionFailed, level: .error, actor: .user,
                 data: [
                     "action": AnyCodable(actionName),

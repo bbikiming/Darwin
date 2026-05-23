@@ -20,6 +20,9 @@ public struct WalkTrialAutoGeneratorSheet: View {
     @State private var isGenerating: Bool = false
     @State private var generationTask: Task<Void, Never>?
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     public var body: some View {
@@ -142,7 +145,7 @@ public struct WalkTrialAutoGeneratorSheet: View {
                 Button("취소", role: .destructive) {
                     generationTask?.cancel()
                     isGenerating = false
-                    Harness.shared.record(
+                    harness.record(
                         .walklabTrialAutogenCancelled, level: .info, actor: .user,
                         data: ["was_generating": AnyCodable(true)]
                     )
@@ -150,7 +153,7 @@ public struct WalkTrialAutoGeneratorSheet: View {
             } else {
                 // 사이클 138 (audit #24 codex sweep)
                 Button("닫기", role: .cancel) {
-                    Harness.shared.record(
+                    harness.record(
                         .walklabTrialAutogenCancelled, level: .info, actor: .user,
                         data: ["was_generating": AnyCodable(false)]
                     )
@@ -193,7 +196,7 @@ public struct WalkTrialAutoGeneratorSheet: View {
             return
         }
         isGenerating = true
-        Harness.shared.record(
+        harness.record(
             .walklabTrialAutogenStarted, level: .info, actor: .user,
             data: [
                 "preset_count": AnyCodable(selectedPresets.count),

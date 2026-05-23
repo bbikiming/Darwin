@@ -37,6 +37,9 @@ public struct WalkDataView: View {
     @Environment(\.dfTheme) private var theme: DFTheme
     @State private var showV2Panel: Bool = false
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     public var body: some View {
@@ -74,7 +77,7 @@ public struct WalkDataView: View {
                 Button {
                     showV2Panel.toggle()
                     if showV2Panel { claudeShowPanel = false }
-                    Harness.shared.record(
+                    harness.record(
                         .walklabDataAnalysisPanelToggle, level: .info, actor: .user,
                         data: ["panel": AnyCodable("critic_v2"),
                                "visible": AnyCodable(showV2Panel)]
@@ -88,7 +91,7 @@ public struct WalkDataView: View {
                 Button {
                     claudeShowPanel.toggle()
                     if claudeShowPanel { showV2Panel = false }
-                    Harness.shared.record(
+                    harness.record(
                         .walklabDataAnalysisPanelToggle, level: .info, actor: .user,
                         data: ["panel": AnyCodable("markdown"),
                                "visible": AnyCodable(claudeShowPanel)]
@@ -434,7 +437,7 @@ public struct WalkDataView: View {
             return
         }
 
-        Harness.shared.record(
+        harness.record(
             .walklabDataAnalysisStarted, level: .info, actor: .user,
             data: ["session_count": AnyCodable(summaries.count)]
         )
@@ -593,7 +596,7 @@ public struct WalkDataView: View {
             .padding(DFSpace.md)
         }
         .onChange(of: summary.id) { _, newId in
-            Harness.shared.record(
+            harness.record(
                 .walklabDataSessionSelected, level: .info, actor: .user,
                 data: ["session_id_hash": AnyCodable(Harness.shortHash(newId))]
             )
@@ -845,7 +848,7 @@ public struct WalkDataView: View {
     }
 
     private func deleteSession(id: String) {
-        Harness.shared.record(
+        harness.record(
             .walklabDataSessionDeleted, level: .warn, actor: .user,
             data: ["session_id_hash": AnyCodable(Harness.shortHash(id))]
         )

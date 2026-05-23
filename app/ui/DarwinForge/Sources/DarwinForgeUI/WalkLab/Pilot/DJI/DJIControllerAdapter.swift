@@ -128,10 +128,15 @@ public final class DJIControllerAdapter {
         fatalError("unreachable")
     }
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
     /// 테스트 / 통합 진입점 — MockDJIController 또는 미래 production source 주입.
-    public init(bridge: WalkLabRCBridge?, source: DJIControllerInputSource) {
+    public init(bridge: WalkLabRCBridge?, source: DJIControllerInputSource,
+                harness: (any HarnessFacade)? = nil) {
         self.bridge = bridge
         self.source = source
+        self.harness = harness ?? LiveHarness.shared
     }
 
     // MARK: - Lifecycle
@@ -151,7 +156,7 @@ public final class DJIControllerAdapter {
 
         // 사이클 213 telemetry — DJI adapter 활성화.
         // 사이클 214 critic MINOR-3: refreshConnectedController 후 호출 → 정확한 controller_name.
-        Harness.shared.record(
+        harness.record(
             .pilotAdapterStarted, level: .info, actor: .user,
             data: ["source": AnyCodable("dji"),
                    "controller_name": AnyCodable(connectedControllerName ?? "none")]
@@ -171,7 +176,7 @@ public final class DJIControllerAdapter {
         isRunning = false
 
         // 사이클 213 telemetry — DJI adapter 비활성화.
-        Harness.shared.record(
+        harness.record(
             .pilotAdapterStopped, level: .info, actor: .user,
             data: ["source": AnyCodable("dji")]
         )
@@ -278,7 +283,7 @@ public final class DJIControllerAdapter {
         connectedControllerName = source.controllerName
         // 사이클 213 telemetry — DJI 컨트롤러 연결/해제 변경 감지.
         if prev != connectedControllerName {
-            Harness.shared.record(
+            harness.record(
                 .pilotControllerChanged, level: .info, actor: .system,
                 data: ["source": AnyCodable("dji"),
                        "controller_name": AnyCodable(connectedControllerName ?? "none"),

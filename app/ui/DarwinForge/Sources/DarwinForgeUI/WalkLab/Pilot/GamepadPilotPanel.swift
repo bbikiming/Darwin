@@ -54,6 +54,9 @@ public struct GamepadPilotPanel: View {
 
     // MARK: - Init
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     /// Production init — 실 `GCController` source 사용.
     public init(bridge: WalkLabRCBridge) {
         self.bridge = bridge
@@ -244,13 +247,13 @@ public struct GamepadPilotPanel: View {
         guard let adapter else { return }
         if adapter.isRunning {
             adapter.stop()
-            Harness.shared.record(
+            harness.record(
                 .pilotAdapterStopped, level: .info, actor: .user,
                 data: ["source": AnyCodable("gamepad_panel_toggle")]
             )
         } else {
             adapter.start()
-            Harness.shared.record(
+            harness.record(
                 .pilotAdapterStarted, level: .info, actor: .user,
                 data: ["source": AnyCodable("gamepad_panel_toggle")]
             )

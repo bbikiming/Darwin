@@ -66,7 +66,12 @@ public final class IntentDispatcher: ObservableObject {
     /// `ConnectionStore`가 보유한 Bus를 받아서 사용 — DI.
     public weak var connectionStore: ConnectionStore?
 
-    public init() {}
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
+    }
 
     // MARK: - 공용 진입점
 
@@ -77,7 +82,7 @@ public final class IntentDispatcher: ObservableObject {
         let currentMode = mode.rawValue
 
         // Telemetry: mode resolution — simulation vs hardware 판단 근거.
-        Harness.shared.record(
+        harness.record(
             .claudeIntentDispatched, level: .info, actor: .claude,
             data: ["tool": AnyCodable(toolName),
                    "mode": AnyCodable(currentMode)]
@@ -93,7 +98,7 @@ public final class IntentDispatcher: ObservableObject {
             } else {
                 errorCase = "generic"
             }
-            Harness.shared.record(
+            harness.record(
                 .claudeIntentError, level: .warn, actor: .system,
                 data: ["tool": AnyCodable(toolName),
                        "error_case": AnyCodable(errorCase)]

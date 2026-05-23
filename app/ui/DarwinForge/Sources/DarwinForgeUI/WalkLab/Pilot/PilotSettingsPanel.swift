@@ -66,6 +66,9 @@ public struct PilotSettingsPanel: View {
 
     // MARK: - Init
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(bridge: WalkLabRCBridge, store: PilotPreferencesStore) {
         self.bridge = bridge
         self.store = store
@@ -227,7 +230,7 @@ public struct PilotSettingsPanel: View {
             smoothingFactor: smoothingFactor
         )
         store.save(prefs)
-        Harness.shared.record(
+        harness.record(
             .pilotSettingsSaved, level: .info, actor: .user,
             data: [
                 "scale_lr": AnyCodable(scaleLR),
@@ -246,7 +249,7 @@ public struct PilotSettingsPanel: View {
 
     /// "기본값" — slider 4개 + bridge 동시 reset. 저장은 안 함 (명시 클릭 필요).
     private func resetToDefaults() {
-        Harness.shared.record(.pilotSettingsReset, level: .info, actor: .user)
+        harness.record(.pilotSettingsReset, level: .info, actor: .user)
         let d = PilotPreferences.defaultValues
         scaleLR = d.scaleLR
         scaleFB = d.scaleFB

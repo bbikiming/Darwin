@@ -26,6 +26,13 @@ public struct PilotActionBar: View {
     /// 본 banner 자동 dismiss task — 재발화 시 cancel + 재시작.
     @State private var errorDismissTask: Task<Void, Never>?
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    //
+    // 종전: `Harness.shared.record(...)` 직접 호출 (4 사이트) — 테스트/Preview 에서
+    //       NoopHarness 주입 불가 → 실제 디스크 IO 발생.
+    // 신규: SwiftUI Environment 주입. Root 가 LiveHarness 주입 (RootView).
+    @Environment(\.harness) private var harness
+
     public init(channel: TeleopChannel, gate: PilotSafetyGate, flags: PilotFeatureFlags,
                 demoOccupiesBus: Bool = false) {
         self.channel = channel
@@ -68,7 +75,7 @@ public struct PilotActionBar: View {
             // Gate-rejection 메시지는 pilotSafetyGateBlocked 에서 이미 기록됨 — errorException 중복 방지.
             let isGateRejection = err.hasPrefix("먼저 ARM") || err.hasPrefix("위험 동작")
             if !isGateRejection {
-                Harness.shared.record(
+                harness.record(
                     .errorException, level: .error, actor: .system,
                     data: ["source": AnyCodable("pilot.action_bar"),
                            "error_hash": AnyCodable(Harness.shortHash(err))]
@@ -96,7 +103,7 @@ public struct PilotActionBar: View {
                 message: Text("\(meta.displayNameKo)\n실행하면 \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초 동안 \(meta.bodyRegions.first?.rawValue ?? "관절") 가(이) 움직입니다.\(chainNote)\n\ncradle 거치를 확인했나요?"),
                 primaryButton: .destructive(Text("확인 후 실행")) {
                     // .warn 의도적 — safety override 이벤트를 대시보드에서 플래그하기 위함.
-                    Harness.shared.record(
+                    harness.record(
                         .pilotActionBarRiskConfirmed, level: .warn, actor: .user,
                         data: ["slot": AnyCodable(meta.slot),
                                "safety_class": AnyCodable(meta.safetyClass.rawValue),
@@ -105,7 +112,7 @@ public struct PilotActionBar: View {
                     Task { _ = await channel.sendMotion(slot: meta.slot, confirmRisk: true) }
                 },
                 secondaryButton: .cancel(Text("취소")) {
-                    Harness.shared.record(
+                    harness.record(
                         .pilotActionBarRiskCancelled, level: .info, actor: .user,
                         data: ["slot": AnyCodable(meta.slot),
                                "safety_class": AnyCodable(meta.safetyClass.rawValue),
@@ -290,7 +297,7 @@ public struct PilotActionBar: View {
     }
 
     private func press(_ meta: MotionPageMetadata) {
-        Harness.shared.record(
+        harness.record(
             .pilotActionBarPressed, level: .info, actor: .user,
             data: ["slot": AnyCodable(meta.slot),
                    "safety_class": AnyCodable(meta.safetyClass.rawValue),

@@ -38,6 +38,9 @@ public struct StudioView: View {
     private let inspectorMinWidth: CGFloat = 260
     private let inspectorMaxWidth: CGFloat = 520
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     public var body: some View {
@@ -75,7 +78,7 @@ public struct StudioView: View {
         )
         // 사이클 197 (cycle 190 audit P2 #6): cross-menu 재진입 시 navigation telemetry.
         .onAppear {
-            Harness.shared.record(.uiViewAppeared, level: .trace, actor: .user,
+            harness.record(.uiViewAppeared, level: .trace, actor: .user,
                                   data: ["view": AnyCodable("studio")])
         }
         // 티칭 모드 → Studio 자세 전달 받음.

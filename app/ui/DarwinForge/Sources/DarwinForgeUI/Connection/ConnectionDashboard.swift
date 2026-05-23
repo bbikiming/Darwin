@@ -15,6 +15,9 @@ public struct ConnectionDashboardView: View {
     @State private var now: Date = Date()
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(isPresented: Binding<Bool>) {
         self._isPresented = isPresented
     }
@@ -77,7 +80,7 @@ public struct ConnectionDashboardView: View {
 
     private var disconnectButton: some View {
         Button {
-            Harness.shared.record(.connectDisconnect, level: .info, actor: .user)
+            harness.record(.connectDisconnect, level: .info, actor: .user)
             store.disconnect()
             isPresented = false
         } label: {
@@ -205,7 +208,7 @@ public struct ConnectionDashboardView: View {
 
     private func remoteToolButton(label: String, detail: String, icon: String, tint: Color, urlString: String, buttonKey: String) -> some View {
         Button {
-            Harness.shared.record(
+            harness.record(
                 .uiButtonTapped, level: .info, actor: .user,
                 data: ["button": AnyCodable(buttonKey),
                        "url_hash": AnyCodable(Harness.shortHash(urlString))]

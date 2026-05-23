@@ -168,15 +168,17 @@ public struct RootView: View {
         }
         // v1.12.0 telemetry — section 변경 추적 (메뉴/단축키/사이드바 모두 포착).
         // **사이클 141 (Swift 6 deprecated fix)**: 1-param onChange → 2-param closure (macOS 14+).
+        // **Wave 3 Phase 3.3 (사이클 243)** — root level 이므로 LiveHarness.shared 직접 사용.
+        // (RootView 가 `\.harness` 의 root injector — 자신의 환경엔 parent default 만 존재.)
         .onChange(of: section) { _, newValue in
-            Harness.shared.record(
+            LiveHarness.shared.record(
                 .uiSectionChanged, level: .info, actor: .user,
                 data: ["to": AnyCodable(newValue.rawValue)]
             )
         }
         .onReceive(NotificationCenter.default.publisher(for: .dfOpenPalette)) { _ in
             paletteOpen = true
-            Harness.shared.record(.uiPaletteOpened, level: .info, actor: .user)
+            LiveHarness.shared.record(.uiPaletteOpened, level: .info, actor: .user)
         }
         .onReceive(NotificationCenter.default.publisher(for: .dfAutoConnect)) { _ in
             store.autoConnect()

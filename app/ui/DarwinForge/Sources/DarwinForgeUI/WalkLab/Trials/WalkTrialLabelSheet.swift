@@ -34,6 +34,9 @@ public struct WalkTrialLabelSheet: View {
     @State private var selectedAutoTags: Set<String> = []
     @State private var customTagsInput: String = ""
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(trial: WalkTrial, onSave: @escaping (UserLabel) -> Void, onSkip: (() -> Void)? = nil) {
         self.trial = trial
         self.onSave = onSave
@@ -75,7 +78,7 @@ public struct WalkTrialLabelSheet: View {
             }
             Spacer()
             Button(action: {
-                Harness.shared.record(.walklabTrialLabelSkipped, level: .info, actor: .user)
+                harness.record(.walklabTrialLabelSkipped, level: .info, actor: .user)
                 onSkip?()
                 dismiss()
             }) {
@@ -206,7 +209,7 @@ public struct WalkTrialLabelSheet: View {
     private var footerButtons: some View {
         HStack {
             Button("건너뛰기") {
-                Harness.shared.record(.walklabTrialLabelSkipped, level: .info, actor: .user)
+                harness.record(.walklabTrialLabelSkipped, level: .info, actor: .user)
                 onSkip?()
                 dismiss()
             }
@@ -216,7 +219,7 @@ public struct WalkTrialLabelSheet: View {
                 let allTags = Array(selectedAutoTags) + parseCustomTags(customTagsInput)
                 let dedup = Array(Set(allTags))
                 let trimmedFreeText = freeText.trimmingCharacters(in: .whitespacesAndNewlines)
-                Harness.shared.record(
+                harness.record(
                     .walklabTrialLabeled, level: .info, actor: .user,
                     data: ["rating": AnyCodable(max(1, rating)),
                            "tag_count": AnyCodable(dedup.count),

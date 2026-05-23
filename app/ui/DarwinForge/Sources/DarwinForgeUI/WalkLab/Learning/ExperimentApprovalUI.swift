@@ -31,6 +31,9 @@ public struct ExperimentApprovalUI: View {
     public let onApprove: () -> Void
     public let onCancel: () -> Void
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     /// **v1.11.14.3 신 init**: closure 기반 — dynamic 재계산.
     public init(response: ClaudeCriticResponse,
                 baselineSessionId: String,
@@ -286,7 +289,7 @@ public struct ExperimentApprovalUI: View {
     private var buttonRow: some View {
         HStack(spacing: DFSpace.sm) {
             Button("취소", role: .cancel) {
-                Harness.shared.record(
+                harness.record(
                     .walklabExperimentRejected, level: .info, actor: .user,
                     data: [
                         "axis": AnyCodable(response.nextExperiment?.axis.rawValue ?? "none"),
@@ -297,7 +300,7 @@ public struct ExperimentApprovalUI: View {
             }
             Spacer()
             Button {
-                Harness.shared.record(
+                harness.record(
                     .walklabExperimentApproved, level: .info, actor: .user,
                     data: [
                         "axis": AnyCodable(response.nextExperiment?.axis.rawValue ?? "none"),

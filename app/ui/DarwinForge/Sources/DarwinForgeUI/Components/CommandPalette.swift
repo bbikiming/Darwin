@@ -12,6 +12,9 @@ public struct CommandPalette: View {
     @State private var selectedIndex: Int = 0
     @FocusState private var queryFocused: Bool
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(isPresented: Binding<Bool>,
                 entries: [CommandEntry],
                 onRun: @escaping (CommandEntry) -> Void) {
@@ -38,7 +41,7 @@ public struct CommandPalette: View {
             query = ""
             selectedIndex = 0
             queryFocused = true
-            Harness.shared.record(.uiPaletteOpened, level: .info, actor: .user)
+            harness.record(.uiPaletteOpened, level: .info, actor: .user)
         }
     }
 
@@ -168,7 +171,7 @@ public struct CommandPalette: View {
 
     private func recordCommandRun(_ entry: CommandEntry) {
         let level: TelemetryLevel = entry.dangerous ? .warn : .info
-        Harness.shared.record(.uiPaletteCommand, level: level, actor: .user,
+        harness.record(.uiPaletteCommand, level: level, actor: .user,
                               data: ["command_id": AnyCodable(entry.id),
                                      "dangerous": AnyCodable(entry.dangerous)])
     }

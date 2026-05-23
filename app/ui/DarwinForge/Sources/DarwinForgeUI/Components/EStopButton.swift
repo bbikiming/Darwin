@@ -19,6 +19,9 @@ public struct EStopButton: View {
     @State private var pulse = false
     @Environment(\.accessibilityReduceMotion) var reduceMotion
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(
         dispatcher: IntentDispatcher,
         lastAcknowledgement: Binding<String?>
@@ -66,7 +69,7 @@ public struct EStopButton: View {
 
     private func trigger() {
         // UI 레벨 기록만 — pilotEStop SOT 는 WalkLabRCBridge.
-        Harness.shared.record(.uiButtonTapped, level: .trace, actor: .user,
+        harness.record(.uiButtonTapped, level: .trace, actor: .user,
                               data: ["button": AnyCodable("estop_button")])
         Task { @MainActor in
             let r = await dispatcher.emergencyStop()

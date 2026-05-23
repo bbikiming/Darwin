@@ -55,6 +55,9 @@ public struct MotionStudioView: View {
     /// 최대 undo depth.
     private let maxUndoDepth: Int = 50
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     public var body: some View {
@@ -116,7 +119,7 @@ public struct MotionStudioView: View {
         )
         .onAppear {
             // 사이클 197 (cycle 190 audit P2 #6): cross-menu 재진입 시 navigation telemetry.
-            Harness.shared.record(.uiViewAppeared, level: .trace, actor: .user,
+            harness.record(.uiViewAppeared, level: .trace, actor: .user,
                                   data: ["view": AnyCodable("motion_studio")])
             applySelectedStepToPose()
         }
@@ -208,7 +211,7 @@ public struct MotionStudioView: View {
             // motionPageCreated 패턴 일관 (cycle 191 audit 의 recommended) — 신규 페이지
             // ID + source 만 (pose 좌표 X — PII 회피).
             if let newId = reassigned.first?.id {
-                Harness.shared.record(
+                harness.record(
                     .motionPageCreated, level: .info, actor: .user,
                     data: ["new_id": AnyCodable(Int(newId)),
                            "source": AnyCodable("teach_transfer")]
@@ -1102,7 +1105,7 @@ public struct MotionStudioView: View {
         selectedStep = 0
         markDirty()
         // v1.12.2 telemetry — 페이지 생성 (name redacted).
-        Harness.shared.record(
+        harness.record(
             .motionPageCreated, level: .info, actor: .user,
             data: ["page_id": AnyCodable(nextId),
                    "name_hash": AnyCodable(Harness.shortHash(newPage.name)),
@@ -1149,7 +1152,7 @@ public struct MotionStudioView: View {
         markDirty()
         applySelectedStepToPose()
         // v1.12.2 telemetry — 페이지 삭제 (name redacted).
-        Harness.shared.record(
+        harness.record(
             .motionPageDeleted, level: .info, actor: .user,
             data: ["page_id": AnyCodable(removed.id),
                    "name_hash": AnyCodable(Harness.shortHash(removed.name)),
@@ -1168,7 +1171,7 @@ public struct MotionStudioView: View {
         motion.pages[idx].name = trimmed
         markDirty()
         // v1.12.2 telemetry — 페이지 이름 변경 (names redacted to hashes).
-        Harness.shared.record(
+        harness.record(
             .motionPageRenamed, level: .info, actor: .user,
             data: ["page_id": AnyCodable(pageId),
                    "from_hash": AnyCodable(Harness.shortHash(oldName)),

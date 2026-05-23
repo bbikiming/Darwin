@@ -31,6 +31,9 @@ public struct TransportBar: View {
     public let onUndo: () -> Void
     public let onRedo: () -> Void
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(
         player: MotionPlayer,
         totalDurationMs: Double,
@@ -100,7 +103,7 @@ public struct TransportBar: View {
                 icon: "backward.end.fill",
                 help: "처음으로 (Home)",
                 action: {
-                    Harness.shared.record(.uiButtonTapped, level: .trace, actor: .user,
+                    harness.record(.uiButtonTapped, level: .trace, actor: .user,
                                          data: ["button": AnyCodable("transport_rewind_home")])
                     player.seekToStart()
                 }
@@ -112,7 +115,7 @@ public struct TransportBar: View {
                 icon: "backward.frame.fill",
                 help: "이전 키프레임 (←)",
                 action: {
-                    Harness.shared.record(.uiButtonTapped, level: .trace, actor: .user,
+                    harness.record(.uiButtonTapped, level: .trace, actor: .user,
                                          data: ["button": AnyCodable("transport_step_back")])
                     player.step(by: -1)
                 }
@@ -127,7 +130,7 @@ public struct TransportBar: View {
                 icon: "forward.frame.fill",
                 help: "다음 키프레임 (→)",
                 action: {
-                    Harness.shared.record(.uiButtonTapped, level: .trace, actor: .user,
+                    harness.record(.uiButtonTapped, level: .trace, actor: .user,
                                          data: ["button": AnyCodable("transport_step_forward")])
                     player.step(by: 1)
                 }
@@ -139,7 +142,7 @@ public struct TransportBar: View {
                 icon: "forward.end.fill",
                 help: "끝으로 (End)",
                 action: {
-                    Harness.shared.record(.uiButtonTapped, level: .trace, actor: .user,
+                    harness.record(.uiButtonTapped, level: .trace, actor: .user,
                                          data: ["button": AnyCodable("transport_fast_forward_end")])
                     player.seekToEnd()
                 }
@@ -151,7 +154,7 @@ public struct TransportBar: View {
                 icon: "stop.fill",
                 help: "정지 (재생을 멈추고 처음으로)",
                 action: {
-                    Harness.shared.record(.motionPlayAbort, level: .info, actor: .user,
+                    harness.record(.motionPlayAbort, level: .info, actor: .user,
                                          data: ["source": AnyCodable("transport_stop")])
                     player.stop()
                 }
@@ -165,11 +168,11 @@ public struct TransportBar: View {
         return Button {
             if isPlaying {
                 // pause ≠ abort — 구분하여 uiButtonTapped 로 기록.
-                Harness.shared.record(.uiButtonTapped, level: .info, actor: .user,
+                harness.record(.uiButtonTapped, level: .info, actor: .user,
                                      data: ["button": AnyCodable("transport_pause")])
                 player.pause()
             } else {
-                Harness.shared.record(.motionPlayStart, level: .info, actor: .user)
+                harness.record(.motionPlayStart, level: .info, actor: .user)
                 onPlay()
             }
         } label: {
@@ -229,7 +232,7 @@ public struct TransportBar: View {
                 help: "되돌리기 (⌘Z)",
                 enabled: canUndo,
                 action: {
-                    Harness.shared.record(.uiButtonTapped, level: .info, actor: .user,
+                    harness.record(.uiButtonTapped, level: .info, actor: .user,
                                          data: ["button": AnyCodable("transport_undo")])
                     onUndo()
                 }
@@ -239,7 +242,7 @@ public struct TransportBar: View {
                 help: "다시 앞으로 (⌘⇧Z)",
                 enabled: canRedo,
                 action: {
-                    Harness.shared.record(.uiButtonTapped, level: .info, actor: .user,
+                    harness.record(.uiButtonTapped, level: .info, actor: .user,
                                          data: ["button": AnyCodable("transport_redo")])
                     onRedo()
                 }
@@ -279,7 +282,7 @@ public struct TransportBar: View {
             // Loop 토글
             Button {
                 let newValue = !player.isLooping
-                Harness.shared.record(.uiButtonTapped, level: .info, actor: .user,
+                harness.record(.uiButtonTapped, level: .info, actor: .user,
                                      data: ["button": AnyCodable("transport_loop_toggle"),
                                             "enabled": AnyCodable(newValue)])
                 player.isLooping.toggle()
@@ -303,7 +306,7 @@ public struct TransportBar: View {
 
             // Speed selector — 0.5x / 1x / 2x cycle.
             Button {
-                Harness.shared.record(.uiButtonTapped, level: .info, actor: .user,
+                harness.record(.uiButtonTapped, level: .info, actor: .user,
                                      data: ["button": AnyCodable("transport_speed_cycle"),
                                             "current_rate": AnyCodable(player.playbackRate)])
                 player.cyclePlaybackRate()
@@ -387,7 +390,7 @@ public struct TransportBar: View {
                 help: "지금 자세를 키프레임으로 추가",
                 tint: DFColor.accent,
                 action: {
-                    Harness.shared.record(.motionStepAdded, level: .info, actor: .user,
+                    harness.record(.motionStepAdded, level: .info, actor: .user,
                                          data: ["source": AnyCodable("transport_add_step"),
                                                 "step_index": AnyCodable(player.currentStepIndex)])
                     onAddStep()
@@ -401,7 +404,7 @@ public struct TransportBar: View {
                 tint: DFColor.info,
                 disabled: !hasBus,
                 action: {
-                    Harness.shared.record(.teachSnapshotCaptured, level: .info, actor: .user,
+                    harness.record(.teachSnapshotCaptured, level: .info, actor: .user,
                                          data: ["source": AnyCodable("transport_capture_pose")])
                     onCapture()
                 }
@@ -420,7 +423,7 @@ public struct TransportBar: View {
     /// 저장 버튼 — dirty 표시 점 + 클릭 시 saveDocAs.
     private var saveButton: some View {
         Button {
-            Harness.shared.record(.motionPageSaved, level: .info, actor: .user,
+            harness.record(.motionPageSaved, level: .info, actor: .user,
                                   data: ["was_dirty": AnyCodable(isDirty)])
             onSave()
         } label: {
@@ -463,7 +466,7 @@ public struct TransportBar: View {
     /// LIVE 토글 (스트리밍) 과 구분 — 이건 "지금 한 번" semantic 의 explicit 액션.
     private var runOnRobotButton: some View {
         Button {
-            Harness.shared.record(.uiButtonTapped, level: .info, actor: .user,
+            harness.record(.uiButtonTapped, level: .info, actor: .user,
                                   data: ["button": AnyCodable("transport_run_on_robot"),
                                          "step_count": AnyCodable(stepCount)])
             onRunOnRobot()
@@ -515,7 +518,7 @@ public struct TransportBar: View {
     private var recordToggle: some View {
         Button {
             let newValue = !sendToHardware
-            Harness.shared.record(.uiButtonTapped, level: .info, actor: .user,
+            harness.record(.uiButtonTapped, level: .info, actor: .user,
                                   data: ["button": AnyCodable("transport_live_toggle"),
                                          "enabled": AnyCodable(newValue)])
             sendToHardware.toggle()

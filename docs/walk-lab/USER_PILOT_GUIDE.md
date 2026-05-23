@@ -1175,3 +1175,49 @@ RMS (root mean square) + peak mismatch joint. UI 통합 deferred.
 - cycle 209 (이 doc).
 - cycle 210+ critic review of 205-208 (background, in progress).
 - 후속 cycles: UI 통합 (PoseDeltaCalculator → WalkLabIntegrationCards), Snapshot 복원 UI 표시.
+
+---
+
+## 사이클 239-244 — 아키텍처 고도화 (2026-05-23)
+
+### 한 줄 결론
+
+Architecture audit (2026-05-23) 의 3 wave 처리 — Wave 1 trivial 통합 (사이클 239),
+Wave 2 거대 함수 분해 + 동시성 표준화 (사이클 240), Wave 3 Harness DI 추상화
+점진 migration (사이클 241-244). 테스트 가능성 4/10 → 8/10 향상 목표.
+
+### 사이클 239: P0 trivial 통합 (Wave 1)
+
+- WalkStabilityPredictor 안전 임계 magic number 상수화 (`StabilityThresholds` /
+  `CapsThresholds`) — 7 hard-coded threshold 가 namespace 단일 SOT 로 통합.
+- ConnectionStore silent failure 3 사이트 DFLog 추가 (servo write 실패 trail) —
+  실 robot 디버깅 시 누락된 motor 추적 가능.
+- 잔존 force-unwrap 4 사이트 안전화 (`guard let` + 명시 fallback).
+
+### 사이클 240: 거대 함수 분해 + 동시성 표준화 (Wave 2)
+
+- WalkLabSession.startWalkCycle 468줄 → 78줄 facade + 12 phase helper —
+  Phase 7-10 split 패턴 (사이클 109-113) 의 확장. 각 phase 가 단일 책임 + 독립
+  테스트 가능.
+- DispatchQueue.main 18 사이트 → `Task { @MainActor in ... }` + `Task.sleep` —
+  modern Swift concurrency 통일. Cancellation 가능 + retain cycle 위험 감소.
+- Test sleep 22 → 9 (`waitUntil` helper 신규) — 고정 timeout 보다 condition
+  polling 으로 flaky 감소 + CI 시간 단축.
+
+### 사이클 241-244: Harness DI 추상화 (Wave 3)
+
+- 3-way Protocol Split — `HarnessRecording` / `HarnessHeartbeat` /
+  `HarnessContext` / `HarnessLifecycle` (ISP 준수, 90% caller 는 Recording 만 필요).
+- 3 구현 — `LiveHarness` (production wrapper) / `NoopHarness` (test/preview
+  default) / `RecordingHarness` (assertion 용 in-memory 캡처).
+- 49 파일 257 사이트 → `@Environment(\.harness)` (View) / `init injection`
+  (Class) 점진 migration.
+- Phase 분할:
+  - 사이클 241 (Phase 3.1): 6 신규 인프라 파일, +432 LOC, 1814 tests (+3 회귀 가드).
+  - 사이클 242 (Phase 3.2): 6 caller 72 사이트 migration, +250/-76 LOC, 1819 tests (+5).
+  - 사이클 243 (예정 — Phase 3.3): 42 파일 batch.
+  - 사이클 244 (예정 — Phase 3.4): deprecation + SwiftLint regex CI gate.
+- 테스트 가능성 4/10 → 8/10 향상 — Mock harness 주입으로 telemetry side effect
+  격리, flaky 회귀 감소.
+
+상세 설계 근거: `docs/architecture/adr-001-harness-di.md`.
