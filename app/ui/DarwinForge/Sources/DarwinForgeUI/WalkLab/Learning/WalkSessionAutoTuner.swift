@@ -77,9 +77,8 @@ public final class WalkSessionAutoTuner: ObservableObject {
 
     private func computeRecommendation(currentLevel: Int) -> (level: Int, reason: String)? {
         let window = recentSummaries.prefix(Self.consistencyWindow)
-        guard window.count >= 1 else { return nil }
+        guard let latest = window.first else { return nil }
         // 최신 session 의 권고.
-        let latest = window.first!
         guard latest.confidence >= Self.minConfidenceForApply else {
             return nil
         }

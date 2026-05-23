@@ -219,7 +219,7 @@ public final class WalkSessionLogger {
     private func writeLine<T: Encodable>(_ value: T) throws {
         let data = try encoder.encode(value)
         try fileHandle.write(contentsOf: data)
-        try fileHandle.write(contentsOf: "\n".data(using: .utf8)!)
+        try fileHandle.write(contentsOf: Data("\n".utf8))
     }
 }
 

@@ -1609,13 +1609,18 @@ extension MotionStudioView {
         // 로봇 댄스
         pages.append(oscillate(id, "로봇 댄스", "robot_dance_a", "robot_dance_b", times: 3, stepMs: 400)); id += 1
         // 축구 — 발차기 콤보
-        let kickSteps: [MotionStep] = [
-            .from(pose: PoseLibrary.get("walk_ready")!.pose, playMs: 300, pauseMs: 0),
-            .from(pose: PoseLibrary.get("soccer_kick_right_back")!.pose, playMs: 600, pauseMs: 200),
-            .from(pose: PoseLibrary.get("soccer_kick_right_swing")!.pose, playMs: 400, pauseMs: 200),
-            .from(pose: PoseLibrary.get("walk_ready")!.pose, playMs: 600, pauseMs: 100)
-        ]
-        pages.append(MotionPage(id: id, name: "축구 — 오른발 차기", steps: kickSteps)); id += 1
+        if let walkReady = PoseLibrary.get("walk_ready")?.pose,
+           let kickBack = PoseLibrary.get("soccer_kick_right_back")?.pose,
+           let kickSwing = PoseLibrary.get("soccer_kick_right_swing")?.pose {
+            let kickSteps: [MotionStep] = [
+                .from(pose: walkReady, playMs: 300, pauseMs: 0),
+                .from(pose: kickBack, playMs: 600, pauseMs: 200),
+                .from(pose: kickSwing, playMs: 400, pauseMs: 200),
+                .from(pose: walkReady, playMs: 600, pauseMs: 100)
+            ]
+            pages.append(MotionPage(id: id, name: "축구 — 오른발 차기", steps: kickSteps))
+        }
+        id += 1
         // 골키퍼 세이브
         pages.append(single(id, "골키퍼 세이브 (우)", "goalkeeper_save_right", playMs: 600, pauseMs: 300)); id += 1
         // 스로인

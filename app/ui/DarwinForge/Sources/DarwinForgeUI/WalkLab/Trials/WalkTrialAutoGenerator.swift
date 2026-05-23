@@ -65,11 +65,12 @@ public final class WalkTrialAutoGenerator {
                 "Auto Trial 생성 차단 — \(f.userMessage)",
                 source: .ui
             )
-            progress = Progress(
+            let p = Progress(
                 current: 0, total: 0,
                 lastTrial: "emergency 활성 — 차단됨"
             )
-            onProgress?(progress!)
+            progress = p
+            onProgress?(p)
             return
         }
 
@@ -81,11 +82,12 @@ public final class WalkTrialAutoGenerator {
             for intensity in intensityRange {
                 for _ in 0..<trialsPerCombo {
                     current += 1
-                    progress = Progress(
+                    let p = Progress(
                         current: current, total: total,
                         lastTrial: "\(preset.rawValue) lvl=\(intensity)"
                     )
-                    onProgress?(progress!)
+                    progress = p
+                    onProgress?(p)
 
                     // 1) config 설정.
                     session.correctorIntensityLevel = intensity
@@ -101,8 +103,9 @@ public final class WalkTrialAutoGenerator {
             }
         }
 
-        progress = Progress(current: total, total: total, lastTrial: "완료")
-        onProgress?(progress!)
+        let pDone = Progress(current: total, total: total, lastTrial: "완료")
+        progress = pDone
+        onProgress?(pDone)
     }
 
     /// 단발 generation — 한 config 의 한 trial.

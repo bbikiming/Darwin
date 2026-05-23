@@ -312,8 +312,10 @@ struct SafetySparkline: View {
             return
         }
 
-        let tFirst = validSamples.first!.0.timeIntervalSinceReferenceDate
-        let tLast = validSamples.last!.0.timeIntervalSinceReferenceDate
+        guard let firstSample = validSamples.first,
+              let lastSample = validSamples.last else { return }
+        let tFirst = firstSample.0.timeIntervalSinceReferenceDate
+        let tLast = lastSample.0.timeIntervalSinceReferenceDate
         let tSpan = tLast - tFirst
         // tSpan < 0.05s — 모든 점이 거의 같은 시각. 첫·마지막만 그림.
         guard tSpan > 0.05, tSpan.isFinite else {
