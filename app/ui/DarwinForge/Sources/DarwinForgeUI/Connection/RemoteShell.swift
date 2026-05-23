@@ -72,7 +72,17 @@ public final class RemoteShell: ObservableObject {
     /// 채널 자동 선택 — SSH key 인증 가능하면 SSH, 아니면 SMB.
     public func probeChannel() async {
         let ok = await SSHShell.isReachable(host: host, user: username, timeout: 2.5)
-        activeChannel = ok ? .ssh : .smb
+        let from = activeChannel
+        let to: Channel = ok ? .ssh : .smb
+        activeChannel = to
+        // 사이클 182 (P1 #3.6 fix): probe 결과 telemetry. 사용자 환경 별 channel
+        // 분포 분석 (key 미셋업 vs 정상 비율 등). host 는 redaction — 마지막 옥텟 mask.
+        Harness.shared.record(
+            .remoteChannelChanged, level: .info, actor: .system,
+            data: ["from": AnyCodable(String(describing: from)),
+                   "to": AnyCodable(String(describing: to)),
+                   "host_hash": AnyCodable(Harness.shortHash(host))]
+        )
     }
 
     /// 명령 전송 → 결과 반환. SSH 가능하면 즉시 (30-80ms), 아니면 SMB watcher (2-30초).
@@ -90,6 +100,16 @@ public final class RemoteShell: ObservableObject {
         isSending = true
         defer { isSending = false }
 
+        // 사이클 182 (P1 #3.6 fix): 명령 송신 telemetry. PII 회피 — 명령 본문 X,
+        // 길이 + hash 만. hash 로 동일 명령 반복 분석 가능.
+        let channelAtSend = activeChannel
+        Harness.shared.record(
+            .remoteCommandSent, level: .info, actor: .user,
+            data: ["channel": AnyCodable(String(describing: channelAtSend)),
+                   "cmd_len": AnyCodable(trimmed.count),
+                   "cmd_hash": AnyCodable(Harness.shortHash(trimmed))]
+        )
+
         // 1) SSH 채널 우선 시도 (즉시 응답).
         if activeChannel != .smb {
             do {
@@ -100,13 +120,33 @@ public final class RemoteShell: ObservableObject {
                 exchange.receivedAt = Date()
                 if index < history.count { history[index] = exchange }
                 activeChannel = .ssh
+                // 사이클 182: SSH 응답 성공 telemetry.
+                Harness.shared.record(
+                    .remoteCommandResponded, level: .info, actor: .system,
+                    data: ["channel": AnyCodable("ssh"),
+                           "elapsed_ms": AnyCodable(exchange.elapsedMs ?? 0),
+                           "result_len": AnyCodable(r.combined.count),
+                           "cmd_hash": AnyCodable(Harness.shortHash(trimmed))]
+                )
                 return exchange
             } catch SSHShell.SSHError.keyAuthRequired {
                 // key 미셋업 — 명확한 안내 + SMB fallback.
                 activeChannel = .smb
+                Harness.shared.record(
+                    .remoteCommandError, level: .warn, actor: .system,
+                    data: ["channel": AnyCodable("ssh"),
+                           "error_case": AnyCodable("key_auth_required"),
+                           "fallback": AnyCodable("smb")]
+                )
             } catch {
                 // 일반 SSH 실패 — SMB fallback.
                 activeChannel = .smb
+                Harness.shared.record(
+                    .remoteCommandError, level: .warn, actor: .system,
+                    data: ["channel": AnyCodable("ssh"),
+                           "error_case": AnyCodable("ssh_generic"),
+                           "fallback": AnyCodable("smb")]
+                )
             }
         }
 
@@ -140,6 +180,14 @@ public final class RemoteShell: ObservableObject {
                     exchange.result = body
                     exchange.receivedAt = Date()
                     if index < history.count { history[index] = exchange }
+                    // 사이클 182: SMB 응답 성공 telemetry.
+                    Harness.shared.record(
+                        .remoteCommandResponded, level: .info, actor: .system,
+                        data: ["channel": AnyCodable("smb"),
+                               "elapsed_ms": AnyCodable(exchange.elapsedMs ?? 0),
+                               "result_len": AnyCodable(body.count),
+                               "cmd_hash": AnyCodable(Harness.shortHash(trimmed))]
+                    )
                     return exchange
                 }
             }
@@ -148,12 +196,36 @@ public final class RemoteShell: ObservableObject {
             exchange.error = err.errorDescription
             exchange.receivedAt = Date()
             if index < history.count { history[index] = exchange }
+            // 사이클 182: SMB ShellError telemetry — error_case enum 매핑.
+            Harness.shared.record(
+                .remoteCommandError, level: .error, actor: .system,
+                data: ["channel": AnyCodable("smb"),
+                       "error_case": AnyCodable(Self.shellErrorCase(err)),
+                       "elapsed_ms": AnyCodable(exchange.elapsedMs ?? 0)]
+            )
         } catch {
             exchange.error = error.localizedDescription
             exchange.receivedAt = Date()
             if index < history.count { history[index] = exchange }
+            Harness.shared.record(
+                .remoteCommandError, level: .error, actor: .system,
+                data: ["channel": AnyCodable("smb"),
+                       "error_case": AnyCodable("smb_generic"),
+                       "elapsed_ms": AnyCodable(exchange.elapsedMs ?? 0)]
+            )
         }
         return exchange
+    }
+
+    /// 사이클 182: ShellError → telemetry-friendly case name (PII 회피, 메시지 본문 X).
+    private static func shellErrorCase(_ err: ShellError) -> String {
+        switch err {
+        case .mountFailed:        return "mount_failed"
+        case .inboxNotFound:      return "inbox_not_found"
+        case .writeFailed:        return "write_failed"
+        case .resultTimeout:      return "result_timeout"
+        case .shellNotConfigured: return "shell_not_configured"
+        }
     }
 
     public func clear() { history.removeAll() }

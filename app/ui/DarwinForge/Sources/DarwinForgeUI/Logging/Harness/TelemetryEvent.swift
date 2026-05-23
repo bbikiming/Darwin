@@ -161,6 +161,16 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: messages_cleared.
     public static let claudeSessionCleared: TelemetryKind = "claude.session_cleared"
 
+    // Remote shell (사이클 182, P1 #3.6 fix, cycle 177 audit)
+    /// 사용자가 RemoteShell 명령 송신. data: channel, cmd_len, cmd_hash.
+    public static let remoteCommandSent: TelemetryKind = "remote.command_sent"
+    /// SSH/SMB 응답 수신. data: channel, elapsed_ms, result_len.
+    public static let remoteCommandResponded: TelemetryKind = "remote.command_responded"
+    /// 명령 실행 실패. data: channel, error_case, elapsed_ms.
+    public static let remoteCommandError: TelemetryKind = "remote.command_error"
+    /// probeChannel 가 channel 자동 선택. data: from_channel, to_channel.
+    public static let remoteChannelChanged: TelemetryKind = "remote.channel_changed"
+
     // System
     public static let heartbeat: TelemetryKind = "heartbeat.tick"
     public static let harnessDropped: TelemetryKind = "harness.dropped"
