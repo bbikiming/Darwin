@@ -186,9 +186,29 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: matched (Bool), keyword (matched 시).
     public static let pilotVoiceKeyword: TelemetryKind = "pilot.voice_keyword"
 
+    // Safety gate (ARM / DISARM / gate block)
+    /// PilotSafetyGate.arm() — drag-to-arm 완료.
+    public static let pilotSafetyArmed: TelemetryKind = "pilot.safety_armed"
+    /// PilotSafetyGate.disarm() — ESC / 명시 / 연결 끊김.
+    public static let pilotSafetyDisarmed: TelemetryKind = "pilot.safety_disarmed"
+    /// PilotSafetyGate.allowMotion() 거부 — blockUnarmed / requireHighRiskConfirm.
+    /// data: reason, motion_name.
+    public static let pilotSafetyGateBlocked: TelemetryKind = "pilot.safety_gate_blocked"
+
     /// 사이클 214: TelloPilotHud UI 버튼/토글 사용자 액션.
     /// data: action ("activate" / "retry" / "bridge_toggle"), enabled (Bool, 토글 시).
     public static let pilotHudAction: TelemetryKind = "pilot.hud_action"
+
+    // PilotActionBar (Harness telemetry hooks)
+    /// Action Bar 버튼 클릭 — 모션 송출 진입점.
+    /// data: slot, safety_class, is_sim.
+    public static let pilotActionBarPressed: TelemetryKind = "pilot.action_bar_pressed"
+    /// HighRisk 확인 대화상자 — 사용자 승인 (safety override).
+    /// data: slot, safety_class, display_name_hash.
+    public static let pilotActionBarRiskConfirmed: TelemetryKind = "pilot.action_bar_risk_confirmed"
+    /// HighRisk 확인 대화상자 — 사용자 취소.
+    /// data: slot, safety_class, display_name_hash.
+    public static let pilotActionBarRiskCancelled: TelemetryKind = "pilot.action_bar_risk_cancelled"
 
     // Keyboard pilot panel UI telemetry
     /// 키보드 패널에서 방향/emergency/recovery/motion/preset 키 입력.
@@ -270,6 +290,21 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// 수동 → 고급 토글 전환.
     /// data: to_advanced (Bool).
     public static let setupConnAdvancedToggle: TelemetryKind = "setup.conn_advanced_toggle"
+    /// OneClickConnect.runOneClick() 내부 시작 — Fired(버튼 클릭) 와 분리.
+    /// data: has_last_endpoint, candidate_count.
+    public static let setupConnOneClickStarted: TelemetryKind = "setup.conn_oneclick_started"
+    /// OneClickConnect.runOneClick() 결과 — 성공 또는 전체 실패.
+    /// data: success (Bool), winning_kind (성공 시 후보 kind).
+    public static let setupConnOneClickResult: TelemetryKind = "setup.conn_oneclick_result"
+    /// OneClickConnect.runDiagnosticsOnly() 진입.
+    /// data: candidate_count.
+    public static let setupConnDiagnosticsStarted: TelemetryKind = "setup.conn_diagnostics_started"
+    /// OneClickConnect.manualProbe() — 사용자가 입력한 호스트 1개 probe.
+    /// data: host_hash (PII-safe Harness.shortHash).
+    public static let setupConnManualProbe: TelemetryKind = "setup.conn_manual_probe"
+    /// 개별 후보 probe 결과 (trace 레벨).
+    /// data: candidate_id, candidate_kind, stage ("ready"/"failed").
+    public static let setupConnCandidateProbed: TelemetryKind = "setup.conn_candidate_probed"
 
     // Remote shell (사이클 182, P1 #3.6 fix, cycle 177 audit)
     /// 사용자가 RemoteShell 명령 송신. data: channel, cmd_len, cmd_hash.

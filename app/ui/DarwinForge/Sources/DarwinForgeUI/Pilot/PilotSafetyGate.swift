@@ -20,12 +20,16 @@ public final class PilotSafetyGate: ObservableObject {
     public init() {}
 
     /// ARM 슬라이더 drag 완료 시 호출 — TeleopChannel.arm 의 종착점.
-    public func arm() { armed = true }
+    public func arm() {
+        armed = true
+        Harness.shared.record(.pilotSafetyArmed, level: .info, actor: .user)
+    }
 
     /// DISARM (ESC / 사용자 명시 / 연결 끊김).
     public func disarm() {
         armed = false
         lastBlockReason = nil
+        Harness.shared.record(.pilotSafetyDisarmed, level: .info, actor: .user)
     }
 
     /// E-stop 시각 시그널 — 0.3 s 후 자동 해제.
@@ -60,10 +64,20 @@ public final class PilotSafetyGate: ObservableObject {
     public func allowMotion(_ meta: MotionPageMetadata, confirmRisk: Bool) -> GateResult {
         if !armed {
             lastBlockReason = GateResult.blockUnarmed.message
+            Harness.shared.record(
+                .pilotSafetyGateBlocked, level: .warn, actor: .system,
+                data: ["reason": AnyCodable("blockUnarmed"),
+                       "motion_name": AnyCodable(Harness.shortHash(meta.displayName))]
+            )
             return .blockUnarmed
         }
         if meta.safetyClass == .highRisk && !confirmRisk {
             lastBlockReason = GateResult.requireHighRiskConfirm.message
+            Harness.shared.record(
+                .pilotSafetyGateBlocked, level: .warn, actor: .system,
+                data: ["reason": AnyCodable("requireHighRiskConfirm"),
+                       "motion_name": AnyCodable(Harness.shortHash(meta.displayName))]
+            )
             return .requireHighRiskConfirm
         }
         lastBlockReason = nil

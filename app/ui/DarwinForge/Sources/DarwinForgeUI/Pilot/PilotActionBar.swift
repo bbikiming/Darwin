@@ -65,6 +65,11 @@ public struct PilotActionBar: View {
         // **사이클 121 (audit #11)**: channel.lastError observer — 비-nil 변경 시 banner 표시 + 5초 후 dismiss.
         .onChange(of: channel.lastError) { newError in
             guard let err = newError, !err.isEmpty else { return }
+            Harness.shared.record(
+                .errorException, level: .warn, actor: .system,
+                data: ["source": AnyCodable("pilot.action_bar"),
+                       "error_hash": AnyCodable(Harness.shortHash(err))]
+            )
             displayedError = err
             errorDismissTask?.cancel()
             errorDismissTask = Task { @MainActor in
@@ -86,9 +91,22 @@ public struct PilotActionBar: View {
                 title: Text("위험 동작 확인"),
                 message: Text("\(meta.displayNameKo)\n실행하면 \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초 동안 \(meta.bodyRegions.first?.rawValue ?? "관절") 가(이) 움직입니다.\(chainNote)\n\ncradle 거치를 확인했나요?"),
                 primaryButton: .destructive(Text("확인 후 실행")) {
+                    Harness.shared.record(
+                        .pilotActionBarRiskConfirmed, level: .warn, actor: .user,
+                        data: ["slot": AnyCodable(meta.slot),
+                               "safety_class": AnyCodable(meta.safetyClass.rawValue),
+                               "display_name_hash": AnyCodable(Harness.shortHash(meta.displayNameKo))]
+                    )
                     Task { _ = await channel.sendMotion(slot: meta.slot, confirmRisk: true) }
                 },
-                secondaryButton: .cancel(Text("취소"))
+                secondaryButton: .cancel(Text("취소")) {
+                    Harness.shared.record(
+                        .pilotActionBarRiskCancelled, level: .info, actor: .user,
+                        data: ["slot": AnyCodable(meta.slot),
+                               "safety_class": AnyCodable(meta.safetyClass.rawValue),
+                               "display_name_hash": AnyCodable(Harness.shortHash(meta.displayNameKo))]
+                    )
+                }
             )
         }
         .sheet(isPresented: $showMoreSheet) { moreSheet }
@@ -267,6 +285,12 @@ public struct PilotActionBar: View {
     }
 
     private func press(_ meta: MotionPageMetadata) {
+        Harness.shared.record(
+            .pilotActionBarPressed, level: .info, actor: .user,
+            data: ["slot": AnyCodable(meta.slot),
+                   "safety_class": AnyCodable(meta.safetyClass.rawValue),
+                   "is_sim": AnyCodable(isSimMode)]
+        )
         if meta.safetyClass.requiresConfirm {
             pendingConfirm = meta
         } else {
