@@ -145,7 +145,7 @@ final class SessionMarkdownReportTests: XCTestCase {
             ev(.appTerminate, seq: 3, secondsFromBase: 2)
         ]
         let output = render(events: events)
-        XCTAssertTrue(output.contains("3"), "Total event count missing")
+        XCTAssertTrue(output.contains("**이벤트 수**: 3"), "Total event count missing")
     }
 
     func testMetaDroppedCountPresent() {

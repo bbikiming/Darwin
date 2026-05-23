@@ -132,7 +132,7 @@ final class HarnessBaselineTests: XCTestCase {
 
     // MARK: - 2. Improved RTT -> check metric deltas
 
-    func testImprovedRttShowsNegativeDelta() {
+    func testImprovedRttShowsNegativeDelta() throws {
         let baselineEvents = rttSession(rttMs: 100.0)
         let currentEvents = rttSession(rttMs: 50.0)
 
@@ -141,17 +141,16 @@ final class HarnessBaselineTests: XCTestCase {
             current: analyzed(id: "c", events: currentEvents)
         )
 
-        let rttP95 = diff.metrics.first { $0.label == "RTT p95 (ms)" }
-        XCTAssertNotNil(rttP95)
-        XCTAssertNotNil(rttP95?.deltaAbsolute)
-        XCTAssertNotNil(rttP95?.deltaPercent)
-        XCTAssertEqual(rttP95!.deltaAbsolute!, -50.0, accuracy: 1.0,
+        let rttP95 = try XCTUnwrap(diff.metrics.first { $0.label == "RTT p95 (ms)" })
+        let p95DeltaAbs = try XCTUnwrap(rttP95.deltaAbsolute)
+        let p95DeltaPct = try XCTUnwrap(rttP95.deltaPercent)
+        XCTAssertEqual(p95DeltaAbs, -50.0, accuracy: 1.0,
                        "RTT p95 should decrease by ~50ms")
-        XCTAssertEqual(rttP95!.deltaPercent!, -50.0, accuracy: 1.0,
+        XCTAssertEqual(p95DeltaPct, -50.0, accuracy: 1.0,
                        "RTT p95 should decrease by ~50%")
     }
 
-    func testImprovedRttMeanShowsNegativeDelta() {
+    func testImprovedRttMeanShowsNegativeDelta() throws {
         let baselineEvents = rttSession(rttMs: 100.0)
         let currentEvents = rttSession(rttMs: 50.0)
 
@@ -160,10 +159,11 @@ final class HarnessBaselineTests: XCTestCase {
             current: analyzed(id: "c", events: currentEvents)
         )
 
-        let rttMean = diff.metrics.first { $0.label == "RTT mean (ms)" }
-        XCTAssertNotNil(rttMean)
-        XCTAssertEqual(rttMean!.deltaAbsolute!, -50.0, accuracy: 1.0)
-        XCTAssertEqual(rttMean!.deltaPercent!, -50.0, accuracy: 1.0)
+        let rttMean = try XCTUnwrap(diff.metrics.first { $0.label == "RTT mean (ms)" })
+        let meanDeltaAbs = try XCTUnwrap(rttMean.deltaAbsolute)
+        let meanDeltaPct = try XCTUnwrap(rttMean.deltaPercent)
+        XCTAssertEqual(meanDeltaAbs, -50.0, accuracy: 1.0)
+        XCTAssertEqual(meanDeltaPct, -50.0, accuracy: 1.0)
     }
 
     // MARK: - 3. Error count regression (0 -> N)
@@ -223,7 +223,7 @@ final class HarnessBaselineTests: XCTestCase {
 
     // MARK: - 5. Error count improvement
 
-    func testErrorCountImprovementShowsNegativeDelta() {
+    func testErrorCountImprovementShowsNegativeDelta() throws {
         let baselineEvents = errorSession(count: 10)
         let currentEvents = errorSession(count: 2)
 
@@ -232,17 +232,16 @@ final class HarnessBaselineTests: XCTestCase {
             current: analyzed(id: "c", events: currentEvents)
         )
 
-        let errorCount = diff.counts.first { $0.label == "에러" }
-        XCTAssertNotNil(errorCount)
-        XCTAssertEqual(errorCount!.delta, -8,
+        let errorCount = try XCTUnwrap(diff.counts.first { $0.label == "에러" })
+        XCTAssertEqual(errorCount.delta, -8,
                        "10 errors -> 2 errors = delta -8")
-        XCTAssertEqual(errorCount!.baseline, 10)
-        XCTAssertEqual(errorCount!.current, 2)
+        XCTAssertEqual(errorCount.baseline, 10)
+        XCTAssertEqual(errorCount.current, 2)
     }
 
     // MARK: - 6. Both nil metrics -> deltas are nil
 
-    func testBothNilMetricsProduceNilDeltas() {
+    func testBothNilMetricsProduceNilDeltas() throws {
         // Sessions with no heartbeats containing RTT context -> rttMs will be nil
         let events = [ev(.appLaunch, level: .notice, seq: 0, secondsFromBase: 0)]
 
@@ -251,16 +250,16 @@ final class HarnessBaselineTests: XCTestCase {
             current: analyzed(id: "c", events: events)
         )
 
-        let rttP95 = diff.metrics.first { $0.label == "RTT p95 (ms)" }
-        XCTAssertNotNil(rttP95, "RTT p95 metric should always be present in array")
-        XCTAssertNil(rttP95!.baseline, "No heartbeats -> baseline RTT nil")
-        XCTAssertNil(rttP95!.current, "No heartbeats -> current RTT nil")
-        XCTAssertNil(rttP95!.deltaAbsolute, "Both nil -> deltaAbsolute nil")
-        XCTAssertNil(rttP95!.deltaPercent, "Both nil -> deltaPercent nil")
+        let rttP95 = try XCTUnwrap(diff.metrics.first { $0.label == "RTT p95 (ms)" },
+                                    "RTT p95 metric should always be present in array")
+        XCTAssertNil(rttP95.baseline, "No heartbeats -> baseline RTT nil")
+        XCTAssertNil(rttP95.current, "No heartbeats -> current RTT nil")
+        XCTAssertNil(rttP95.deltaAbsolute, "Both nil -> deltaAbsolute nil")
+        XCTAssertNil(rttP95.deltaPercent, "Both nil -> deltaPercent nil")
 
-        let rttMean = diff.metrics.first { $0.label == "RTT mean (ms)" }
-        XCTAssertNil(rttMean!.deltaAbsolute)
-        XCTAssertNil(rttMean!.deltaPercent)
+        let rttMean = try XCTUnwrap(diff.metrics.first { $0.label == "RTT mean (ms)" })
+        XCTAssertNil(rttMean.deltaAbsolute)
+        XCTAssertNil(rttMean.deltaPercent)
     }
 
     // MARK: - 7. Baseline zero, current zero -> no regression
@@ -282,7 +281,7 @@ final class HarnessBaselineTests: XCTestCase {
         }
     }
 
-    func testBothZeroErrorsDeltaIsZero() {
+    func testBothZeroErrorsDeltaIsZero() throws {
         let events = emptySession()
 
         let diff = HarnessBaseline.compare(
@@ -290,14 +289,13 @@ final class HarnessBaselineTests: XCTestCase {
             current: analyzed(id: "c", events: events)
         )
 
-        let errorCount = diff.counts.first { $0.label == "에러" }
-        XCTAssertNotNil(errorCount)
-        XCTAssertEqual(errorCount!.delta, 0)
-        XCTAssertEqual(errorCount!.baseline, 0)
-        XCTAssertEqual(errorCount!.current, 0)
+        let errorCount = try XCTUnwrap(diff.counts.first { $0.label == "에러" })
+        XCTAssertEqual(errorCount.delta, 0)
+        XCTAssertEqual(errorCount.baseline, 0)
+        XCTAssertEqual(errorCount.current, 0)
     }
 
-    func testBothZeroEStopsDeltaIsZero() {
+    func testBothZeroEStopsDeltaIsZero() throws {
         let events = emptySession()
 
         let diff = HarnessBaseline.compare(
@@ -305,9 +303,8 @@ final class HarnessBaselineTests: XCTestCase {
             current: analyzed(id: "c", events: events)
         )
 
-        let eStop = diff.counts.first { $0.label == "E-stop" }
-        XCTAssertNotNil(eStop)
-        XCTAssertEqual(eStop!.delta, 0)
+        let eStop = try XCTUnwrap(diff.counts.first { $0.label == "E-stop" })
+        XCTAssertEqual(eStop.delta, 0)
     }
 
     // MARK: - 8. MetricDelta count is 5
@@ -375,52 +372,52 @@ final class HarnessBaselineTests: XCTestCase {
 
     // MARK: - 10. MetricDelta lowerIsBetter flags
 
-    func testRttMetricsHaveLowerIsBetterTrue() {
+    func testRttMetricsHaveLowerIsBetterTrue() throws {
         let events = emptySession()
         let diff = HarnessBaseline.compare(
             baseline: analyzed(id: "b", events: events),
             current: analyzed(id: "c", events: events)
         )
 
-        let rttP95 = diff.metrics.first { $0.label == "RTT p95 (ms)" }
-        XCTAssertTrue(rttP95!.lowerIsBetter, "RTT p95 should be lowerIsBetter=true")
+        let rttP95 = try XCTUnwrap(diff.metrics.first { $0.label == "RTT p95 (ms)" })
+        XCTAssertTrue(rttP95.lowerIsBetter, "RTT p95 should be lowerIsBetter=true")
 
-        let rttMean = diff.metrics.first { $0.label == "RTT mean (ms)" }
-        XCTAssertTrue(rttMean!.lowerIsBetter, "RTT mean should be lowerIsBetter=true")
+        let rttMean = try XCTUnwrap(diff.metrics.first { $0.label == "RTT mean (ms)" })
+        XCTAssertTrue(rttMean.lowerIsBetter, "RTT mean should be lowerIsBetter=true")
     }
 
-    func testImuStaleRatioHasLowerIsBetterTrue() {
+    func testImuStaleRatioHasLowerIsBetterTrue() throws {
         let events = emptySession()
         let diff = HarnessBaseline.compare(
             baseline: analyzed(id: "b", events: events),
             current: analyzed(id: "c", events: events)
         )
 
-        let imu = diff.metrics.first { $0.label == "IMU stale ratio" }
-        XCTAssertTrue(imu!.lowerIsBetter, "IMU stale ratio should be lowerIsBetter=true")
+        let imu = try XCTUnwrap(diff.metrics.first { $0.label == "IMU stale ratio" })
+        XCTAssertTrue(imu.lowerIsBetter, "IMU stale ratio should be lowerIsBetter=true")
     }
 
-    func testBatteryMinHasLowerIsBetterFalse() {
+    func testBatteryMinHasLowerIsBetterFalse() throws {
         let events = emptySession()
         let diff = HarnessBaseline.compare(
             baseline: analyzed(id: "b", events: events),
             current: analyzed(id: "c", events: events)
         )
 
-        let battery = diff.metrics.first { $0.label == "배터리 min (V)" }
-        XCTAssertFalse(battery!.lowerIsBetter,
+        let battery = try XCTUnwrap(diff.metrics.first { $0.label == "배터리 min (V)" })
+        XCTAssertFalse(battery.lowerIsBetter,
                        "Battery min should be lowerIsBetter=false (higher voltage is better)")
     }
 
-    func testConnectionSuccessRateHasLowerIsBetterFalse() {
+    func testConnectionSuccessRateHasLowerIsBetterFalse() throws {
         let events = emptySession()
         let diff = HarnessBaseline.compare(
             baseline: analyzed(id: "b", events: events),
             current: analyzed(id: "c", events: events)
         )
 
-        let conn = diff.metrics.first { $0.label == "연결 성공률" }
-        XCTAssertFalse(conn!.lowerIsBetter,
+        let conn = try XCTUnwrap(diff.metrics.first { $0.label == "연결 성공률" })
+        XCTAssertFalse(conn.lowerIsBetter,
                        "Connection success rate should be lowerIsBetter=false")
     }
 

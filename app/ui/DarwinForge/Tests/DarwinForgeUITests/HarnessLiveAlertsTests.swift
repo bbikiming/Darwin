@@ -8,6 +8,14 @@ import XCTest
 /// Each test calls `sut.reset()` first to guarantee isolation.
 final class HarnessLiveAlertsTests: XCTestCase {
 
+    // MARK: - Lifecycle
+
+    @MainActor
+    override func setUp() {
+        super.setUp()
+        HarnessLiveAlerts.shared.reset()
+    }
+
     // MARK: - Helpers
 
     private let isoFormatter: ISO8601DateFormatter = {
@@ -400,7 +408,7 @@ final class HarnessLiveAlertsTests: XCTestCase {
     // MARK: - 18. firstObservedAt persists across evaluations
 
     @MainActor
-    func testFirstObservedAtPersistsAcrossEvaluations() {
+    func testFirstObservedAtPersistsAcrossEvaluations() throws {
         let sut = HarnessLiveAlerts.shared
         sut.reset()
 
@@ -408,8 +416,8 @@ final class HarnessLiveAlertsTests: XCTestCase {
             ev(.busEStop, level: .error, seq: 1, secondsFromNow: -1),
         ]
         sut.evaluate(events: events)
-        let firstAlert = try? XCTUnwrap(sut.active.first { $0.id == "estop.window" })
-        let firstObserved = firstAlert?.firstObservedAt
+        let firstAlert = try XCTUnwrap(sut.active.first { $0.id == "estop.window" })
+        let firstObserved = firstAlert.firstObservedAt
 
         // Second evaluation with same alert
         sut.evaluate(events: events)
