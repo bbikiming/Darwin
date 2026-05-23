@@ -756,3 +756,77 @@ ROBOTIS 권장 125Hz 의 1/25. Onboard mode 는 자이로 보정 자체가 Mac �
 - **78 commits ahead origin** (cycles 119-172).
 - **1344 swift + 368 rust tests pass**.
 - **0 build warnings**.
+
+---
+
+## 사이클 174-183 — 자이로 closed-loop 통합 검증 + 메뉴 연계 audit + 6 gap 처리
+
+### 한 줄 결론
+
+cycle 172 의 자이로 closed-loop 완성 이후 (1) 통합/유기 검증 3 cycle (174-176) +
+(2) 메뉴 간 연계 audit (177) + (3) audit 의 P0 3건 + P1 3건 모두 처리 (178-183).
+**테스트 1344 → 1409 (+65), 0 failures**.
+
+### 174-176 — 자이로 closed-loop 유기 통합 검증 (3 cycle)
+
+| 사이클 | 검증 chain | 신규 테스트 |
+|---|---|---|
+| **174** | WalkLabSession 의 모든 자이로 관련 상태 default + freshness state 전환 + correction effect metric end-to-end | 11 (WalkLabGyroClosedLoopIntegrationTests) |
+| **175** | ConnectionStore + WalkLabSession 의 imuFastPollActive 양방향 일관성 + @Published observer + weak ref | 6 (WalkLabStoreSessionIntegrationTests) |
+| **176** | WalkLabPreset 8 case 의 currentWalkingEngineCommand → 10 필드 schema 검증 + advanced/basic mode 분기 | 9 (WalkLabPresetCommandIntegrationTests) |
+
+### 177 — WalkLab + 주변 메뉴 연계성 audit
+
+**docs/diagnosis/WALKLAB_MENU_INTEGRATION_REVIEW_2026-05-23.md** (225 lines):
+
+- 8 메뉴 (studio/teach/motion/walk/conversation/pilot/remote/expert) × 10+ shared state 의 chain 검사.
+- **정상 chain**: WalkLab→Trial→Recommender ✓, Connect→WalkLab ✓, Pilot↔WalkLab ✓.
+- **gap 6건 식별**: P0 3건 + P1 3건.
+
+### 178-183 — audit gap 6건 처리
+
+| 사이클 | gap | 구현 | 신규 tests |
+|---|---|---|---|
+| **178** | P0 #3.3 Pilot/MotionLibrary 카탈로그 일관성 | regression guard — cycle 143 의 placeholder prefix 작업 이 이미 일관성 유지 확인 | 6 (PilotMotionCatalogConsistencyTests) |
+| **179** | P0 #3.1 Studio motion play silent | StudioConnectionStateBadge (bus×liveApply 4 상태) → DFStatusBadge `.simulationOnly` / `.appliedToRobot` 명시 | 6 |
+| **180** | P0 #3.2 Synth → MotionLibrary 끊김 | SynthMotionExporter + "Motion 스튜디오 로 보내기" button + dfImportSynthPagesToMotionStudio notification + page ID 재할당 | 7 |
+| **181** | P1 #3.4 Conversation telemetry 누락 | 5 신규 TelemetryKind (planApproved/Rejected/Executed/Failed/SessionCleared) + ConversationViewModel hooks. PII redaction 유지 | 5 |
+| **182** | P1 #3.6 Remote SSH telemetry 누락 | 4 신규 TelemetryKind (commandSent/Responded/Error/ChannelChanged) + RemoteShell hooks. SSH+SMB 양 채널 분리 추적 + shellErrorCase mapping | 5 |
+| **183** | P1 #3.5 Expert↔Trial Library 통합 | TrialComparisonModel (pure logic, 4 metric directional diff) + TrialComparisonCard (dropdown picker + side-by-side grid) + WalkLabIntegrationCards 4번째 card | 10 |
+
+### 사용자 효과 매트릭스
+
+| 변경 | 이전 사용자 경험 | 이후 사용자 경험 |
+|---|---|---|
+| Studio sim/real badge | bus 미연결 시 슬라이더가 silent fallback — "로봇이 왜 안 움직이지?" | 진입 즉시 "시뮬레이션" badge 노출 / liveApply ON 시 "실 로봇 적용됨" badge |
+| Synth → Motion | 결과 JSON 을 외부 forge CLI 로 import 해야 함 | "Motion 스튜디오 로 보내기" button 한 클릭 → 자동 import + section 전환 + 토스트 |
+| Conversation telemetry | plan approve/reject/실행 결과 기록 X — UX 분석 불가 | 5 단계 모두 추적 — Inspector / SessionAnalysis 가 사용자 의사결정 패턴 시각화 |
+| Remote SSH telemetry | 모든 명령 silent — 채널 전환 / latency 분석 불가 | sent / responded / error / channel_changed 4 단계 추적, hash 로 동일 명령 반복 분석 |
+| Trial 비교 | live session metric 만 — 과거 비교 미지원 | Expert 메뉴 의 신규 "Trial 비교" card 에서 두 trial 선택 → 4 metric (안정성/부드러움/최대roll/최대pitch) directional diff |
+
+### Telemetry 확장 누적 (cycles 181-182)
+
+| Namespace | Before | After |
+|---|---|---|
+| `claude.*` | 3 case | **8** (+5 plan approve/reject/exec/fail/sessionClear) |
+| `remote.*` | 0 case | **4** (commandSent/Responded/Error/ChannelChanged) |
+
+### 신규 모듈 정리
+
+- `Studio/StudioConnectionStateBadge.swift` — pure resolver
+- `Synth/SynthMotionExporter.swift` — pure JSON → MotionPage decode + error 분기
+- `Expert/WalkDiagnostics/TrialComparisonModel.swift` — pure metric diff
+- `Expert/WalkDiagnostics/TrialComparisonCard.swift` — view
+- 5 신규 TelemetryKind (claude.* 5), 4 (remote.* 4)
+
+### 검증
+
+- 1344 → **1409** Swift tests (+65, 0 failures).
+- swift build: 0 errors.
+- 모든 commit conventional commits + Co-Authored-By 포함.
+
+### 남은 영역 (deferred to cycle 185+)
+
+- USER_PILOT_GUIDE 의 신규 사용자 흐름 example (Synth→Motion, Trial 비교 사용법) screenshot 첨부.
+- codex review cycles 178-183 (별도 sprint).
+- 실 robot smoke test for Trial Comparison UX (cycle 184 의 doc 확장).
