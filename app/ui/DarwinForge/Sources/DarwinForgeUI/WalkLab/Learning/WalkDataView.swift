@@ -785,9 +785,11 @@ public struct WalkDataView: View {
     private func loadSamples(for sessionId: String) {
         isLoadingSamples = true
         loadedSamples = []
-        DispatchQueue.global(qos: .userInitiated).async {
+        // Task.detached: parseSamples 는 nonisolated static 함수 — UI thread 점유
+        // 없이 background 에서 파싱. await MainActor.run 으로 @State 안전 갱신.
+        Task.detached(priority: .userInitiated) {
             let result = Self.parseSamples(sessionId: sessionId)
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.loadedSamples = result
                 self.isLoadingSamples = false
             }

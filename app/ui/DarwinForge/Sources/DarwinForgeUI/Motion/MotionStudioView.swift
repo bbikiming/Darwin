@@ -200,7 +200,10 @@ public struct MotionStudioView: View {
             applySelectedStepToPose()
             isDirty = true
             transferToast = "✅ Motion 페이지 추가됨"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { transferToast = nil }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                transferToast = nil
+            }
             // 사이클 203 (cycle 199 critic missing #3): Teach → Motion transfer telemetry.
             // motionPageCreated 패턴 일관 (cycle 191 audit 의 recommended) — 신규 페이지
             // ID + source 만 (pose 좌표 X — PII 회피).
@@ -290,7 +293,10 @@ public struct MotionStudioView: View {
         let specs = MotionBuilder.parseHeuristic(desc)
         guard !specs.isEmpty else {
             aiBuilderToast = "❌ 매칭 자세 없음"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { aiBuilderToast = nil }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                aiBuilderToast = nil
+            }
             return
         }
         do {
@@ -305,10 +311,16 @@ public struct MotionStudioView: View {
             applySelectedStepToPose()
             aiBuilderText = ""
             aiBuilderToast = "✅ \(specs.count) 스텝 추가"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { aiBuilderToast = nil }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                aiBuilderToast = nil
+            }
         } catch {
             aiBuilderToast = "❌ \(error.localizedDescription)"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { aiBuilderToast = nil }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                aiBuilderToast = nil
+            }
         }
     }
 

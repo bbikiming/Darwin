@@ -37,7 +37,8 @@ final class WalkLabRCBridgeEmergencyTests: XCTestCase {
 
         XCTAssertEqual(bridge.emergencyCount, 1)
         XCTAssertEqual(session.current, .idle, "emergencyStop 후 current idle")
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        // async Tello emergency() 전파 완료 polling 대기.
+        try? await waitUntil(timeout: 2.0) { mock.emergencyCount == 1 }
         XCTAssertEqual(mock.emergencyCount, 1, "MockTello 의 emergency() 호출됨")
     }
 

@@ -818,7 +818,7 @@ public struct WalkDiagnosticsView: View {
         cmdA = cmd.a
         activePreset = preset
         // onChange 가 activePreset 을 nil 로 되돌릴 수 있어 다시 설정.
-        DispatchQueue.main.async { activePreset = preset }
+        Task { @MainActor in activePreset = preset }
         pushCommand()
     }
 

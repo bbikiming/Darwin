@@ -320,11 +320,14 @@ final class WalkLabSessionExtensionCoverageTests: XCTestCase {
     /// codex review missing #3.
     func testUpdateFallPredictionAccumulatesSamples() async {
         let session = WalkLabSession()
-        // 5번 sample 누적 — 150ms+ 간격으로 호출.
+        // settle wait — 5번 sample 누적. 각 호출 사이에 150ms+ 경과 필요.
+        // FallPredictor 의 jitter guard (150ms 미만 skip) 를 통과하기 위한 실제 시간 경과.
+        // 대안 없음: jitter guard 는 실제 wall-time 기반이라 mock clock 주입 구조 아님
+        // (TODO: FallPredictor 에 testable clock injection 추가).
         for _ in 0..<5 {
             session._testForceImuAndTick(rollDeg: 10, pitchDeg: 5)
             session.updateFallPrediction()
-            try? await Task.sleep(nanoseconds: 160_000_000)  // 160ms > 150ms jitter
+            try? await Task.sleep(nanoseconds: 160_000_000)  // 160ms > 150ms jitter guard
         }
         // imuBuffer 가 sample 누적 (FallPredictor 가 ring buffer 정책으로 5개 보존).
         XCTAssertGreaterThanOrEqual(session.imuBuffer.count, 1,

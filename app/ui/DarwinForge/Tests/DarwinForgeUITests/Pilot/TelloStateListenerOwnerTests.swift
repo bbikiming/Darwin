@@ -68,9 +68,8 @@ final class TelloStateListenerOwnerTests: XCTestCase {
         XCTAssertEqual(listener.startCount, 1)
 
         listener.simulate(sampleMessage(battery: 75))
-        // MainActor hop 대기.
-        await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+        // MainActor hop 완료 polling 대기.
+        try? await waitUntil(timeout: 2.0) { bridge.lastTelloState?.batteryPct == 75 }
 
         XCTAssertEqual(bridge.lastTelloState?.batteryPct, 75,
                        "listener → owner → bridge 전체 path 동작")
@@ -93,9 +92,9 @@ final class TelloStateListenerOwnerTests: XCTestCase {
         XCTAssertNil(listener.onState, "callback 해제됨")
 
         // 이미 isStarted=false → simulate 가 no-op (mock 이 guard).
+        // messagesReceived 가 0 임을 polling 으로 확인 (no-op 이라 즉시 통과).
         listener.simulate(sampleMessage(battery: 50))
-        await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        try? await waitUntil(timeout: 1.0) { owner.messagesReceived == 0 }
 
         XCTAssertNil(bridge.lastTelloState, "stop 이후 메시지 전파 안 됨")
         XCTAssertEqual(owner.messagesReceived, 0)
@@ -113,9 +112,8 @@ final class TelloStateListenerOwnerTests: XCTestCase {
         for bat in [80, 70, 60, 50, 40] {
             listener.simulate(sampleMessage(battery: bat))
         }
-        // 모든 MainActor hop 완료 대기.
-        for _ in 0..<3 { await Task.yield() }
-        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+        // 모든 MainActor hop 완료 polling 대기.
+        try? await waitUntil(timeout: 2.0) { owner.messagesReceived == 5 }
 
         XCTAssertEqual(owner.messagesReceived, 5, "5개 메시지 모두 카운트")
         XCTAssertEqual(bridge.lastTelloState?.batteryPct, 40,
@@ -133,8 +131,7 @@ final class TelloStateListenerOwnerTests: XCTestCase {
 
         // bridge nil 이라도 callback 자체는 발화 — counter 증가, bridge 호출 skip.
         listener.simulate(sampleMessage(battery: 60))
-        await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        try? await waitUntil(timeout: 2.0) { owner.messagesReceived == 1 }
 
         XCTAssertEqual(owner.messagesReceived, 1, "counter 는 진행 — owner state 갱신")
         XCTAssertNotNil(owner.lastReceived, "lastReceived 도 갱신")
@@ -177,8 +174,7 @@ final class TelloStateListenerOwnerTests: XCTestCase {
 
         // 재 start 후 메시지 정상 전파 검증.
         listener.simulate(sampleMessage(battery: 30))
-        await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        try? await waitUntil(timeout: 2.0) { bridge.lastTelloState?.batteryPct == 30 }
 
         XCTAssertEqual(bridge.lastTelloState?.batteryPct, 30,
                        "재 start 후 메시지 전파 정상")
@@ -300,8 +296,7 @@ final class TelloStateListenerOwnerTests: XCTestCase {
 
         // 메시지 1건 도착.
         listener.simulate(sampleMessage(battery: 50))
-        await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        try? await waitUntil(timeout: 2.0) { owner.messagesReceived > 0 }
 
         XCTAssertEqual(owner.health(stalledThreshold: 5.0), .healthy,
                        "messagesReceived > 0 → healthy")

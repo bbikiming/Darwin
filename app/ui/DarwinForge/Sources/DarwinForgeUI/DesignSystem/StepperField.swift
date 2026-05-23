@@ -80,7 +80,7 @@ public struct StepperField: View {
                 beforeFocusValue = value
                 draft = format(value)
                 #if canImport(AppKit)
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     NSApp.keyWindow?.firstResponder?
                         .tryToPerform(#selector(NSText.selectAll(_:)), with: nil)
                 }

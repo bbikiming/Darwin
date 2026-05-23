@@ -336,7 +336,10 @@ public struct InitialSetupWizardView: View {
                     pb.clearContents()
                     pb.setString(RobotSetupCommand.masterSetup, forType: .string)
                     copyToast = "✓ VNC 터미널에 붙여넣기"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copyToast = nil }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        copyToast = nil
+                    }
                     state.mark(.robotSetup, .inProgress)
                 } label: {
                     Label("마스터 셋업 복사", systemImage: "doc.on.clipboard.fill")
@@ -380,7 +383,10 @@ public struct InitialSetupWizardView: View {
                     pb.clearContents()
                     pb.setString(RobotSetupCommand.masterSetupRollback, forType: .string)
                     copyToast = "✓ rollback 명령 복사 — VNC 터미널 붙여넣기"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { copyToast = nil }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        copyToast = nil
+                    }
                 } label: {
                     Label("rollback 복사", systemImage: "arrow.uturn.backward")
                         .font(.system(size: DFFontSize.s10))
@@ -409,7 +415,10 @@ public struct InitialSetupWizardView: View {
                     pb.setString(SSHShell.keyAuthSetupCommand(host: state.host, user: state.username),
                                  forType: .string)
                     copyToast = "✓ Mac 터미널 (cmd+space → Terminal) 에 붙여넣기"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copyToast = nil }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        copyToast = nil
+                    }
                 } label: {
                     Label("SSH key 셋업 복사", systemImage: "key.fill")
                         .padding(.horizontal, 12).padding(.vertical, 6)

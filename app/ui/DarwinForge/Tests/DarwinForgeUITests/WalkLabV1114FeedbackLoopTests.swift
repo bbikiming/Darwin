@@ -278,9 +278,11 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         // onCleared callback 이 호출되어 activeExperimentId/BaselineSessionId clear.
         XCTAssertNil(session.activeExperimentId)
         XCTAssertNil(session.activeBaselineSessionId)
-        // finalize 가 Task { await saveHistory() } fire-and-forget 이라 잠시 대기 후
-        // 원래 상태로 복원 (cap 30 누적 + 다른 test 의 history 가드 충돌 방지).
-        try await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+        // settle wait — finalize 내부 Task { await saveHistory() } 가 fire-and-forget 이라
+        // 완료 신호가 없음. restoreSharedHistoryFile 호출 전에 write 완료를 보장해야 함.
+        // 대안 없음: finalize 가 saveHistory 완료를 외부에 노출하지 않음
+        // (TODO: finalize 가 완료 신호를 반환하도록 개선).
+        try await Task.sleep(nanoseconds: 300_000_000)  // 300ms settle wait
         await restoreSharedHistoryFile(historyBefore)
     }
 
@@ -991,7 +993,9 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         // activeExperimentId 미설정 — trigger no-op 기대.
         XCTAssertNil(session.activeExperimentId)
         session.triggerAutoLoopIfActive(summaryId: "any")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        // settle wait — 부재(negative) 를 검증: compare 가 호출되지 않아야 함.
+        // 폴링으로 부재를 확인할 수 없어 고정 대기 유지 (100ms 이면 async chain 이 완료될 충분한 시간).
+        try await Task.sleep(nanoseconds: 100_000_000)  // settle wait — negative assertion
         XCTAssertNil(controller.lastComparison, "active 없음 → compare 호출 X")
     }
 

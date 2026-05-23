@@ -79,15 +79,18 @@ final class WalkLabV1147SimUnblockTests: XCTestCase {
 
     /// **defer 된 balanceCorrector 가 결국 갱신**.
     /// Task { @MainActor } 의 결과를 short wait 후 확인.
-    func testDeferredCorrectorEventuallyUpdates() async {
+    func testDeferredCorrectorEventuallyUpdates() async throws {
         let session = WalkLabSession()
         let originalIntensity = session.balanceCorrector.intensity
         // lvl 3 → intensity 1.5 (배수).
         session.correctorIntensityLevel = 3
         // 즉시 — 아직 corrector 재구성 안 됨 (Task 가 다음 tick).
-        // 짧게 wait — main queue tick.
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        // settle wait — correctorIntensityLevel setter 내부 Task { @MainActor } 가 동일한
+        // main actor 에서 실행. Task.yield 로 양보 후 조건 확인.
+        // 관찰 가능한 완료 신호 없음 (TODO: setter 가 async 를 반환하거나 publisher 노출).
+        await Task.yield()
+        await Task.yield()  // 복수 yield — 부하 시 deferred Task 실행 보장.
         XCTAssertNotEqual(session.balanceCorrector.intensity, originalIntensity,
-            "defer 된 Task 가 corrector 재구성 — 100ms 안에 완료")
+            "defer 된 Task 가 corrector 재구성")
     }
 }

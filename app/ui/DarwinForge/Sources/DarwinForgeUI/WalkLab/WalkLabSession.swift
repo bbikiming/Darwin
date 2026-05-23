@@ -860,12 +860,18 @@ public final class WalkLabSession {
     }
 
     /// 실 보행 cycle 진행 중인지 — UI badge / 토글 disable 용.
-    public private(set) var isRobotWalking: Bool = false
+    ///
+    /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+StartCycle` extension 의 task spawn helper 가 갱신 필요.
+    public internal(set) var isRobotWalking: Bool = false
 
     /// Codex P0 fix (2026-05-13 3차): preflight 결과 + cycle 종료 후 결과 집계.
     /// 이전 v1.0 은 모든 write 를 `_ = try?` 로 silently swallow → "정상 종료" 처럼 보였음.
-    public private(set) var lastCycleResult: WalkCycleResult?
-    public private(set) var lastPreflightFailure: WalkPreflightFailure?
+    ///
+    /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+StartCycle` extension 의 task spawn helper 가 갱신 필요.
+    public internal(set) var lastCycleResult: WalkCycleResult?
+    public internal(set) var lastPreflightFailure: WalkPreflightFailure?
 
     // MARK: - v1.11.24 audit (2026-05-20): 상태 분리
     //
@@ -885,7 +891,10 @@ public final class WalkLabSession {
     /// 실 motor task 가 진행 중인 preset. nil = walkCycleTask 없음 + onboardWalkingActive=false.
     /// **로거의 sample.preset 은 이 값을 우선 사용** — 사용자가 다른 preset 을 클릭해도 실 task
     /// 가 안 바뀌면 로그는 변경 전 preset 유지 (mixed-preset session 문제 차단).
-    public private(set) var activeRobotPreset: WalkLabPreset?
+    ///
+    /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+StartCycle` extension 의 task spawn helper 가 갱신 필요.
+    public internal(set) var activeRobotPreset: WalkLabPreset?
 
     /// 마지막 `start(_:)` 가 시도한 preset (preflight 실패 포함). UI 의 "마지막 요청"
     /// 표시 및 로거 header 의 `requestedPreset` 필드에 기록.
@@ -893,18 +902,30 @@ public final class WalkLabSession {
 
     /// preflight 차단 사유 — `WalkPreflightFailure.diagnosticCode`. 로거 header 의
     /// `startBlockedReason` 필드. nil = preflight 통과 (성공 또는 미시도).
-    public private(set) var startBlockedReason: String?
+    ///
+    /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+StartCycle` extension 의 preflight helper 가 갱신 필요.
+    public internal(set) var startBlockedReason: String?
 
     /// 첫 setPosition 성공 시 true. 실제 명령이 motor 까지 도달했는지 회고적 진단용.
     /// `runWalkCycle` / `runContinuousWalk` 의 onBusWriteFailure callback 의 역.
-    public private(set) var motorWriteStarted: Bool = false
+    ///
+    /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+StartCycle` extension 의 task spawn / closure 가 갱신 필요.
+    public internal(set) var motorWriteStarted: Bool = false
 
     /// 실 motor write 누적 step 수. 로거 header / 자체 진단 dashboard 용.
-    public private(set) var motorWriteStepCount: Int = 0
+    ///
+    /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+StartCycle` extension 의 closure / task spawn 이 갱신 필요.
+    public internal(set) var motorWriteStepCount: Int = 0
 
     /// ROBOTIS Onboard ACK 상태 — "ok" / "no_ack" / "timeout" / "error: ..." 또는 nil.
     /// `WalkLabOnboardBridge` 가 ACK 수신 시 update.
-    public private(set) var onboardAckStatus: String?
+    ///
+    /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+StartCycle` extension 의 onboard helper 가 갱신 필요.
+    public internal(set) var onboardAckStatus: String?
 
     /// `isRobotWalking || onboardWalkingActive` — UI 가 preset 버튼 disable 시 사용.
     /// `walkCycleTask != nil` 은 private 이므로 view 에서 직접 못 보므로 published 두 값의 합.
@@ -1441,7 +1462,10 @@ public final class WalkLabSession {
 
     /// 실 로봇에 정적 자세 송출. bus 미연결 / cradle 미확인 / cancelled 시 skip.
     /// 단발 자세 송출. 반복 보행은 `startWalkCycle` 경로가 담당.
-    private func sendRobotPose(_ pose: RobotPose, eventLabel: String) {
+    ///
+    /// **사이클 115 (P1)**: `private` → `internal` — `WalkLabSession+StartCycle`
+    /// extension 의 idle branch helper 가 본 method 호출 필요.
+    internal func sendRobotPose(_ pose: RobotPose, eventLabel: String) {
         guard let store = store, store.bus != nil else {
             lastRobotEvent = "ℹ️ 시뮬 모드 — 로봇 미연결 (\(eventLabel))"
             return
@@ -1466,148 +1490,34 @@ public final class WalkLabSession {
     /// - runWalkCycle 가 `WalkCycleResult` 반환 — cycle 종료 사유 사용자에게 표시.
     ///
     /// 이전 task 가 있으면 cancel + 완료 대기 후 새 cycle 시작 — preset 전환 race 방지.
+    ///
+    /// # 분해 (사이클 115 — P1 god function refactor)
+    ///
+    /// 종전 468-line 단일 함수 → 11 phase facade. 본 facade 는 phase 순서를 명시하는
+    /// "목차" 역할. 각 helper 의 구현 / 책임 / 변수 의존성은
+    /// `WalkLabSession+StartCycle.swift` 참조.
+    ///
+    /// **logic 보존 100%**: 분해 전후 행위 동일 — 변수 capture / side effect / early return /
+    /// telemetry 발행 위치 / Task.detached spawn 시점 모두 원본 그대로.
     private func startWalkCycle(_ preset: WalkLabPreset) {
-        // **v1.11.8 (2026-05-18) — HIGH-3 fix**: 보행 중 다중 진입 차단.
-        if walkCycleTask != nil || onboardWalkingActive {
-            lastRobotEvent = "⚠️ 보행 진행 중 — 정지(■) 후 다시 시도하세요 (\(preset.label))"
-            // v1.12.2 (Codex P1-5) — 실 cycle 시작 거부도 telemetry.
-            Harness.shared.record(
-                .walkLabStartBlocked, level: .warn, actor: .user,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable("alreadyWalking")]
-            )
-            return
-        }
+        // Phase 1 — 다중 진입 차단 (walkCycleTask / onboardWalkingActive).
+        if swcGuardAlreadyWalking(preset) { return }
 
-        guard let store = store, let bus = store.bus else {
-            let f = WalkPreflightFailure(cause: .noConnection)
-            lastPreflightFailure = f
-            startBlockedReason = f.diagnosticCode  // v1.11.24 audit iter2-D
-            lastRobotEvent = "🛑 시뮬레이션만 — 로봇 미연결. \(preset.label) 보행 신호는 송출 안 됨. 사이드바에서 연결 후 재시도"
-            // v1.12.2 (Codex P1-5) — quickPreflight 통과 후라도 race 로 bus 가 사라진
-            // 시점 추적용. 사용자가 "preflight 통과인데 왜 모터 안 움직이지?" 답 가능.
-            Harness.shared.record(
-                .walkLabStartBlocked, level: .warn, actor: .system,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable("noConnectionRace")]
-            )
-            return
-        }
-        guard cradleConfirmed else {
-            let f = WalkPreflightFailure(cause: .cradleNotConfirmed)
-            lastPreflightFailure = f
-            startBlockedReason = f.diagnosticCode  // v1.11.24 audit iter2-D
-            lastRobotEvent = f.userMessage + " (\(preset.label))"
-            Harness.shared.record(
-                .walkLabStartBlocked, level: .warn, actor: .user,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable("cradleNotConfirmedRace")]
-            )
-            return
-        }
+        // Phase 2a — connection + cradle guard. nil 반환 시 caller return.
+        guard let (store, bus) = swcResolveStoreAndCradle(preset) else { return }
 
         // **v1.12.2 (Codex P1-5 + re-review fix)** — walkLabStart 는 모든 guard
         // 통과 후 실 motor command issue 직전에 발행. 아래 guard 들은 각자 별도로
         // walkLabStartBlocked 발행.
 
-        // **v1.11.3 (2026-05-18) — 보행 시작 진입 가드**: safetyVerdict 가 .blocked 면
-        // applyToRobot 강등 후 진행. 의도: didSet 는 config 변경 시점에만 작동 → 보행
-        // 시작 시점에 다시 한 번 확인. 사용자가 didSet 우회 경로 (test fixture, 직렬화
-        // 복원 등) 로 위험 config 가 살아남는 케이스 차단. 보행 자체는 진행 (사용자
-        // 의도 보존) — 단지 robot 송출 차단.
-        if case .blocked(let reason) = balanceExperimentConfig.safetyVerdict,
-           balanceExperimentConfig.applyToRobot {
-            logSafetyEvent(
-                kind: .correctorOff,
-                message: "보행 시작 시 안전 차단: \(reason)"
-            )
-            // **v1.11.5.2 (2026-05-18, Codex Med #4 fix)**: pitchInputConvention 보존 추가.
-            balanceExperimentConfig = BalanceExperimentConfig(
-                algorithmMode: balanceExperimentConfig.algorithmMode,
-                signConvention: balanceExperimentConfig.signConvention,
-                gainProfile: balanceExperimentConfig.gainProfile,
-                applyToRobot: false,
-                pitchInputConvention: balanceExperimentConfig.pitchInputConvention
-            )
-        }
+        // Phase 2b — safetyVerdict.blocked → applyToRobot=false 강등 (return 안 함).
+        swcApplySafetyDemotion()
 
-        // 2026-05-17 사용자 보고 critical fix: caution 등급 (fastWalk/turnLeft/turnRight)
-        // 은 정적 plan + IMU balance 미활성 시 실 robot 낙상 위험. WalkStabilityPredictor
-        // 는 사전 휴리스틱일 뿐 실시간 IMU 기반 자세 보정 없음. balanceCorrection 자동
-        // OFF 이면 사용자가 명시 ON 후 재시작 요구.
-        if preset.safety == .caution, !enableBalanceCorrection {
-            let f = WalkPreflightFailure(cause: .balanceCorrectorRequiredForCautionPreset(presetLabel: preset.label))
-            lastPreflightFailure = f
-            startBlockedReason = f.diagnosticCode  // v1.11.24 audit iter2-D
-            lastRobotEvent = f.userMessage
-            // v1.12.2 (Codex re-review fix) — start_blocked 발행.
-            Harness.shared.record(
-                .walkLabStartBlocked, level: .warn, actor: .user,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable(f.diagnosticCode)]
-            )
-            return
-        }
+        // Phase 2c — caution preset + balanceCorrector OFF → 차단.
+        if swcGuardCautionPreset(preset) { return }
 
-        // Preflight — dxl_power ON + 모든 토크 ON. 하체 1개라도 실패면 차단.
-        if let failure = preflightForWalkCycle(bus: bus) {
-            lastPreflightFailure = failure
-            startBlockedReason = failure.diagnosticCode  // v1.11.24 audit iter2-D
-            lastRobotEvent = failure.userMessage + " (\(preset.label))"
-            Harness.shared.record(
-                .walkLabStartBlocked, level: .warn, actor: .system,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable(failure.diagnosticCode)]
-            )
-            return
-        }
-
-        // **v1.11.22.1 (Codex HIGH-2 fix)** — 실 robot 보행 시작 전 IMU live + plausible:
-        //   - bus 있는데 IMU 한 번도 안 옴 → 차단 (gate L3/corrector 모두 무력화 위험)
-        //   - IMU stale (5s+ 지연) → 차단
-        //   - imuScaleSuspicion suspectedLegacy10Bit/outOfRange → 차단 (1g 감지 실패)
-        // 정상 보행 시 fall prevention chain (L3 hard gate, corrector) 의 데이터 의존성
-        // 확보. 정합 안 되면 실 robot 송출 자체 금지.
-        if store.isImuUnavailable {
-            let f = WalkPreflightFailure(cause: .imuUnavailable)
-            lastPreflightFailure = f
-            startBlockedReason = f.diagnosticCode
-            lastRobotEvent = f.userMessage + " (\(preset.label))"
-            logSafetyEvent(kind: .preflightFailure,
-                           message: "보행 차단 — IMU unavailable (bus 연결 후 sample 없음)")
-            Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .system,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable(f.diagnosticCode)])
-            return
-        }
-        if store.isImuStale {
-            let f = WalkPreflightFailure(cause: .imuStale)
-            lastPreflightFailure = f
-            startBlockedReason = f.diagnosticCode
-            lastRobotEvent = f.userMessage + " (\(preset.label))"
-            logSafetyEvent(kind: .preflightFailure,
-                           message: "보행 차단 — IMU stale (5초+ 지연)")
-            Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .system,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable(f.diagnosticCode)])
-            return
-        }
-        if store.imuScaleSuspicion == .suspectedLegacy10Bit
-            || store.imuScaleSuspicion == .outOfRange {
-            let f = WalkPreflightFailure(cause: .imuPlausibilityFailed(store.imuScaleSuspicion.rawValue))
-            lastPreflightFailure = f
-            startBlockedReason = f.diagnosticCode
-            lastRobotEvent = f.userMessage + " (\(preset.label))"
-            logSafetyEvent(kind: .preflightFailure,
-                           message: "보행 차단 — IMU plausibility \(store.imuScaleSuspicion.rawValue)")
-            Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .system,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable(f.diagnosticCode),
-                       "imu_scale": AnyCodable(store.imuScaleSuspicion.rawValue)])
-            return
-        }
-        lastPreflightFailure = nil
-        startBlockedReason = nil
+        // Phase 2d — hardware preflight (dxl_power / torque / IMU plausibility).
+        if swcGuardHardwarePreflight(preset, store: store, bus: bus) { return }
 
         // **v1.12.2 (Codex re-review fix)** — 모든 free + race + safety guard 통과.
         // 이 시점에 walkLabStart 발행 (단, onboard 경로면 SSH/brokering guard 가
@@ -1627,11 +1537,8 @@ public final class WalkLabSession {
         let maxDurationSec = preset.maxDurationSec
         let lowerBody = Self.lowerBodyJoints
 
-        if preset == .idle {
-            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(presetLabel)")
-            // idle 은 static anchor — walking 이벤트 발행 안 함 (사용자는 정지/대기로 인식).
-            return
-        }
+        // Phase 3 — idle preset 정적 anchor + return.
+        if swcHandleIdlePresetIfNeeded(preset) { return }
 
         // **v1.11.5 (2026-05-18) — ROBOTIS Onboard 모드 분기**:
         // walkingEngine == .robotisOnboard 면 Mac sparse keyframe 합성 + setPosition
@@ -1639,304 +1546,41 @@ public final class WalkLabSession {
         // 상태라 가정. WalkLabSession 은 currentWalkingEngineCommand() 만 published —
         // 외부 component (예: WalkLabOnboardBridge) 가 RemoteShell 통해 SSH brokering.
         //
-        // **v1.11.7 (2026-05-18, GPT HIGH-2 fix)** — lifecycle 명시:
-        // - onboardWalkingActive=true 로 UI/log 가 "robot 측 active" 인식
-        // - safety event 로깅
-        // - cycleStartedAt 갱신 (UI 경과 시간 동기)
-        // - autoOnboardBrokering ON 이면 WalkLabOnboardBridge 가 첫 명령 자동 송출
-        if walkingEngine == .robotisOnboard {
-            // **v1.11.24 (2026-05-20) audit P1-3 — health-check 를 hard block 으로 강화**:
-            //
-            // 종전: warning 만 — `onboardWalkingActive=true` 를 무조건 set → 사용자는 UI 상
-            //       "active" 로 보지만 robot 은 가만히 있음 (silent fail).
-            // 현재: SSH 미연결 또는 autoOnboardBrokering=false 면 명시적으로 차단 + 사유 표시.
-            //       사용자가 SSH 연결 / 토글 ON 후 재시도 강제.
-            //
-            // (실제 ACK 검증은 첫 명령 송출 후 WalkLabOnboardBridge 가 onboardAckStatus 에
-            //  결과 기록 — 본 시점에는 precondition 만 검사.)
-            // 이 시점에서 store 는 위쪽 guard let 로 이미 unwrap. bus != nil 도 보장.
-            // (실 environment 에서는 noConnection branch 가 이미 차단)
-            let isSshConnected = (store.bus != nil)
-            if !isSshConnected {
-                let f = WalkPreflightFailure(cause: .onboardSshNotConnected)
-                lastPreflightFailure = f
-                lastRobotEvent = f.userMessage + " (\(presetLabel))"
-                startBlockedReason = f.diagnosticCode
-                logSafetyEvent(kind: .preflightFailure,
-                               message: "Onboard 시작 차단 — SSH 미연결")
-                Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .user,
-                    data: ["requested_preset": AnyCodable(presetLabel),
-                           "reason": AnyCodable(f.diagnosticCode)])
-                return
-            }
-            if !autoOnboardBrokering {
-                let f = WalkPreflightFailure(cause: .onboardAutoBrokeringOff)
-                lastPreflightFailure = f
-                lastRobotEvent = f.userMessage + " (\(presetLabel))"
-                startBlockedReason = f.diagnosticCode
-                logSafetyEvent(kind: .preflightFailure,
-                               message: "Onboard 시작 차단 — autoOnboardBrokering OFF")
-                Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .user,
-                    data: ["requested_preset": AnyCodable(presetLabel),
-                           "reason": AnyCodable(f.diagnosticCode)])
-                return
-            }
-            // precheck 통과 — onboard cycle 활성. ACK 는 bridge 가 별도 trace.
-            // v1.12.2 (Codex re-review fix) — onboard 도 실제 cycle 시작 시점에 발행.
-            Harness.shared.record(
-                .walkLabStart, level: .notice, actor: .user,
-                data: ["preset": AnyCodable(presetLabel),
-                       "engine": AnyCodable("robotisOnboard"),
-                       "advanced": AnyCodable(advanced)]
-            )
-            onboardWalkingActive = true
-            // 사이클 159 (P0-1 fix): onboard mode 도 IMU fast polling — robot 측 보정 외에도
-            // Mac UI 의 LiveGyroPanel / FallPredictor 가 빠르게 반응. 단 Mac 보정은 미적용.
-            store.imuFastPollActive = true
-            activeRobotPreset = preset
-            motorWriteStarted = false        // bridge 가 ACK ok 도착 시 set
-            motorWriteStepCount = 0
-            onboardAckStatus = "pending"     // ACK 도착하면 "ok" / "no_ack" 갱신
-            cycleStartedAt = Date()
-            logSafetyEvent(
-                kind: .correctorOn,
-                message: "ROBOTIS Onboard 시작: \(presetLabel) (Mac sparse 우회). brokering 자동"
-            )
-            lastRobotEvent = "▶ ROBOTIS Onboard: \(presetLabel) — Mac sparse 우회, 자동 brokering 활성"
-            return
-        }
+        // Phase 4 — Onboard 분기 (handled 시 return).
+        if swcRunOnboardCycleIfNeeded(preset, store: store) { return }
 
-        // v1.9 (2026-05-17 사용자 요청): 보행 session logging 시작.
-        // autoTuner 의 권고 level 자동 적용 (autoApplyEnabled 시).
-        // **v1.11.1 (2026-05-18 사용자 review HIGH-2) — 실 robot 자동 적용 차단**:
-        // applyMode == "robotApplied" (실 모터 송출) 일 때 자동 튜닝 자동 적용 차단.
-        // 이유: WalkSessionAnalyzer 의 데이터 품질 검증이 v2 quality analyzer 수준에
-        // 도달 전 (IMU duplicate ratio / stale ratio / 독립 sample 수 정밀 미검증).
-        // observeOnly / simOnly / off 모드에서는 안전 — pose 변경 없음.
-        // 사용자가 autoApplyEnabled=true 토글했어도 실 적용 mode 면 무시.
-        let appliedLevel: Int
-        if correctionApplyMode == "robotApplied" && autoTuner.autoApplyEnabled {
-            appliedLevel = correctorIntensityLevel
-            logSafetyEvent(
-                kind: .correctorOn,
-                message: "자동 튜닝 차단: 실 robot 적용 모드 — 수동 강도 유지 (\(Self.intensityLabel(level: correctorIntensityLevel)))"
-            )
-        } else {
-            appliedLevel = autoTuner.levelToApply(currentLevel: correctorIntensityLevel)
-        }
-        if appliedLevel != correctorIntensityLevel {
-            correctorIntensityLevel = appliedLevel
-            lastRobotEvent = "🧠 자동 튜닝: 보정 강도 \(WalkLabSession.intensityLabel(level: appliedLevel)) 적용"
-        }
+        // Phase 5a — autoTuner level 자동 적용.
+        swcApplyAutoTuningLevel()
+
         // **v1.11 (Codex 2nd review MEDIUM-B fix)**: cycleStartedAt 은 logging 여부와
         // 무관하게 walk start 시 항상 set. 종전엔 logger init 안에 있어서, logging OFF
         // 또는 logger throw 시 Hybrid phase=0 / P-control walkPhase01=nil.
         cycleStartedAt = Date()
 
-        if enableSessionLogging {
-            let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
-            do {
-                // **v1.11 (Codex 2026-05-18 HIGH-2)**: handoff §3 5+3 필드를 헤더로 전달.
-                sessionLogger = try WalkSessionLogger(
-                    preset: preset.rawValue,
-                    intensityLevel: correctorIntensityLevel,
-                    appVersion: appVersion,
-                    isRealRobot: true,  // startWalkCycle 안에서는 이미 bus guard 통과.
-                    balanceAlgorithmMode: balanceAlgorithmMode,
-                    balanceSignConvention: balanceSignConvention,
-                    balanceGainProfile: balanceGainProfile,
-                    correctionApplyMode: correctionApplyMode,
-                    imuSourceAtStart: imuSourceAtStart,
-                    imuScaleSuspicionAtStart: imuScaleSuspicionAtStart,
-                    operatorNoteAtStart: operatorNote,
-                    comparisonTag: comparisonTag,
-                    // v1.11.10 V2 — 8 axis + tuning + experiment context
-                    walkingEngine: walkingEngine.rawValue,
-                    pitchInputConvention: balanceExperimentConfig.pitchInputConvention.rawValue,
-                    enableBalanceCorrectionAtStart: enableBalanceCorrection,
-                    autoOnboardBrokeringAtStart: autoOnboardBrokering,
-                    hipPitchOffsetTrimDegAtStart: hipPitchOffsetTrimDeg,
-                    tuningStrideMm: advanced ? strideMm : nil,
-                    tuningSideMm: advanced ? sideMm : nil,
-                    tuningTurnDeg: advanced ? turnDeg : nil,
-                    tuningPeriodMs: advanced ? customPeriodMs : nil,
-                    tuningFootHeightMm: advanced ? footHeightMm : nil,
-                    tuningBalanceGain: advanced ? balanceGain : nil,
-                    customGainHipRoll: balanceExperimentConfig.gainProfile == .custom ? customHipRollGain : nil,
-                    customGainKnee: balanceExperimentConfig.gainProfile == .custom ? customKneeGain : nil,
-                    customGainAnklePitch: balanceExperimentConfig.gainProfile == .custom ? customAnklePitchGain : nil,
-                    customGainAnkleRoll: balanceExperimentConfig.gainProfile == .custom ? customAnkleRollGain : nil,
-                    robotModel: "DARwIn-OP2",
-                    // v1.11.14: 실험 컨텍스트 — applyExperimentChange 후 활성.
-                    experimentId: activeExperimentId,
-                    baselineSessionId: activeBaselineSessionId,
-                    // v1.11.24 audit P1-2 — start diagnostic snapshot.
-                    requestedPreset: requestedPreset?.rawValue,
-                    startBlockedReason: startBlockedReason,
-                    walkCycleTaskActiveAtStart: walkCycleTask != nil,
-                    lastRobotEventAtStart: lastRobotEvent
-                )
-                // v1.9.2: Logger 의 startedAt 과 sync — summary.id 와 jsonl filename
-                // 일치 보장. 종전: 별도 Date() → 3ms drift → matching 실패.
-                sessionStartedAt = sessionLogger?.startedAt
-            } catch {
-                // logging 실패 시 silent (보행 자체는 진행).
-                sessionLogger = nil
-            }
-        }
+        // Phase 5b — WalkSessionLogger init (enableSessionLogging 시).
+        swcInitSessionLogger(preset)
 
-        // Phase G11 — 3D 모델 동기화 closure. weak self 로 retain cycle 회피.
-        // v1.11.24 audit P1-2 — motor write counter. 첫 호출 시 motorWriteStarted=true,
-        // 이후 호출마다 step count 증가. preflight 통과했지만 실 write 가 0 인 케이스
-        // (예: bus 즉시 끊김) 를 사후 진단 가능.
-        let onPose: @MainActor @Sendable (RobotPose) -> Void = { [weak self] pose in
-            guard let self else { return }
-            self.visualPose = pose
-            if !self.motorWriteStarted { self.motorWriteStarted = true }
-            self.motorWriteStepCount &+= 1
-        }
+        // Phase 6 — onPose / transformPose closure 생성 (weak self capture).
+        let (onPose, transformPose) = swcMakePoseCallbacks()
 
-        // **Stage 4b (v1.1 fall prevention)**: 실 motor 송출 경로에 corrector wire.
-        // `enableBalanceCorrection = true` 시 매 step pose 에 IMU 기반 보정 적용.
-        // default false (사용자 토글 ON 후 활성).
-        let transformPose: @MainActor @Sendable (RobotPose) -> RobotPose = { [weak self] pose in
-            self?.applyBalanceCorrectionIfEnabled(to: pose) ?? pose
-        }
+        // Phase 7 — continuousWalkPlan 가능 시 Task.detached spawn + return.
+        if swcSpawnContinuousWalkTask(
+            preset, bus: bus, store: store, prev: prev,
+            presetLabel: presetLabel, maxDurationSec: maxDurationSec, lowerBody: lowerBody,
+            onPose: onPose, transformPose: transformPose
+        ) { return }
 
-        // 연속 보행 plan 시도.
-        if let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: currentWalkTuning()) {
-            isRobotWalking = true
-            // 사이클 159 (P0-1 fix): 실 robot 송출 path → IMU fast polling (50ms = 20Hz).
-            // freshness gate (250ms) 와 4 step 마진. stop 시 finalize 에서 false 복원.
-            store.imuFastPollActive = true
-            // v1.11.24 audit P1-1 — 실 motor task 시작 시점에 activeRobotPreset 갱신.
-            // 로거 sample.preset 은 이 값을 우선 → 보행 중 사용자가 다른 preset 클릭해도
-            // 실 task 가 안 바뀌면 로그는 변경 전 preset 유지.
-            activeRobotPreset = preset
-            motorWriteStarted = false
-            motorWriteStepCount = 0
-            lastRobotEvent = "🤖 연속 보행 시작 — \(presetLabel)"
-            // v1.12.2 (Codex re-review fix) — 실 motor task spawn 직전. 모든 guard pass.
-            Harness.shared.record(
-                .walkLabStart, level: .notice, actor: .user,
-                data: ["preset": AnyCodable(presetLabel),
-                       "engine": AnyCodable(String(describing: walkingEngine)),
-                       "advanced": AnyCodable(advanced),
-                       "mode": AnyCodable("continuous")]
-            )
-            // 2026-05-17 chaos #1: weak store capture — Task 내부에서 매 step 마다
-            // store?.bus !== nil 확인 가능. 종전엔 bus strong capture 로 dead handle
-            // 송출 ~5 step 지속.
-            // v1.11.2 (2026-05-18): CI Swift 5.9 strict concurrency 호환 — outer
-            // `weak store = self.store` 가 inner closure 에서 var-like 로 재캡쳐되어
-            // error. `[weak self]` 만 캡쳐하고 inner 가 self?.store 통해 access.
-            walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
-                await prev?.value
-                let result = await Self.runContinuousWalk(
-                    bus: bus, plan: plan,
-                    maxDurationSec: maxDurationSec,
-                    lowerBodyJoints: lowerBody,
-                    onPose: onPose,
-                    transformPose: transformPose,
-                    isBusAlive: { [weak self] in
-                        guard let self else { return false }
-                        return await self.isBusAliveSnapshot()
-                    },
-                    // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 시 exit phase 스킵.
-                    isHardStopped: { [weak self] in
-                        guard let self else { return true }
-                        return await MainActor.run { self.emergencyStopActive }
-                    },
-                    // v1.11.1 MEDIUM-5: bus write 실패 시 ConnectionStore counter 누적.
-                    onBusWriteFailure: { [weak self] in
-                        self?.store?._bumpBusWriteFailureCount()
-                    }
-                )
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.isRobotWalking = false
-                    // 사이클 159 (P0-1 fix): walk 종료 → IMU slow polling 복원 (perf).
-                    self.store?.imuFastPollActive = false
-                    // v1.11.24 audit P1-1 — cycle 정상/비정상 종료 시 활성 preset clear.
-                    self.activeRobotPreset = nil
-                    self.lastCycleResult = result
-                    if result.isSuccess {
-                        self.lastRobotEvent = "✅ \(result.userMessage) — walkReady 복귀 (\(presetLabel))"
-                    } else {
-                        self.lastRobotEvent = "🛑 \(result.userMessage) (\(presetLabel))"
-                    }
-                    self.finalizeSessionLog()
-                }
-            }
-            return
-        }
-
-        // jog (kick chain) — 단발 page + oneShot.
-        guard let page = WalkMotionLibrary.page(for: preset, tuning: currentWalkTuning()) else {
-            sendRobotPose(.walkReady, eventLabel: "보행 anchor — \(presetLabel)")
-            return
-        }
-        isRobotWalking = true
-        // 사이클 159 (P0-1 fix): jog kick chain 도 IMU fast polling 활성.
-        store.imuFastPollActive = true
-        // v1.11.24 audit P1-1 — jog 같은 single-page cycle 도 동일.
-        activeRobotPreset = preset
-        motorWriteStarted = false
-        motorWriteStepCount = 0
-        lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(presetLabel)"
-        // v1.12.2 (Codex re-review fix) — single-cycle 도 실 task spawn 직전.
-        Harness.shared.record(
-            .walkLabStart, level: .notice, actor: .user,
-            data: ["preset": AnyCodable(presetLabel),
-                   "engine": AnyCodable(String(describing: walkingEngine)),
-                   "advanced": AnyCodable(advanced),
-                   "mode": AnyCodable("kickChain")]
+        // Phase 8 — jog (kick chain) Task.detached spawn (continuous plan 없을 때 fallback).
+        swcSpawnJogCycleTask(
+            preset, bus: bus, store: store, prev: prev,
+            presetLabel: presetLabel, maxDurationSec: maxDurationSec, lowerBody: lowerBody,
+            onPose: onPose, transformPose: transformPose
         )
-        // v1.11.2 (2026-05-18): CI Swift 5.9 strict concurrency 호환 (line 960 와 동일).
-        walkCycleTask = Task.detached(priority: .userInitiated) { [weak self] in
-            await prev?.value
-            let result = await Self.runWalkCycle(
-                bus: bus, page: page,
-                maxDurationSec: maxDurationSec,
-                lowerBodyJoints: lowerBody,
-                loop: false,   // jog 는 kick chain 끝나면 종료.
-                onPose: onPose,
-                transformPose: transformPose,
-                isBusAlive: { [weak self] in
-                    guard let self else { return false }
-                    return await self.isBusAliveSnapshot()
-                },
-                // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 시 walkReady 복귀 스킵.
-                isHardStopped: { [weak self] in
-                    guard let self else { return true }
-                    return await MainActor.run { self.emergencyStopActive }
-                },
-                // v1.11.1 MEDIUM-5: bus write 실패 시 ConnectionStore counter 누적.
-                onBusWriteFailure: { [weak self] in
-                    self?.store?._bumpBusWriteFailureCount()
-                }
-            )
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.isRobotWalking = false
-                // 사이클 159 (P0-1 fix): jog 종료 → IMU slow polling 복원.
-                self.store?.imuFastPollActive = false
-                // v1.11.24 audit iter3-A — jog 단발 cycle 도 cleanup 일치.
-                self.activeRobotPreset = nil
-                self.lastCycleResult = result
-                if result.isSuccess {
-                    self.lastRobotEvent = "✅ \(result.userMessage) — walkReady 복귀 (\(presetLabel))"
-                } else {
-                    self.lastRobotEvent = "🛑 \(result.userMessage) (\(presetLabel))"
-                }
-                // v1.11.24 audit iter3-A — finalize log for natural jog completion
-                // (loop=false → kick chain 끝나면 외부 stop() 없어도 cycle 종료).
-                self.finalizeSessionLog()
-            }
-        }
     }
 
-    private func currentWalkTuning() -> WalkMotionLibrary.AdvancedTuning? {
+    /// **사이클 115 (P1)**: `private` → `internal` — `WalkLabSession+StartCycle`
+    /// extension 의 walk plan helper 가 본 method 호출 필요.
+    internal func currentWalkTuning() -> WalkMotionLibrary.AdvancedTuning? {
         // **v1.11.4 (2026-05-18)** — hipPitchOffsetTrimDeg 가 default (13°) 와 다르면
         // advanced=false 여도 trim 만은 적용. 사용자가 cradle 캘리브레이션 중 13/5/0°
         // 비교를 advanced disclosure 펴지 않고도 가능하게.
@@ -2008,7 +1652,10 @@ public final class WalkLabSession {
     /// startWalkCycle 진입 시 onboard 분기에서 true, stop / cancelWalkCycle 시 false.
     /// UI 가 이 값으로 "robot 측에서 보행 중" 표시 가능.
     /// Mac sparse 의 walkCycleTask 와 별개 — onboard 는 SSH brokering 으로만 동작.
-    public private(set) var onboardWalkingActive: Bool = false
+    ///
+    /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+StartCycle` extension 의 onboard helper 가 갱신 필요.
+    public internal(set) var onboardWalkingActive: Bool = false
 
     /// **v1.11.16.1 (2026-05-19)** — Onboard health indicator state.
     /// Bridge 가 send/ping 결과를 set. UI (OnboardHealthIndicator) 가 시각 표시.
@@ -2232,7 +1879,10 @@ public final class WalkLabSession {
 
     /// Preflight: dxl_power ON + 모든 토크 ON. 하체 실패 / 상체 4개+ 실패 시 차단.
     /// Codex P0 권고: WalkLab cycle 이 torque OFF 상태에서 시작해도 silent 했던 버그 차단.
-    private func preflightForWalkCycle(bus: Bus) -> WalkPreflightFailure? {
+    ///
+    /// **사이클 115 (P1)**: `private` → `internal` — `WalkLabSession+StartCycle`
+    /// extension 의 preflight helper 가 본 method 호출 필요.
+    internal func preflightForWalkCycle(bus: Bus) -> WalkPreflightFailure? {
         // 1. dxl_power ON.
         do { try bus.setDxlPower(true) }
         catch { return WalkPreflightFailure(cause: .dxlPowerFailed(error.localizedDescription)) }

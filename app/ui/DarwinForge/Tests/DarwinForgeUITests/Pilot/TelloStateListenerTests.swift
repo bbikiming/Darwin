@@ -206,10 +206,8 @@ final class TelloStateListenerTests: XCTestCase {
 
         try? listener.start()
         listener.simulate(raw: "pitch:0;roll:0;yaw:0;bat:18;tof:5")
-        // main actor hop 대기.
-        await Task.yield()
-        // 짧은 sleep 으로 dispatch 완료 보장.
-        try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+        // MainActor hop 완료 polling 대기 — bridge 가 lastTelloState 를 갱신할 때까지.
+        try? await waitUntil(timeout: 2.0) { bridge.lastTelloState?.batteryPct == 18 }
 
         XCTAssertEqual(bridge.lastTelloState?.batteryPct, 18,
                        "listener 가 bridge 까지 메시지 전파")

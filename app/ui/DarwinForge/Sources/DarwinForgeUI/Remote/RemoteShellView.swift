@@ -307,7 +307,10 @@ public struct RemoteShellView: View {
                     pb.clearContents()
                     pb.setString(RobotSetupCommand.remoteShellSetup, forType: .string)
                     copyToast = "✓ 클립보드에 복사됨 — VNC 터미널에 붙여넣기"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copyToast = nil }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        copyToast = nil
+                    }
                 } label: {
                     Label("셋업 명령 복사", systemImage: "doc.on.clipboard.fill")
                         .padding(.horizontal, DFSpace.sm3).padding(.vertical, DFSpace.sm)
@@ -352,7 +355,10 @@ public struct RemoteShellView: View {
                     pb.setString(SSHShell.keyAuthSetupCommand(host: shell.host, user: shell.username),
                                  forType: .string)
                     copyToast = "✓ Mac 터미널에 붙여넣기 (한 번만)"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copyToast = nil }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        copyToast = nil
+                    }
                 } label: {
                     Label("SSH key 셋업 복사", systemImage: "key.fill")
                         .padding(.horizontal, DFSpace.sm2).padding(.vertical, DFSpace.xs2)

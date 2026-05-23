@@ -63,12 +63,12 @@ public struct RobotScene3D: NSViewRepresentable {
         context.coordinator.applyImuTilt(rollDeg: imuRollDeg, pitchDeg: imuPitchDeg)
         // ViewCube/Home 버튼이 카메라를 조작할 수 있도록 controller에 view 등록.
         if let controller = cameraController {
-            DispatchQueue.main.async { controller.view = view }
+            Task { @MainActor in controller.view = view }
         }
         // P0-F: makeNSView 한 번 호출 시 fallback 여부를 호출자에게 통지.
         if let cb = onMeshFallback {
             let active = context.coordinator.usingMeshFallback
-            DispatchQueue.main.async { cb(active) }
+            Task { @MainActor in cb(active) }
         }
         return view
     }

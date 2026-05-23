@@ -83,15 +83,8 @@ final class WalkLabRCBridgeTrialTests: XCTestCase {
 
         bridge.handleTelloStick(lr: 80, fb: 80, ud: 0, yaw: 80)
 
-        var pendingTrial: WalkTrial?
-        for _ in 0..<100 {
-            if let t = session.pendingLabelTrial {
-                pendingTrial = t
-                break
-            }
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
-        guard let trial = pendingTrial else {
+        try? await waitUntil(timeout: 5.0) { session.pendingLabelTrial != nil }
+        guard let trial = session.pendingLabelTrial else {
             XCTFail("pendingLabelTrial 미설정 — async Task 미완료")
             return
         }
@@ -113,16 +106,8 @@ final class WalkLabRCBridgeTrialTests: XCTestCase {
 
         session.stop()
 
-        var pendingTrial: WalkTrial?
-        for _ in 0..<100 {
-            if let t = session.pendingLabelTrial {
-                pendingTrial = t
-                break
-            }
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
-
-        guard let trial = pendingTrial else {
+        try? await waitUntil(timeout: 5.0) { session.pendingLabelTrial != nil }
+        guard let trial = session.pendingLabelTrial else {
             XCTFail("pendingLabelTrial 가 finalize 후에도 nil — async Task 완료 안 됨")
             return
         }
@@ -209,15 +194,8 @@ final class WalkLabRCBridgeTrialTests: XCTestCase {
 
         session.stop()
 
-        var pending: WalkTrial?
-        for _ in 0..<100 {
-            if let t = session.pendingLabelTrial {
-                pending = t
-                break
-            }
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
-        guard let trial = pending else {
+        try? await waitUntil(timeout: 5.0) { session.pendingLabelTrial != nil }
+        guard let trial = session.pendingLabelTrial else {
             XCTFail("pendingLabelTrial 미설정 — finalize async Task 미완료")
             return
         }

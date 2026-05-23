@@ -144,7 +144,8 @@ public struct ConnectionWizardView: View {
             .onChange(of: store.status) { _, new in
                 if case .connected = new {
                     markCurrentStep(.success)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
                         isPresented = false
                     }
                 } else if case .error(let m) = new {
@@ -671,7 +672,8 @@ public struct ConnectionWizardView: View {
                     pb.clearContents()
                     pb.setString(RobotSetupCommand.unifiedSetup, forType: .string)
                     copyConfirm = "✓ 클립보드에 복사됐어요"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
                         copyConfirm = nil
                     }
                 } label: {

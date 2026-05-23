@@ -137,7 +137,7 @@ public final class InteractiveSceneView: SCNView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        DispatchQueue.main.async { [weak self] in
+        Task { @MainActor [weak self] in
             self?.window?.makeFirstResponder(self)
         }
     }

@@ -57,7 +57,9 @@ final class HarnessRealRobotSmokeTests: XCTestCase {
     /// AsyncStream → recorder → JSONL 디스크 까지 가는 데 잠깐 걸림. 짧게 yield + flush.
     private func waitForFlush() async throws {
         await Harness.shared.flush()
-        // recorder 의 internal flush 가 fsync 까지 다 끝났는지 보장하려면 한 번 더 yield.
+        // settle wait — recorder 의 internal flush 가 fsync 까지 완료될 때까지.
+        // AsyncStream consumer → TelemetryRecorder.flush → fsync 체인에 관찰 가능한
+        // 완료 신호가 없음. 현재 구조상 대안 없음 (TODO: flush() 가 완료 신호 반환하도록 개선).
         try await Task.sleep(nanoseconds: 100_000_000)
         await Harness.shared.flush()
     }
@@ -85,11 +87,11 @@ final class HarnessRealRobotSmokeTests: XCTestCase {
         // 연결 시도 — performConnect 가 max 3 retry, 그 후 .error 로 끝나며 hook 발화.
         store.connect(endpoint: endpoint)
 
-        // 재시도 끝날 때까지 기다림 (3 attempts * 200ms + headroom).
+        // 재시도 끝날 때까지 polling 대기 (3 attempts * 200ms + headroom).
         // performConnect 는 async Task — main actor 에서 fire & forget.
-        for _ in 0..<30 {
-            try await Task.sleep(nanoseconds: 100_000_000)
-            if case .error = store.status { break }
+        try await waitUntil(timeout: 5.0) {
+            if case .error = store.status { return true }
+            return false
         }
         try await waitForFlush()
 
@@ -172,7 +174,9 @@ final class HarnessRealRobotSmokeTests: XCTestCase {
     // MARK: - 검증: heartbeat sampler 가 디스크에 떨어지는지.
 
     func testHeartbeatTimerDeliversToDisk() async throws {
-        // 0.1s 주기 heartbeat — 약 3 tick 받으면 충분.
+        // settle wait — 실제 타이머 기반 heartbeat (0.1s 주기, 약 3 tick 대기).
+        // Timer.scheduledTimer 는 tick 완료 신호가 없음. 최소 2 tick 이상을 보장하려면
+        // 실제 시간 경과가 필요. 대안 없음 (TODO: heartbeat 에 tick count 관찰 가능 API 추가).
         Harness.shared.startHeartbeat(intervalSeconds: 0.1)
         try await Task.sleep(nanoseconds: 350_000_000)
         Harness.shared.stopHeartbeat()
@@ -229,8 +233,10 @@ final class HarnessRealRobotSmokeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(meta.errorCount, 1)
 
         Harness.shared.stop(reason: "smoke-test-end")
-        // stop 은 비동기 finalize → consumer drain 까지 대기.
-        try await Task.sleep(nanoseconds: 500_000_000)
+        // settle wait — stop 이 비동기 finalize (archive → meta.json 이동 포함) 이라
+        // archive 완료 전 metaURL 경로가 유효하지 않음. archive 경로를 미리 알 수 없어
+        // polling 불가 (TODO: Harness.stop 이 완료 신호를 반환하도록 개선).
+        try await Task.sleep(nanoseconds: 500_000_000)  // settle wait — archive + finalize
 
         // sessions/ 로 archive 됐을 수도 있음. 검색.
         let archivedRoot = tempRoot.appendingPathComponent("..").standardizedFileURL
