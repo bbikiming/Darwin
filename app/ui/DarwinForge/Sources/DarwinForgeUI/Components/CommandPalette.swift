@@ -38,6 +38,7 @@ public struct CommandPalette: View {
             query = ""
             selectedIndex = 0
             queryFocused = true
+            Harness.shared.record(.uiPaletteOpened, level: .trace, actor: .user)
         }
     }
 
@@ -85,6 +86,7 @@ public struct CommandPalette: View {
                         row(e, isSelected: idx == selectedIndex)
                             .id(e.id)
                             .onTapGesture {
+                                recordCommandRun(e)
                                 isPresented = false
                                 onRun(e)
                             }
@@ -159,8 +161,16 @@ public struct CommandPalette: View {
         guard !items.isEmpty else { return }
         let idx = max(0, min(selectedIndex, items.count - 1))
         let entry = items[idx]
+        recordCommandRun(entry)
         isPresented = false
         onRun(entry)
+    }
+
+    private func recordCommandRun(_ entry: CommandEntry) {
+        let level: TelemetryLevel = entry.dangerous ? .warn : .info
+        Harness.shared.record(.uiPaletteCommand, level: level, actor: .user,
+                              data: ["command_id": AnyCodable(entry.id),
+                                     "dangerous": AnyCodable(entry.dangerous)])
     }
 }
 

@@ -73,6 +73,37 @@ public final class IntentDispatcher: ObservableObject {
     /// CommandPlan을 실행한다.
     /// 호출 측은 `needs_confirmation`을 사전에 확인하고 사용자 승인 후 호출.
     public func execute(_ plan: CommandPlan) async throws -> ExecutionResult {
+        let toolName = String(describing: plan.tool)
+        let currentMode = mode.rawValue
+
+        // Telemetry: mode resolution — simulation vs hardware 판단 근거.
+        Harness.shared.record(
+            .claudeIntentDispatched, level: .info, actor: .claude,
+            data: ["tool": AnyCodable(toolName),
+                   "mode": AnyCodable(currentMode)]
+        )
+
+        do {
+            let result = try await dispatchTool(plan)
+            return result
+        } catch {
+            let errorCase: String
+            if let de = error as? DispatcherError {
+                errorCase = de.telemetryCase
+            } else {
+                errorCase = "generic"
+            }
+            Harness.shared.record(
+                .claudeIntentError, level: .warn, actor: .system,
+                data: ["tool": AnyCodable(toolName),
+                       "error_case": AnyCodable(errorCase)]
+            )
+            throw error
+        }
+    }
+
+    /// `execute(_:)` 에서 telemetry 를 분리하기 위한 내부 라우터.
+    private func dispatchTool(_ plan: CommandPlan) async throws -> ExecutionResult {
         switch plan.tool {
         // 정보 조회 — Bus 필요
         case .ports: return try await runPorts()

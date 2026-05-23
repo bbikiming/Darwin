@@ -66,7 +66,7 @@ public struct PilotActionBar: View {
         .onChange(of: channel.lastError) { newError in
             guard let err = newError, !err.isEmpty else { return }
             Harness.shared.record(
-                .errorException, level: .warn, actor: .system,
+                .errorException, level: .error, actor: .system,
                 data: ["source": AnyCodable("pilot.action_bar"),
                        "error_hash": AnyCodable(Harness.shortHash(err))]
             )
@@ -91,6 +91,7 @@ public struct PilotActionBar: View {
                 title: Text("위험 동작 확인"),
                 message: Text("\(meta.displayNameKo)\n실행하면 \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초 동안 \(meta.bodyRegions.first?.rawValue ?? "관절") 가(이) 움직입니다.\(chainNote)\n\ncradle 거치를 확인했나요?"),
                 primaryButton: .destructive(Text("확인 후 실행")) {
+                    // .warn 의도적 — safety override 이벤트를 대시보드에서 플래그하기 위함.
                     Harness.shared.record(
                         .pilotActionBarRiskConfirmed, level: .warn, actor: .user,
                         data: ["slot": AnyCodable(meta.slot),

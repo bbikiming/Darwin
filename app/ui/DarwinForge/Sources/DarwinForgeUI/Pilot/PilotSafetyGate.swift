@@ -25,11 +25,12 @@ public final class PilotSafetyGate: ObservableObject {
         Harness.shared.record(.pilotSafetyArmed, level: .info, actor: .user)
     }
 
-    /// DISARM (ESC / 사용자 명시 / 연결 끊김).
-    public func disarm() {
+    /// DISARM (ESC / 사용자 명시 / 연결 끊김 / 비상정지).
+    /// - Parameter source: `.user` (사용자 명시) 또는 `.system` (비상정지 등 자동).
+    public func disarm(source: TelemetryActor = .user) {
         armed = false
         lastBlockReason = nil
-        Harness.shared.record(.pilotSafetyDisarmed, level: .info, actor: .user)
+        Harness.shared.record(.pilotSafetyDisarmed, level: .info, actor: source)
     }
 
     /// E-stop 시각 시그널 — 0.3 s 후 자동 해제.

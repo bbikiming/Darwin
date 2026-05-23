@@ -437,7 +437,7 @@ public final class TeleopChannel: ObservableObject {
         playingSlot = nil
         progress = 0
         armStage = .idle
-        gate?.disarm()
+        gate?.disarm(source: .system)
         lastToast = "긴급 정지 — 토크 OFF. ARM 다시 해주세요."
     }
 }

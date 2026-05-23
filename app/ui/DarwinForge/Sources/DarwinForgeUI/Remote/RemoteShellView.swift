@@ -96,6 +96,13 @@ public struct RemoteShellView: View {
                 .buttonStyle(.borderless)
 
                 Button {
+                    Harness.shared.record(
+                        .remoteModeToggled,
+                        level: .info,
+                        actor: .user,
+                        data: ["to_mode": AnyCodable("shell"),
+                               "source": AnyCodable("wizard_skip")]
+                    )
                     showSetupWizard = false
                 } label: {
                     Label("셸로 건너뛰기", systemImage: "forward.fill")
@@ -143,6 +150,13 @@ public struct RemoteShellView: View {
 
     private func quickActionButton(_ action: QuickAction) -> some View {
         Button {
+            Harness.shared.record(
+                .remoteQuickAction,
+                level: action.category == .danger ? .warn : .info,
+                actor: .user,
+                data: ["action_id": AnyCodable(action.id),
+                       "category": AnyCodable(action.category.rawValue)]
+            )
             if action.requiresConfirm {
                 confirmAction = action
             } else {
@@ -187,6 +201,13 @@ public struct RemoteShellView: View {
     @ViewBuilder
     private var modeToggle: some View {
         Button {
+            let toMode = shouldShowSetupWizard ? "shell" : "wizard"
+            Harness.shared.record(
+                .remoteModeToggled,
+                level: .trace,
+                actor: .user,
+                data: ["to_mode": AnyCodable(toMode)]
+            )
             showSetupWizard = !(shouldShowSetupWizard)
         } label: {
             Label(shouldShowSetupWizard ? "셸 모드" : "셋업 가이드",
@@ -477,6 +498,12 @@ public struct RemoteShellView: View {
 
     private func presetChip(_ label: String, cmd: String) -> some View {
         Button {
+            Harness.shared.record(
+                .remotePresetChip,
+                level: .info,
+                actor: .user,
+                data: ["label_hash": AnyCodable(Harness.shortHash(label))]
+            )
             inputText = cmd
         } label: {
             Text(label)

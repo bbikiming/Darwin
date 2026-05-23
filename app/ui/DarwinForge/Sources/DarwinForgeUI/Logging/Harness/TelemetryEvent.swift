@@ -191,7 +191,7 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let pilotSafetyArmed: TelemetryKind = "pilot.safety_armed"
     /// PilotSafetyGate.disarm() — ESC / 명시 / 연결 끊김.
     public static let pilotSafetyDisarmed: TelemetryKind = "pilot.safety_disarmed"
-    /// PilotSafetyGate.allowMotion() 거부 — blockUnarmed / requireHighRiskConfirm.
+    /// PilotSafetyGate.allowMotion(_:confirmRisk:) 거부 — blockUnarmed / requireHighRiskConfirm.
     /// data: reason, motion_name.
     public static let pilotSafetyGateBlocked: TelemetryKind = "pilot.safety_gate_blocked"
 
@@ -253,6 +253,12 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// 사이클 181: 대화 세션 clear — 사용자가 history 비움.
     /// data: messages_cleared.
     public static let claudeSessionCleared: TelemetryKind = "claude.session_cleared"
+    /// IntentDispatcher 가 tool 을 dispatch 할 때 — 도구별 호출 빈도, sim/hw 비율 분석.
+    /// data: tool, mode.
+    public static let claudeIntentDispatched: TelemetryKind = "claude.intent_dispatched"
+    /// IntentDispatcher 에서 dispatch 실패 시 — 에러 유형별 빈도 분석.
+    /// data: tool, error_case.
+    public static let claudeIntentError: TelemetryKind = "claude.intent_error"
 
     // Joint control (사이클 196, cycle 190 audit P1 #3)
     /// JointControlView 의 버튼 (Torque ON/OFF, action buttons) 클릭 시 발화.
@@ -295,6 +301,9 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let setupConnOneClickStarted: TelemetryKind = "setup.conn_oneclick_started"
     /// OneClickConnect.runOneClick() 결과 — 성공 또는 전체 실패.
     /// data: success (Bool), winning_kind (성공 시 후보 kind).
+    ///
+    /// **Note**: 전체 실패 시 `setupConnOneClickAllFailed` 와 의도적 double-fire —
+    /// 본 kind 는 결과 요약 (success Bool), AllFailed 는 ConnectionWizard UI 반응 맥락.
     public static let setupConnOneClickResult: TelemetryKind = "setup.conn_oneclick_result"
     /// OneClickConnect.runDiagnosticsOnly() 진입.
     /// data: candidate_count.
@@ -315,6 +324,12 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let remoteCommandError: TelemetryKind = "remote.command_error"
     /// probeChannel 가 channel 자동 선택. data: from_channel, to_channel.
     public static let remoteChannelChanged: TelemetryKind = "remote.channel_changed"
+    /// Quick action 버튼 탭. data: action_id, category. level=.warn for danger.
+    public static let remoteQuickAction: TelemetryKind = "remote.quick_action"
+    /// 프리셋 칩 탭 — 명령 프리필. data: label_hash.
+    public static let remotePresetChip: TelemetryKind = "remote.preset_chip"
+    /// Wizard ↔ shell 모드 수동 전환. data: to_mode.
+    public static let remoteModeToggled: TelemetryKind = "remote.mode_toggled"
 
     // System
     public static let heartbeat: TelemetryKind = "heartbeat.tick"
