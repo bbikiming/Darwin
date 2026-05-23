@@ -1,4 +1,5 @@
 import ForgeCore
+import os
 import SwiftUI
 
 /// RoboPlus Motion 대체 — 페이지 / step 키프레임 타임라인 에디터.
@@ -1619,6 +1620,8 @@ extension MotionStudioView {
                 .from(pose: walkReady, playMs: 600, pauseMs: 100)
             ]
             pages.append(MotionPage(id: id, name: "축구 — 오른발 차기", steps: kickSteps))
+        } else {
+            DFLog.motion.warning("PoseLibrary 축구 킥 자세 누락 — 페이지 생략")
         }
         id += 1
         // 골키퍼 세이브
