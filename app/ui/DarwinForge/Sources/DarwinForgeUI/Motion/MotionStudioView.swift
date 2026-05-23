@@ -114,6 +114,9 @@ public struct MotionStudioView: View {
             message: { Text(lastError ?? "") }
         )
         .onAppear {
+            // 사이클 197 (cycle 190 audit P2 #6): cross-menu 재진입 시 navigation telemetry.
+            Harness.shared.record(.uiViewAppeared, level: .trace, actor: .user,
+                                  data: ["view": AnyCodable("motion_studio")])
             applySelectedStepToPose()
         }
         .onChange(of: player.pose) { _, newPose in

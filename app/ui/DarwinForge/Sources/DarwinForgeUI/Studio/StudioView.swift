@@ -73,6 +73,11 @@ public struct StudioView: View {
             actions: { Button("닫기", role: .cancel) { lastError = nil } },
             message: { Text(lastError ?? "") }
         )
+        // 사이클 197 (cycle 190 audit P2 #6): cross-menu 재진입 시 navigation telemetry.
+        .onAppear {
+            Harness.shared.record(.uiViewAppeared, level: .trace, actor: .user,
+                                  data: ["view": AnyCodable("studio")])
+        }
         // 티칭 모드 → Studio 자세 전달 받음.
         .onReceive(NotificationCenter.default.publisher(for: .dfTransferPoseToStudio)) { note in
             if let p = note.object as? RobotPose {
