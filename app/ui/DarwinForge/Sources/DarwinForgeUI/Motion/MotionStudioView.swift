@@ -266,80 +266,53 @@ public struct MotionStudioView: View {
 
     private var centerColumn: some View {
         VStack(spacing: DFSpace.none) {
-            ZStack(alignment: .topLeading) {
-                RobotScene3D(pose: stagedPose,
-                             footTrace: [],
-                             highlight: inspectorJoint,
-                             showAxes: true,
-                             cameraController: camera)
-                // 3D 가 무엇을 보여주는지 명확히 — 사용자가 편집/재생/송출을 한눈에 구분.
-                HStack(spacing: DFSpace.xs) {
-                    sourceModeBadge
-                    pageMetaBadge
-                }
-                .padding(DFSpace.md)
-                ViewportControls(camera: camera)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: .topTrailing)
-            }
-            .background(LinearGradient(colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
-                                        startPoint: .top, endPoint: .bottom))
+            MotionStudioCanvas(
+                pose: stagedPose,
+                highlightJoint: inspectorJoint,
+                camera: camera,
+                sourceMode: currentSourceMode,
+                currentPage: currentPage
+            )
 
             Divider()
 
-            timelineSection
-                .padding(DFSpace.md)
-                .background(DFColor.card)
+            MotionStudioTimeline(
+                doc: doc,
+                player: player,
+                sendToHardware: $sendToHardware,
+                currentPage: currentPage,
+                hasBus: store.bus != nil,
+                canUndo: canUndo,
+                canRedo: canRedo,
+                onPlay: { startPlayback() },
+                onAddStep: { addStepFromCurrentPose() },
+                onCapture: { captureFromTelemetry() },
+                onRunOnRobot: { runCurrentPageOnRobot() },
+                onSave: { saveDocAs() },
+                onUndo: { undo() },
+                onRedo: { redo() },
+                onApplySelectedStepToPose: { applySelectedStepToPose() },
+                onCopySelectedStep: { copySelectedStep() },
+                onPasteStep: { pasteStep() },
+                onSplitSelectedStep: { splitSelectedStep() },
+                onRemoveSelectedStep: { removeSelectedStep() }
+            )
+            .padding(DFSpace.md)
+            .background(DFColor.card)
         }
     }
 
     /// 3D 뷰포트의 데이터 출처 — 4가지 상태로 사용자가 자기 행동의 효과를 정확히 인지.
     ///
+    /// **사이클 259 (W4.3.6)**: enum 정의는 `MotionStudioCanvas.SourceMode` 로
+    /// 이동. owner 는 다중 의존성 (sendToHardware / store.bus / player.mode) 을
+    /// 종합해 enum 값만 계산해 전달.
+    ///
     /// **Codex pass 1 [P2]**: 이전엔 정지/일시정지 + sendToHardware ON 케이스가
     /// `.editing` 으로 떨어져 "로봇은 움직이지 않아요" 라고 거짓말함. 실제로는 인스펙터
     /// 슬라이더가 매번 `applyToHardware` 를 호출하여 로봇이 움직임. 새 `.liveEditing`
     /// 케이스로 명시.
-    private enum SourceMode {
-        case editing       // 정지/일시정지 + 송출 OFF (또는 버스 nil) — 진정한 화면-only.
-        case liveEditing   // 정지/일시정지 + 송출 ON + 버스 있음 — 슬라이더 한 번에 모터 1번.
-        case previewing    // 재생 + 송출 OFF (또는 버스 nil) — 화면에서만 재생.
-        case broadcasting  // 재생 + 송출 ON + 버스 있음 — 모션 전체가 로봇으로 송출.
-
-        var title: String {
-            switch self {
-            case .editing:      return "편집 미리보기"
-            case .liveEditing:  return "실시간 편집 송출"
-            case .previewing:   return "재생 미리보기"
-            case .broadcasting: return "로봇으로 송출 중"
-            }
-        }
-        var icon: String {
-            switch self {
-            case .editing:      return "pencil.tip"
-            case .liveEditing:  return "slider.horizontal.below.rectangle"
-            case .previewing:   return "play.tv"
-            case .broadcasting: return "antenna.radiowaves.left.and.right"
-            }
-        }
-        var help: String {
-            switch self {
-            case .editing:
-                return "선택한 단계의 자세를 화면에만 보여줍니다. 로봇은 움직이지 않아요."
-            case .liveEditing:
-                // **Codex pass 3 [P2]**: MotionStudioView 의 PoseInspector binding setter
-                // (line ~836) 가 매 변경마다 stagedPose 갱신 + `if sendToHardware`
-                // 즉시 송출 — PoseInspector 내부의 commit-only logic 을 우회한다.
-                // 따라서 드래그 중 매 frame 송출이 일어남. 사실대로 안내.
-                return "슬라이더가 움직이는 동안 매 변경이 곧바로 로봇으로 송출됩니다. 모터 부하가 클 수 있으니 큰 변경 전에는 ‘로봇에 보내기’ 토글을 끄세요."
-            case .previewing:
-                return "모션을 화면에서만 재생합니다. 로봇은 움직이지 않아요."
-            case .broadcasting:
-                return "재생 중인 모션이 실 로봇으로 송출되고 있습니다."
-            }
-        }
-    }
-
-    private var currentSourceMode: SourceMode {
+    private var currentSourceMode: MotionStudioCanvas.SourceMode {
         // sendToHardware 토글이 켜져 있더라도 bus == nil 이면 송출은 silent no-op
         // (applyToHardware:guard let bus = store.bus else { return }) — UI 도 그에 맞춰
         // "송출 중" 으로 가짜 안내하지 않음.
@@ -351,108 +324,8 @@ public struct MotionStudioView: View {
         return .editing
     }
 
-    private var sourceModeBadge: some View {
-        let mode = currentSourceMode
-        let tint: Color = {
-            switch mode {
-            case .editing:      return DFColor.textSecondary
-            case .liveEditing:  return DFColor.warning  // 송출은 맞지만 부분적 — 주황.
-            case .previewing:   return DFColor.info
-            case .broadcasting: return DFColor.danger   // 전체 모션 송출 — 빨강.
-            }
-        }()
-        return HStack(spacing: DFSpace.xs) {
-            Image(systemName: mode.icon)
-                .font(.system(size: DFFontSize.s10))
-                .foregroundStyle(tint)
-            Text(mode.title)
-                .font(.system(size: DFFontSize.s10, weight: .semibold))
-                .foregroundStyle(tint)
-        }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(.regularMaterial)
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(tint.opacity(0.45), lineWidth: 0.8))
-        .help(mode.help)
-    }
-
-    private var pageMetaBadge: some View {
-        Group {
-            if let page = currentPage {
-                HStack(spacing: DFSpace.sm) {
-                    Image(systemName: "doc.text").foregroundStyle(DFColor.accent)
-                    VStack(alignment: .leading, spacing: DFSpace.none) {
-                        Text(page.name.isEmpty ? "동작 \(page.id)" : page.name)
-                            .font(DFFont.bodyEmph)
-                        Text(metaLine(for: page))
-                            .font(DFFont.caption.monospaced())
-                            .foregroundStyle(DFColor.textSecondary)
-                    }
-                }
-                .padding(.horizontal, DFSpace.md)
-                .padding(.vertical, DFSpace.sm)
-                .background(.regularMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
-            }
-        }
-    }
-
-    private func metaLine(for page: MotionPage) -> String {
-        var parts: [String] = []
-        parts.append("\(page.steps.count)단계")
-        if page.nextPage != 0 { parts.append("다음: 동작 \(page.nextPage)") }
-        if page.exitPage != 0 { parts.append("종료: 동작 \(page.exitPage)") }
-        return parts.joined(separator: " · ")
-    }
-
-    private var timelineSection: some View {
-        VStack(alignment: .leading, spacing: DFSpace.sm) {
-            transportRow
-
-            if let page = currentPage {
-                TimelineCanvas(
-                    page: page,
-                    selectedStep: Binding(
-                        get: { doc.selectedStep },
-                        set: { doc.selectedStep = $0; applySelectedStepToPose() }
-                    ),
-                    elapsedMs: player.elapsedMs,
-                    onSeek: { player.seek(toMs: $0) }
-                )
-
-                stepDetailRow(page: page)
-            } else {
-                ContentUnavailableView(
-                    "동작을 선택하세요",
-                    systemImage: "play.rectangle.on.rectangle",
-                    description: Text("왼쪽 목록에서 동작을 고르거나, ➕ 버튼으로 새로 만들거나, ⬇️ 로 .mtn 파일을 가져올 수 있어요.")
-                )
-            }
-        }
-    }
-
-    /// 영상 편집 도구 (Premiere / FCP / After Effects) 스타일의 transport bar.
-    /// 분리된 컴포넌트로 — `Motion/TransportBar.swift`.
-    private var transportRow: some View {
-        TransportBar(
-            player: player,
-            totalDurationMs: Double(currentPage?.totalDurationMs ?? 0),
-            stepCount: currentPage?.steps.count ?? 0,
-            hasBus: store.bus != nil,
-            sendToHardware: $sendToHardware,
-            isDirty: doc.isDirty,
-            executingOnRobot: doc.executingOnRobot,
-            canUndo: canUndo,
-            canRedo: canRedo,
-            onPlay: { startPlayback() },
-            onAddStep: { addStepFromCurrentPose() },
-            onCapture: { captureFromTelemetry() },
-            onRunOnRobot: { runCurrentPageOnRobot() },
-            onSave: { saveDocAs() },
-            onUndo: { undo() },
-            onRedo: { redo() }
-        )
-    }
+    // 사이클 259 (W4.3.6) — `timelineSection` / `transportRow` 는
+    // `MotionStudioTimeline` 으로 이동. centerColumn 에서 직접 호출.
 
     /// "로봇에 실행" — 현재 페이지를 1배속으로 재생 + sendToHardware 일시 활성 + 끝나면 복귀.
     /// LIVE 토글과 다름: 명시적 "한 번 실행" semantic, 진행 중 버튼 disabled + 상태 표시.
@@ -477,186 +350,9 @@ public struct MotionStudioView: View {
         }
     }
 
-    private func stepDetailRow(page: MotionPage) -> some View {
-        // 현재 step idx 가 안전한 범위인지.
-        let stepCount = page.steps.count
-        return HStack(spacing: DFSpace.md) {
-            // 키프레임 위치 label.
-            HStack(spacing: DFSpace.xs) {
-                Image(systemName: "key.horizontal.fill")
-                    .font(.system(size: DFFontSize.s11))
-                    .foregroundStyle(DFColor.forge)
-                Text("\(doc.selectedStep + 1) / \(stepCount)")
-                    .font(DFFont.bodyEmph.monospacedDigit())
-            }
-
-            Divider().frame(height: DFSize.iconMd2)
-
-            // 이동 시간 (playMs) — stepper 인라인 편집.
-            keyframeStepperField(
-                label: "이동",
-                valueMs: page.steps[safe: doc.selectedStep]?.playMs ?? 0,
-                range: 0...4096,    // .mtn raw 한계 (255 × 8ms = ~2040ms 권장, 여유로 4096).
-                stepMs: 8,           // .mtn raw 단위 (1 raw = 8ms).
-                tint: DFColor.accent
-            ) { newMs in
-                updateSelectedStepTiming(playMs: newMs, pauseMs: nil)
-            }
-
-            // 멈춤 시간 (pauseMs) — stepper 인라인 편집.
-            keyframeStepperField(
-                label: "정지",
-                valueMs: page.steps[safe: doc.selectedStep]?.pauseMs ?? 0,
-                range: 0...2040,
-                stepMs: 8,
-                tint: DFColor.textSecondary
-            ) { newMs in
-                updateSelectedStepTiming(playMs: nil, pauseMs: newMs)
-            }
-
-            Spacer()
-
-            // 키프레임 편집 클러스터 — Copy / Paste / Split (단축키 ⌘C / ⌘V / ⌘K).
-            HStack(spacing: DFSpace.micro2) {
-                keyframeIconButton(
-                    icon: "doc.on.doc",
-                    help: "키프레임 복사 (⌘C)",
-                    tint: DFColor.accent,
-                    enabled: true,
-                    action: { copySelectedStep() }
-                )
-                keyframeIconButton(
-                    icon: "doc.on.clipboard",
-                    help: doc.copiedStep == nil
-                        ? "먼저 키프레임을 복사하세요"
-                        : "복사한 키프레임 붙여넣기 (⌘V)",
-                    tint: DFColor.accent,
-                    enabled: doc.copiedStep != nil,
-                    action: { pasteStep() }
-                )
-                keyframeIconButton(
-                    icon: "scissors",
-                    help: "키프레임 쪼개기 (⌘K) — 중간 자세로 두 단계 분할",
-                    tint: DFColor.forge,
-                    enabled: (page.steps[safe: doc.selectedStep]?.playMs ?? 0) >= 16,
-                    action: { splitSelectedStep() }
-                )
-            }
-
-            Divider().frame(height: DFSize.iconMd2)
-
-            Button(role: .destructive) {
-                removeSelectedStep()
-            } label: {
-                Label("이 단계 삭제", systemImage: "trash")
-                    .font(.system(size: DFFontSize.s11, weight: .semibold))
-            }
-            .controlSize(.small)
-            .disabled(stepCount <= 1)
-            .help("동작에는 최소 한 단계가 있어야 해요")
-        }
-        .font(DFFont.caption)
-        .padding(.horizontal, DFSpace.sm)
-        .padding(.vertical, DFSpace.xs2)
-        .background(DFColor.elev2.opacity(DFOpacity.dim))
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-    }
-
-    /// 키프레임 편집 아이콘 버튼 — Copy / Paste / Split 공통 스타일.
-    private func keyframeIconButton(
-        icon: String,
-        help: String,
-        tint: Color,
-        enabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: DFFontSize.s11, weight: .semibold))
-                .foregroundStyle(enabled ? tint : DFColor.textSecondary.opacity(DFOpacity.disabled))
-                .frame(width: DFSize.iconMd, height: DFSize.iconMd)
-                .background(enabled ? tint.opacity(DFOpacity.subtle) : DFColor.elev2)
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DFRadius.xs2)
-                        .stroke(
-                            enabled ? tint.opacity(DFOpacity.strong) : DFColor.textSecondary.opacity(DFOpacity.subtle),
-                            lineWidth: DFSize.borderHairline
-                        )
-                )
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .help(help)
-    }
-
-    /// 키프레임 시간 stepper — 라벨 + 값 (mono) + Stepper +/-. 변경 시 onChange 콜.
-    private func keyframeStepperField(
-        label: String,
-        valueMs: Int,
-        range: ClosedRange<Int>,
-        stepMs: Int,
-        tint: Color,
-        onChange: @escaping (Int) -> Void
-    ) -> some View {
-        HStack(spacing: DFSpace.xs) {
-            Text(label)
-                .font(.system(size: DFFontSize.s11))
-                .foregroundStyle(DFColor.textSecondary)
-            Text("\(valueMs)ms")
-                .font(.system(size: DFFontSize.s11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(tint)
-                .frame(minWidth: 56, alignment: .trailing)
-                .monospacedDigit()
-            Stepper("",
-                    value: Binding(
-                        get: { valueMs },
-                        set: { onChange(max(range.lowerBound, min(range.upperBound, $0))) }
-                    ),
-                    in: range,
-                    step: stepMs)
-                .labelsHidden()
-                .controlSize(.mini)
-        }
-        .padding(.horizontal, DFSpace.xs2)
-        .padding(.vertical, DFSpace.xs)
-        .background(DFColor.canvas.opacity(DFOpacity.dim))
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.xs)
-                .stroke(tint.opacity(DFOpacity.subtle), lineWidth: DFSize.borderHairline)
-        )
-    }
-
-    /// 선택된 step 의 playMs / pauseMs 갱신. nil 인 인자는 변경 안 함.
-    private func updateSelectedStepTiming(playMs: Int?, pauseMs: Int?) {
-        guard doc.selectedPageIdx >= 0, doc.selectedPageIdx < doc.motion.pages.count else { return }
-        let stepCount = doc.motion.pages[doc.selectedPageIdx].steps.count
-        guard doc.selectedStep >= 0, doc.selectedStep < stepCount else { return }
-        var step = doc.motion.pages[doc.selectedPageIdx].steps[doc.selectedStep]
-        let oldStep = step
-        if let newPlay = playMs {
-            // playMs / pauseMs 모두 raw (×8 ms) 로 저장 — 8 단위 quantize.
-            let quantized = max(0, (newPlay / 8) * 8)
-            step.playTime = UInt8(clamping: quantized / 8)
-        }
-        if let newPause = pauseMs {
-            let quantized = max(0, (newPause / 8) * 8)
-            step.pauseTime = UInt8(clamping: quantized / 8)
-        }
-        guard step != oldStep else { return }   // 무의미한 변경 skip (undo 폭주 방지).
-        MotionPageActions.pushUndoSnapshot(in: doc)
-        doc.motion.pages[doc.selectedPageIdx].steps[doc.selectedStep] = step
-        MotionPageActions.markDirty(in: doc)
-        // Player 에 변경 반영 — 재생 중이면 다음 tick 부터 적용.
-        if let page = currentPage {
-            let wasPlaying = player.mode == .playing
-            let elapsed = player.elapsedMs
-            player.page = page
-            player.seek(toMs: elapsed)
-            if wasPlaying { player.play() }
-        }
-    }
+    // 사이클 259 (W4.3.6) — `stepDetailRow` / `keyframeStepperField` /
+    // `keyframeIconButton` / `updateSelectedStepTiming` 는 `MotionStudioTimeline`
+    // 으로 이동 (키프레임 편집 cluster 와 결속된 view-private helper).
 
     // MARK: - Right (inspector)
     //
@@ -887,12 +583,8 @@ public struct MotionStudioView: View {
     // (사이드바 전용 sheet item).
 }
 
-/// Array safe subscript — out-of-range index 시 nil (페이지 idx 안전 접근).
-fileprivate extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
+// 사이클 259 (W4.3.6) — Array safe subscript 는 stepDetailRow 전용
+// helper 였으므로 `MotionStudioTimeline` 으로 동반 이동 (fileprivate).
 
 /// MotionStudio 우측 자세 편집기 width를 드래그로 조절하는 splitter.
 struct MotionInspectorSplitter: View {

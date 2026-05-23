@@ -248,6 +248,26 @@ public final class ConnectionStore: ObservableObject {
     private var imuAccelZSamples: [UInt16] = []
     private static let imuScaleSamplesRequired = 25  // 5Hz × 5초 = 안정 추정.
 
+    /// **V266-2 testability hook** — `diagnoseImuScale` 직접 호출 (internal, XCTest 전용).
+    ///
+    /// 비유: 배터리 테스터가 특정 셀 전압을 직접 주입해 진단 로직을 검증하는 것처럼,
+    /// raw accel Z 값을 직접 주입해 scale suspicion 상태 전환을 단위 테스트.
+    ///
+    /// `runImuLoop` 없이 `diagnoseImuScale` 경로를 단독 검증. 25 sample (imuScaleSamplesRequired)
+    /// 이상 주입 후 `imuScaleSuspicion` 전환 여부 확인.
+    internal func _testFeedImuSample(accelZ: UInt16) {
+        let raw = ImuRaw(
+            gyroX: 512, gyroY: 512, gyroZ: 512,
+            accelX: 512, accelY: 512, accelZ: accelZ,
+            rollDeg: 0, pitchDeg: 0
+        )
+        diagnoseImuScale(raw)
+    }
+
+    /// **V266-2 testability hook** — `imuScaleSamplesRequired` 상수 노출 (internal).
+    /// 테스트가 정확한 sample 수를 알지 않아도 됨.
+    internal static var _testImuScaleSamplesRequired: Int { imuScaleSamplesRequired }
+
     /// IMU sample 별 호출 — accel Z raw 기반 plausibility 추정 (v1.7 의미체계).
     private func diagnoseImuScale(_ sample: ImuRaw) {
         imuAccelZSamples.append(sample.accelZ)
@@ -2013,6 +2033,14 @@ public final class ConnectionStore: ObservableObject {
                 )
             }
         }
+    }
+
+    /// **V266-2 testability hook** — `telemetryLoopPollFsr` 직접 호출 (internal, XCTest 전용).
+    ///
+    /// `runTelemetryLoop` 의 async loop 없이 FSR polling 1회 경로를 단위 테스트.
+    /// 3회 연속 실패 → `health.fsrPollingDisabled=true` + .telemetrySkip event 발화 경로 검증.
+    internal func _testPollFsrOnce(bus: any BusInterface) async {
+        await telemetryLoopPollFsr(bus: bus)
     }
 
     /// 1Hz sparkline append — voltage / avgTemperature 가 있으면 60-cap append.
