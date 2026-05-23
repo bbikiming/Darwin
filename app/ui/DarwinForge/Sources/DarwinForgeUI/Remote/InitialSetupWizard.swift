@@ -61,7 +61,15 @@ public final class InitialSetupState: ObservableObject {
 
     private var pollTask: Task<Void, Never>?
 
+    /// 사이클 194 (cycle 190 audit P0 #2): wizard 첫 진입 시각 — completed 이벤트 의
+    /// elapsed_ms 계산용. startAutoVerification 호출 시 set.
+    private var wizardStartedAt: Date?
+    /// 사이클 194: completed 이벤트 가 한 번만 발화 보장.
+    private var completedFired: Bool = false
+
     public func startAutoVerification() {
+        // 사이클 194: 첫 진입 시각 기록 (재진입 시 reset 안 함 — 누적 시간 정확).
+        if wizardStartedAt == nil { wizardStartedAt = Date() }
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -77,7 +85,28 @@ public final class InitialSetupState: ObservableObject {
     }
 
     public func mark(_ step: Step, _ status: StepStatus) {
+        // 사이클 194 (cycle 190 audit P0 #2): 모든 step status 전환 telemetry.
+        // 단일 hook — 자동 verify + 수동 button 둘 다 본 method 경유 → 발화 site 통합.
+        let from = statuses[step] ?? .pending
+        guard from != status else { return }  // no-op transition skip.
         statuses[step] = status
+        Harness.shared.record(
+            .setupWizardStepChanged, level: .info, actor: .user,
+            data: ["step": AnyCodable(String(describing: step)),
+                   "from": AnyCodable(String(describing: from)),
+                   "to": AnyCodable(String(describing: status))]
+        )
+        // 사이클 194: 모든 step completed 첫 전환 → wizard completed telemetry.
+        if !completedFired && allDone {
+            completedFired = true
+            let elapsedMs = wizardStartedAt.map {
+                Int(Date().timeIntervalSince($0) * 1000)
+            } ?? 0
+            Harness.shared.record(
+                .setupWizardCompleted, level: .notice, actor: .user,
+                data: ["elapsed_ms": AnyCodable(elapsedMs)]
+            )
+        }
     }
 
     public var allDone: Bool {
@@ -97,14 +126,15 @@ public final class InitialSetupState: ObservableObject {
             return false
         }()
         if bothOpen, statuses[.robotSetup] != .completed {
-            statuses[.robotSetup] = .completed
+            // 사이클 194: 자동 verify path 도 mark() 경유 — telemetry 일관성.
+            mark(.robotSetup, .completed)
         }
 
         // Mac SSH key: SSH BatchMode 즉시 응답.
         if statuses[.robotSetup] == .completed {
             let sshOK = await SSHShell.isReachable(host: host, user: username, timeout: 2.0)
             if sshOK, statuses[.macSSHKey] != .completed {
-                statuses[.macSSHKey] = .completed
+                mark(.macSSHKey, .completed)
             }
         }
     }

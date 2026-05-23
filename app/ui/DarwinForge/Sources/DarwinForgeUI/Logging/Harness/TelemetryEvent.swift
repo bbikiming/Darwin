@@ -174,6 +174,15 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: messages_cleared.
     public static let claudeSessionCleared: TelemetryKind = "claude.session_cleared"
 
+    // Setup wizard (사이클 194, cycle 190 audit P0 #2)
+    /// InitialSetupWizard 의 step status 변경 (vnc/robotSetup/macSSHKey/connect ×
+    /// pending/inProgress/verifying/completed). data: step, from_status, to_status.
+    /// 사용자 onboarding funnel 분석 — 어느 단계 에서 막히나, 자동 검증 vs 수동 비율.
+    public static let setupWizardStepChanged: TelemetryKind = "setup.wizard_step_changed"
+    /// 모든 step completed 첫 전환 — 사용자 onboarding 성공 funnel 끝.
+    /// data: elapsed_ms (Wizard 첫 진입 부터).
+    public static let setupWizardCompleted: TelemetryKind = "setup.wizard_completed"
+
     // Remote shell (사이클 182, P1 #3.6 fix, cycle 177 audit)
     /// 사용자가 RemoteShell 명령 송신. data: channel, cmd_len, cmd_hash.
     public static let remoteCommandSent: TelemetryKind = "remote.command_sent"
