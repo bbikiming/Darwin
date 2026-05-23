@@ -68,7 +68,7 @@ public enum TrialComparisonModel {
             return Double(improved) / Double(metrics.count)
         }
 
-        /// 한국어 sammary — "5 중 4 개선" 등.
+        /// 한국어 summary — "5 중 4 개선" 등.
         public var summaryLabel: String {
             let improved = metrics.filter { $0.isImprovement }.count
             let total = metrics.count

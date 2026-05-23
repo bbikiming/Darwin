@@ -25,6 +25,9 @@ public final class TeachCapture: ObservableObject {
     /// UserDefaults key — 스냅샷 메타데이터 배열.
     static let metaDefaultsKey = "df.teach.snapshot_meta"
 
+    /// 메타데이터 최대 보유 수 — FIFO 초과 시 오래된 항목 삭제.
+    static let maxPersistedMeta: Int = 100
+
     /// 스냅샷 메타데이터 — pose joint 데이터 제외 (PII 경계).
     private struct PersistedSnapshotMeta: Codable {
         let id: String
@@ -71,10 +74,22 @@ public final class TeachCapture: ObservableObject {
         )
     }
 
-    /// 현재 저장된 메타데이터 목록.
+    /// 사이클 212 (cycle 212 critic MINOR-1): decode 실패 시 telemetry 추가 —
+    /// saveMeta 의 encode 실패 telemetry 와 대칭. 스키마 마이그레이션 시
+    /// silent regression 방지.
     private func loadMeta() -> [PersistedSnapshotMeta] {
         guard let data = defaults.data(forKey: Self.metaDefaultsKey) else { return [] }
-        return (try? JSONDecoder().decode([PersistedSnapshotMeta].self, from: data)) ?? []
+        do {
+            return try JSONDecoder().decode([PersistedSnapshotMeta].self, from: data)
+        } catch {
+            Harness.shared.record(
+                .errorException, level: .error, actor: .system,
+                data: ["component": AnyCodable("TeachCapture.loadMeta"),
+                       "error_type": AnyCodable(String(describing: type(of: error))),
+                       "data_bytes": AnyCodable(data.count)]
+            )
+            return []
+        }
     }
 
     /// 메타데이터 목록 저장.
@@ -98,6 +113,7 @@ public final class TeachCapture: ObservableObject {
     }
 
     /// 스냅샷 메타데이터 항목 추가.
+    /// 사이클 212: maxPersistedMeta 초과 시 오래된(뒤쪽) 항목 FIFO 삭제.
     private func appendMeta(for snap: PoseSnapshot) {
         var list = loadMeta()
         let entry = PersistedSnapshotMeta(
@@ -106,6 +122,9 @@ public final class TeachCapture: ObservableObject {
             timestamp: isoFormatter.string(from: snap.capturedAt)
         )
         list.insert(entry, at: 0)
+        if list.count > Self.maxPersistedMeta {
+            list = Array(list.prefix(Self.maxPersistedMeta))
+        }
         saveMeta(list)
     }
 

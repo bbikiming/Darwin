@@ -8,6 +8,7 @@ public struct TeachModeView: View {
     @StateObject private var camera = CameraController()
     @State private var snapshotName: String = ""
     @State private var selectedSnapshot: TeachCapture.PoseSnapshot?
+    @State private var showComparison: Bool = false
     @State private var torqueSidebarOpen: Bool = true
     @Environment(\.dfWindowWidth) private var winWidth
 
@@ -259,11 +260,20 @@ public struct TeachModeView: View {
                 }
 
                 if capture.snapshots.isEmpty {
-                    Text("저장된 자세 없음 — [스냅샷] 으로 현재 자세 캡처")
-                        .font(DFFont.caption)
-                        .foregroundStyle(DFColor.textSecondary)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity)
+                    VStack(spacing: DFSpace.xs) {
+                        Text("저장된 자세 없음 — [스냅샷] 으로 현재 자세 캡처")
+                            .font(DFFont.caption)
+                            .foregroundStyle(DFColor.textSecondary)
+                        // 사이클 212: 이전 세션 스냅샷 메타데이터 복원 힌트.
+                        if capture.persistedSnapshotCount > 0 {
+                            Label("이전 세션에서 \(capture.persistedSnapshotCount)개의 스냅샷이 있었습니다 (재캡처 필요)",
+                                  systemImage: "clock.arrow.circlepath")
+                                .font(.system(size: DFFontSize.s10))
+                                .foregroundStyle(DFColor.info)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
                 } else {
                     VStack(spacing: DFSpace.xs) {
                         ForEach(capture.snapshots) { s in
@@ -271,7 +281,72 @@ public struct TeachModeView: View {
                         }
                     }
                 }
+
+                // 사이클 212: PoseDeltaCalculator UI wire-up (cycle 207 model).
+                if capture.snapshots.count >= 2 {
+                    Divider()
+                    poseDeltaSection
+                }
             }
+        }
+    }
+
+    // MARK: - Pose Delta Comparison (사이클 212)
+
+    @ViewBuilder
+    private var poseDeltaSection: some View {
+        let snaps = capture.snapshots
+        if snaps.count >= 2 {
+            let cmp = PoseDeltaCalculator.compare(
+                baseline: snaps[1].pose,
+                candidate: snaps[0].pose,
+                baselineLabel: snaps[1].name,
+                candidateLabel: snaps[0].name
+            )
+            DisclosureGroup("자세 비교 — \(snaps[0].name) vs \(snaps[1].name)") {
+                VStack(alignment: .leading, spacing: DFSpace.xs2) {
+                    HStack {
+                        Text("RMS Δ")
+                            .font(DFFont.caption.bold())
+                            .foregroundStyle(DFColor.textSecondary)
+                        Text(String(format: "%.1f°", cmp.rmsDeg))
+                            .font(.system(size: DFFontSize.s13, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(cmp.rmsDeg > 10 ? DFColor.warning : DFColor.success)
+                    }
+                    if let peak = cmp.peakJoint {
+                        HStack {
+                            Text("최대 편차")
+                                .font(DFFont.caption.bold())
+                                .foregroundStyle(DFColor.textSecondary)
+                            Text("\(peak.jointName) \(String(format: "%+.1f°", peak.deltaDeg))")
+                                .font(.system(size: DFFontSize.s11, design: .monospaced))
+                                .foregroundStyle(DFColor.accent)
+                        }
+                    }
+                    // top 5 관절 delta bar
+                    let sorted = cmp.perJointDeltas.sorted { $0.absDeltaDeg > $1.absDeltaDeg }.prefix(5)
+                    ForEach(Array(sorted.enumerated()), id: \.offset) { _, d in
+                        HStack(spacing: DFSpace.xs) {
+                            Text(d.jointName)
+                                .font(.system(size: DFFontSize.s9, design: .monospaced))
+                                .frame(width: 70, alignment: .leading)
+                            GeometryReader { geo in
+                                let maxDeg = cmp.peakJoint?.absDeltaDeg ?? 1
+                                let ratio = maxDeg > 0 ? d.absDeltaDeg / maxDeg : 0
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(d.deltaDeg > 0 ? DFColor.info : DFColor.warning)
+                                    .frame(width: geo.size.width * ratio)
+                            }
+                            .frame(height: 8)
+                            Text(String(format: "%+.1f°", d.deltaDeg))
+                                .font(.system(size: DFFontSize.s9, design: .monospaced))
+                                .frame(width: 50, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding(.top, DFSpace.xs)
+            }
+            .font(DFFont.caption)
         }
     }
 

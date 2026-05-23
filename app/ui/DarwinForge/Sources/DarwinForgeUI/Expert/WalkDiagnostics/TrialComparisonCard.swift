@@ -138,15 +138,25 @@ public struct TrialComparisonCard: View {
         }
     }
 
+    /// 사이클 212 (cycle 212 critic MAJOR-1): disk I/O on main thread — loadTrials() 와
+    /// 동일 패턴 적용. WalkTrialStore.load(id:) 는 Data(contentsOf:) + JSONDecoder 사용.
     private func computeComparison() {
-        guard let baselineTrial = WalkTrialStore.shared.load(id: baselineId),
-              let candidateTrial = WalkTrialStore.shared.load(id: candidateId)
-        else { comparison = nil; return }
-        comparison = TrialComparisonModel.compare(
-            baselineId: baselineId,
-            candidateId: candidateId,
-            baseline: baselineTrial.outcome,
-            candidate: candidateTrial.outcome
-        )
+        let bId = baselineId
+        let cId = candidateId
+        Task.detached(priority: .userInitiated) {
+            guard let baselineTrial = WalkTrialStore.shared.load(id: bId),
+                  let candidateTrial = WalkTrialStore.shared.load(id: cId)
+            else {
+                await MainActor.run { self.comparison = nil }
+                return
+            }
+            let result = TrialComparisonModel.compare(
+                baselineId: bId,
+                candidateId: cId,
+                baseline: baselineTrial.outcome,
+                candidate: candidateTrial.outcome
+            )
+            await MainActor.run { self.comparison = result }
+        }
     }
 }

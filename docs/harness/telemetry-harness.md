@@ -107,8 +107,11 @@
 | `motion` | `load`, `play_start`, `play_complete`, `play_abort`, `record_start`, `record_stop` | `{ "page_id": 12, "step_count": 8 }` |
 | `walklab` | `start`, `stop`, `emergency_stop`, `config_change`, `preset_applied`, `experiment_start`, `experiment_complete` | `{ "preset": "smooth-default" }` |
 | `pose` | `apply_start`, `apply_complete`, `apply_failed`, `cancel` | `{ "joints": 6, "profile": "smooth", "ms": 942 }` |
-| `pilot` | `mode_changed`, `dpad`, `head_track_on`, `head_track_off`, `e_stop` | `{ "mode": "walk" }` |
-| `teach` | `capture_start`, `capture_stop`, `pose_recorded` | `{ "duration_s": 4.2 }` |
+| `pilot` | `mode_changed`, `e_stop`, `recovery_requested`, `intent_blocked`, `bridge_disabled` | `{ "source": "keyboard", "preset": "walk" }` |
+| `teach` | `capture_start`, `capture_stop`, `snapshot_captured`, `snapshot_applied`, `snapshot_deleted`, `snapshots_cleared`, `torque_changed`, `snapshot_meta_restored` | `{ "name_hash": "a1b2", "joint_count": 20 }` |
+| `remote` | `command_sent`, `command_responded`, `command_error`, `channel_changed` | `{ "channel": "ssh", "cmd_hash": "a1b2" }` |
+| `setup` | `wizard_step_changed`, `wizard_completed` | `{ "step": "vnc", "elapsed_ms": 42000 }` |
+| `joint` | `action_requested`, `action_failed` | `{ "action": "torque_on", "joint_id": 1 }` |
 | `claude` | `prompt_sent`, `response_received`, `tool_invoked`, `error` | `{ "turn": 7, "input_tokens": 1234 }` (raw text **X**) |
 | `heartbeat` | `tick` | full context block; data 비움 |
 | `error` | `exception`, `boundary` | `{ "msg": "...", "file": "...", "line": 42 }` |
