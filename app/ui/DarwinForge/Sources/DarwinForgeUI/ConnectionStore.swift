@@ -61,24 +61,36 @@ public final class ConnectionStore: ObservableObject {
     /// 가장 최근 폴링 텔레메트리 (StatusBar / Studio 등 위젯이 구독).
     @Published public var lastTelemetry: TelemetrySnapshot?
 
+    /// **Wave 4.2.1 (사이클 V260-1)** — telemetry / IMU / FSR / sparkline health state.
+    /// 종전: 17개 @Published 가 본 store 에 산재 → SwiftUI 가 작은 통계 갱신에도
+    ///       전체 view graph 재평가 + god object 화. 신규: 별도 ObservableObject 로 격리.
+    /// `health` 직접 노출은 새 코드용. 기존 view 의 `store.lastSuccessAt` 등은 아래
+    /// backward-compat computed property 로 delegate 유지 — view migration 불필요.
+    @Published public private(set) var health: ConnectionHealthStore
+
+    // MARK: - Backward-compat delegate (view migration 없이 transparent)
+    //
+    // 모든 health-related property 는 `health` 로 위임. 외부 view/test 코드가 path
+    // `store.lastSuccessAt` 등을 그대로 사용 가능. Wave 5 의 @Observable migration 이후
+    // 단계적으로 `store.health.lastSuccessAt` 로 callsite 갱신 가능.
+
     /// 가장 최근 성공한 boardSnapshot 호출의 wall-clock 시점.
-    /// 대시보드의 "마지막 통신" 표시용. 연결됨 상태에서 매 1초 갱신.
-    @Published public private(set) var lastSuccessAt: Date?
+    public var lastSuccessAt: Date? { health.lastSuccessAt }
     /// 연결 시작 시각 — uptime 계산용.
-    @Published public private(set) var connectedAt: Date?
+    public var connectedAt: Date? { health.connectedAt }
     /// 누적 통신 통계 (대시보드 카드).
-    @Published public private(set) var successCount: Int = 0
-    @Published public private(set) var failureCount: Int = 0
+    public var successCount: Int { health.successCount }
+    public var failureCount: Int { health.failureCount }
     /// 마지막 boardSnapshot 호출의 측정 latency (ms). 없으면 nil.
-    @Published public private(set) var lastRoundTripMs: Double?
+    public var lastRoundTripMs: Double? { health.lastRoundTripMs }
 
     // MARK: - IMU 전용 health (Codex 권고 — 잔여 2 잔여 4)
     //
     // IMU 는 board snapshot 과 별도 read — 같은 bus 라도 일부 펌웨어 / 모델은 IMU register
     // 응답 안 함. 전체 watchdog 에 합치면 "연결 끊김" 으로 오진. 별도 카운터로 추적.
-    @Published public private(set) var lastImuSuccessAt: Date?
-    @Published public private(set) var imuConsecutiveFailures: Int = 0
-    @Published public private(set) var lastImuError: String?
+    public var lastImuSuccessAt: Date? { health.lastImuSuccessAt }
+    public var imuConsecutiveFailures: Int { health.imuConsecutiveFailures }
+    public var lastImuError: String? { health.lastImuError }
 
     // MARK: - §4 wiring (2026-05-17 handoff)
     //
@@ -95,20 +107,20 @@ public final class ConnectionStore: ObservableObject {
     ///     매번 다른 값이라 packet-level duplicate 검출 불가)
     /// 진짜 duplicate ratio 가 필요하면 firmware 에 sequence field 추가 + ImuRaw 에
     /// 노출 후 그 값으로 교체.
-    @Published public private(set) var imuSequenceCount: UInt32 = 0
+    public var imuSequenceCount: UInt32 { health.imuSequenceCount }
     /// 누적 bus write 실패 (setPosition / setTorque / setPGain 등). 시작 시점 0 가정.
-    @Published public private(set) var busWriteFailureCount: Int = 0
+    public var busWriteFailureCount: Int { health.busWriteFailureCount }
     /// 누적 bus read 실패 (readImu / boardSnapshot / readState).
-    @Published public private(set) var busReadFailureCount: Int = 0
+    public var busReadFailureCount: Int { health.busReadFailureCount }
 
     /// **v1.11.1 (2026-05-18 사용자 review MEDIUM-5)**: WalkLabSession 의 setPosition
     /// catch 경로에서 호출. underscore prefix 는 internal API 표시. external 직접 호출 X.
     public func _bumpBusWriteFailureCount() {
-        busWriteFailureCount &+= 1
+        health.bumpBusWriteFailure()
     }
     /// Mac-side complementary filter (Sprint 18 Phase E, Codex 잔여 4 v1.5 minimal viable).
     /// 5Hz IMU polling × tau=0.5s — alpha ≈ 0.71. 정적 tilt 보다 약간 개선.
-    @Published public private(set) var imuFilter: ImuFilter = ImuFilter()
+    public var imuFilter: ImuFilter { health.imuFilter }
 
     /// 사이클 159 (P0-1, gyro closed-loop review fix):
     /// IMU polling 동적 모드. walk 활성 시 fast (50ms = 20Hz), idle 시 slow (200ms = 5Hz).
@@ -131,33 +143,25 @@ public final class ConnectionStore: ObservableObject {
     /// **v1.11.17 (2026-05-19) — LiveGyroPanel 용**: 최신 raw IMU sample.
     /// 종전: imuFilter 만 expose 라 gyro 각속도 (X/Y/Z dps) UI 노출 불가.
     /// runImuLoop 가 매 polling 마다 갱신. UI 가 자이로 패널에서 직접 read.
-    @Published public private(set) var lastImuRaw: ImuRaw? = nil
+    public var lastImuRaw: ImuRaw? { health.lastImuRaw }
 
     /// **v1.11.25 (2026-05-21) audit P0 robot-D** — 좌/우 FSR (foot pressure) 측정값.
     /// telemetry loop 가 1Hz 로 polling (board read 와 같은 cadence). board 미장착 시 nil.
-    @Published public private(set) var lastFsrLeft: FsrReading? = nil
-    @Published public private(set) var lastFsrRight: FsrReading? = nil
+    public var lastFsrLeft: FsrReading? { health.lastFsrLeft }
+    public var lastFsrRight: FsrReading? { health.lastFsrRight }
     /// FSR 마지막 성공 read 시각 — telemetry loop 가 update.
-    @Published public private(set) var lastFsrSuccessAt: Date? = nil
+    public var lastFsrSuccessAt: Date? { health.lastFsrSuccessAt }
     /// FSR 연속 실패 카운터 — 3회 도달 시 polling stop (board 미장착으로 간주).
-    @Published public private(set) var fsrConsecutiveFailures: Int = 0
+    public var fsrConsecutiveFailures: Int { health.fsrConsecutiveFailures }
     /// FSR polling 자동 비활성 — board 미장착 robot 에서 spam 차단.
-    @Published public private(set) var fsrPollingDisabled: Bool = false
+    public var fsrPollingDisabled: Bool { health.fsrPollingDisabled }
 
     /// IMU 가 5초 이상 응답 없으면 stale — UI 가 "IMU 오래됨" 라벨 표시.
-    public var isImuStale: Bool {
-        guard let at = lastImuSuccessAt else { return imuConsecutiveFailures > 0 }
-        return Date().timeIntervalSince(at) > 5.0
-    }
+    public var isImuStale: Bool { health.isImuStale }
 
     /// IMU 가 3회 연속 실패 + 마지막 성공이 없거나 30초 이상 전이면 unavailable —
     /// 사용자에게 "IMU 사용 불가" 라고 명확히 표시.
-    public var isImuUnavailable: Bool {
-        if let at = lastImuSuccessAt {
-            return Date().timeIntervalSince(at) > 30.0 && imuConsecutiveFailures >= 3
-        }
-        return imuConsecutiveFailures >= 3
-    }
+    public var isImuUnavailable: Bool { health.isImuUnavailable }
 
     /// 모터 이동 속도 프로파일 — Studio/Teach 의 자세 변경 시 사용.
     /// 기본: smooth (1초 보간).
@@ -167,8 +171,8 @@ public final class ConnectionStore: ObservableObject {
     @Published public private(set) var isMovingPose: Bool = false
 
     /// 배터리 sparkline용 - 최근 60 sample (1 Hz 폴링 시 1분).
-    @Published public private(set) var voltageHistory: [Double] = []
-    @Published public private(set) var avgTempHistory: [Double] = []
+    public var voltageHistory: [Double] { health.voltageHistory }
+    public var avgTempHistory: [Double] { health.avgTempHistory }
 
     private var pollTask: Task<Void, Never>?
     private var cadence: TelemetryCadence = .off
@@ -281,6 +285,8 @@ public final class ConnectionStore: ObservableObject {
 
     public init(harness: (any HarnessFacade)? = nil) {
         self.harness = harness ?? LiveHarness.shared
+        // Wave 4.2.1 — health state 격리 store. init 시 빈 상태.
+        self.health = ConnectionHealthStore()
         // 앱 시작 시 마지막 성공 endpoint 복원.
         if let data = UserDefaults.standard.data(forKey: Self.lastEndpointKey),
            let ep = try? JSONDecoder().decode(Endpoint.self, from: data) {
@@ -401,11 +407,7 @@ public final class ConnectionStore: ObservableObject {
                 self.reconnectAttempt = 0
                 self.status = .connected(snap)
                 self.lastTelemetry = TelemetrySnapshot(board: snap, joints: [:])
-                self.connectedAt = Date()
-                self.lastSuccessAt = Date()
-                self.successCount = 1
-                self.failureCount = 0
-                self.lastRoundTripMs = rtt
+                self.health.recordConnected(rttMs: rtt)
                 startTelemetry(cadence: .light)
                 // v1.12.2 telemetry — 연결 성공 (redacted).
                 harness.record(
@@ -589,16 +591,12 @@ public final class ConnectionStore: ObservableObject {
         activeEndpoint = nil
         jointStates.removeAll()
         lastTelemetry = nil
-        voltageHistory.removeAll()
-        avgTempHistory.removeAll()
+        health.resetConnectionStats()
         // 2026-05-17 disconnect 시 IMU scale 진단 reset — 다음 연결에서 재진단.
         imuAccelZSamples.removeAll()
         imuAccelZMagnitudeAvg = 0
         imuScaleSuspicion = .unknown
         jointConsecutiveFailures.removeAll()
-        connectedAt = nil
-        lastSuccessAt = nil
-        lastRoundTripMs = nil
         status = .disconnected
     }
 
@@ -1100,8 +1098,7 @@ public final class ConnectionStore: ObservableObject {
         activeEndpoint = nil
         jointStates.removeAll()
         lastTelemetry = nil
-        voltageHistory.removeAll()
-        avgTempHistory.removeAll()
+        health.resetConnectionStats()
         // 2026-05-17 disconnect 시 IMU scale 진단 reset — 다음 연결에서 재진단.
         imuAccelZSamples.removeAll()
         imuAccelZMagnitudeAvg = 0
@@ -1654,12 +1651,7 @@ public final class ConnectionStore: ObservableObject {
                 let wasUnavailable = prevImuUnavailable
                 let wasStale = prevImuStale
                 let priorFailures = self.imuConsecutiveFailures
-                self.imuFilter.update(value)
-                self.lastImuRaw = value
-                self.lastImuSuccessAt = Date()
-                self.imuConsecutiveFailures = 0
-                self.lastImuError = nil
-                self.imuSequenceCount &+= 1
+                self.health.recordImuSuccess(raw: value)
                 self.diagnoseImuScale(value)
                 if let snap = self.lastTelemetry {
                     self.lastTelemetry = TelemetrySnapshot(board: snap.board, joints: snap.joints, imu: value)
@@ -1695,9 +1687,7 @@ public final class ConnectionStore: ObservableObject {
                 prevImuStale = false
 
             case .failure(let error):
-                self.imuConsecutiveFailures &+= 1
-                self.busReadFailureCount &+= 1
-                self.lastImuError = error.localizedDescription
+                self.health.recordImuFailure(error: error)
                 // **v1.14.2** — 상태 전환 검출 (failure 누적이 임계 넘는 첫 순간).
                 let nowUnavailable = isImuUnavailable
                 let nowStale = isImuStale && !nowUnavailable
@@ -1768,12 +1758,10 @@ public final class ConnectionStore: ObservableObject {
                 case .success(let snap):
                     board = snap
                     let rtt = Date().timeIntervalSince(t0) * 1000
-                    self.lastRoundTripMs = rtt
-                    self.lastSuccessAt = Date()
-                    self.successCount &+= 1
+                    self.health.recordSuccess(rttMs: rtt)
                 case .failure(let error):
                     didFail = true
-                    self.failureCount &+= 1
+                    self.health.recordFailure()
                     handleBusError(error)
                 }
 
@@ -1793,25 +1781,24 @@ public final class ConnectionStore: ObservableObject {
                             }()
                             return (l, r)
                         }.value
-                    var fsrOk = false
-                    if case .success(let l) = fsrResult.0 {
-                        self.lastFsrLeft = l; fsrOk = true
-                    }
-                    if case .success(let r) = fsrResult.1 {
-                        self.lastFsrRight = r; fsrOk = true
-                    }
+                    let leftOpt: FsrReading? = {
+                        if case .success(let l) = fsrResult.0 { return l } else { return nil }
+                    }()
+                    let rightOpt: FsrReading? = {
+                        if case .success(let r) = fsrResult.1 { return r } else { return nil }
+                    }()
+                    let fsrOk = (leftOpt != nil) || (rightOpt != nil)
                     if fsrOk {
-                        self.lastFsrSuccessAt = Date()
-                        self.fsrConsecutiveFailures = 0
+                        self.health.updateFsr(left: leftOpt, right: rightOpt)
                     } else {
-                        self.fsrConsecutiveFailures &+= 1
-                        if self.fsrConsecutiveFailures >= 3 {
-                            self.fsrPollingDisabled = true
+                        self.health.bumpFsrFailure()
+                        if self.health.fsrConsecutiveFailures >= 3 {
+                            self.health.disableFsrPolling()
                             // event tee — Harness 가 trace.
                             harness.record(
                                 .telemetrySkip, level: .info, actor: .system,
                                 data: ["reason": AnyCodable("fsr_board_missing"),
-                                       "consecutive_failures": AnyCodable(self.fsrConsecutiveFailures)]
+                                       "consecutive_failures": AnyCodable(self.health.fsrConsecutiveFailures)]
                             )
                         }
                     }
@@ -1851,12 +1838,10 @@ public final class ConnectionStore: ObservableObject {
             // 1초당 1회 sparkline에 추가.
             if tick % 5 == 0 {
                 if let v = board?.voltageVolts {
-                    voltageHistory.append(v)
-                    if voltageHistory.count > 60 { voltageHistory.removeFirst() }
+                    health.appendVoltage(v)
                 }
                 if let t = snap.avgTemperature {
-                    avgTempHistory.append(t)
-                    if avgTempHistory.count > 60 { avgTempHistory.removeFirst() }
+                    health.appendAvgTemp(t)
                 }
             }
 

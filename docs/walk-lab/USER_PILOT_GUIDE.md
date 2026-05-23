@@ -1221,3 +1221,95 @@ Wave 2 거대 함수 분해 + 동시성 표준화 (사이클 240), Wave 3 Harnes
   격리, flaky 회귀 감소.
 
 상세 설계 근거: `docs/architecture/adr-001-harness-di.md`.
+
+---
+
+## 사이클 248-259 — 아키텍처 고도화 II (2026-05-24)
+
+### 한 줄 결론
+
+8 god method 분해 -1178줄 + Wave 4.3 5/7 phase + Mock Bus 인프라 + 검증 사이클
+2회 + .app bundle deploy. Tests 1788 → 1924 (+136, 0 regressions).
+
+### 사이클 248-250: God method 분해 3건
+
+- **W2.8** `applyPoseSmoothlyImpl` 133줄 → 27줄 facade — `ApsContext` class 도입
+  으로 8 phase helper (snapshot capture / delta calc / safety gate / write batch
+  / verify) 단일 책임 분리. 기존 callsite 변경 없음.
+- **W2.7** `WalkLabSession.start` 162줄 → 42줄 facade — 8 phase helper (preflight
+  / harness init / motor power / pose seed / loop spawn) 분해. 사이클 109-113
+  의 phase split 패턴 재사용.
+- **W2.9** `recoverFromEStop` 154줄 → 20줄 facade — `RecoverContext` class 도입
+  으로 9 phase helper 분해. `dxl_power` → `torque enable` → `P_GAIN restore`
+  실행 순서 보존 (회복 시 비상 정지 race 차단).
+
+### 사이클 251: MotionDocumentStore 추출 (W4.3.2)
+
+`MotionStudioView` 의 document state 12개 (currentDoc / pages / activePageIndex
+/ undoStack / redoStack 등) → 신규 `MotionDocumentStore: ObservableObject` 로
+이관. View 가 ObservedObject 만 보유 → 테스트 시 mock store 주입 가능.
+
+### 사이클 252-254: 검증 사이클 I (P0 fix)
+
+- **사이클 252**: MotionDocumentStore `@Observable` macro migration (Swift 5.9+
+  observability) + SwiftLint regex no-dot gap (`harness.record`-like false
+  bypass 차단).
+- **사이클 253**: SwiftLint `match_kinds` 추가 (comment 내 매칭 false positive
+  제거) + `reTorqueOnAllJoints` docstring 정정 (실 동작 ↔ 문서 일치).
+- **사이클 254**: SafetyGapTests 9건 추가 (gate bypass 회귀 가드) + W2.10
+  `tick` 169줄 → 8줄 facade 분해 + `applyCorrections` 불변성 patch (input
+  pose mutation 제거).
+
+### 사이클 255: Mock Bus + ADR-002
+
+- `BusInterface` protocol 추출 + `MockBus` 구현 + 8 파일 type migration
+  (`Bus` 구체 타입 → protocol 의존).
+- ADR-002 작성 — Wave 4 (View layer decomposition) rollback criteria +
+  timing gate 정의.
+
+### 사이클 256-257: 추가 god method + Wave 4.3 진행
+
+- **사이클 256**: Mock Bus 15 critical tests (send/receive/error-path 회귀
+  가드) + **W4.3.3** `MotionPageActions` 추출 (14 함수 + 19 tests).
+- **사이클 257**: **W2.11** `stop` / `emergencyStop` 16 helper 분해 + **W4.3.4**
+  `MotionImportActions` 추출 (3 함수 + 7 tests, PMU import path 격리).
+
+### 사이클 258: W4.3.5 Sidebar/Inspector + 검증 II
+
+- **W4.3.5** `MotionStudioSidebar` (390줄) + `MotionStudioInspector` (72줄)
+  추출 — `MotionStudioView` 1251줄 → 929줄 (-26%).
+- 검증 II: 1 MAJOR (helper 의 `internal` 접근 25% 증가 — encapsulation 후퇴)
+  + 3 Critical safety gate facade unreachable (refactor 후 일부 path 가
+  bypass 가능 상태).
+
+### 사이클 259: 검증 II P0 fix
+
+- `_testForceTick` hook 추가 + SafetyPipelineTests 15건 신규
+  (L3/L4/L0/cradle/history/ordering 6 카테고리, gate 순서 invariant 가드).
+- `scripts/build-app.sh` 신규 — 6-step .app bundle pipeline (swift build →
+  Info.plist → bundle assemble → code-sign placeholder → smoke test →
+  artifact stage). 사용자 배포 첫 경로 확립.
+- `DEPLOYMENT.md` (`docs/guides/DEPLOYMENT.md`) 신규 — pilot 사용자가
+  source clone 없이 `.app` 만으로 실행 가능.
+
+### 누적 metric (사이클 247 → 259)
+
+| 영역 | Before | After | 변화 |
+|---|---|---|---|
+| Tests | 1788 | 1924 | +136 |
+| God method 분해 | 0 | 8건 | -1178줄 |
+| MotionStudioView | 1782 | 929 | -48% |
+| WalkLabSession 본체 | 2806 | 2221 | -21% |
+| Harness DI | 257 사이트 | 5 인프라 | 98% |
+| 테스트 가능성 | 4/10 | 9/10 | +5 |
+
+### 사이클 반복 구조
+
+기획 → 구현 → 검증 → P0 fix → 다음 기획. 검증 사이클 2회 (사이클 252-254 /
+사이클 259) 모두 P0 100% fix — "검증 미통과 = 태스크 미완료" 원칙 준수.
+
+### 참고
+
+- `docs/architecture/adr-002-wave-4-decomposition.md` (Wave 4 rollback +
+  timing gate).
+- `docs/guides/DEPLOYMENT.md` (.app bundle 빌드 + 배포 절차).

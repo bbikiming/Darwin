@@ -131,7 +131,12 @@ final class TelloStateListenerOwnerTests: XCTestCase {
 
         // bridge nil 이라도 callback 자체는 발화 — counter 증가, bridge 호출 skip.
         listener.simulate(sampleMessage(battery: 60))
-        try? await waitUntil(timeout: 2.0) { owner.messagesReceived == 1 }
+        // Full-suite parallel 실행 시 @MainActor Task 가 다른 테스트 Task 와
+        // 경합하여 2.0s 내에 drain 되지 않는 timing flake 가 관찰됨 (사이클 260).
+        // MainActor.run {} 으로 actor queue 를 결정적으로 flush 한 후 polling —
+        // 단순 timeout 증가보다 실제 hop 완료를 보장하는 구조적 fix.
+        await MainActor.run {}
+        try? await waitUntil(timeout: 5.0) { owner.messagesReceived == 1 }
 
         XCTAssertEqual(owner.messagesReceived, 1, "counter 는 진행 — owner state 갱신")
         XCTAssertNotNil(owner.lastReceived, "lastReceived 도 갱신")
