@@ -33,6 +33,11 @@ public struct WalkLabIntegrationCards: View {
             operationStateCard
             attitudeAndComCard
             fallPredictorCard
+            // 사이클 183 (P1 #3.5 fix, cycle 177 audit): Trial Library 통합 — 과거
+            // trial vs 현재 metric 비교 view. 이전엔 WalkDiagnostics 가 live session
+            // 만 본 → 학습 / 진척 분석 불가능. 본 card 가 user-driven dropdown 으로
+            // 두 trial 의 4 metric diff 표시.
+            TrialComparisonCard()
         }
     }
 
