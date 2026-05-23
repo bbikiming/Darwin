@@ -164,10 +164,18 @@ public actor TelemetryRecorder {
         inFlight.append(stamped)
 
         // Counter updates for meta.
+        // 사이클 188: 신규 error-level kinds (cycle 181/182) 도 errorCount 에 반영.
+        // 종전: 4 kind 만 한정 → 신규 plan_execution_failed / remote.command_error 가
+        // silent — meta.errorCount 가 실제 보다 낮아 분석 도구 (SessionAnalysis) 가
+        // "오류 없음" 으로 오판.
+        // pilotEStop 은 의도적으로 level=.warn (사용자 정의 안전 액션, 시스템 오류 X) →
+        // 본 switch 의 errorCount 에는 포함 X. 분석 시 별도 카운트 가능 (kind 이름 으로).
         switch stamped.k.rawValue {
         case TelemetryKind.connectSuccess.rawValue: meta.connectCount &+= 1
         case TelemetryKind.errorException.rawValue, TelemetryKind.claudeError.rawValue,
-             TelemetryKind.busReadFail.rawValue, TelemetryKind.busWriteFail.rawValue:
+             TelemetryKind.busReadFail.rawValue, TelemetryKind.busWriteFail.rawValue,
+             TelemetryKind.claudePlanExecutionFailed.rawValue,
+             TelemetryKind.remoteCommandError.rawValue:
             if stamped.lv == .error { meta.errorCount &+= 1 }
         default: break
         }

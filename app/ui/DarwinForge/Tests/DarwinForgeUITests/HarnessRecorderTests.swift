@@ -100,6 +100,51 @@ final class HarnessRecorderTests: XCTestCase {
         XCTAssertGreaterThan(snapshot.sizeBytes, 0)
     }
 
+    /// 사이클 188: cycle 181 + 182 신규 error-level kind 도 errorCount 에 반영.
+    /// regression guard — 향후 신규 error kinds 추가 시 본 테스트 깨지면 switch case 갱신.
+    func testNewErrorKindsBumpErrorCount() async throws {
+        let recorder = try TelemetryRecorder(directory: tempDir, meta: makeMeta())
+
+        // cycle 181 — claude plan dispatcher fail.
+        await recorder.enqueue(TelemetryEvent(
+            session: "x", seq: 0, wall: "t", mono: 0,
+            kind: .claudePlanExecutionFailed, level: .error, actor: .system))
+        // cycle 182 — remote SSH/SMB command error.
+        await recorder.enqueue(TelemetryEvent(
+            session: "x", seq: 0, wall: "t", mono: 0,
+            kind: .remoteCommandError, level: .error, actor: .system))
+        // 추가 non-error level 같은 kind 는 카운트 안 함 (lv != .error).
+        await recorder.enqueue(TelemetryEvent(
+            session: "x", seq: 0, wall: "t", mono: 0,
+            kind: .claudePlanExecutionFailed, level: .warn, actor: .system))
+        // 비교용 — info level 의 신규 kind 는 카운트 안 함.
+        await recorder.enqueue(TelemetryEvent(
+            session: "x", seq: 0, wall: "t", mono: 0,
+            kind: .claudePlanApproved, level: .info, actor: .user))
+        await recorder.flush()
+
+        let snapshot = await recorder.meta
+        XCTAssertEqual(snapshot.eventCount, 4)
+        XCTAssertEqual(
+            snapshot.errorCount, 2,
+            "cycle 181 claudePlanExecutionFailed + cycle 182 remoteCommandError " +
+            "둘 다 .error level → errorCount += 2. .warn / .info 는 비카운트."
+        )
+    }
+
+    /// 사이클 188: pilotEStop 은 의도적으로 level=.warn (사용자 안전 액션, 시스템 오류 X).
+    /// errorCount 에 반영 안 됨 — 분석 시 별도 kind 카운트 가능.
+    func testPilotEStopDoesNotBumpErrorCount() async throws {
+        let recorder = try TelemetryRecorder(directory: tempDir, meta: makeMeta())
+        await recorder.enqueue(TelemetryEvent(
+            session: "x", seq: 0, wall: "t", mono: 0,
+            kind: .pilotEStop, level: .warn, actor: .user))
+        await recorder.flush()
+        let snapshot = await recorder.meta
+        XCTAssertEqual(snapshot.errorCount, 0,
+                       "pilotEStop@.warn 은 의도적 — errorCount 비반영")
+    }
+
     // MARK: - finalize
 
     func testFinalizeSetsEndedTimestamp() async throws {
