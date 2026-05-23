@@ -77,6 +77,7 @@ public struct ConnectionDashboardView: View {
 
     private var disconnectButton: some View {
         Button {
+            Harness.shared.record(.connectDisconnect, level: .info, actor: .user)
             store.disconnect()
             isPresented = false
         } label: {
@@ -172,21 +173,24 @@ public struct ConnectionDashboardView: View {
                     detail: "그래픽 화면 · 가상 키보드",
                     icon: "macwindow",
                     tint: DFColor.accent,
-                    urlString: "vnc://\(remoteHost):5900"
+                    urlString: "vnc://\(remoteHost):5900",
+                    buttonKey: "remote_vnc"
                 )
                 remoteToolButton(
                     label: "Vision Tool",
                     detail: "카메라 · 색상 튜닝 (브라우저)",
                     icon: "camera.viewfinder",
                     tint: DFColor.success,
-                    urlString: "http://\(remoteHost):8080"
+                    urlString: "http://\(remoteHost):8080",
+                    buttonKey: "remote_vision"
                 )
                 remoteToolButton(
                     label: "파일 시스템",
                     detail: "SMB 공유 (Finder)",
                     icon: "folder",
                     tint: DFColor.warning,
-                    urlString: "smb://\(remoteHost)"
+                    urlString: "smb://\(remoteHost)",
+                    buttonKey: "remote_smb"
                 )
             }
         }
@@ -199,8 +203,13 @@ public struct ConnectionDashboardView: View {
         )
     }
 
-    private func remoteToolButton(label: String, detail: String, icon: String, tint: Color, urlString: String) -> some View {
+    private func remoteToolButton(label: String, detail: String, icon: String, tint: Color, urlString: String, buttonKey: String) -> some View {
         Button {
+            Harness.shared.record(
+                .uiButtonTapped, level: .info, actor: .user,
+                data: ["button": AnyCodable(buttonKey),
+                       "url_hash": AnyCodable(Harness.shortHash(urlString))]
+            )
             if let url = URL(string: urlString) {
                 NSWorkspace.shared.open(url)
             }

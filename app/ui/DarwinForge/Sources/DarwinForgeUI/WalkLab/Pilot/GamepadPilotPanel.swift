@@ -244,8 +244,16 @@ public struct GamepadPilotPanel: View {
         guard let adapter else { return }
         if adapter.isRunning {
             adapter.stop()
+            Harness.shared.record(
+                .pilotAdapterStopped, level: .info, actor: .user,
+                data: ["source": AnyCodable("gamepad_panel_toggle")]
+            )
         } else {
             adapter.start()
+            Harness.shared.record(
+                .pilotAdapterStarted, level: .info, actor: .user,
+                data: ["source": AnyCodable("gamepad_panel_toggle")]
+            )
         }
     }
 }

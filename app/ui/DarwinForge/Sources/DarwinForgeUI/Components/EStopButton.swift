@@ -1,3 +1,4 @@
+import ForgeCore
 import SwiftUI
 
 /// L5 — 하드웨어 비상정지 (LLM 경로 우회).
@@ -64,6 +65,8 @@ public struct EStopButton: View {
     }
 
     private func trigger() {
+        Harness.shared.record(.pilotEStop, level: .warn, actor: .user,
+                              data: ["source": AnyCodable("estop_button")])
         Task { @MainActor in
             let r = await dispatcher.emergencyStop()
             lastAcknowledgement = r.speak

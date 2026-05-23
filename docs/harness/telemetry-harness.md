@@ -255,10 +255,10 @@ cycle 177 의 cross-menu audit 이후 Phase 2 instrumentation 가 광범위 진�
 |---|---|---|
 | `claude.*` | 8 (planApproved/Rejected/Executed/Failed/SessionCleared 신규 5) | 181 |
 | `remote.*` | 4 (commandSent/Responded/Error/ChannelChanged) | 182 |
-| `pilot.*` | 10 (modeChanged/eStop/recoveryRequested/intentBlocked/bridgeDisabled + adapterStarted/Stopped/controllerChanged/voiceError/voiceKeyword) | 213 |
+| `pilot.*` | 16 (modeChanged/eStop/recoveryRequested/intentBlocked/bridgeDisabled + adapterStarted/Stopped/controllerChanged/voiceError/voiceKeyword + hudAction/keyboardAction/sensitivityChanged + featureLevelChanged/demoModeRequested/demoModeResult/transitionAdvance/transitionCancel/reconnectTapped) | 216 |
 | `teach.torque_changed` | wired 4 sites | 193 |
 | `teach.snapshot_meta_restored` | 신규 (app launch restoration) | 206 |
-| `setup.*` | 2 (wizardStepChanged/Completed) | 194 |
+| `setup.*` | 9 (wizardStepChanged/Completed + conn_wizard_started/path_selected/oneclick_fired/oneclick_all_failed/retry/path_connect/advanced_toggle) | 215 |
 | `joint.*` | 2 (actionRequested/Failed) | 196 |
 | `ui.view_appeared` | 1 (cross-menu navigation) | 197 |
 | `walklab.freshness_changed` | 1 (didSet hook) | 200 |
