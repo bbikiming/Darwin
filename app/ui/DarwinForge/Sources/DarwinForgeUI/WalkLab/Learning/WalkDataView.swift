@@ -74,6 +74,11 @@ public struct WalkDataView: View {
                 Button {
                     showV2Panel.toggle()
                     if showV2Panel { claudeShowPanel = false }
+                    Harness.shared.record(
+                        .walklabDataAnalysisPanelToggle, level: .info, actor: .user,
+                        data: ["panel": AnyCodable("critic_v2"),
+                               "visible": AnyCodable(showV2Panel)]
+                    )
                 } label: {
                     Label(showV2Panel ? "Critic V2 숨김" : "Critic V2 (typed)",
                           systemImage: "sparkles.rectangle.stack.fill")
@@ -83,6 +88,11 @@ public struct WalkDataView: View {
                 Button {
                     claudeShowPanel.toggle()
                     if claudeShowPanel { showV2Panel = false }
+                    Harness.shared.record(
+                        .walklabDataAnalysisPanelToggle, level: .info, actor: .user,
+                        data: ["panel": AnyCodable("markdown"),
+                               "visible": AnyCodable(claudeShowPanel)]
+                    )
                 } label: {
                     Label(claudeShowPanel ? "Markdown 패널 숨김" : "Markdown 분석 (v1.11.9)",
                           systemImage: "sparkles")
@@ -424,6 +434,11 @@ public struct WalkDataView: View {
             return
         }
 
+        Harness.shared.record(
+            .walklabDataAnalysisStarted, level: .info, actor: .user,
+            data: ["session_count": AnyCodable(summaries.count)]
+        )
+
         // sessionId → jsonl 파일에서 sample 배열 load 후 phase 통계.
         let builder: (String) -> [WalkSessionClaudePrompt.PhaseStats] = { sessionId in
             guard let dir = WalkSessionStore.sessionsDir else { return [] }
@@ -577,7 +592,11 @@ public struct WalkDataView: View {
             }
             .padding(DFSpace.md)
         }
-        .onChange(of: summary.id) { _, _ in
+        .onChange(of: summary.id) { _, newId in
+            Harness.shared.record(
+                .walklabDataSessionSelected, level: .info, actor: .user,
+                data: ["session_id_hash": AnyCodable(Harness.shortHash(newId))]
+            )
             loadSamples(for: summary.id)
         }
         .onAppear {
@@ -824,6 +843,10 @@ public struct WalkDataView: View {
     }
 
     private func deleteSession(id: String) {
+        Harness.shared.record(
+            .walklabDataSessionDeleted, level: .warn, actor: .user,
+            data: ["session_id_hash": AnyCodable(Harness.shortHash(id))]
+        )
         guard let url = sessionFileURL(for: id) else { return }
         let summaryURL = url.deletingPathExtension().appendingPathExtension("summary.json")
         try? FileManager.default.removeItem(at: url)

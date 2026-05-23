@@ -214,6 +214,12 @@ public final class VoicePilotAdapter {
             data: ["matched": AnyCodable(true),
                    "keyword": AnyCodable(keyword)]
         )
+        // 키워드 매칭 + bridge dispatch 완료 — 음성 명령 빈도 분석용.
+        Harness.shared.record(
+            .pilotVoiceDispatched, level: .info, actor: .user,
+            data: ["keyword": AnyCodable(keyword),
+                   "text_hash": AnyCodable(Harness.shortHash(lastRecognized ?? ""))]
+        )
     }
 
     // MARK: - Keyword tables (immutable)

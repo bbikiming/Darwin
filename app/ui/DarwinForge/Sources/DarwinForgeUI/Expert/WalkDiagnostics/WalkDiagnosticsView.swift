@@ -223,7 +223,11 @@ public struct WalkDiagnosticsView: View {
                 .controlSize(.small)
                 .labelsHidden()
                 .frame(width: 200)
-                .onChange(of: source) { _, _ in
+                .onChange(of: source) { _, newSource in
+                    Harness.shared.record(
+                        .walklabDiagnosticsSourceChanged, level: .info, actor: .user,
+                        data: ["source": AnyCodable(newSource.rawValue)]
+                    )
                     // 모드 전환 = 데이터 의미가 달라짐 → 차트 초기화.
                     stop()
                     reset()
@@ -490,7 +494,13 @@ public struct WalkDiagnosticsView: View {
                 .help(isStoreConnected
                     ? "켜면 위 슬라이더·preset 의 명령이 100ms 마다 다리 12관절로 송출됩니다. 안전한 환경에서만 사용하세요."
                     : "로봇 연결 후 사용 가능합니다.")
-                .onChange(of: sendWalkToRobot) { _, _ in updateWalkSender() }
+                .onChange(of: sendWalkToRobot) { _, newValue in
+                    Harness.shared.record(
+                        .walklabDiagnosticsSendToggle, level: newValue ? .warn : .info, actor: .user,
+                        data: ["sending": AnyCodable(newValue)]
+                    )
+                    updateWalkSender()
+                }
                 .onChange(of: enabled) { _, _ in updateWalkSender() }
 
                 if !isStoreConnected {
@@ -1098,7 +1108,13 @@ public struct WalkDiagnosticsView: View {
     // MARK: - Engine control
 
     private func toggleRun() {
+        let willEnable = !enabled
         if enabled { stop() } else { start() }
+        Harness.shared.record(
+            .walklabDiagnosticsRunToggle, level: .info, actor: .user,
+            data: ["enabled": AnyCodable(willEnable),
+                   "source": AnyCodable(source.rawValue)]
+        )
     }
 
     private func start() {
@@ -1136,6 +1152,7 @@ public struct WalkDiagnosticsView: View {
     }
 
     private func reset() {
+        let priorSampleCount = data.gyroX.samples.count
         stop()
         simTime = 0
         sampleId = 0
@@ -1145,6 +1162,10 @@ public struct WalkDiagnosticsView: View {
         liveStartedAt = nil
         lastLiveImuTimestamp = nil
         data.clear()
+        Harness.shared.record(
+            .walklabDiagnosticsReset, level: .info, actor: .user,
+            data: ["sample_count": AnyCodable(priorSampleCount)]
+        )
     }
 
     private func pushCommand() {
@@ -1310,6 +1331,7 @@ public struct WalkDiagnosticsView: View {
     // MARK: - CSV export
 
     private func exportCsv() {
+        let sampleCount = data.gyroX.samples.count
         let csv = data.toCsv(gyroUnit: unitGyro, accelUnit: unitAccel, angleUnit: unitAngle)
         let ts = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -1318,6 +1340,11 @@ public struct WalkDiagnosticsView: View {
             try csv.write(to: url, atomically: true, encoding: .utf8)
             lastExportPath = url.path
             withAnimation { showExportToast = true }
+            Harness.shared.record(
+                .walklabDiagnosticsExport, level: .info, actor: .user,
+                data: ["sample_count": AnyCodable(sampleCount),
+                       "success": AnyCodable(true)]
+            )
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 withAnimation { showExportToast = false }
@@ -1325,6 +1352,11 @@ public struct WalkDiagnosticsView: View {
         } catch {
             lastExportPath = "export 실패: \(error.localizedDescription)"
             withAnimation { showExportToast = true }
+            Harness.shared.record(
+                .walklabDiagnosticsExport, level: .error, actor: .user,
+                data: ["sample_count": AnyCodable(sampleCount),
+                       "success": AnyCodable(false)]
+            )
         }
     }
 

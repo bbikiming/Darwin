@@ -246,28 +246,29 @@ Phase 2 (후속 PR): Teach 모드, Studio 인스펙터, Expert 탭 세부 인터
 
 ---
 
-## 11. Phase 2 통합 현황 (cycles 178-208, 2026-05-23)
+## 11. Phase 2 통합 현황 (cycles 178-223, 2026-05-23)
 
 cycle 177 의 cross-menu audit 이후 Phase 2 instrumentation 가 광범위 진행. 통합
 포인트 (위 §7) 외에 다음 신규 영역 추가:
 
 | Namespace | 누적 kind | 추가 cycle |
 |---|---|---|
-| `claude.*` | 8 (planApproved/Rejected/Executed/Failed/SessionCleared 신규 5) | 181 |
-| `remote.*` | 4 (commandSent/Responded/Error/ChannelChanged) | 182 |
-| `pilot.*` | 16 (modeChanged/eStop/recoveryRequested/intentBlocked/bridgeDisabled + adapterStarted/Stopped/controllerChanged/voiceError/voiceKeyword + hudAction/keyboardAction/sensitivityChanged + featureLevelChanged/demoModeRequested/demoModeResult/transitionAdvance/transitionCancel/reconnectTapped) | 216 |
+| `claude.*` | 10 (planApproved/Rejected/Executed/Failed/SessionCleared 신규 5 + intentDispatched/intentError) | 181, 220 |
+| `remote.*` | 7 (commandSent/Responded/Error/ChannelChanged + quickAction/presetChip/modeToggled) | 182, 220 |
+| `pilot.*` | 27 (safety_armed/disarmed/gate_blocked + action_bar_pressed/risk_confirmed/cancelled + camera_connect/head_tracking_toggle/sheet_opened + head_tracker_gain_changed/reset_defaults + hsv_load/write/reset + settings_saved/reset + featureLevelChanged/demoMode/transition/reconnect + modeChanged/eStop/recovery/intent/bridge/hud) | 216-223 |
+| `setup.*` | 14 (wizardStepChanged/Completed + conn_wizard_started/path_selected/oneclick_started/result/all_failed/diagnostics/probe/candidate + advanced_toggle) | 215, 220 |
+| `walklab.*` | 14 (trial 6 + balance 3 + calibration 3 + recommender 2) | 222-223 |
 | `teach.torque_changed` | wired 4 sites | 193 |
 | `teach.snapshot_meta_restored` | 신규 (app launch restoration) | 206 |
-| `setup.*` | 9 (wizardStepChanged/Completed + conn_wizard_started/path_selected/oneclick_fired/oneclick_all_failed/retry/path_connect/advanced_toggle) | 215 |
 | `joint.*` | 2 (actionRequested/Failed) | 196 |
 | `ui.view_appeared` | 1 (cross-menu navigation) | 197 |
 | `walklab.freshness_changed` | 1 (didSet hook) | 200 |
 
-### errorCountedKinds 단일 source of truth (cycle 192)
+### errorCountedKinds 단일 source of truth (cycle 223)
 
 `TelemetryRecorder.errorCountedKinds` constant 가 모든 error-level kind 매핑.
-신규 추가 시 본 list + 7 tests update 강제. 현재 12 kind (errorException +
-4 connect/bus + 1 pose + 1 walk + 2 claude + 1 remote + 1 joint + 1 pilot).
+신규 추가 시 본 list + 7 tests update 강제. 현재 13 kind (errorException +
+4 connect/bus + 1 pose + 1 walk + 3 claude + 1 remote + 1 joint + 1 pilot).
 
 ### PII redaction 패턴 (cycles 182, 187, 202)
 

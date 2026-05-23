@@ -293,8 +293,16 @@ public struct VoicePilotPanel: View {
         guard let adapter else { return }
         if adapter.isListening {
             adapter.stop()
+            Harness.shared.record(
+                .pilotVoiceToggle, level: .info, actor: .user,
+                data: ["listening": AnyCodable(false)]
+            )
         } else {
             adapter.start()
+            Harness.shared.record(
+                .pilotVoiceToggle, level: .info, actor: .user,
+                data: ["listening": AnyCodable(true)]
+            )
         }
     }
 

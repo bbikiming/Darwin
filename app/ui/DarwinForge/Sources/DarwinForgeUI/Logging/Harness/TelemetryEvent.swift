@@ -259,6 +259,14 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: action ("activate" / "retry" / "bridge_toggle"), enabled (Bool, 토글 시).
     public static let pilotHudAction: TelemetryKind = "pilot.hud_action"
 
+    // VoicePilotPanel UI telemetry
+    /// 음성 인식 토글 — 사용자 명시 start/stop.
+    /// data: listening (Bool — 전환 후 상태).
+    public static let pilotVoiceToggle: TelemetryKind = "pilot.voice_toggle"
+    /// 음성 키워드 인식 + dispatch — adapter 가 bridge 에 명령 전달 직전.
+    /// data: keyword (String), text_hash (PII-safe — 원문 해시).
+    public static let pilotVoiceDispatched: TelemetryKind = "pilot.voice_dispatched"
+
     // PilotCameraView (Harness telemetry hooks)
     /// 카메라 연결 버튼 클릭 — 사용자 명시 시작.
     /// data: endpoint_hash (PII-safe).
@@ -423,6 +431,37 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let remotePresetChip: TelemetryKind = "remote.preset_chip"
     /// Wizard ↔ shell 모드 수동 전환. data: to_mode.
     public static let remoteModeToggled: TelemetryKind = "remote.mode_toggled"
+
+    // WalkDiagnosticsView telemetry
+    /// 보행 진단 데이터 소스 전환 (preview ↔ live).
+    /// data: source ("preview" / "live").
+    public static let walklabDiagnosticsSourceChanged: TelemetryKind = "walklab.diagnostics_source_changed"
+    /// 보행 진단 실행/일시정지 토글.
+    /// data: enabled (Bool — 전환 후 상태), source.
+    public static let walklabDiagnosticsRunToggle: TelemetryKind = "walklab.diagnostics_run_toggle"
+    /// 보행 진단 데이터 리셋 — 버퍼 초기화.
+    /// data: sample_count (초기화 전 샘플 수).
+    public static let walklabDiagnosticsReset: TelemetryKind = "walklab.diagnostics_reset"
+    /// 보행 진단 CSV 익스포트.
+    /// data: sample_count, success (Bool).
+    public static let walklabDiagnosticsExport: TelemetryKind = "walklab.diagnostics_export"
+    /// 보행 진단 실 로봇 송출 토글 (sendWalkToRobot).
+    /// data: sending (Bool — 전환 후 상태).
+    public static let walklabDiagnosticsSendToggle: TelemetryKind = "walklab.diagnostics_send_toggle"
+
+    // WalkDataView telemetry
+    /// 보행 데이터 세션 선택 — 사용자가 목록에서 세션 클릭.
+    /// data: session_id_hash (PII-safe).
+    public static let walklabDataSessionSelected: TelemetryKind = "walklab.data_session_selected"
+    /// 보행 데이터 세션 삭제 (destructive).
+    /// data: session_id_hash (PII-safe).
+    public static let walklabDataSessionDeleted: TelemetryKind = "walklab.data_session_deleted"
+    /// 보행 데이터 Claude 분석 패널 토글.
+    /// data: panel ("critic_v2" / "markdown"), visible (Bool).
+    public static let walklabDataAnalysisPanelToggle: TelemetryKind = "walklab.data_analysis_panel_toggle"
+    /// 보행 데이터 Claude 분석 실행 시작.
+    /// data: session_count.
+    public static let walklabDataAnalysisStarted: TelemetryKind = "walklab.data_analysis_started"
 
     // System
     public static let heartbeat: TelemetryKind = "heartbeat.tick"

@@ -75,6 +75,11 @@ public struct PilotModePicker: View {
                 .accessibilityValue(mode == .manual ? "수동" : "공 추적")
                 .disabled(!flags.ballFollow && mode != .manual)
                 .onChange(of: mode) { _, newMode in
+                    Harness.shared.record(
+                        .pilotModeChanged, level: .info, actor: .user,
+                        data: ["mode": AnyCodable(newMode.rawValue),
+                               "ball_follow_enabled": AnyCodable(flags.ballFollow)]
+                    )
                     if newMode == .ballFollow && !flags.ballFollow {
                         mode = .manual
                     }
