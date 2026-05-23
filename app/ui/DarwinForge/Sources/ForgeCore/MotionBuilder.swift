@@ -67,9 +67,8 @@ public enum MotionBuilder {
 
         // wrap: 시작/끝에 walk_ready 추가.
         var finalSteps: [MotionStep] = []
-        if wrapWithReady {
-            let ready = PoseLibrary.get("walk_ready")!
-            finalSteps.append(MotionStep.from(pose: ready.pose, playMs: 300, pauseMs: 0))
+        if wrapWithReady, let readyPose = PoseLibrary.get("walk_ready")?.pose {
+            finalSteps.append(MotionStep.from(pose: readyPose, playMs: 300, pauseMs: 0))
         }
 
         for (i, entry) in poses.enumerated() {
@@ -87,9 +86,8 @@ public enum MotionBuilder {
                                               pauseMs: Int(spec.pauseMs)))
         }
 
-        if wrapWithReady {
-            let ready = PoseLibrary.get("walk_ready")!
-            finalSteps.append(MotionStep.from(pose: ready.pose, playMs: 500, pauseMs: 200))
+        if wrapWithReady, let readyPose = PoseLibrary.get("walk_ready")?.pose {
+            finalSteps.append(MotionStep.from(pose: readyPose, playMs: 500, pauseMs: 200))
         }
 
         // **사이클 126 (audit #34, P2)**: 결정적 placeholder ID 사용.
@@ -179,19 +177,6 @@ public enum MotionBuilder {
 
         return steps
     }
-
-    /// "왼" / "오른" 같은 좌우 키워드 감지 — 향후 mirror 적용용.
-    public static func detectSide(_ command: String) -> Side {
-        let n = command.lowercased()
-        let leftKeys  = ["왼", "left", "왼쪽", "왼손", "왼팔", "왼발"]
-        let rightKeys = ["오른", "right", "오른쪽", "오른손", "오른팔", "오른발"]
-        let l = leftKeys.contains { n.contains($0) }
-        let r = rightKeys.contains { n.contains($0) }
-        if l && !r { return .left }
-        if r && !l { return .right }
-        return .neutral
-    }
-    public enum Side { case left, right, neutral }
 
     // MARK: - Helpers
 
