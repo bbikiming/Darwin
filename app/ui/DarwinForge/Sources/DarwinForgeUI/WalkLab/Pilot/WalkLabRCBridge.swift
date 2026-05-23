@@ -164,6 +164,17 @@ public final class WalkLabRCBridge {
         process(intent)
     }
 
+    /// 사이클 186: PilotIntent.Kind → telemetry-friendly raw label.
+    /// associated value 노이즈 차단 — case name 만.
+    private static func intentKindLabel(_ kind: PilotIntent.Kind) -> String {
+        switch kind {
+        case .move:      return "move"
+        case .stop:      return "stop"
+        case .emergency: return "emergency"
+        case .motion:    return "motion"
+        }
+    }
+
     /// 사용자 emergency — UI 버튼 / 단축키 / Tello "emergency" 명령.
     public func handleEmergency(from source: InputSource) {
         process(.emergency(from: source))
@@ -227,6 +238,11 @@ public final class WalkLabRCBridge {
         // 이 session.pilotIsEmergency 만 사용. recovery → state inactive → 다음 emergency
         // 자동으로 beep (reset 작업 불요).
         session.pilotPostEvent("emergency recovery — preset 입력 활성", source: source)
+        // 사이클 186: recovery telemetry. PII X — source 만.
+        Harness.shared.record(
+            .pilotRecoveryRequested, level: .info, actor: .user,
+            data: ["source": AnyCodable(source.rawValue)]
+        )
     }
 
     /// **v1.20.4 (2026-05-22) 사이클 10** — preset 직접 선택 (number key / future button).
@@ -281,9 +297,24 @@ public final class WalkLabRCBridge {
             presetChangeMirror += 1
             session.pilotPostEvent("preset \(preset.rawValue) 시작", source: source)
             safetyMessage = nil
+            // 사이클 186: preset 변경 telemetry — 종전 dead code 활성. PII X.
+            Harness.shared.record(
+                .pilotModeChanged, level: .info, actor: .user,
+                data: ["preset": AnyCodable(preset.rawValue),
+                       "source": AnyCodable(source.rawValue),
+                       "result": AnyCodable("success")]
+            )
         case .blocked(let userMessage):
             // preflight failure 의 userMessage 또는 startBlockedReason 합성 메시지.
             safetyMessage = userMessage
+            // 사이클 186: blocked 도 telemetry — 실패율 분석. message 본문은 PII 회피 (hash).
+            Harness.shared.record(
+                .pilotModeChanged, level: .warn, actor: .user,
+                data: ["preset": AnyCodable(preset.rawValue),
+                       "source": AnyCodable(source.rawValue),
+                       "result": AnyCodable("blocked"),
+                       "message_hash": AnyCodable(Harness.shortHash(userMessage))]
+            )
         }
     }
 
@@ -309,6 +340,12 @@ public final class WalkLabRCBridge {
             accumulator.record(intent)  // disabled 라도 사용자 의도 기록.
             safetyMessage = "Bridge 비활성 — emergency 만 허용"
             latencyTracker?.cancel()
+            // 사이클 186: bridge disabled telemetry.
+            Harness.shared.record(
+                .pilotBridgeDisabled, level: .info, actor: .user,
+                data: ["source": AnyCodable(intent.source.rawValue),
+                       "intent_kind": AnyCodable(Self.intentKindLabel(intent.kind))]
+            )
             return
         }
         // **v1.20.44 사이클 58 — security-auditor HIGH 1 fix**:
@@ -320,6 +357,12 @@ public final class WalkLabRCBridge {
             accumulator.record(intent)
             safetyMessage = "긴급 정지 상태 — recovery 필요 (R 키 또는 Recover 버튼)"
             latencyTracker?.cancel()
+            // 사이클 186: intent blocked by emergency state telemetry.
+            Harness.shared.record(
+                .pilotIntentBlocked, level: .info, actor: .system,
+                data: ["source": AnyCodable(intent.source.rawValue),
+                       "intent_kind": AnyCodable(Self.intentKindLabel(intent.kind))]
+            )
             return
         }
         // emergency 는 무조건 통과.
@@ -341,6 +384,12 @@ public final class WalkLabRCBridge {
             if !wasAlreadyEmergency {
                 audioFeedback?.playEmergency()
             }
+            // 사이클 186: emergency stop telemetry — 종전 dead code 활성. PII X — source 만.
+            Harness.shared.record(
+                .pilotEStop, level: .warn, actor: .user,
+                data: ["source": AnyCodable(intent.source.rawValue),
+                       "was_already_active": AnyCodable(wasAlreadyEmergency)]
+            )
             return
         }
         // bus / cradle 검사 — preset 시작 path 와 동일.

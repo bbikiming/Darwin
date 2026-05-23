@@ -138,8 +138,21 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let poseApplyCancel: TelemetryKind = "pose.apply_cancel"
 
     // Pilot
+    /// 사이클 186: preset 변경 success (cycle 9 auto-start 포함).
+    /// data: preset, source. cycle 177 audit follow-up — 종전 dead code.
     public static let pilotModeChanged: TelemetryKind = "pilot.mode_changed"
+    /// 사이클 186: emergency stop fired — 5 source 중 어느 곳 에서 발생 했는지.
+    /// data: source, was_already_active. 종전 dead code.
     public static let pilotEStop: TelemetryKind = "pilot.e_stop"
+    /// 사이클 186 신규: emergency 상태에서 사용자 명시 recovery.
+    /// data: source.
+    public static let pilotRecoveryRequested: TelemetryKind = "pilot.recovery_requested"
+    /// 사이클 186 신규: emergencyStopActive 동안 intent 차단.
+    /// data: source, intent_kind ("move" / "stop" / "motion" / "preset").
+    public static let pilotIntentBlocked: TelemetryKind = "pilot.intent_blocked"
+    /// 사이클 186 신규: bridge.enabled=false 동안 intent 차단.
+    /// data: source, intent_kind.
+    public static let pilotBridgeDisabled: TelemetryKind = "pilot.bridge_disabled"
 
     // Claude
     public static let claudePromptSent: TelemetryKind = "claude.prompt_sent"
