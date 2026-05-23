@@ -2315,11 +2315,14 @@ public final class WalkLabSession {
     /// `runWalkCycle` 의 local var. instance var X (static func 라 mutate 불가, concurrency
     /// 안전성 위해). 단일 joint 5회 연속 fail 시 cycle abort.
 
+    #if DEBUG
     /// **테스트용 hooks (internal)** — 10x review P0 fix: hysteresis state machine 테스트.
     /// `applyBalanceMitigation` 가 private 이라 직접 호출 불가 → 카운터 inspection.
     /// **사이클 118 (security-auditor LOW-2 fix)**: `public` → `internal` —
     /// 사이클 100+ 의 internal(set) 격상 후 hysteresis counter 가 internal 로 접근 가능 →
     /// public 노출 redundant. 외부 module 노출 차단 (DarwinForgeApp 만 import 하지만 보안 격상).
+    /// **V269-1 (사이클 269)**: `#if DEBUG` gate — release binary 에서 hook symbol 제거.
+    /// XCTest 는 항상 DEBUG 빌드라 동작 무변경.
     internal func _testInspectWarningHysteresis() -> Int { warningStateConsecutiveSamples }
     internal func _testInspectDangerHysteresis() -> Int { dangerStateConsecutiveSamples }
     // v1.11.25 audit dead-code #1 — `_testInspectL3Hysteresis` 제거 (Sources+Tests 0 사용).
@@ -2327,6 +2330,7 @@ public final class WalkLabSession {
     /// 테스트용 — IMU 값 강제 set 후 tick 한 번 실행 (hysteresis 동작 검증).
     /// **사이클 118 (security-auditor LOW-2 fix)**: `public` → `internal` —
     /// 외부 module noise reduction. test 가 same-module `@testable import` 라 internal 충분.
+    /// **V269-1 (사이클 269)**: `#if DEBUG` gate — release binary 에서 hook symbol 제거.
     internal func _testForceImuAndTick(rollDeg: Double, pitchDeg: Double) {
         imuRollDeg = rollDeg
         imuPitchDeg = pitchDeg
@@ -2336,6 +2340,7 @@ public final class WalkLabSession {
             applyBalanceMitigation()
         }
     }
+    #endif
 
     /// 실 telemetry stale 임계 — IMU / 모터 온도 둘 다 동일.
     /// `ImuFilter.isStale()` 내부 5.0초 임계와 정합. 한 곳에서 변경 시 양쪽 자동 동기화.

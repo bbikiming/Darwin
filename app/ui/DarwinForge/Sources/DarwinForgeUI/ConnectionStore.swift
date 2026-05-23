@@ -248,6 +248,7 @@ public final class ConnectionStore: ObservableObject {
     private var imuAccelZSamples: [UInt16] = []
     private static let imuScaleSamplesRequired = 25  // 5Hz × 5초 = 안정 추정.
 
+    #if DEBUG
     /// **V266-2 testability hook** — `diagnoseImuScale` 직접 호출 (internal, XCTest 전용).
     ///
     /// 비유: 배터리 테스터가 특정 셀 전압을 직접 주입해 진단 로직을 검증하는 것처럼,
@@ -255,6 +256,9 @@ public final class ConnectionStore: ObservableObject {
     ///
     /// `runImuLoop` 없이 `diagnoseImuScale` 경로를 단독 검증. 25 sample (imuScaleSamplesRequired)
     /// 이상 주입 후 `imuScaleSuspicion` 전환 여부 확인.
+    ///
+    /// **V269-1 (사이클 269)**: `#if DEBUG` gate — release binary 에서 hook symbol 제거.
+    /// XCTest 는 항상 DEBUG 빌드라 동작 무변경. 운영 코드에서 절대 사용 금지.
     internal func _testFeedImuSample(accelZ: UInt16) {
         let raw = ImuRaw(
             gyroX: 512, gyroY: 512, gyroZ: 512,
@@ -266,7 +270,10 @@ public final class ConnectionStore: ObservableObject {
 
     /// **V266-2 testability hook** — `imuScaleSamplesRequired` 상수 노출 (internal).
     /// 테스트가 정확한 sample 수를 알지 않아도 됨.
+    ///
+    /// **V269-1 (사이클 269)**: `#if DEBUG` gate — release binary 에서 symbol 제거.
     internal static var _testImuScaleSamplesRequired: Int { imuScaleSamplesRequired }
+    #endif
 
     /// IMU sample 별 호출 — accel Z raw 기반 plausibility 추정 (v1.7 의미체계).
     private func diagnoseImuScale(_ sample: ImuRaw) {
@@ -2095,10 +2102,14 @@ public final class ConnectionStore: ObservableObject {
         }
     }
 
+    #if DEBUG
     /// **V266-2 testability hook** — `telemetryLoopPollFsr` 직접 호출 (internal, XCTest 전용).
     ///
     /// `runTelemetryLoop` 의 async loop 없이 FSR polling 1회 경로를 단위 테스트.
     /// 3회 연속 실패 → `health.fsrPollingDisabled=true` + .telemetrySkip event 발화 경로 검증.
+    ///
+    /// **V269-1 (사이클 269)**: `#if DEBUG` gate — release binary 에서 symbol 제거.
+    /// XCTest 는 항상 DEBUG 빌드라 동작 무변경.
     internal func _testPollFsrOnce(bus: any BusInterface) async {
         await telemetryLoopPollFsr(bus: bus)
     }
@@ -2114,6 +2125,8 @@ public final class ConnectionStore: ObservableObject {
     ///
     /// - Returns: `telemetryLoopOnce` 의 반환값 (false = 루프 종료 신호 — cadence .off 또는
     ///   mid-loop bus 소멸 시).
+    ///
+    /// **V269-1 (사이클 269)**: `#if DEBUG` gate — release binary 에서 symbol 제거.
     @discardableResult
     internal func _testTelemetryOnce(bus: any BusInterface, tick: Int = 0) async -> Bool {
         let state = TelemetryLoopState()
@@ -2125,9 +2138,12 @@ public final class ConnectionStore: ObservableObject {
     ///
     /// `startTelemetry(cadence:)` 는 pollTask 까지 생성하므로 cadence 만 조정할 때는
     /// 본 hook 사용. production 코드에서는 항상 `startTelemetry(cadence:)` 경유.
+    ///
+    /// **V269-1 (사이클 269)**: `#if DEBUG` gate — release binary 에서 symbol 제거.
     internal func _testSetCadence(_ c: TelemetryCadence) {
         self.cadence = c
     }
+    #endif
 
     /// 1Hz sparkline append — voltage / avgTemperature 가 있으면 60-cap append.
     /// HealthStore (`appendVoltage` / `appendAvgTemp`) 가 내부적으로 60-cap deque
