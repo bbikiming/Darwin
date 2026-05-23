@@ -200,6 +200,16 @@ public struct MotionStudioView: View {
             isDirty = true
             transferToast = "✅ Motion 페이지 추가됨"
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { transferToast = nil }
+            // 사이클 203 (cycle 199 critic missing #3): Teach → Motion transfer telemetry.
+            // motionPageCreated 패턴 일관 (cycle 191 audit 의 recommended) — 신규 페이지
+            // ID + source 만 (pose 좌표 X — PII 회피).
+            if let newId = reassigned.first?.id {
+                Harness.shared.record(
+                    .motionPageCreated, level: .info, actor: .user,
+                    data: ["new_id": AnyCodable(Int(newId)),
+                           "source": AnyCodable("teach_transfer")]
+                )
+            }
         case .failure(let err):
             lastError = SynthMotionExporter.koreanMessage(for: err)
         }

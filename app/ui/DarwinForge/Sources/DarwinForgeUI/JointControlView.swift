@@ -87,6 +87,14 @@ struct JointDetailView: View {
                     runJointAction("torque_off") { try store.bus?.setTorque(joint, enable: false) }
                 }
                 Button("Refresh") {
+                    // 사이클 203 (cycle 199 critic missing #2): refresh 버튼 telemetry.
+                    // jointActionRequested 패턴 일관 — action="refresh".
+                    Harness.shared.record(
+                        .jointActionRequested, level: .info, actor: .user,
+                        data: ["action": AnyCodable("refresh"),
+                               "joint_id": AnyCodable(joint.rawValue),
+                               "joint_name": AnyCodable(joint.name)]
+                    )
                     store.refreshJointState(joint)
                 }
                 Spacer()
