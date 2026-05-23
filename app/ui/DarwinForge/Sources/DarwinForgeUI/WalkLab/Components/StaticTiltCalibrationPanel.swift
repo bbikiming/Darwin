@@ -20,6 +20,12 @@ struct StaticTiltCalibrationPanel: View {
     // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
     @Environment(\.harness) private var harness
 
+    /// **V272-1 (2026-05-24) UI/UX P0 fix**: 캡처 초기화 확인 dialog.
+    /// 종전: "초기화" 버튼이 즉시 captures 전부 삭제 — 사용자 실수 클릭 시 ~25초
+    /// 재캡처 부담. HIG `confirmationDialog` 패턴 적용으로 destructive 액션의
+    /// 의도 확인 단계 추가 (Nielsen heuristic #5 error prevention).
+    @State private var showResetConfirm: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.xs2) {
             // 헤더
@@ -51,19 +57,12 @@ struct StaticTiltCalibrationPanel: View {
             // 진단 결과
             diagnosisSection
 
-            // 리셋 버튼
+            // 리셋 버튼 — V272-1: 즉시 삭제 → confirmationDialog 게이트.
             if !session.calibrationCaptures.isEmpty {
                 HStack {
                     Spacer()
                     Button(role: .destructive) {
-                        harness.record(
-                            .walklabCalibrationReset, level: .info, actor: .user,
-                            data: ["cleared_count": AnyCodable(session.calibrationCaptures.count)]
-                        )
-                        captureTask?.cancel()
-                        activeAxis = nil
-                        captureProgress = 0
-                        session.resetCalibrationCaptures()
+                        showResetConfirm = true
                     } label: {
                         Label("초기화", systemImage: "arrow.counterclockwise")
                             .font(DFFont.micro)
@@ -75,6 +74,25 @@ struct StaticTiltCalibrationPanel: View {
         .padding(DFSpace.xs2)
         .background(DFColor.info.opacity(DFOpacity.o06))
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .confirmationDialog(
+            "캡처 초기화",
+            isPresented: $showResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("초기화", role: .destructive) {
+                harness.record(
+                    .walklabCalibrationReset, level: .info, actor: .user,
+                    data: ["cleared_count": AnyCodable(session.calibrationCaptures.count)]
+                )
+                captureTask?.cancel()
+                activeAxis = nil
+                captureProgress = 0
+                session.resetCalibrationCaptures()
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("저장된 \(session.calibrationCaptures.count)개 캡처가 삭제됩니다. 다시 모두 캡처해야 합니다 (약 \(session.calibrationCaptures.count * 5)초 소요).")
+        }
     }
 
     // MARK: - Components

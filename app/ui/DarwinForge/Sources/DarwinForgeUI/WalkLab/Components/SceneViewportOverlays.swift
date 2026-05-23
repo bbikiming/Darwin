@@ -2,6 +2,35 @@ import SwiftUI
 import Charts
 import ForgeCore
 
+/// **V272-1 (2026-05-24) WCAG 1.4.1 fix — Scene attitude severity dual encoding**.
+///
+/// Color-only 인디케이터 (다른 컴포넌트 LiveGyroPanel/FallPredictionCard 와 동일한
+/// 25/35/45/50° tier) 가 WCAG 1.4.1 (정보를 색상만으로 전달 금지) 위반. color +
+/// systemImage 아이콘 dual encoding 으로 color-blind 사용자도 tier 전환 인식 가능.
+///
+/// Domain: 자세 (roll/pitch) 각도 — danger 임계값 비례 (기본 50°).
+enum SceneSeverity {
+    /// 자세 각도 (절대값) 에 따른 systemImage 이름.
+    static func icon(forAttitudeDeg value: Double, danger: Double = 50) -> String {
+        let absV = abs(value)
+        if absV >= danger        { return "octagon.fill" }                  // 50°+ critical
+        if absV >= danger * 0.90 { return "exclamationmark.triangle.fill" } // 45°+ severe
+        if absV >= danger * 0.70 { return "exclamationmark.circle.fill" }   // 35°+ warning
+        if absV >= danger * 0.50 { return "circle.fill" }                   // 25°+ caution
+        return "circle"                                                     // normal
+    }
+
+    /// 자세 각도 (절대값) 에 따른 색상 — 기존 angleColor 패턴 그대로 유지.
+    static func color(forAttitudeDeg value: Double, danger: Double = 50) -> Color {
+        let absV = abs(value)
+        if absV >= danger        { return DFColor.danger }
+        if absV >= danger * 0.90 { return DFColor.severe }
+        if absV >= danger * 0.70 { return DFColor.warning }
+        if absV >= danger * 0.50 { return DFColor.warning.opacity(0.7) }
+        return DFColor.textPrimary
+    }
+}
+
 /// **v1.11.18 (2026-05-19)** — RobotScene3D 위에 떠 있는 두 overlay.
 ///
 /// 사용자 요청: 3D 모델링 뷰포트의 좌측 하단 + 우측 하단에 자이로 + 걸음 그래프
@@ -96,16 +125,15 @@ public struct SceneGyroMiniOverlay: View {
     }
 
     /// BalanceState 5-tier (25/35/45/50°) 정합 — 다른 컴포넌트와 색 일관성.
+    /// **V272-1 WCAG 1.4.1 fix**: 색상-only 인디케이터 → 색 + 아이콘 dual encoding.
+    /// color-blind 사용자도 tier 전환을 아이콘 변화로 인식 가능.
     private func label(_ axis: String, _ value: Double, danger: Double) -> some View {
-        let absV = abs(value)
-        let color: Color = {
-            if absV >= danger        { return DFColor.danger }                    // 50°
-            if absV >= danger * 0.90 { return DFColor.severe }                    // 45°
-            if absV >= danger * 0.70 { return DFColor.warning }                   // 35°
-            if absV >= danger * 0.50 { return DFColor.warning.opacity(0.7) }      // 25°
-            return DFColor.textPrimary
-        }()
+        let color = SceneSeverity.color(forAttitudeDeg: value, danger: danger)
+        let icon = SceneSeverity.icon(forAttitudeDeg: value, danger: danger)
         return HStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 8))
+                .foregroundStyle(color)
             Text(axis)
                 .font(DFFont.micro)
                 .foregroundStyle(DFColor.textSecondary)

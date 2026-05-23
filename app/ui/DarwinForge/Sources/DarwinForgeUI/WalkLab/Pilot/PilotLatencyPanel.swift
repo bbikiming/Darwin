@@ -61,13 +61,20 @@ public struct PilotLatencyPanel: View {
         }
     }
 
-    /// 현재 median 기반 status dot — 녹/황/적 한눈 시각.
+    /// 현재 median 기반 status indicator — 아이콘 + 라벨 dual encoding.
+    /// **V272-1 WCAG 1.4.1 fix**: 색상-only Circle → 아이콘 + 한글 라벨.
+    /// color-blind 사용자도 정상/주의/위험 즉시 인식 가능.
     private var statusDot: some View {
         let color = Self.tint(forMillis: medianMillis)
-        return Circle()
-            .fill(color)
-            .frame(width: 8, height: 8)
-            .help("최근 30 cycle median 응답 시간 기준")
+        return HStack(spacing: 3) {
+            Image(systemName: Self.statusIcon(forMillis: medianMillis))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(color)
+            Text(Self.statusLabel(forMillis: medianMillis))
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(color)
+        }
+        .help("최근 30 cycle median 응답 시간 기준")
     }
 
     // MARK: - Stats grid
@@ -186,5 +193,22 @@ public struct PilotLatencyPanel: View {
         if ms < 50 { return DFColor.success }
         if ms < 150 { return DFColor.warning }
         return DFColor.danger
+    }
+
+    /// **V272-1 WCAG 1.4.1 fix**: latency tier 별 systemImage 아이콘.
+    /// Domain: input → engine latency (50ms / 150ms 임계).
+    private static func statusIcon(forMillis ms: Double) -> String {
+        if ms <= 0 { return "minus.circle" }                  // 표본 없음
+        if ms < 50 { return "checkmark.circle.fill" }         // 정상
+        if ms < 150 { return "exclamationmark.triangle.fill" } // 주의
+        return "octagon.fill"                                  // 위험
+    }
+
+    /// **V272-1 WCAG 1.4.1 fix**: latency tier 한글 라벨.
+    private static func statusLabel(forMillis ms: Double) -> String {
+        if ms <= 0 { return "대기" }
+        if ms < 50 { return "정상" }
+        if ms < 150 { return "주의" }
+        return "위험"
     }
 }

@@ -45,6 +45,12 @@ public struct WalkLabView: View {
     /// Drag handle hover 상태 — 시각 highlight 용.
     @State private var fallPanelHandleHovering: Bool = false
 
+    /// **V272-1 (2026-05-24) UI/UX P0 fix**: 안전 정지 배너 dismiss 확인 dialog.
+    /// 종전: "닫기" 버튼이 balanceLost/thermalAlarm 을 즉시 false 로 클리어 — 사용자
+    /// 실수 클릭 한 번에 안전 가드 해제. HIG `confirmationDialog` 패턴 적용으로
+    /// destructive 액션 (안전 플래그 해제) 의 의도 확인 단계 추가.
+    @State private var showDismissBalanceLossConfirm: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -674,10 +680,11 @@ public struct WalkLabView: View {
             Text(message)
                 .font(DFFont.bodyEmph)
             Spacer()
-            // 사이클 138 (audit #24 codex sweep)
+            // 사이클 138 (audit #24 codex sweep) — V272-1 (2026-05-24): 즉시 해제 →
+            // confirmationDialog 게이트. 실수 클릭으로 안전 가드 해제 방지 (Nielsen
+            // heuristic #5 error prevention).
             Button("닫기", role: .cancel) {
-                session.balanceLost = false
-                session.thermalAlarm = false
+                showDismissBalanceLossConfirm = true
             }
             .buttonStyle(.plain)
             .font(.caption)
@@ -687,6 +694,19 @@ public struct WalkLabView: View {
         .background(tint.opacity(DFOpacity.o18))
         .foregroundStyle(tint)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
+        .confirmationDialog(
+            "안전 경고 해제",
+            isPresented: $showDismissBalanceLossConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("해제하고 계속 진행", role: .destructive) {
+                session.balanceLost = false
+                session.thermalAlarm = false
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("자동 안전 정지가 활성됐습니다. 정말 해제하시겠습니까? 로봇 상태를 확인한 후 진행하세요.")
+        }
     }
 
     /// **2026-05-16 검증**: 좁은 detail 폭 (480pt) 에서 HStack 컬럼 5개 + Spacer +

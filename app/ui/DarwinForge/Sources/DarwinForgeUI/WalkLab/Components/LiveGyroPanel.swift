@@ -2,6 +2,31 @@ import SwiftUI
 import Charts
 import ForgeCore
 
+/// **V272-1 (2026-05-24) WCAG 1.4.1 fix — Gyro 자세/각속도 severity dual encoding**.
+///
+/// Color-only 인디케이터 (`angleColor` 의 25/35/45/50° tier + gyroAxisCell 의
+/// 50dps 단일 임계) 가 WCAG 1.4.1 위반. systemImage 아이콘 + 색상 dual encoding
+/// 으로 color-blind 사용자도 tier 전환 인식 가능.
+///
+/// **Domain 분리**: SceneViewportOverlays 의 `SceneSeverity` 와 동일 임계지만
+/// 도메인별 helper 로 분리 (LiveGyroPanel 은 5-tier attitude + 2-tier gyro 두 종류).
+enum GyroSeverity {
+    /// 자세 (roll/pitch) 5-tier 아이콘 — 25/35/45/50° (danger 비례).
+    static func attitudeIcon(deg value: Double, danger: Double = 50) -> String {
+        let absV = abs(value)
+        if absV >= danger        { return "octagon.fill" }                  // critical
+        if absV >= danger * 0.90 { return "exclamationmark.triangle.fill" } // severe
+        if absV >= danger * 0.70 { return "exclamationmark.circle.fill" }   // warning
+        if absV >= danger * 0.50 { return "circle.fill" }                   // caution
+        return "circle"                                                     // normal
+    }
+
+    /// 각속도 (gyro) 2-tier 아이콘 — 단일 임계 (기본 50dps).
+    static func gyroIcon(dps value: Double, danger: Double = 50) -> String {
+        abs(value) > danger ? "exclamationmark.triangle.fill" : "circle"
+    }
+}
+
 /// **v1.11.17 (2026-05-19)** — 워크랩 진입 즉시 IMU 자세/IMU 패널.
 ///
 /// 보행 시작 전부터 표시 — `session.attach(store:)` 호출 후 polling tick 이 시작
@@ -120,7 +145,11 @@ public struct LiveGyroPanel: View {
     }
 
     private func compactAngleCell(label: String, value: Double) -> some View {
+        // **V272-1 WCAG 1.4.1 fix**: 색상-only → 아이콘 + 색상 dual encoding.
         HStack(spacing: 2) {
+            Image(systemName: GyroSeverity.attitudeIcon(deg: value, danger: 50))
+                .font(.system(size: 8))
+                .foregroundStyle(angleColor(value))
             Text(label)
                 .font(DFFont.micro)
                 .foregroundStyle(DFColor.textSecondary)
@@ -141,9 +170,15 @@ public struct LiveGyroPanel: View {
 
     private func angleCell(label: String, value: Double, dangerThreshold: Double) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(DFFont.micro)
-                .foregroundStyle(DFColor.textSecondary)
+            // **V272-1 WCAG 1.4.1 fix**: 색상-only → label 옆 severity 아이콘 추가.
+            HStack(spacing: 4) {
+                Image(systemName: GyroSeverity.attitudeIcon(deg: value, danger: dangerThreshold))
+                    .font(.system(size: 10))
+                    .foregroundStyle(angleColor(value, danger: dangerThreshold))
+                Text(label)
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
             Text(String(format: "%+.1f°", value))
                 .font(DFFont.sectionLarge.monospacedDigit())
                 .foregroundStyle(angleColor(value, danger: dangerThreshold))
@@ -183,13 +218,21 @@ public struct LiveGyroPanel: View {
     }
 
     private func gyroAxisCell(_ axis: String, value: Double) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(axis)
-                .font(DFFont.micro)
-                .foregroundStyle(DFColor.textSecondary)
+        // **V272-1 WCAG 1.4.1 fix**: 색상-only (> 50dps 노란색) → 아이콘 + 색상.
+        let exceeds = abs(value) > 50
+        let color: Color = exceeds ? DFColor.warning : DFColor.textPrimary
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 3) {
+                Image(systemName: GyroSeverity.gyroIcon(dps: value, danger: 50))
+                    .font(.system(size: 8))
+                    .foregroundStyle(color)
+                Text(axis)
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
             Text(String(format: "%+.0f", value))
                 .font(DFFont.monoLabel)
-                .foregroundStyle(abs(value) > 50 ? DFColor.warning : DFColor.textPrimary)
+                .foregroundStyle(color)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
