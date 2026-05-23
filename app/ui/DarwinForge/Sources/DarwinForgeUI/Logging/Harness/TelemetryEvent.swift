@@ -146,6 +146,36 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// 분포 분석 — 보정 차단 빈도 / IMU 지연 패턴 / sim vs real 비교.
     public static let walkLabFreshnessChanged: TelemetryKind = "walklab.freshness_changed"
 
+    // Trial Library
+    /// Trial Library 에서 trial 선택 — 사용자가 어떤 trial 을 열람하는지 빈도 분석.
+    /// data: trial_id_hash (PII-safe), preset, overall_score.
+    public static let walklabTrialSelected: TelemetryKind = "walklab.trial_selected"
+    /// Trial Library 필터/정렬 변경 — 사용자 탐색 패턴 분석.
+    /// data: sort, no_falls_only, real_robot_only, preset, min_rating.
+    public static let walklabTrialFilterChanged: TelemetryKind = "walklab.trial_filter_changed"
+    /// Trial AutoGenerator sheet 열기 — Recommender 학습용 자동 생성 진입 빈도.
+    public static let walklabTrialAutogenOpened: TelemetryKind = "walklab.trial_autogen_opened"
+
+    /// HITL 실험 승인 — 사용자가 ExperimentApprovalUI 에서 "실험 시작" 클릭.
+    /// data: axis, confidence_pct, safety_verdict, baseline_session_id.
+    public static let walklabExperimentApproved: TelemetryKind = "walklab.experiment_approved"
+    /// HITL 실험 거부 — 사용자가 ExperimentApprovalUI 에서 "취소" 클릭.
+    /// data: axis, baseline_session_id.
+    public static let walklabExperimentRejected: TelemetryKind = "walklab.experiment_rejected"
+    /// Trial 라벨 저장 — 사용자가 별점/태그/메모를 입력하고 "저장" 클릭.
+    /// data: rating (Int), tag_count (Int), has_free_text (Bool). 라벨 품질 분석용.
+    /// **PII**: free-text 원문은 절대 포함 금지 — has_free_text Bool 만 기록.
+    public static let walklabTrialLabeled: TelemetryKind = "walklab.trial_labeled"
+    /// Trial 라벨 건너뛰기 — 사용자가 "건너뛰기" 또는 X 버튼으로 라벨 없이 종료.
+    /// data: 없음. skip 빈도 대비 label 빈도 분석.
+    public static let walklabTrialLabelSkipped: TelemetryKind = "walklab.trial_label_skipped"
+    /// Trial 자동 생성 시작 (사용자 confirm).
+    /// data: preset_count, trials_per_combo, intensity_range, expected_trials.
+    public static let walklabTrialAutogenStarted: TelemetryKind = "walklab.trial_autogen_started"
+    /// Trial 자동 생성 취소 또는 시트 닫기.
+    /// data: was_generating (Bool).
+    public static let walklabTrialAutogenCancelled: TelemetryKind = "walklab.trial_autogen_cancelled"
+
     // Pose
     public static let poseApplyStart: TelemetryKind = "pose.apply_start"
     public static let poseApplyComplete: TelemetryKind = "pose.apply_complete"

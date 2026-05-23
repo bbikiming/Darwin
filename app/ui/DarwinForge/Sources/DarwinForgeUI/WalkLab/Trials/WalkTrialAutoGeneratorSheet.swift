@@ -142,10 +142,20 @@ public struct WalkTrialAutoGeneratorSheet: View {
                 Button("취소", role: .destructive) {
                     generationTask?.cancel()
                     isGenerating = false
+                    Harness.shared.record(
+                        .walklabTrialAutogenCancelled, level: .info, actor: .user,
+                        data: ["was_generating": AnyCodable(true)]
+                    )
                 }
             } else {
                 // 사이클 138 (audit #24 codex sweep)
-                Button("닫기", role: .cancel) { dismiss() }
+                Button("닫기", role: .cancel) {
+                    Harness.shared.record(
+                        .walklabTrialAutogenCancelled, level: .info, actor: .user,
+                        data: ["was_generating": AnyCodable(false)]
+                    )
+                    dismiss()
+                }
                     .keyboardShortcut(.cancelAction)
             }
             Spacer()
@@ -183,6 +193,15 @@ public struct WalkTrialAutoGeneratorSheet: View {
             return
         }
         isGenerating = true
+        Harness.shared.record(
+            .walklabTrialAutogenStarted, level: .info, actor: .user,
+            data: [
+                "preset_count": AnyCodable(selectedPresets.count),
+                "trials_per_combo": AnyCodable(trialsPerCombo),
+                "intensity_range": AnyCodable("\(intensityLowerBound)...\(intensityUpperBound)"),
+                "expected_trials": AnyCodable(expectedTrialCount),
+            ]
+        )
         generationTask = Task { @MainActor in
             await generator.generateBatch(
                 session: session,

@@ -146,6 +146,15 @@ public struct ExperimentApprovalUI: View {
         }
     }
 
+    /// Telemetry-safe verdict key — PII 없는 enum case 문자열만 반환.
+    private func safetyVerdictKey(_ v: BalanceExperimentConfig.SafetyVerdict) -> String {
+        switch v {
+        case .safe: return "safe"
+        case .caution: return "caution"
+        case .blocked: return "blocked"
+        }
+    }
+
     private var header: some View {
         HStack(spacing: DFSpace.xs) {
             Image(systemName: "hand.tap.fill")
@@ -277,10 +286,26 @@ public struct ExperimentApprovalUI: View {
     private var buttonRow: some View {
         HStack(spacing: DFSpace.sm) {
             Button("취소", role: .cancel) {
+                Harness.shared.record(
+                    .walklabExperimentRejected, level: .info, actor: .user,
+                    data: [
+                        "axis": AnyCodable(response.nextExperiment?.axis.rawValue ?? "none"),
+                        "baseline_session_id": AnyCodable(Harness.shortHash(baselineSessionId)),
+                    ]
+                )
                 onCancel()
             }
             Spacer()
             Button {
+                Harness.shared.record(
+                    .walklabExperimentApproved, level: .info, actor: .user,
+                    data: [
+                        "axis": AnyCodable(response.nextExperiment?.axis.rawValue ?? "none"),
+                        "confidence_pct": AnyCodable(response.confidence.map { Int($0 * 100) }),
+                        "safety_verdict": AnyCodable(safetyVerdictKey(proposedConfig.safetyVerdict)),
+                        "baseline_session_id": AnyCodable(Harness.shortHash(baselineSessionId)),
+                    ]
+                )
                 onApprove()
             } label: {
                 Label("실험 시작 (사용자 명시 승인)", systemImage: "play.fill")

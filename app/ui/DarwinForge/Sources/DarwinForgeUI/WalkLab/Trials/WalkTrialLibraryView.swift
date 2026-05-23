@@ -45,7 +45,12 @@ public struct WalkTrialLibraryView: View {
                     }
                 }
                 // **v1.19.1 (2026-05-21) 사이클 4**: AutoGenerator 진입점.
-                Button(action: { showingAutoGenerator = true }) {
+                Button(action: {
+                    showingAutoGenerator = true
+                    Harness.shared.record(
+                        .walklabTrialAutogenOpened, level: .info, actor: .user
+                    )
+                }) {
                     Image(systemName: "sparkles.rectangle.stack")
                 }
                 .help("Trial 자동 생성 — Recommender 학습용")
@@ -71,6 +76,12 @@ public struct WalkTrialLibraryView: View {
                                 onSkip: nil)
         }
         .onAppear { refresh() }
+        .onChange(of: filter) { _, newFilter in
+            recordFilterChange(newFilter)
+        }
+        .onChange(of: sort) { _, newSort in
+            recordFilterChange(filter, sort: newSort)
+        }
     }
 
     // MARK: - Sidebar
@@ -88,6 +99,12 @@ public struct WalkTrialLibraryView: View {
                             .tag(store.load(id: entry.id))
                             .onTapGesture {
                                 selectedTrial = store.load(id: entry.id)
+                                Harness.shared.record(
+                                    .walklabTrialSelected, level: .info, actor: .user,
+                                    data: ["trial_id_hash": AnyCodable(Harness.shortHash(entry.id)),
+                                           "preset": AnyCodable(entry.preset),
+                                           "overall_score": AnyCodable(entry.overallScore)]
+                                )
                             }
                     }
                 }
@@ -205,6 +222,17 @@ public struct WalkTrialLibraryView: View {
 
     private func refresh() {
         indexEntries = store.allIndex()
+    }
+
+    private func recordFilterChange(_ f: TrialFilter, sort s: TrialSort? = nil) {
+        Harness.shared.record(
+            .walklabTrialFilterChanged, level: .info, actor: .user,
+            data: ["sort": AnyCodable((s ?? sort).rawValue),
+                   "no_falls_only": AnyCodable(f.noFallsOnly),
+                   "real_robot_only": AnyCodable(f.realRobotOnly),
+                   "preset": AnyCodable(f.preset ?? "all"),
+                   "min_rating": AnyCodable(f.minRating ?? 0)]
+        )
     }
 }
 

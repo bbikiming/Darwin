@@ -74,7 +74,11 @@ public struct WalkTrialLabelSheet: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button(action: { onSkip?(); dismiss() }) {
+            Button(action: {
+                Harness.shared.record(.walklabTrialLabelSkipped, level: .info, actor: .user)
+                onSkip?()
+                dismiss()
+            }) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title3)
                     .foregroundStyle(.tertiary)
@@ -202,6 +206,7 @@ public struct WalkTrialLabelSheet: View {
     private var footerButtons: some View {
         HStack {
             Button("건너뛰기") {
+                Harness.shared.record(.walklabTrialLabelSkipped, level: .info, actor: .user)
                 onSkip?()
                 dismiss()
             }
@@ -210,9 +215,16 @@ public struct WalkTrialLabelSheet: View {
             Button("저장") {
                 let allTags = Array(selectedAutoTags) + parseCustomTags(customTagsInput)
                 let dedup = Array(Set(allTags))
+                let trimmedFreeText = freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+                Harness.shared.record(
+                    .walklabTrialLabeled, level: .info, actor: .user,
+                    data: ["rating": AnyCodable(max(1, rating)),
+                           "tag_count": AnyCodable(dedup.count),
+                           "has_free_text": AnyCodable(!trimmedFreeText.isEmpty)]
+                )
                 let label = UserLabel(
                     rating: max(1, rating),  // 별점 0 도 저장 시 1 로 보정 (UserLabel init 정책).
-                    freeText: freeText.trimmingCharacters(in: .whitespacesAndNewlines),
+                    freeText: trimmedFreeText,
                     tags: dedup,
                     labeledAtIso: ISO8601DateFormatter().string(from: Date())
                 )
