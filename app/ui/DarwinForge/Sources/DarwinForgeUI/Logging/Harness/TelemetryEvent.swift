@@ -198,6 +198,22 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: value (Double), label (String).
     public static let pilotSensitivityChanged: TelemetryKind = "pilot.sensitivity_changed"
 
+    // Remote pilot (사이클 216)
+    /// Feature level picker 변경 (v1.0 / v1.5 등).
+    /// data: from, to.
+    public static let pilotFeatureLevelChanged: TelemetryKind = "pilot.feature_level_changed"
+    /// 데모 모드 전환 요청 (manual ↔ ballFollow). handleModeChange 진입.
+    /// data: from_mode, to_mode, patched_demo.
+    public static let pilotDemoModeRequested: TelemetryKind = "pilot.demo_mode_requested"
+    /// 데모 모드 전환 완료 (성공/실패). data: mode, success, error_hash (PII-safe).
+    public static let pilotDemoModeResult: TelemetryKind = "pilot.demo_mode_result"
+    /// Transition overlay 사용자 "다음" 진행. data: step_index, step_id.
+    public static let pilotTransitionAdvance: TelemetryKind = "pilot.transition_advance"
+    /// Transition overlay 사용자 취소. data: step_index, step_count.
+    public static let pilotTransitionCancel: TelemetryKind = "pilot.transition_cancel"
+    /// 에러 배너 재연결 버튼. data: endpoint_hash (PII-safe).
+    public static let pilotReconnectTapped: TelemetryKind = "pilot.reconnect_tapped"
+
     // Claude
     public static let claudePromptSent: TelemetryKind = "claude.prompt_sent"
     public static let claudeResponseReceived: TelemetryKind = "claude.response_received"

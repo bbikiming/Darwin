@@ -394,7 +394,7 @@ public enum HarnessInsights {
         let voiceErrors = events.filter { $0.k.rawValue == TelemetryKind.pilotVoiceError.rawValue }
         guard voiceErrors.count >= 3 else { return [] }
         return [Insight(
-            id: "pilot.voice_error_pattern#\(voiceErrors.count)",
+            id: "pilot.voice_error_pattern#\(a.summary.firstEventAt ?? "")",
             ruleID: "pilot.voice_error_chain",
             severity: .warn, kind: .pilot,
             title: "음성 인식 오류 \(voiceErrors.count) 회",
@@ -410,14 +410,14 @@ public enum HarnessInsights {
         _ a: SessionAnalysis, _ events: [TelemetryEvent]
     ) -> [Insight] {
         let keywords = events.filter { $0.k.rawValue == TelemetryKind.pilotVoiceKeyword.rawValue }
-        guard keywords.count >= 5 else { return [] }
+        guard keywords.count >= 10 else { return [] }
         let matched = keywords.filter {
             ($0.d.raw["matched"])?.value as? Bool == true
         }.count
         let ratio = Double(matched) / Double(keywords.count)
         guard ratio < 0.3 else { return [] }
         return [Insight(
-            id: "pilot.voice_low_match#\(percent(ratio))",
+            id: "pilot.voice_low_match#\(a.summary.firstEventAt ?? "")",
             ruleID: "pilot.voice_low_match_rate",
             severity: .notice, kind: .pilot,
             title: "음성 키워드 매칭률 \(percent(ratio)) — 환경 소음 의심",
