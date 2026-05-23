@@ -95,7 +95,12 @@ public enum HarnessBaseline {
                                     baseline: Double?,
                                     current: Double?,
                                     lowerIsBetter: Bool) -> MetricDelta {
-        let abs = (baseline != nil && current != nil) ? (current! - baseline!) : nil
+        let abs: Double?
+        if let b = baseline, let c = current {
+            abs = c - b
+        } else {
+            abs = nil
+        }
         let pct: Double? = {
             guard let b = baseline, let c = current, b != 0 else { return nil }
             return (c - b) / b * 100.0

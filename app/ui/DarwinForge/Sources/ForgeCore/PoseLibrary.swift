@@ -638,7 +638,11 @@ public enum PoseLibrary {
             }
             if p.description.lowercased().contains(q) { score += 1 }
             if score > 0 {
-                if best == nil || score > best!.1 { best = (p, score) }
+                if let currentBest = best {
+                    if score > currentBest.1 { best = (p, score) }
+                } else {
+                    best = (p, score)
+                }
             }
         }
         return best?.0

@@ -794,6 +794,10 @@ public final class ConnectionStore: ObservableObject {
                     speedFailureCount += 1
                     failedJointsUnique.insert(j)
                     lastWriteError = "\(j.name) 목표 속도 전송: \(error.localizedDescription)"
+                    // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
+                    // 카테고리=connection (DFLog.swift: ConnectionStore/SerialPort/SSH/NetworkProbe).
+                    // privacy=.public: joint.name + bus error 는 PII X (precedent: line 1381 readState).
+                    DFLog.connection.warning("setMovingSpeed 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 }
             }
             for (j, raw) in step.positions {
@@ -805,6 +809,8 @@ public final class ConnectionStore: ObservableObject {
                         lowerBodyPositionFails.insert(j)
                     }
                     lastWriteError = "\(j.name) 목표 위치 전송: \(error.localizedDescription)"
+                    // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
+                    DFLog.connection.warning("setPosition 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 }
             }
 
@@ -1171,7 +1177,12 @@ public final class ConnectionStore: ObservableObject {
         var pGainFailures = 0
         for j in JointID.allCases {
             do { try bus.setPGain(j, value: 32) }
-            catch { pGainFailures += 1 }
+            catch {
+                pGainFailures += 1
+                // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
+                // recovery P-gain restore 가 실패하면 해당 관절은 위치 제어 불능 → root cause 추적 필수.
+                DFLog.connection.warning("setPGain 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
         }
         // P_GAIN 정착 — 짧은 대기 (모터 내부 register write 후 효과 적용).
         try? await Task.sleep(nanoseconds: 200_000_000)

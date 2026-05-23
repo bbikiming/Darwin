@@ -217,12 +217,16 @@ public struct RemotePilotView: View {
 
     /// 사용자가 후면 버튼을 눌렀음을 알리는 액션 — waitingForUser step 진행.
     private func advanceUserStep() {
+        // step_id 추출 — activeIndex nil 또는 out-of-range 시 "unknown" 으로 처리.
+        let stepId: String = {
+            guard let activeIdx = transitionActiveIndex,
+                  transitionSteps.indices.contains(activeIdx) else { return "unknown" }
+            return transitionSteps[activeIdx].id
+        }()
         Harness.shared.record(
             .pilotTransitionAdvance, level: .info, actor: .user,
             data: ["step_index": AnyCodable(transitionActiveIndex ?? -1),
-                   "step_id": AnyCodable(
-                       transitionSteps.indices.contains(transitionActiveIndex ?? -1)
-                           ? transitionSteps[transitionActiveIndex!].id : "unknown")])
+                   "step_id": AnyCodable(stepId)])
         waitingForUserAdvance?.resume()
         waitingForUserAdvance = nil
     }
