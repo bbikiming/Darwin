@@ -36,6 +36,15 @@ public struct BalanceExperimentControls: View {
     /// 이므로 "사용자가 확인하면 적용" 패턴 자체가 부적절. session.didSet / startWalkCycle
     /// 진입 가드가 이중 안전망이지만 UI 단에서도 명시 거부하여 사용자 의도 오해 차단.
     private func requestConfigChange(_ newConfig: BalanceExperimentConfig) {
+        Harness.shared.record(
+            .walklabBalanceProfileChanged, level: .info, actor: .user,
+            data: [
+                "algorithm": AnyCodable(newConfig.algorithmMode.rawValue),
+                "sign": AnyCodable(newConfig.signConvention.rawValue),
+                "gain": AnyCodable(newConfig.gainProfile.rawValue),
+                "apply_to_robot": AnyCodable(newConfig.applyToRobot),
+            ]
+        )
         if case .blocked = newConfig.safetyVerdict {
             // 사용자 의도 (algorithm/sign/gain/pitchInputConvention 변경) 는 보존하되
             // applyToRobot 만 강제 OFF. **v1.11.4 (2026-05-18) fix**: pitchInputConvention
@@ -313,12 +322,29 @@ public struct BalanceExperimentControls: View {
 
             HStack {
                 Button("취소") {
+                    Harness.shared.record(
+                        .walklabBalanceRiskyCancelled, level: .info, actor: .user,
+                        data: [
+                            "algorithm": AnyCodable(config.algorithmMode.rawValue),
+                            "sign": AnyCodable(config.signConvention.rawValue),
+                            "gain": AnyCodable(config.gainProfile.rawValue),
+                        ]
+                    )
                     pendingRiskyApply = nil
                 }
                 .buttonStyle(.bordered)
                 .keyboardShortcut(.escape)
                 Spacer()
                 Button(isAlternateSign ? "관찰 전용으로 진행" : "이해함, 실 적용 진행") {
+                    Harness.shared.record(
+                        .walklabBalanceRiskyConfirmed, level: .warn, actor: .user,
+                        data: [
+                            "algorithm": AnyCodable(config.algorithmMode.rawValue),
+                            "sign": AnyCodable(config.signConvention.rawValue),
+                            "gain": AnyCodable(config.gainProfile.rawValue),
+                            "apply_to_robot": AnyCodable(config.applyToRobot),
+                        ]
+                    )
                     session.balanceExperimentConfig = config
                     pendingRiskyApply = nil
                 }

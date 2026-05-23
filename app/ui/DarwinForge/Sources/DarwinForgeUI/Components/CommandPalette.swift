@@ -38,7 +38,7 @@ public struct CommandPalette: View {
             query = ""
             selectedIndex = 0
             queryFocused = true
-            Harness.shared.record(.uiPaletteOpened, level: .trace, actor: .user)
+            Harness.shared.record(.uiPaletteOpened, level: .info, actor: .user)
         }
     }
 

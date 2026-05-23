@@ -200,6 +200,13 @@ public struct WalkTrialRecommenderCard: View {
                     titleVisibility: .visible
                 ) {
                     Button("그래도 적용", role: .destructive) {
+                        Harness.shared.record(
+                            .walklabRecommenderSimConfirmed, level: .info, actor: .user,
+                            data: [
+                                "strategy": AnyCodable(recommendation.strategy.rawValue),
+                                "sim_count": AnyCodable(recommendation.sourceBreakdown?.simCount ?? 0),
+                            ]
+                        )
                         performApply()
                     }
                     Button("취소", role: .cancel) {}
@@ -226,6 +233,15 @@ public struct WalkTrialRecommenderCard: View {
 
     /// 사이클 153: confirmation 통과 후 실제 apply (또는 sim/disconnected 시 직접 호출).
     private func performApply() {
+        Harness.shared.record(
+            .walklabRecommenderApplied, level: .info, actor: .user,
+            data: [
+                "strategy": AnyCodable(recommendation.strategy.rawValue),
+                "data_maturity": AnyCodable(recommendation.dataMaturity),
+                "preset": AnyCodable(recommendation.preset),
+                "intensity_level": AnyCodable(recommendation.intensityLevel),
+            ]
+        )
         onApply()
         appliedAt = Date()
     }

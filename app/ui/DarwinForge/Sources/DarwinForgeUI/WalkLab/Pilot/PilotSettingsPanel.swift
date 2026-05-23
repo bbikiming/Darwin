@@ -227,6 +227,15 @@ public struct PilotSettingsPanel: View {
             smoothingFactor: smoothingFactor
         )
         store.save(prefs)
+        Harness.shared.record(
+            .pilotSettingsSaved, level: .info, actor: .user,
+            data: [
+                "scale_lr": AnyCodable(scaleLR),
+                "scale_fb": AnyCodable(scaleFB),
+                "scale_yaw": AnyCodable(scaleYaw),
+                "smoothing": AnyCodable(smoothingFactor),
+            ]
+        )
         // 1.5초간 "저장됨" 표시 후 자동 hide.
         savedFlash = true
         Task { @MainActor in
@@ -237,6 +246,7 @@ public struct PilotSettingsPanel: View {
 
     /// "기본값" — slider 4개 + bridge 동시 reset. 저장은 안 함 (명시 클릭 필요).
     private func resetToDefaults() {
+        Harness.shared.record(.pilotSettingsReset, level: .info, actor: .user)
         let d = PilotPreferences.defaultValues
         scaleLR = d.scaleLR
         scaleFB = d.scaleFB

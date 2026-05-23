@@ -219,6 +219,7 @@ public struct PilotHsvTuningSheet: View {
     private var actionsBar: some View {
         HStack(spacing: DFSpace.sm) {
             DFButton(.secondary, size: .medium) {
+                Harness.shared.record(.pilotHsvResetDefault, level: .info, actor: .user)
                 preset = .macDefault
                 lastOperationMessage = "Mac default 로 초기화"
             } label: {
@@ -253,6 +254,7 @@ public struct PilotHsvTuningSheet: View {
 
     @MainActor
     private func loadFromRobot() async {
+        Harness.shared.record(.pilotHsvLoadFromRobot, level: .info, actor: .user)
         lastOperationMessage = "로봇에서 config.ini read 중…"
         let priorCount = remoteShell.history.count
         await remoteShell.send(RobotSetupCommand.readVisionConfig)
@@ -324,6 +326,8 @@ public struct PilotHsvTuningSheet: View {
 
     @MainActor
     private func writeToRobot() async {
+        Harness.shared.record(.pilotHsvWriteToRobot, level: .warn, actor: .user,
+                              data: ["tag_count": AnyCodable(MultiColorVision.Tag.allCases.count)])
         lastOperationMessage = "로봇에 write 중…"
         // DF_ARGS — 4색 × 7토큰 (tag h t sat val min_pct max_pct).
         // ROBOTIS ini 가 sat/val 은 0-100 정수, min/max_pct 는 float — 그대로 전달.

@@ -53,6 +53,10 @@ struct StaticTiltCalibrationPanel: View {
                 HStack {
                     Spacer()
                     Button(role: .destructive) {
+                        Harness.shared.record(
+                            .walklabCalibrationReset, level: .info, actor: .user,
+                            data: ["cleared_count": AnyCodable(session.calibrationCaptures.count)]
+                        )
                         captureTask?.cancel()
                         activeAxis = nil
                         captureProgress = 0
@@ -190,6 +194,11 @@ struct StaticTiltCalibrationPanel: View {
         activeAxis = axis
         captureProgress = 0
 
+        Harness.shared.record(
+            .walklabCalibrationCaptureStart, level: .info, actor: .user,
+            data: ["axis": AnyCodable(axis.rawValue)]
+        )
+
         captureTask = Task { @MainActor in
             // UI progress (5초 동안 0→1).
             let progressTask = Task { @MainActor in
@@ -201,8 +210,17 @@ struct StaticTiltCalibrationPanel: View {
                     try? await Task.sleep(nanoseconds: stepNs)
                 }
             }
-            _ = await session.runStaticTiltCalibration(axis: axis, durationSec: 5.0)
+            let result = await session.runStaticTiltCalibration(axis: axis, durationSec: 5.0)
             progressTask.cancel()
+
+            Harness.shared.record(
+                .walklabCalibrationCaptureDone, level: .info, actor: .user,
+                data: [
+                    "axis": AnyCodable(axis.rawValue),
+                    "sample_count": AnyCodable(result?.samples.count ?? 0),
+                ]
+            )
+
             activeAxis = nil
             captureProgress = 0
         }

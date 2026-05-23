@@ -204,9 +204,10 @@ public struct RemoteShellView: View {
             let toMode = shouldShowSetupWizard ? "shell" : "wizard"
             Harness.shared.record(
                 .remoteModeToggled,
-                level: .trace,
+                level: .info,
                 actor: .user,
-                data: ["to_mode": AnyCodable(toMode)]
+                data: ["to_mode": AnyCodable(toMode),
+                       "source": AnyCodable("mode_toggle")]
             )
             showSetupWizard = !(shouldShowSetupWizard)
         } label: {

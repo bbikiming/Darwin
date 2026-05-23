@@ -65,11 +65,15 @@ public struct PilotActionBar: View {
         // **사이클 121 (audit #11)**: channel.lastError observer — 비-nil 변경 시 banner 표시 + 5초 후 dismiss.
         .onChange(of: channel.lastError) { newError in
             guard let err = newError, !err.isEmpty else { return }
-            Harness.shared.record(
-                .errorException, level: .error, actor: .system,
-                data: ["source": AnyCodable("pilot.action_bar"),
-                       "error_hash": AnyCodable(Harness.shortHash(err))]
-            )
+            // Gate-rejection 메시지는 pilotSafetyGateBlocked 에서 이미 기록됨 — errorException 중복 방지.
+            let isGateRejection = err.hasPrefix("먼저 ARM") || err.hasPrefix("위험 동작")
+            if !isGateRejection {
+                Harness.shared.record(
+                    .errorException, level: .error, actor: .system,
+                    data: ["source": AnyCodable("pilot.action_bar"),
+                           "error_hash": AnyCodable(Harness.shortHash(err))]
+                )
+            }
             displayedError = err
             errorDismissTask?.cancel()
             errorDismissTask = Task { @MainActor in

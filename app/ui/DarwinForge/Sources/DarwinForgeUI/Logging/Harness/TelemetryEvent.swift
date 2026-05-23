@@ -176,6 +176,36 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: was_generating (Bool).
     public static let walklabTrialAutogenCancelled: TelemetryKind = "walklab.trial_autogen_cancelled"
 
+    // Balance experiment controls
+    /// 사용자가 balance profile preset 버튼 클릭 (ROBOTIS/v1.10 관찰/v1.10 적용/OFF).
+    /// data: profile (rawValue summary).
+    public static let walklabBalanceProfileChanged: TelemetryKind = "walklab.balance_profile_changed"
+    /// 위험 조합 실 적용 확인 sheet — 사용자가 "진행" 클릭.
+    /// data: algorithm, sign, gain, apply_to_robot.
+    public static let walklabBalanceRiskyConfirmed: TelemetryKind = "walklab.balance_risky_confirmed"
+    /// 위험 조합 실 적용 확인 sheet — 사용자가 "취소" 클릭.
+    /// data: algorithm, sign, gain.
+    public static let walklabBalanceRiskyCancelled: TelemetryKind = "walklab.balance_risky_cancelled"
+
+    // Static tilt calibration
+    /// 정적 IMU 캘리브레이션 캡처 시작 — 사용자가 축별 "캡처" 버튼 클릭.
+    /// data: axis.
+    public static let walklabCalibrationCaptureStart: TelemetryKind = "walklab.calibration_capture_start"
+    /// 정적 IMU 캘리브레이션 캡처 완료 — 5초 캡처 종료.
+    /// data: axis, sample_count.
+    public static let walklabCalibrationCaptureDone: TelemetryKind = "walklab.calibration_capture_done"
+    /// 정적 IMU 캘리브레이션 전체 초기화.
+    /// data: cleared_count.
+    public static let walklabCalibrationReset: TelemetryKind = "walklab.calibration_reset"
+
+    // Recommender card
+    /// Recommender 카드 "이 config 적용" 클릭 (직접 적용 또는 sim confirm 후).
+    /// data: strategy, data_maturity, preset, intensity_level.
+    public static let walklabRecommenderApplied: TelemetryKind = "walklab.recommender_applied"
+    /// Recommender 카드 sim-only confirmation dialog — 사용자가 "그래도 적용" 클릭.
+    /// data: strategy, sim_count.
+    public static let walklabRecommenderSimConfirmed: TelemetryKind = "walklab.recommender_sim_confirmed"
+
     // Pose
     public static let poseApplyStart: TelemetryKind = "pose.apply_start"
     public static let poseApplyComplete: TelemetryKind = "pose.apply_complete"
@@ -229,6 +259,32 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: action ("activate" / "retry" / "bridge_toggle"), enabled (Bool, 토글 시).
     public static let pilotHudAction: TelemetryKind = "pilot.hud_action"
 
+    // PilotCameraView (Harness telemetry hooks)
+    /// 카메라 연결 버튼 클릭 — 사용자 명시 시작.
+    /// data: endpoint_hash (PII-safe).
+    public static let pilotCameraConnect: TelemetryKind = "pilot.camera_connect"
+    /// head tracking 토글 — 사용자 ON/OFF 전환.
+    /// data: enabled (Bool).
+    public static let pilotCameraHeadTrackingToggle: TelemetryKind = "pilot.camera_head_tracking_toggle"
+    /// Expert menu sheet 열기 — 어느 시트를 열었는지.
+    /// data: sheet ("head_tracker" / "imu" / "hsv").
+    public static let pilotCameraSheetOpened: TelemetryKind = "pilot.camera_sheet_opened"
+
+    // PilotHeadTrackerSettingsSheet (Harness telemetry hooks)
+    /// gain 슬라이더 변경 — 어떤 파라미터가 바뀌었는지.
+    /// data: param, value (Double).
+    public static let pilotHeadTrackerGainChanged: TelemetryKind = "pilot.head_tracker_gain_changed"
+    /// 모두 기본값으로 초기화 버튼 클릭.
+    public static let pilotHeadTrackerResetDefaults: TelemetryKind = "pilot.head_tracker_reset_defaults"
+
+    // PilotHsvTuningSheet (Harness telemetry hooks)
+    /// 로봇에서 config.ini 불러오기 시작. data: (none).
+    public static let pilotHsvLoadFromRobot: TelemetryKind = "pilot.hsv_load_from_robot"
+    /// 로봇에 config.ini 저장 (destructive). data: tag_count.
+    public static let pilotHsvWriteToRobot: TelemetryKind = "pilot.hsv_write_to_robot"
+    /// Mac default 로 초기화. data: (none).
+    public static let pilotHsvResetDefault: TelemetryKind = "pilot.hsv_reset_default"
+
     // PilotActionBar (Harness telemetry hooks)
     /// Action Bar 버튼 클릭 — 모션 송출 진입점.
     /// data: slot, safety_class, is_sim.
@@ -247,6 +303,13 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// 키보드 패널 sensitivity slider 변경.
     /// data: value (Double), label (String).
     public static let pilotSensitivityChanged: TelemetryKind = "pilot.sensitivity_changed"
+
+    // PilotSettingsPanel (Harness telemetry hooks)
+    /// Pilot 감도 설정 "저장" 버튼 클릭.
+    /// data: scale_lr, scale_fb, scale_yaw, smoothing.
+    public static let pilotSettingsSaved: TelemetryKind = "pilot.settings_saved"
+    /// Pilot 감도 설정 "기본값" 버튼 클릭.
+    public static let pilotSettingsReset: TelemetryKind = "pilot.settings_reset"
 
     // Remote pilot (사이클 216)
     /// Feature level picker 변경 (v1.0 / v1.5 등).

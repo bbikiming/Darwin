@@ -133,6 +133,7 @@ public actor TelemetryRecorder {
         // Claude
         .claudeError,
         .claudePlanExecutionFailed,
+        .claudeIntentError,
         // Remote (cycle 182)
         .remoteCommandError,
         // Joint control (cycle 196)
