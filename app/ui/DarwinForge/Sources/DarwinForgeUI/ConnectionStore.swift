@@ -517,11 +517,37 @@ public final class ConnectionStore: ObservableObject {
     }
 
     /// watchdog 또는 명시 호출로 끊긴 후 재연결 시도 (1, 2, 4, 8, 16초 백오프).
+    ///
+    /// **W2.14 (사이클 V268-2)** — 76-line god method 분해 (11번째 god method).
+    /// facade 가 5 helper 로 위임 — guard / state begin / Task spawn 으로 분리. 동작
+    /// 100% 보존 — exponential backoff (1<<(attempt-1)), state machine begin/end 순서,
+    /// telemetry payload (.connectReconnectStart/Attempt, .connectSuccess/Failure),
+    /// cancellation (Task.isCancelled / weak self) 모두 보존. helper prefix `reconn`
+    /// 사용 — W2.9 의 `re` (recoverFromEStop) 와 `record`, `resetBusFailureCounter` 와
+    /// 충돌 회피.
     public func startReconnectIfPossible() {
-        guard let endpoint = lastSuccessfulEndpoint else { return }
-        guard reconnectTask == nil else { return }
+        guard let target = reconnCanStart() else { return }
+        reconnBegin(target: target)
+        reconnSpawnTask(target: target)
+    }
+
+    /// W2.14 helper — startReconnectIfPossible guard.
+    ///
+    /// 두 조건 모두 통과해야 reconnect 시작: (1) `lastSuccessfulEndpoint` 존재, (2)
+    /// 이미 진행 중인 `reconnectTask` 없음. 반환값이 nil 이면 facade 가 조용히 무시 —
+    /// `testStartReconnectIfPossibleIgnoredWithoutLastEndpoint` 계약 보존.
+    private func reconnCanStart() -> Endpoint? {
+        guard let endpoint = lastSuccessfulEndpoint else { return nil }
+        guard reconnectTask == nil else { return nil }
+        return endpoint
+    }
+
+    /// W2.14 helper — reconnect 사이클 시작 (state machine begin + telemetry).
+    ///
+    /// `transport.beginReconnecting()` 호출과 `.connectReconnectStart` 발화. 순서
+    /// (begin → telemetry) 보존 — testReconnectTransportStateMachineSequence 계약.
+    private func reconnBegin(target: Endpoint) {
         transport.beginReconnecting()
-        let target = endpoint
         // **v1.14.2 (2026-05-21)** — reconnect cycle 시작 발화.
         harness.record(
             .connectReconnectStart, level: .notice, actor: .system,
@@ -530,6 +556,14 @@ public final class ConnectionStore: ObservableObject {
                    "max_attempts": AnyCodable(Self.maxReconnectAttempts)],
             context: harnessContext()
         )
+    }
+
+    /// W2.14 helper — reconnect Task spawn (백오프 loop + 최종 실패 처리).
+    ///
+    /// `[weak self]` capture 보존 — disconnect/cancel 중 self deinit 시 task 안전 종료.
+    /// loop 내부에서 `Task.isCancelled` 체크 두 번 (delay 전/후) — cancellation latency
+    /// 최소화. 모든 attempt 실패 시 `reconnHandleAllFailed` 로 위임.
+    private func reconnSpawnTask(target: Endpoint) {
         reconnectTask = Task { [weak self] in
             for attempt in 1...Self.maxReconnectAttempts {
                 if Task.isCancelled { break }
@@ -539,57 +573,83 @@ public final class ConnectionStore: ObservableObject {
                 if Task.isCancelled { break }
                 guard let self else { break }
 
-                // **v1.14.2** — 매 attempt 발화 — 진단성 위해 어디서 실패했는지 추적.
-                harness.record(
-                    .connectReconnectAttempt, level: .info, actor: .system,
-                    data: ["attempt": AnyCodable(attempt),
-                           "delay_s": AnyCodable(delaySeconds),
-                           "endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—")],
-                    context: harnessContext()
-                )
-
-                // 빠른 sanity check — 연결 시도.
-                self.status = .connecting("자동 재연결 \(attempt)/\(Self.maxReconnectAttempts)")
-                do {
-                    let bus = try Bus(endpoint: target)
-                    let snap = try bus.boardSnapshot()
-                    self.bus = bus
-                    self.activeEndpoint = target
-                    self.status = .connected(snap)
-                    self.lastTelemetry = TelemetrySnapshot(board: snap, joints: [:])
-                    self.startTelemetry(cadence: .light)
-                    self.transport.endReconnecting()
-                    self.reconnectTask = nil
-                    // **v1.14.2** — reconnect 성공도 connect_success 와 동일하게.
-                    harness.record(
-                        .connectSuccess, level: .notice, actor: .system,
-                        data: ["endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—"),
-                               "endpoint_kind": AnyCodable(HarnessRedaction.endpointKind(target)),
-                               "via": AnyCodable("reconnect"),
-                               "attempt": AnyCodable(attempt)],
-                        context: self.harnessContext()
-                    )
-                    return
-                } catch {
-                    // 다음 attempt — 백오프.
-                    continue
+                if self.reconnTryAttempt(attempt: attempt, delaySeconds: delaySeconds, target: target) {
+                    return  // 성공 — task 정상 종료.
                 }
+                // 실패 → 다음 attempt (백오프 loop continue).
             }
             // 모든 시도 실패.
-            self?.transport.endReconnecting()
-            self?.reconnectTask = nil
-            self?.status = .error(
-                "자동 재연결 \(Self.maxReconnectAttempts)회 모두 실패. 케이블·네트워크를 확인 후 수동으로 다시 연결해 주세요."
-            )
-            // **v1.14.2** — reconnect 최종 실패 발화 (사용자 개입 필요).
-            self?.harness.record(
-                .connectFailure, level: .error, actor: .system,
-                data: ["via": AnyCodable("reconnect"),
-                       "attempts": AnyCodable(Self.maxReconnectAttempts),
-                       "endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—")],
-                context: self?.harnessContext()
-            )
+            self?.reconnHandleAllFailed(target: target)
         }
+    }
+
+    /// W2.14 helper — 단일 reconnect attempt 실행 (telemetry + Bus 연결 시도 + 성공/실패 처리).
+    ///
+    /// 책임: (1) `.connectReconnectAttempt` 발화 (진단성), (2) status="자동 재연결 N/M",
+    /// (3) Bus 생성 + boardSnapshot — 성공 시 모든 state 갱신 (bus / activeEndpoint /
+    /// status / lastTelemetry / startTelemetry / endReconnecting / reconnectTask=nil)
+    /// + `.connectSuccess(via=reconnect)` 발화 후 true 반환. (4) 실패 시 false — 호출자가
+    /// 다음 attempt 로 continue.
+    ///
+    /// **계약**: 성공 시 reconnectTask=nil 까지 설정해야 facade 의 `reconnCanStart` 가 다음
+    /// 호출 때 통과한다.
+    private func reconnTryAttempt(attempt: Int, delaySeconds: Double, target: Endpoint) -> Bool {
+        // **v1.14.2** — 매 attempt 발화 — 진단성 위해 어디서 실패했는지 추적.
+        harness.record(
+            .connectReconnectAttempt, level: .info, actor: .system,
+            data: ["attempt": AnyCodable(attempt),
+                   "delay_s": AnyCodable(delaySeconds),
+                   "endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—")],
+            context: harnessContext()
+        )
+
+        // 빠른 sanity check — 연결 시도.
+        self.status = .connecting("자동 재연결 \(attempt)/\(Self.maxReconnectAttempts)")
+        do {
+            let bus = try Bus(endpoint: target)
+            let snap = try bus.boardSnapshot()
+            self.bus = bus
+            self.activeEndpoint = target
+            self.status = .connected(snap)
+            self.lastTelemetry = TelemetrySnapshot(board: snap, joints: [:])
+            self.startTelemetry(cadence: .light)
+            self.transport.endReconnecting()
+            self.reconnectTask = nil
+            // **v1.14.2** — reconnect 성공도 connect_success 와 동일하게.
+            harness.record(
+                .connectSuccess, level: .notice, actor: .system,
+                data: ["endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—"),
+                       "endpoint_kind": AnyCodable(HarnessRedaction.endpointKind(target)),
+                       "via": AnyCodable("reconnect"),
+                       "attempt": AnyCodable(attempt)],
+                context: self.harnessContext()
+            )
+            return true
+        } catch {
+            // 다음 attempt — 백오프.
+            return false
+        }
+    }
+
+    /// W2.14 helper — 5회 모두 실패 시 final 정리 + 사용자 안내 + telemetry.
+    ///
+    /// 순서: endReconnecting (state machine end) → reconnectTask=nil → status .error →
+    /// `.connectFailure(via=reconnect)` 발화. 사용자에게 케이블/네트워크 확인 후 수동
+    /// 재연결 가이드 — 무한 retry loop 금지 (배터리/리소스 보호).
+    private func reconnHandleAllFailed(target: Endpoint) {
+        self.transport.endReconnecting()
+        self.reconnectTask = nil
+        self.status = .error(
+            "자동 재연결 \(Self.maxReconnectAttempts)회 모두 실패. 케이블·네트워크를 확인 후 수동으로 다시 연결해 주세요."
+        )
+        // **v1.14.2** — reconnect 최종 실패 발화 (사용자 개입 필요).
+        self.harness.record(
+            .connectFailure, level: .error, actor: .system,
+            data: ["via": AnyCodable("reconnect"),
+                   "attempts": AnyCodable(Self.maxReconnectAttempts),
+                   "endpoint": AnyCodable(HarnessRedaction.endpoint(target) ?? "—")],
+            context: self.harnessContext()
+        )
     }
 
     /// 사용자가 입력한 네트워크 정보로 연결.
