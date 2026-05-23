@@ -191,13 +191,19 @@ struct JointDetailView: View {
             try action()
             lastError = nil
         } catch {
+            // UI 표시 — 로컬라이즈 된 메시지 (사용자 노출 OK).
             lastError = error.localizedDescription
+            // 사이클 202 (codex critic MAJOR-1 cycle 199 fix): telemetry payload 에
+            // raw `error.localizedDescription` 전송 X — 파일 경로 / 호스트명 / IP /
+            // username 등 PII 노출 위험. cycle 182 shellErrorCase / cycle 187
+            // DispatcherError.telemetryCase 패턴 일관 — type 만 + hash.
             Harness.shared.record(
                 .jointActionFailed, level: .error, actor: .user,
                 data: [
                     "action": AnyCodable(actionName),
                     "joint_id": AnyCodable(joint.rawValue),
-                    "error_case": AnyCodable(error.localizedDescription)
+                    "error_type": AnyCodable(String(describing: type(of: error))),
+                    "error_hash": AnyCodable(Harness.shortHash(error.localizedDescription))
                 ]
             )
         }

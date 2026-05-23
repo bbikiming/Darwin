@@ -59,11 +59,14 @@ final class HarnessErrorCountedKindsTests: XCTestCase {
         }
     }
 
-    /// **검증 #4**: pilotEStop 의도된 제외 (design choice: level=.warn).
-    /// 사용자 안전 액션 (실패 X) 이라 errorCount 비포함. 분석 도구 가 별도 kind 카운트.
+    /// **검증 #4**: pilotEStop + uiViewAppeared 의도된 제외 (design choice).
+    /// - pilotEStop: level=.warn (사용자 안전 액션 — 시스템 오류 X).
+    /// - uiViewAppeared: level=.trace (cycle 197 navigation 추적 — 사고 X).
+    /// 분석 도구 가 별도 kind 카운트.
     func testIntentionalExclusions() {
         let mustNot: [TelemetryKind] = [
-            .pilotEStop  // level=.warn, design choice
+            .pilotEStop,        // level=.warn, design choice
+            .uiViewAppeared     // cycle 199 critic 응답: level=.trace, exclude
         ]
         for k in mustNot {
             XCTAssertFalse(

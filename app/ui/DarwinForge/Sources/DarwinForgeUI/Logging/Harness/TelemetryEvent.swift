@@ -86,6 +86,11 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     // UI
     /// 사이클 197 (cycle 190 audit P2 #6): 탭/뷰 전환 시 onAppear 진입 기록.
     /// data: view_name. navigation 패턴 분석 + cross-menu stale state 감시용.
+    ///
+    /// **cycle 202 (cycle 199 critic MINOR-3 응답)**: navigation 시 본 kind 가
+    /// `uiSectionChanged` 와 의도적으로 double-fire — section 변경 (intent) vs view
+    /// lifecycle (실 onAppear) 의 두 의미 분리. 분석 시 본 kind 는 onAppear,
+    /// uiSectionChanged 는 menu 클릭 으로 구분.
     public static let uiViewAppeared: TelemetryKind = "ui.view_appeared"
     public static let uiSectionChanged: TelemetryKind = "ui.section_changed"
     public static let uiTabChanged: TelemetryKind = "ui.tab_changed"
