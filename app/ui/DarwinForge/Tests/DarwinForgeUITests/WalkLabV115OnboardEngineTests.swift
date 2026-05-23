@@ -137,18 +137,17 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
     }
 
     /// walkingEngine 전환 시 safety event 로그 발행.
-    func testWalkingEngineChangeLogsEvent() {
+    func testWalkingEngineChangeLogsEvent() throws {
         let s = WalkLabSession()
         let initialCount = s.safetyEvents.count
         s.walkingEngine = .robotisOnboard
         XCTAssertGreaterThan(s.safetyEvents.count, initialCount,
             "엔진 전환 → safety event 로그 발행")
         // 메시지에 엔진 전환 명시.
-        let last = s.safetyEvents.last
-        XCTAssertNotNil(last)
-        XCTAssertTrue(last!.message.contains("엔진") || last!.message.contains("engine") ||
-                      last!.message.contains("Mac") || last!.message.contains("ROBOTIS"),
-            "메시지에 엔진 전환 명시: \(last!.message)")
+        let last = try XCTUnwrap(s.safetyEvents.last)
+        XCTAssertTrue(last.message.contains("엔진") || last.message.contains("engine") ||
+                      last.message.contains("Mac") || last.message.contains("ROBOTIS"),
+            "메시지에 엔진 전환 명시: \(last.message)")
     }
 
     /// **회귀 가드 — 같은 엔진 set 은 이벤트 없음** (idempotent).

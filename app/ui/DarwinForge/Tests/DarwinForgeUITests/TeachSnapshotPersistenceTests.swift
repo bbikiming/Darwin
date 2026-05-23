@@ -61,13 +61,13 @@ final class TeachSnapshotPersistenceTests: XCTestCase {
     }
 
     /// deleteSnapshot() 호출 후 해당 메타데이터가 제거되어야 함.
-    func testDeleteRemovesMetadata() {
+    func testDeleteRemovesMetadata() throws {
         let capture = makeCapture()
         captureSnapshot(in: capture, name: "삭제 대상")
         captureSnapshot(in: capture, name: "유지 대상")
         XCTAssertEqual(capture.persistedSnapshotCount, 2)
 
-        let toDelete = capture.snapshots.first!
+        let toDelete = try XCTUnwrap(capture.snapshots.first)
         capture.deleteSnapshot(toDelete)
 
         XCTAssertEqual(capture.persistedSnapshotCount, 1,

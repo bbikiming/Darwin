@@ -481,9 +481,9 @@ final class WalkLabV1124AuditFixesTests: XCTestCase {
         let raw = try String(contentsOf: logger.filePath, encoding: .utf8)
         let lines = raw.split(separator: "\n").map(String.init)
         XCTAssertGreaterThanOrEqual(lines.count, 2, "header + footer 최소 2줄")
-        let lastLine = lines.last!
+        let lastLine = try XCTUnwrap(lines.last)
         // 마지막 줄을 footer 로 decode.
-        let data = lastLine.data(using: .utf8)!
+        let data = try XCTUnwrap(lastLine.data(using: .utf8))
         let footer = try JSONDecoder().decode(WalkSessionFooter.self, from: data)
         XCTAssertEqual(footer.type, "footer")
         XCTAssertEqual(footer.motorWriteStarted, true)

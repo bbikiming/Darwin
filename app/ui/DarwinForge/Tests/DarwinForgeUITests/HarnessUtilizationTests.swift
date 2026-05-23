@@ -388,7 +388,7 @@ final class HarnessUtilizationTests: XCTestCase {
             meta: meta, analysis: current, events: [], insights: [], diff: diff
         )
         let decoded = try JSONDecoder().decode(SessionJSONReport.self,
-                                                  from: json.data(using: .utf8)!)
+                                                  from: try XCTUnwrap(json.data(using: .utf8)))
         XCTAssertNotNil(decoded.diff)
         XCTAssertEqual(decoded.diff?.baselineId, "BASE")
     }
@@ -403,7 +403,7 @@ final class HarnessUtilizationTests: XCTestCase {
          "connectCount":0,"errorCount":0,"pinned":false}
         """
         let meta = try JSONDecoder().decode(TelemetrySessionMeta.self,
-                                              from: oldJson.data(using: .utf8)!)
+                                              from: try XCTUnwrap(oldJson.data(using: .utf8)))
         XCTAssertEqual(meta.isBaseline, false, "옛 meta.json 은 isBaseline=false 폴백")
     }
 

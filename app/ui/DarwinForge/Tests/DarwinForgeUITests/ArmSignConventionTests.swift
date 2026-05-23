@@ -40,8 +40,9 @@ final class ArmSignConventionTests: XCTestCase {
     }
 
     /// "팔 위로 / 만세" 의도 자세는 R 양수 / L 음수 mirror pair 여야 한다.
-    func testHandsUpHasMirrorPair() {
-        let pose = PoseLibrary.get("hands_up")!.pose
+    func testHandsUpHasMirrorPair() throws {
+        let entry = try XCTUnwrap(PoseLibrary.get("hands_up"))
+        let pose = entry.pose
         let r = pose.degrees(.rShoulderPitch)
         let l = pose.degrees(.lShoulderPitch)
         XCTAssertGreaterThan(r, 0, "hands_up: rShoulderPitch 양수여야 함. 실제: \(r)°")
