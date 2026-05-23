@@ -16,7 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // **v1.12.0 (2026-05-20) — Telemetry Harness 시동.**
         // 실 로봇 빌드/조작 세션 중 모든 이벤트를 디스크에 기록 (off-by-default 토글로
         // 사용자가 끌 수 있음). 자세한 설계: docs/harness/telemetry-harness.md
-        Harness.shared.start()
+        //
+        // **Wave 3 Phase 3.4 (사이클 115, 2026-05-23)** — `Harness.shared` 가
+        // deprecated. `LiveHarness.shared` (HarnessFacade) 으로 lifecycle 호출.
+        // RootView 의 `.environment(\.harness, LiveHarness.shared)` 와 동일 인스턴스.
+        LiveHarness.shared.start()
         // **v1.14.8 (2026-05-21) perf #5**: heartbeat 는 ConnectionStore.status
         // didSet 에서 connected 전환 시 start, disconnect/error 전환 시 stop.
         // 종전 always-on → 미연결 idle 상태에서도 매 1s Timer 발화 + record() 호출

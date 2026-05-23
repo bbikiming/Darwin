@@ -6,6 +6,13 @@ import SwiftUI
 //
 // 사용자가 텔레메트리 세션을 확인 / 내보내기 / 핀 고정 / 삭제할 수 있는 화면.
 // Expert 탭 또는 Settings 에서 사용. 자세한 설계: docs/harness/telemetry-harness.md
+//
+// **Wave 3 Phase 3.4 (사이클 115, 2026-05-23)** — Inspector 는 introspection
+// (sessionId, sessionDir, recorder 활성 여부, isEnabled get/set) 직접 접근이
+// 본질. `HarnessIntrospection` protocol 으로 표면화했으나 본 view 는 단일 진입점
+// (Expert 탭) 이라 `@Environment(\.harness)` 주입보다 internal 우회
+// (`Harness._internalShared`) 가 더 단순/안전. `_internalShared` 는 module-internal
+// — 외부 caller 는 접근 불가, deprecation warning 도 차단됨 (의도된 forwarding).
 
 public struct HarnessInspectorView: View {
     @StateObject private var model = HarnessInspectorModel()
@@ -42,7 +49,7 @@ public struct HarnessInspectorView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Harness.shared.bookmark("manual bookmark from inspector")
+                    Harness._internalShared.bookmark("manual bookmark from inspector")
                     reload()
                 } label: {
                     Label("북마크 추가", systemImage: "bookmark")
@@ -90,8 +97,8 @@ public struct HarnessInspectorView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Toggle("기록 활성", isOn: Binding(
-                    get: { Harness.shared.isEnabled },
-                    set: { Harness.shared.isEnabled = $0 }
+                    get: { Harness._internalShared.isEnabled },
+                    set: { Harness._internalShared.isEnabled = $0 }
                 ))
                 .toggleStyle(.switch)
                 .font(.caption)
@@ -140,7 +147,7 @@ public struct HarnessInspectorView: View {
     }
 
     private var currentSessionRow: some View {
-        let sid = Harness.shared.sessionId
+        let sid = Harness._internalShared.sessionId
         let shortId = String(sid.prefix(8))
         return HStack(spacing: 8) {
             Circle()
@@ -149,7 +156,7 @@ public struct HarnessInspectorView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("진행 중: \(shortId)")
                     .font(.system(.caption, design: .monospaced))
-                Text("시작: \(formatted(Harness.shared.sessionStarted))")
+                Text("시작: \(formatted(Harness._internalShared.sessionStarted))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -809,7 +816,7 @@ struct CurrentSessionPanel: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 220)
                 Button {
-                    Harness.shared.bookmark("inspector live-tail bookmark")
+                    Harness._internalShared.bookmark("inspector live-tail bookmark")
                 } label: {
                     Label("북마크 추가", systemImage: "bookmark.fill")
                 }
@@ -861,11 +868,11 @@ struct CurrentSessionPanel: View {
     }
 
     private var statusHeader: some View {
-        let sid = Harness.shared.sessionId
+        let sid = Harness._internalShared.sessionId
         let shortId = sid.isEmpty ? "(미시동)" : String(sid.prefix(8))
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Circle().fill(Harness.shared.recorder == nil ? .gray : .green)
+                Circle().fill(Harness._internalShared.recorder == nil ? .gray : .green)
                     .frame(width: 10, height: 10)
                 Text("Live tail — 현재 세션")
                     .font(.headline)
@@ -876,7 +883,7 @@ struct CurrentSessionPanel: View {
             }
             HStack(spacing: 16) {
                 MetaCell(label: "시작",
-                         value: shortTime(Harness.shared.sessionStarted))
+                         value: shortTime(Harness._internalShared.sessionStarted))
                 MetaCell(label: "수집한 이벤트",
                          value: "\(lastEventCount)")
                 MetaCell(label: "디스크 사용량",
@@ -910,7 +917,7 @@ struct CurrentSessionPanel: View {
     private func refresh() {
         // **v1.12.2 (Codex P2 fix)** — file I/O 를 off-main 으로.
         // 종전: main actor 에서 매 1초 50 MB 까지 동기 read → UI 끊김.
-        guard let dir = Harness.shared.sessionDir else { return }
+        guard let dir = Harness._internalShared.sessionDir else { return }
         Task.detached(priority: .utility) {
             let events = dir.appendingPathComponent("events.jsonl")
             let metaURL = dir.appendingPathComponent("meta.json")

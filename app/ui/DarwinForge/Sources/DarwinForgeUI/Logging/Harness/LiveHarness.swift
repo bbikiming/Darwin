@@ -10,11 +10,16 @@ import Foundation
 // internal API (_startInDirectory, _bypassConnectionGuard) 가 외부로 새지 않음.
 // thin wrapper 로 분리해 격리.
 
-/// 프로덕션용 Harness 구현체 — 모든 호출을 `Harness.shared` 로 forward.
+/// 프로덕션용 Harness 구현체 — 모든 호출을 `Harness` 싱글톤으로 forward.
+///
+/// **Wave 3 Phase 3.4 (사이클 115, 2026-05-23)** — `Harness.shared` 가 deprecated
+/// 되었지만 본 wrapper 는 의도적 forward 이므로 `Harness._internalShared` 우회를
+/// 통해 deprecation warning 없이 호출. 일반 caller 는 `Harness.shared` / `Harness._internalShared`
+/// 어느 것도 직접 호출 금지 — 반드시 `LiveHarness.shared` 또는 DI 추상화 사용.
 @MainActor
-public final class LiveHarness: HarnessFacade {
+public final class LiveHarness: HarnessFacade, HarnessIntrospection {
 
-    /// 전역 공유 인스턴스 — Harness.shared 와 1:1 매핑.
+    /// 전역 공유 인스턴스 — `Harness` 싱글톤과 1:1 매핑.
     public static let shared = LiveHarness()
 
     private init() {}
@@ -26,40 +31,63 @@ public final class LiveHarness: HarnessFacade {
                        actor: TelemetryActor,
                        data: [String: AnyCodable],
                        context: TelemetryContext?) {
-        Harness.shared.record(kind, level: level, actor: actor, data: data, context: context)
+        Harness._internalShared.record(kind, level: level, actor: actor, data: data, context: context)
     }
 
     public func bookmark(_ note: String) {
-        Harness.shared.bookmark(note)
+        Harness._internalShared.bookmark(note)
     }
 
     public func flush() async {
-        await Harness.shared.flush()
+        await Harness._internalShared.flush()
     }
 
     // MARK: HarnessHeartbeat
 
     public func startHeartbeat(intervalSeconds: TimeInterval) {
-        Harness.shared.startHeartbeat(intervalSeconds: intervalSeconds)
+        Harness._internalShared.startHeartbeat(intervalSeconds: intervalSeconds)
     }
 
     public func stopHeartbeat() {
-        Harness.shared.stopHeartbeat()
+        Harness._internalShared.stopHeartbeat()
     }
 
     // MARK: HarnessContext
 
     public func registerContextProvider(_ provider: @escaping @MainActor () -> TelemetryContext?) {
-        Harness.shared.registerContextProvider(provider)
+        Harness._internalShared.registerContextProvider(provider)
     }
 
     // MARK: HarnessLifecycle
 
     public func start() {
-        Harness.shared.start()
+        Harness._internalShared.start()
     }
 
     public func stop(reason: String) {
-        Harness.shared.stop(reason: reason)
+        Harness._internalShared.stop(reason: reason)
+    }
+
+    // MARK: HarnessIntrospection
+
+    public var isEnabled: Bool {
+        get { Harness._internalShared.isEnabled }
+        set { Harness._internalShared.isEnabled = newValue }
+    }
+
+    public var sessionId: String {
+        Harness._internalShared.sessionId
+    }
+
+    public var sessionStarted: Date {
+        Harness._internalShared.sessionStarted
+    }
+
+    public var sessionDir: URL? {
+        Harness._internalShared.sessionDir
+    }
+
+    public var isRecorderActive: Bool {
+        Harness._internalShared.isRecorderActive
     }
 }

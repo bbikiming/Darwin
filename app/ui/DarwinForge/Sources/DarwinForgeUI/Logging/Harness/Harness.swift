@@ -19,8 +19,44 @@ import OSLog
 // 3) finalize race (terminate 이벤트가 finalize 후 도착) 의 세 문제 동시 해결.
 
 @MainActor
-public final class Harness {
-    public static let shared = Harness()
+public final class Harness: HarnessIntrospection {
+    /// **internal storage** — 실제 단일 인스턴스. 모든 접근 경로 (deprecated `shared`,
+    /// internal `_internalShared`) 가 본 storage 로 forward. Swift 의 static let
+    /// 이 thread-safe 한 lazy init 을 제공하므로 별도 lock 불필요.
+    private static let _instance = Harness()
+
+    /// **Wave 3 Phase 3.4 (사이클 115, 2026-05-23)** — DI migration 완료 후 deprecated.
+    ///
+    /// 49 파일 257 사이트 중 252 사이트가 DI 추상화 (`@Environment(\.harness)`,
+    /// `any HarnessFacade` init injection) 으로 migration 완료. 잔존 5 인프라 예외:
+    /// 1. `DarwinForgeApp.swift` — start/stop lifecycle (LiveHarness 사용)
+    /// 2. `LiveHarness.swift` — 의도적 forward (production wrapper, `_internalShared` 사용)
+    /// 3. `HarnessInspectorView.swift` — introspection (`_internalShared` 사용)
+    /// 4. `Harness.swift` — 본 파일 (정의)
+    /// 5. `HarnessProtocols.swift` — comment only
+    ///
+    /// 새 코드는 반드시 `@Environment(\.harness)` (View) 또는 `any HarnessFacade`
+    /// init 주입 (class) 사용. 직접 `Harness.shared` 접근 시 deprecation warning.
+    @available(*, deprecated, message: "Use @Environment(\\.harness) for Views or init injection (any HarnessFacade) for classes. Direct shared access remains for LiveHarness forwarding (LiveHarness.swift), Inspector introspection (HarnessIntrospection protocol — Phase 5), and DarwinForgeApp lifecycle.")
+    public static var shared: Harness { _instance }
+
+    /// **internal accessor** — `LiveHarness` / `HarnessInspectorView` 의 5 인프라
+    /// 예외 사이트가 deprecation warning 없이 접근하기 위한 module-internal 우회.
+    ///
+    /// 일반 caller 는 사용 금지 — 반드시 DI 추상화 (`HarnessFacade`) 사용.
+    /// 본 accessor 가 internal 인 이유: 외부 모듈 (DarwinForgeApp 등) 은
+    /// `LiveHarness.shared` 를 통해 lifecycle 호출 → 본 경로 자체가 노출 안 됨.
+    ///
+    /// deprecated `shared` 와 다른 점: 본 accessor 는 `@available` 미부여 →
+    /// 호출 사이트가 deprecation warning 없이 동일 인스턴스 접근. 두 경로 모두
+    /// `_instance` 를 forward — 인스턴스 동일성 보장.
+    internal static var _internalShared: Harness { _instance }
+
+    // MARK: HarnessIntrospection conformance
+
+    /// 현재 세션의 recorder 활성 여부 — `recorder != nil` 의 public mirror.
+    /// (recorder 자체는 `TelemetryRecorder` internal type 이라 protocol 표면에 노출 불가.)
+    public var isRecorderActive: Bool { recorder != nil }
 
     // MARK: Settings (UserDefaults-backed)
 

@@ -51,6 +51,29 @@ public protocol HarnessLifecycle {
     @MainActor func stop(reason: String)
 }
 
+/// Inspector 전용 introspection — telemetry 내부 상태 읽기 (sessionId, sessionDir, 활성화 여부).
+///
+/// **일반 caller 는 본 protocol 을 사용하지 말 것** — `HarnessInspectorView`, `CurrentSessionPanel`
+/// 같이 진행 중 세션의 metadata 를 표시하는 화면 전용. 일반 record/bookmark/flush 호출은
+/// `HarnessRecording` 사용.
+///
+/// Wave 3 Phase 3.4 (사이클 115, 2026-05-23) — 5 인프라 예외 사이트의 introspection
+/// 접근을 protocol 으로 형식화. 이를 통해 `Harness.shared.sessionId` 직접 호출을
+/// `(harness as? any HarnessIntrospection)?.sessionId` 으로 migrate 가능.
+@MainActor
+public protocol HarnessIntrospection {
+    /// 텔레메트리 활성 여부. UserDefaults backed — 사용자 토글 가능.
+    var isEnabled: Bool { get set }
+    /// 현재 진행 중 세션의 UUID (미시동 시 빈 문자열).
+    var sessionId: String { get }
+    /// 현재 세션 시작 시각.
+    var sessionStarted: Date { get }
+    /// 현재 세션 디스크 디렉토리 (미시동 시 nil).
+    var sessionDir: URL? { get }
+    /// 현재 세션의 recorder 활성 여부 (true = 기록 중, false = 미시동/종료됨).
+    var isRecorderActive: Bool { get }
+}
+
 /// 모든 책임 통합 — 전역 DI 주입용 (Environment, ViewModel init 파라미터 등).
 public typealias HarnessFacade = HarnessRecording & HarnessHeartbeat & HarnessContext & HarnessLifecycle
 
