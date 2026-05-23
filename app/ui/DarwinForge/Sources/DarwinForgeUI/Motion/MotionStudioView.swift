@@ -106,9 +106,52 @@ public struct MotionStudioView: View {
                 Task { await applyToHardware(newPose) }
             }
         }
+        // 사이클 180 (P0 #3.2 fix, cycle 177 audit): Synth → MotionStudio import.
+        // SynthInspectorPanel 의 "Motion 스튜디오 로 보내기" 버튼 이 본 notification 발화.
+        .onReceive(NotificationCenter.default.publisher(for: .dfImportSynthPagesToMotionStudio)) { note in
+            if let pages = note.object as? [MotionPage] {
+                importSynthPages(pages)
+            }
+        }
         // Hidden keyboard shortcuts — TextField focus 시 macOS 가 first responder 처리,
         // 그 외에는 우리의 키프레임 동작. ⌘C/V 같은 표준 단축키 자연 우선순위.
         .background(motionEditShortcuts)
+    }
+
+    /// 사이클 180: Synth 합성 결과 페이지 일괄 import. 기존 motion.pages 와 ID 충돌 회피
+    /// 위해 신규 페이지의 ID 를 (현재 max + 1) 부터 재할당.
+    /// import 후 첫 신규 페이지 자동 선택 — 사용자가 즉시 확인 가능.
+    private func importSynthPages(_ pages: [MotionPage]) {
+        guard !pages.isEmpty else { return }
+        pushUndoSnapshot()
+        let existingMaxId = motion.pages.map { Int($0.id) }.max() ?? 0
+        var reassigned: [MotionPage] = []
+        for (offset, p) in pages.enumerated() {
+            let newId = UInt8(clamping: existingMaxId + 1 + offset)
+            // 신규 ID 부여 — 다른 필드 (steps / compliance / nextPage 등) 보존.
+            let renamed = MotionPage(
+                id: newId,
+                name: p.name.isEmpty ? "Synth \(newId)" : "Synth · \(p.name)",
+                compliance: p.compliance,
+                nextPage: p.nextPage,
+                exitPage: p.exitPage,
+                repeat: p.repeat,
+                speed: p.speed,
+                accel: p.accel,
+                steps: p.steps
+            )
+            reassigned.append(renamed)
+        }
+        motion = MotionDoc(
+            version: motion.version,
+            robotGeneration: motion.robotGeneration,
+            pages: motion.pages + reassigned
+        )
+        // 첫 신규 페이지 선택 — 사용자 가 즉시 확인.
+        selectedPageIdx = motion.pages.count - reassigned.count
+        selectedStep = 0
+        applySelectedStepToPose()
+        isDirty = true
     }
 
     /// MotionStudio 전용 키프레임 단축키. opacity 0 + 0×0 frame 으로 hidden.

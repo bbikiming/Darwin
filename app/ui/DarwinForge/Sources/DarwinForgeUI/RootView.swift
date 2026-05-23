@@ -1187,6 +1187,12 @@ extension Notification.Name {
     public static let dfTransferPoseToStudio = Notification.Name("DarwinForge.TransferPoseToStudio")
     /// Studio → MotionStudio 로 자세 전달. object 는 RobotPose.
     public static let dfTransferPoseToMotion = Notification.Name("DarwinForge.TransferPoseToMotion")
+    /// 사이클 180 (P0 #3.2 fix, cycle 177 audit): Synth → MotionStudio 로 합성 결과 페이지
+    /// 전달. object 는 `[MotionPage]` (합성 결과 의 pages 배열).
+    /// 이전엔 SynthInspectorPanel 가 resultJSON 만 model 에 저장 → 사용자가 외부 CLI 로
+    /// 옮겨야만 활용 가능. 이제 한 클릭 으로 Motion Studio 에 합쳐짐.
+    public static let dfImportSynthPagesToMotionStudio =
+        Notification.Name("DarwinForge.ImportSynthPagesToMotionStudio")
 
     /// **2026-05-16**: WalkLab fall prevention 모니터링 dashboard 토글.
     /// 메뉴바 "보기 → Fall Prevention 모니터링" (⌘⇧M) → WalkLabView 가 listen.
