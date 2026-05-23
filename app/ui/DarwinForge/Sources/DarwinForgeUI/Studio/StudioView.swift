@@ -633,12 +633,18 @@ public struct StudioView: View {
 
     // MARK: - Viewport badges
 
+    /// 사이클 179 (P0 #3.1 fix, cycle 177 audit): connection state badge 통합.
+    /// "관절 20개" + DFStatusBadge (bus 미연결 시 `.simulationOnly`, liveApply 시 `.appliedToRobot`).
+    /// 이전엔 bus 미연결 + 슬라이더 움직임이 silent fallback (화면 only) — 사용자가 "로봇이 왜
+    /// 안 움직이지" 혼란. 본 cycle 부터 DFStatusBadge 로 명시.
     private var viewportBadges: some View {
         HStack(spacing: DFSpace.sm) {
             badge("관절 20개", icon: "cube.transparent")
-            if liveApply {
-                badge("로봇 실시간 반영 중", icon: "dot.radiowaves.left.and.right",
-                      tint: DFColor.warning)
+            if let connectionBadge = StudioConnectionStateBadge.resolve(
+                hasBus: store.bus != nil,
+                liveApply: liveApply
+            ) {
+                DFStatusBadgeView(connectionBadge, style: .compact)
             }
         }
     }
