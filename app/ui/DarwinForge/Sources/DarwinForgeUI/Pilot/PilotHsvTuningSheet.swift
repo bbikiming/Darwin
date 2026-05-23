@@ -312,13 +312,16 @@ public struct PilotHsvTuningSheet: View {
                 minPercent: minPct, maxPercent: maxPct
             )
         }
-        guard parsed.count == 4 else {
-            lastOperationMessage = "로봇 ini 파싱 실패 — \(parsed.count)/4 색만 읽음"
+        guard let orange = parsed[.orange],
+              let red = parsed[.red],
+              let yellow = parsed[.yellow],
+              let blue = parsed[.blue] else {
+            lastOperationMessage = "로봇 ini 파싱 실패 — 필요 색상(orange/red/yellow/blue) 누락"
             return
         }
         preset = VisionHsvPreset(
-            orange: parsed[.orange]!, red: parsed[.red]!,
-            yellow: parsed[.yellow]!, blue: parsed[.blue]!,
+            orange: orange, red: red,
+            yellow: yellow, blue: blue,
             source: .robotSynced, lastRobotSyncAt: Date()
         )
         lastOperationMessage = "✅ 로봇에서 4 색 모두 불러옴"
