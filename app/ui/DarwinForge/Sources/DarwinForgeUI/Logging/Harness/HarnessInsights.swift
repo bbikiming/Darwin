@@ -58,6 +58,12 @@ public enum HarnessInsights {
         out.append(contentsOf: walklabCalibrationIncomplete(analysis, events))     // cycle 225
         out.append(contentsOf: pilotDemoModeFailure(analysis, events))             // cycle 225
         out.append(contentsOf: walklabDataDeletionFrequent(analysis, events))      // cycle 225
+        out.append(contentsOf: claudeErrorPattern(analysis, events))               // cycle 226
+        out.append(contentsOf: claudePlanExecFailPattern(analysis, events))        // cycle 226
+        out.append(contentsOf: jointActionFailedPattern(analysis, events))         // cycle 226
+        out.append(contentsOf: remoteCommandErrorPattern(analysis, events))        // cycle 226
+        out.append(contentsOf: errorExceptionPattern(analysis, events))            // cycle 226
+        out.append(contentsOf: busWriteFailStorm(analysis, events))                // cycle 226
         return out
     }
 
@@ -650,6 +656,125 @@ public enum HarnessInsights {
             recommendation: "자동 정리 정책 활용 검토. 삭제 사유 분석하여 trial 품질 개선.",
             eventRefs: Array(deleted.prefix(5).map(\.i)),
             confidence: 0.5
+        )]
+    }
+
+    // MARK: - Claude errors (cycle 226)
+
+    /// Claude API 에러 반복 — claude.error ≥3.
+    private static func claudeErrorPattern(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let errors = events.filter { $0.k.rawValue == TelemetryKind.claudeError.rawValue }
+        let count = errors.count
+        guard count >= 3 else { return [] }
+        return [Insight(
+            id: "claude.error_pattern#\(a.summary.firstEventAt ?? "")",
+            ruleID: "claude.error_pattern",
+            severity: .warn, kind: .claude,
+            title: "Claude API 에러 \(count)회",
+            evidence: "세션 중 claude.error \(count)회. LLM 응답 실패 반복.",
+            recommendation: "네트워크 연결 확인. API 키 유효성 점검. 대화 초기화 후 재시도.",
+            eventRefs: Array(errors.prefix(5).map(\.i)),
+            confidence: 0.8
+        )]
+    }
+
+    /// Claude plan execution 실패 반복 — plan_execution_failed ≥2.
+    private static func claudePlanExecFailPattern(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let failures = events.filter { $0.k.rawValue == TelemetryKind.claudePlanExecutionFailed.rawValue }
+        let count = failures.count
+        guard count >= 2 else { return [] }
+        return [Insight(
+            id: "claude.plan_exec_fail_pattern#\(a.summary.firstEventAt ?? "")",
+            ruleID: "claude.plan_exec_fail_pattern",
+            severity: .warn, kind: .claude,
+            title: "Claude plan 실행 실패 \(count)회",
+            evidence: "세션 중 claude.plan_execution_failed \(count)회. 도구 dispatch 실패 반복.",
+            recommendation: "로봇 연결 상태 확인. plan 에 사용된 도구가 현재 상태에서 실행 가능한지 점검.",
+            eventRefs: Array(failures.prefix(5).map(\.i)),
+            confidence: 0.75
+        )]
+    }
+
+    // MARK: - Joint / Remote / System errors (cycle 226)
+
+    /// Joint action 실패 반복 — joint.action_failed ≥3.
+    private static func jointActionFailedPattern(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let failures = events.filter { $0.k.rawValue == TelemetryKind.jointActionFailed.rawValue }
+        let count = failures.count
+        guard count >= 3 else { return [] }
+        return [Insight(
+            id: "joint.action_failed_pattern#\(a.summary.firstEventAt ?? "")",
+            ruleID: "joint.action_failed_pattern",
+            severity: .warn, kind: .pilot,
+            title: "관절 제어 에러 \(count)회",
+            evidence: "세션 중 joint.action_failed \(count)회. 특정 motor 통신 또는 torque 오류 반복.",
+            recommendation: "해당 motor ID 의 power / 케이블 / Dynamixel firmware 상태 확인.",
+            eventRefs: Array(failures.prefix(5).map(\.i)),
+            confidence: 0.8
+        )]
+    }
+
+    /// Remote command 에러 반복 — remote.command_error ≥3.
+    private static func remoteCommandErrorPattern(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let errors = events.filter { $0.k.rawValue == TelemetryKind.remoteCommandError.rawValue }
+        let count = errors.count
+        guard count >= 3 else { return [] }
+        return [Insight(
+            id: "remote.command_error_pattern#\(a.summary.firstEventAt ?? "")",
+            ruleID: "remote.command_error_pattern",
+            severity: .warn, kind: .remote,
+            title: "원격 명령 에러 \(count)회",
+            evidence: "세션 중 remote.command_error \(count)회. SSH/SMB 명령 실행 반복 실패.",
+            recommendation: "SSH 연결 상태 / 호스트 접근성 확인. 타임아웃 설정 조정 필요할 수 있음.",
+            eventRefs: Array(errors.prefix(5).map(\.i)),
+            confidence: 0.75
+        )]
+    }
+
+    /// 예외 발생 — error.exception ≥1 (즉시 진단 필요).
+    private static func errorExceptionPattern(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let exceptions = events.filter { $0.k.rawValue == TelemetryKind.errorException.rawValue }
+        let count = exceptions.count
+        guard count >= 1 else { return [] }
+        return [Insight(
+            id: "error.exception_pattern#\(a.summary.firstEventAt ?? "")",
+            ruleID: "error.exception_pattern",
+            severity: count >= 3 ? .critical : .warn, kind: .harness,
+            title: "예외 \(count)건 발생",
+            evidence: "세션 중 error.exception \(count)건. 예상치 못한 오류 — 스택 확인 필요.",
+            recommendation: "Inspector 에서 해당 이벤트의 error_hash / source 확인. 반복 시 앱 재시작 권장.",
+            eventRefs: Array(exceptions.prefix(5).map(\.i)),
+            confidence: 0.95
+        )]
+    }
+
+    /// Bus write 실패 폭증 — busWriteFail 분당 5회 이상.
+    private static func busWriteFailStorm(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let writes = events.filter { $0.k.rawValue == TelemetryKind.busWriteFail.rawValue }
+        let durationMin = (a.summary.durationSeconds ?? 0) / 60.0
+        let perMin: Double = durationMin > 0 ? Double(writes.count) / durationMin : 0
+        guard writes.count >= 5, perMin >= 5 else { return [] }
+        return [Insight(
+            id: "bus.write_storm#\(a.summary.firstEventAt ?? "")",
+            ruleID: "bus.write_storm",
+            severity: .critical, kind: .bus,
+            title: "Bus write 실패 폭증 — 분당 \(fmt(perMin))회",
+            evidence: "총 \(writes.count) 회 / \(fmt(durationMin)) 분. bus read storm 과 병행 시 bus 전체 장애.",
+            recommendation: "즉시 연결 해제 후 power cycle. 특정 motor ID 단선 / Dynamixel bus 충돌 의심.",
+            eventRefs: Array(writes.prefix(10).map(\.i)),
+            confidence: 0.9
         )]
     }
 
