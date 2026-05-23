@@ -984,3 +984,60 @@ setup.wizard_completed) + mark() 단일 hook + auto-verify path 통합. **+5 신
 - cycle 196: Joint Control failures silent (parallel agent).
 - cycle 197: Stale state .onAppear 트레이싱 (parallel agent).
 - cycle 198+: USER_PILOT_GUIDE 추가 + codex critic review batch.
+
+---
+
+## 사이클 196-198 — 병렬 implementer 2건 + doc 마감
+
+### 196 — JointControl 실패 telemetry (parallel agent)
+
+cycle 190 audit P1 #3 fix. 2 신규 TelemetryKind:
+- `joint.action_requested` — Torque ON/OFF / E-Stop / set_position 클릭 시.
+- `joint.action_failed` — error 발생 시 (level=.error, errorCountedKinds 등록).
+
+`runJointAction(_ actionName:_ action:)` 시그니처 변경 — 모든 call site 가 action
+name string 전달. cycle 192 errorCountedKinds 10 → **11** (testTotalErrorCountedKindCount 동기 update).
+
+신규 3 tests (JointControlTelemetryKindsTests).
+
+### 197 — Stale state navigation telemetry (parallel agent)
+
+cycle 190 audit P2 #6 fix. 1 신규 TelemetryKind:
+- `ui.view_appeared` — level=.trace, data: view (studio/motion_studio/teach).
+
+3 view 의 `.onAppear` 에 hook:
+- StudioView (신규 .onAppear block)
+- MotionStudioView (기존 .onAppear 에 prepend)
+- TeachModeView (기존 .onAppear 에 prepend)
+
+신규 6 tests (UIViewAppearedTelemetryTests).
+
+### 198 — USER_PILOT_GUIDE 마감 (cycles 189-195)
+
+이전 절 노트 통합 — 3 background agent + 4 후속 fix cycle 의 결과 표.
+
+### Telemetry namespace 누적 (cycle 197 종료)
+
+| Namespace | Before 178 | After 197 |
+|---|---|---|
+| `claude.*` | 3 | 8 |
+| `remote.*` | 0 | 4 |
+| `pilot.*` | 2 dead | 5 alive |
+| `teach.*` | 7 (1 dead) | 7 alive |
+| `setup.*` | 0 | 2 |
+| `joint.*` | 0 | **2** (cycle 196) |
+| `ui.view_appeared` | 0 | **1** (cycle 197) |
+| **errorCountedKinds (SOT)** | 6 | **11** (+5 across cycles 188/192/196) |
+
+### 검증 (cycle 197 종료)
+
+- 1344 → **1450** Swift tests (+106 across cycles 178-197).
+- swift build: 0 errors.
+- 89 commits ahead origin.
+
+### 남은 영역 (cycle 199+)
+
+- cycle 199: codex critic review of cycles 189-198 (백그라운드, 진행 중).
+- cycle 200+: 후속 fix (critic finding 기반).
+- cycle 191 deferred P1: Teach snapshot disk persistence.
+- cycle 191 deferred P2: WalkLabSession comparison UI.
