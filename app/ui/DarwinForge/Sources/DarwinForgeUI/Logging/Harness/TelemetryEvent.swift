@@ -121,6 +121,9 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let teachSnapshotDeleted: TelemetryKind = "teach.snapshot_deleted"
     public static let teachSnapshotsCleared: TelemetryKind = "teach.snapshots_cleared"
     public static let teachTorqueChanged: TelemetryKind = "teach.torque_changed"
+    /// 사이클 206 (Teach P1): 앱 재시작 시 UserDefaults 에서 메타데이터 복원.
+    /// data: count (복원된 스냅샷 메타 수).
+    public static let teachSnapshotMetaRestored: TelemetryKind = "teach.snapshot_meta_restored"
 
     // User Pose Library
     public static let poseLibrarySaved: TelemetryKind = "pose.library_saved"
