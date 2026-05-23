@@ -231,7 +231,8 @@ final class HarnessBaselineDeltaTests: XCTestCase {
         )
 
         let battery = try XCTUnwrap(diff.metrics.first { $0.label == "배터리 min (V)" })
-        XCTAssertEqual(battery.deltaAbsolute!, 0.5, accuracy: 0.01)
+        let batteryDeltaAbs = try XCTUnwrap(battery.deltaAbsolute)
+        XCTAssertEqual(batteryDeltaAbs, 0.5, accuracy: 0.01)
         XCTAssertFalse(battery.lowerIsBetter)
     }
 
@@ -253,10 +254,13 @@ final class HarnessBaselineDeltaTests: XCTestCase {
         )
 
         let imu = try XCTUnwrap(diff.metrics.first { $0.label == "IMU stale ratio" })
-        XCTAssertEqual(imu.baseline!, 0.5, accuracy: 0.01)
-        XCTAssertEqual(imu.current!, 0.1, accuracy: 0.01)
+        let imuBaseline = try XCTUnwrap(imu.baseline)
+        let imuCurrent = try XCTUnwrap(imu.current)
+        let imuDeltaAbs = try XCTUnwrap(imu.deltaAbsolute)
+        XCTAssertEqual(imuBaseline, 0.5, accuracy: 0.01)
+        XCTAssertEqual(imuCurrent, 0.1, accuracy: 0.01)
         XCTAssertTrue(imu.lowerIsBetter)
-        XCTAssertLessThan(imu.deltaAbsolute!, 0, "IMU stale ratio should decrease")
+        XCTAssertLessThan(imuDeltaAbs, 0, "IMU stale ratio should decrease")
     }
 
     // MARK: - Connection success rate delta
@@ -289,9 +293,12 @@ final class HarnessBaselineDeltaTests: XCTestCase {
         )
 
         let conn = try XCTUnwrap(diff.metrics.first { $0.label == "연결 성공률" })
-        XCTAssertEqual(conn.baseline!, 0.5, accuracy: 0.01)
-        XCTAssertEqual(conn.current!, 1.0, accuracy: 0.01)
-        XCTAssertEqual(conn.deltaAbsolute!, 0.5, accuracy: 0.01)
+        let connBaseline = try XCTUnwrap(conn.baseline)
+        let connCurrent = try XCTUnwrap(conn.current)
+        let connDeltaAbs = try XCTUnwrap(conn.deltaAbsolute)
+        XCTAssertEqual(connBaseline, 0.5, accuracy: 0.01)
+        XCTAssertEqual(connCurrent, 1.0, accuracy: 0.01)
+        XCTAssertEqual(connDeltaAbs, 0.5, accuracy: 0.01)
     }
 
     // MARK: - Equatable
