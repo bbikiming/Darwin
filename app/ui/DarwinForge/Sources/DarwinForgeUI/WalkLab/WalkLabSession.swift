@@ -2062,6 +2062,42 @@ public final class WalkLabSession {
     ///
     /// **운영 코드에서 절대 사용 금지.** XCTest 환경에서만 호출해야 함.
     internal var _testOverrideBusConnected: Bool? = nil
+
+    /// **사이클 259 (V259-1) — tick() pipeline 강제 호출 testability hook**.
+    ///
+    /// L3/L4/L0 safety gate 는 `tick()` 진입 없이 unreachable — 직접 테스트 불가.
+    /// 본 hook 은 `imuRollDeg/imuPitchDeg` 를 직접 override 한 뒤 `tick()` 의 safety
+    /// pipeline phase (tickRunSafetyPipeline) 만 호출. 시뮬 IMU 재계산이 값을 덮어쓰지
+    /// 않도록 `imuSource = .sim` (store=nil 환경) 을 유지하면서 tick 의 real IMU 경로를
+    /// 우회한다.
+    ///
+    /// - `updateImuFromRealOrSim()` 은 store==nil 이면 sim 모델을 호출하여 imuRollDeg/
+    ///   imuPitchDeg 를 덮어씀. 이 우회를 막기 위해 hook 은 tickPollSensorsAndBalanceState
+    ///   를 건너뛰고 (값 덮어쓰기 방지) tickRunSafetyPipeline 만 직접 호출.
+    ///
+    /// **운영 코드에서 절대 사용 금지.** XCTest 환경에서만 호출해야 함.
+    internal func _testForceTick(rollDeg: Double, pitchDeg: Double) {
+        assert(
+            NSClassFromString("XCTestCase") != nil,
+            "_testForceTick 는 XCTest 환경에서만 호출 가능."
+        )
+        imuRollDeg = rollDeg
+        imuPitchDeg = pitchDeg
+        // balanceState 도 갱신 — tickPollSensorsAndBalanceState 의 분류 로직 미러.
+        let maxTilt = max(abs(rollDeg), abs(pitchDeg))
+        balanceState = BalanceState.from(maxTilt: maxTilt)
+        tickRunSafetyPipeline()
+    }
+
+    /// **사이클 259 (V259-1) — L3 hard gate 연속 count inspect (테스트 전용)**.
+    ///
+    /// `l3HardGateConsecutiveSamples` 는 internal 이지만 별도 accessor 로 명시해서
+    /// test 가 명확한 의도로 inspect 한다는 것을 문서화.
+    ///
+    /// **운영 코드에서 절대 사용 금지.**
+    internal func _testInspectL3HardGate() -> Int {
+        l3HardGateConsecutiveSamples
+    }
     #endif
 
     // 사이클 94 분할: appendSessionSampleIfLogging / finalizeSessionLog /
