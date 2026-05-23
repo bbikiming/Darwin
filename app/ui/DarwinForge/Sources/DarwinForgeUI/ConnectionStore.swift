@@ -1179,35 +1179,23 @@ public final class ConnectionStore: ObservableObject {
     /// `cradleConfirmed`: 호출자 (RootView / WalkLab) 가 정비 스탠드 거치를 사용자에게
     /// 명시 확인받았다는 신호. 기본값 false — 사용자가 명시적으로 cradle 확인하지 않은
     /// 호출은 자동 거부 (P1-D).
+    ///
+    /// **W2.9 분해 (2026-05-23)**: 154 줄 god method 를 facade + 6 helper + `RecoverContext` 로 분할.
+    /// 동작 100% 보존 — refactor only. 단계 순서, 정착 시간, 안전 가드 모두 동일.
+    /// W2.8 `ApsContext` 와 패턴 일관성 유지 (reference-type context, `re` prefix).
+    ///
+    /// helpers:
+    ///   - `reGuardEntry` — 중복 호출 / bus nil / cradleConfirmed 3 게이트 + RecoverContext 생성
+    ///   - `reSetupRecoveryFlags` — `isRecovering` / `isInRecoveryPath` ON + lastSafetyEvent clear
+    ///   - `rePowerOnDxl` — CM dxl_power 3x 재시도 + 150ms 백오프 + 200ms 정착
+    ///   - `reTorqueOnAllJoints` — 모든 관절 torque ON SYNC_WRITE 2x 재시도
+    ///   - `reRestorePGains` — P_GAIN=32 복원 + 200ms 정착 + state reset + 400ms 정착
+    ///   - `reFinalizeAndReport` — applyPoseSlowly + finalize + 결과 토스트
     public func recoverFromEStop(cradleConfirmed: Bool = false) async {
-        guard !isRecovering else { return }  // 중복 호출 차단.
+        guard let ctx = reGuardEntry(cradleConfirmed: cradleConfirmed) else { return }
 
-        guard let bus = bus else {
-            await MainActor.run {
-                self.lastRecoveryOutcome = .notConnected
-                self.lastRecoveryResult = "연결 안 됨 — 연결 마법사를 먼저 사용하세요"
-            }
-            scheduleResultDismiss()
-            return
-        }
-
-        // CRITIC P1-D: cradle 거치 확인 게이트. 다리 자세 변화로 fall 위험이므로 거치 필수.
-        guard cradleConfirmed else {
-            await MainActor.run {
-                self.lastRecoveryOutcome = .failure
-                self.lastRecoveryResult = "정비 스탠드 거치 확인이 필요합니다 — 복구 중 다리 자세가 변경됩니다"
-            }
-            scheduleResultDismiss()
-            return
-        }
-
-        await MainActor.run {
-            self.isRecovering = true
-            self.isInRecoveryPath = true
-            // E-stop 직후 남아 있던 안전 이벤트 표시를 먼저 깨끗하게.
-            self.lastSafetyEvent = nil
-        }
-        // 에러 경로용 fallback — 정상 경로에서는 끝부분의 finalizeRecoveryState 가 동기 정리.
+        await reSetupRecoveryFlags()
+        // 에러 경로용 fallback — 정상 경로에서는 finalizeRecoveryState 가 동기 정리.
         defer {
             Task { @MainActor in
                 if self.isRecovering {
@@ -1217,15 +1205,87 @@ public final class ConnectionStore: ObservableObject {
             }
         }
 
-        // [1] CM dxl_power ON — E-stop 후 일관성 보장.
-        //
-        // 2026-05-17 사용자 보고 fix: 단일 시도 timeout 으로 recovery 실패.
-        // CM-740 의 dxl_power register 가 가끔 첫 write 응답 지연 → ForgeError.timeout.
-        // 3회 재시도 + 각 시도 사이 150ms 백오프 — robust.
+        guard await rePowerOnDxl(ctx: ctx) else { return }
+        guard await reTorqueOnAllJoints(ctx: ctx) else { return }
+        await reRestorePGains(ctx: ctx)
+        await reFinalizeAndReport(ctx: ctx)
+    }
+
+    // MARK: - recoverFromEStop helpers (W2.9)
+
+    /// `recoverFromEStop` per-call 가변 상태. W2.8 `ApsContext` 와 동일한 reference-type
+    /// 패턴 — async helper 간 누적 카운터를 inout 없이 공유.
+    ///
+    /// 동시성: `@MainActor` 인 ConnectionStore 안에서만 만들어지고 사용 — main actor 안에서만 접근.
+    /// `Sendable` 표기 없음 — actor boundary 를 넘지 않는다.
+    private final class RecoverContext {
+        let bus: Bus
+        /// [2.5] P_GAIN 복원 실패 관절 수. `reRestorePGains` 가 write, `reFinalizeAndReport` 가 read.
+        var pGainFailures: Int = 0
+        /// [4] `applyPoseSlowlyForRecovery` 결과. `reFinalizeAndReport` 가 write & read.
+        var diag: RecoveryDiagnostics? = nil
+
+        init(bus: Bus) {
+            self.bus = bus
+        }
+    }
+
+    /// 게이트 0/1/2 — 중복 호출 / bus nil / cradleConfirmed 검증 + 통과 시 `RecoverContext` 생성.
+    ///
+    /// 반환:
+    ///   - `nil` — 게이트 실패. 호출자는 즉시 return (published state + scheduleResultDismiss 처리 완료).
+    ///   - `RecoverContext` — 게이트 통과. 후속 helper 에 전달.
+    ///
+    /// 동작 보존:
+    ///   - `isRecovering == true` → 조용히 nil (lastRecoveryResult 변경 없음).
+    ///   - `bus == nil` → `.notConnected` 토스트 + dismiss.
+    ///   - `cradleConfirmed == false` → P1-D 거부 토스트 + dismiss.
+    private func reGuardEntry(cradleConfirmed: Bool) -> RecoverContext? {
+        guard !isRecovering else { return nil }  // 중복 호출 차단.
+
+        guard let bus = bus else {
+            self.lastRecoveryOutcome = .notConnected
+            self.lastRecoveryResult = "연결 안 됨 — 연결 마법사를 먼저 사용하세요"
+            scheduleResultDismiss()
+            return nil
+        }
+
+        // CRITIC P1-D: cradle 거치 확인 게이트. 다리 자세 변화로 fall 위험이므로 거치 필수.
+        guard cradleConfirmed else {
+            self.lastRecoveryOutcome = .failure
+            self.lastRecoveryResult = "정비 스탠드 거치 확인이 필요합니다 — 복구 중 다리 자세가 변경됩니다"
+            scheduleResultDismiss()
+            return nil
+        }
+
+        return RecoverContext(bus: bus)
+    }
+
+    /// 복구 모드 진입 — `isRecovering` / `isInRecoveryPath` ON + E-stop 잔존 안전 이벤트 clear.
+    ///
+    /// 동작 보존: 원본은 `await MainActor.run { ... }` 로 감쌌지만 ConnectionStore 가 이미
+    /// `@MainActor` 라 직접 set 과 동일. `await` 보존하면 suspension point 가 동일하게 유지.
+    private func reSetupRecoveryFlags() async {
+        await MainActor.run {
+            self.isRecovering = true
+            self.isInRecoveryPath = true
+            // E-stop 직후 남아 있던 안전 이벤트 표시를 먼저 깨끗하게.
+            self.lastSafetyEvent = nil
+        }
+    }
+
+    /// [1] CM dxl_power ON — E-stop 후 일관성 보장. 3x 재시도 + 150ms 백오프 + 200ms 정착.
+    ///
+    /// 2026-05-17 사용자 보고 fix: 단일 시도 timeout 으로 recovery 실패.
+    /// CM-740 의 dxl_power register 가 가끔 첫 write 응답 지연 → ForgeError.timeout.
+    /// 3회 재시도 + 각 시도 사이 150ms 백오프 — robust.
+    ///
+    /// 반환: 성공 시 true (호출자가 다음 단계 진행). 실패 시 false (published state + dismiss 처리 완료).
+    private func rePowerOnDxl(ctx: RecoverContext) async -> Bool {
         var dxlErr: Error?
         for attempt in 0..<3 {
             do {
-                try bus.setDxlPower(true)
+                try ctx.bus.setDxlPower(true)
                 dxlErr = nil
                 break
             } catch {
@@ -1234,23 +1294,26 @@ public final class ConnectionStore: ObservableObject {
             }
         }
         if let err = dxlErr {
-            await MainActor.run {
-                self.lastRecoveryOutcome = .failure
-                self.lastRecoveryResult = "모터 전원 ON 실패 (3회 재시도) — \(err.localizedDescription)"
-            }
+            self.lastRecoveryOutcome = .failure
+            self.lastRecoveryResult = "모터 전원 ON 실패 (3회 재시도) — \(err.localizedDescription)"
             scheduleResultDismiss()
-            return
+            return false
         }
 
         // 짧은 정착 — CM 보드 power-up.
         try? await Task.sleep(nanoseconds: 200_000_000)
+        return true
+    }
 
-        // [2] 모든 관절 torque ON. SYNC_WRITE 한 패킷 — 실패 시 한 번 더 재시도.
+    /// [2] 모든 관절 torque ON — SYNC_WRITE 한 패킷 형태. 2x 재시도 + 150ms 백오프.
+    ///
+    /// 반환: 성공 시 true. 실패 시 false (published state + dismiss 처리 완료).
+    private func reTorqueOnAllJoints(ctx: RecoverContext) async -> Bool {
         var torqueErr: Error?
         for attempt in 0..<2 {
             do {
                 for j in JointID.allCases {
-                    try bus.setTorque(j, enable: true)
+                    try ctx.bus.setTorque(j, enable: true)
                 }
                 torqueErr = nil
                 break
@@ -1260,32 +1323,35 @@ public final class ConnectionStore: ObservableObject {
             }
         }
         if let err = torqueErr {
-            await MainActor.run {
-                self.lastRecoveryOutcome = .failure
-                self.lastRecoveryResult = "관절 토크 ON 실패 — \(err.localizedDescription)"
-            }
+            self.lastRecoveryOutcome = .failure
+            self.lastRecoveryResult = "관절 토크 ON 실패 — \(err.localizedDescription)"
             scheduleResultDismiss()
-            return
+            return false
         }
+        return true
+    }
 
-        // [2.5] **2026-05-17 CRITICAL FIX**: P_GAIN 복원 (MX-28T default = 32).
-        //
-        // 사용자 보고 버그: emergencyStop 후 recovery 해도 "약한 토크 + 메뉴 동작
-        // 무반응". 원인: `Bus.emergencyStop()` → Rust `emergency_stop()` 가 torque OFF
-        // 와 동시에 **P_GAIN = 0** 으로 설정 (forge-core/control/mod.rs:214).
-        // 종전 recovery 는 torque 만 ON 하고 P_GAIN 복원 안 함 → 위치 제어 불능.
-        //
-        // 결과: 모터가 위치 명령 받아도 토크 못 만들음 → 자세 변경 무응답 → 모든
-        // 메뉴 (Walk/Pilot/MotionStudio) 의 setPosition 호출이 silently 무시되는
-        // 것처럼 보임. "약한 hold" 는 마찰 + 기어비 잔류만.
-        //
-        // Fix: 모든 관절 P_GAIN 을 default 32 로 ramp. 실패는 카운트만 (한 관절
-        // 실패해도 다른 관절은 정상 동작 — 부분 복구라도 사용자 가치).
-        var pGainFailures = 0
+    /// [2.5] **2026-05-17 CRITICAL FIX**: P_GAIN 복원 (MX-28T default = 32).
+    ///
+    /// 사용자 보고 버그: emergencyStop 후 recovery 해도 "약한 토크 + 메뉴 동작
+    /// 무반응". 원인: `Bus.emergencyStop()` → Rust `emergency_stop()` 가 torque OFF
+    /// 와 동시에 **P_GAIN = 0** 으로 설정 (forge-core/control/mod.rs:214).
+    /// 종전 recovery 는 torque 만 ON 하고 P_GAIN 복원 안 함 → 위치 제어 불능.
+    ///
+    /// 결과: 모터가 위치 명령 받아도 토크 못 만들음 → 자세 변경 무응답 → 모든
+    /// 메뉴 (Walk/Pilot/MotionStudio) 의 setPosition 호출이 silently 무시되는
+    /// 것처럼 보임. "약한 hold" 는 마찰 + 기어비 잔류만.
+    ///
+    /// Fix: 모든 관절 P_GAIN 을 default 32 로 ramp. 실패는 카운트만 (한 관절
+    /// 실패해도 다른 관절은 정상 동작 — 부분 복구라도 사용자 가치).
+    ///
+    /// 추가로 [3] state reset 과 두 개의 정착 대기(200 ms + 400 ms) 를 동봉 — 동작 보존.
+    /// `ctx.pGainFailures` 에 실패 카운트 누적.
+    private func reRestorePGains(ctx: RecoverContext) async {
         for j in JointID.allCases {
-            do { try bus.setPGain(j, value: 32) }
+            do { try ctx.bus.setPGain(j, value: 32) }
             catch {
-                pGainFailures += 1
+                ctx.pGainFailures += 1
                 // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
                 // recovery P-gain restore 가 실패하면 해당 관절은 위치 제어 불능 → root cause 추적 필수.
                 DFLog.connection.warning("setPGain 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -1303,22 +1369,33 @@ public final class ConnectionStore: ObservableObject {
 
         // 토크 안정화 — 명령된 위치(현재 위치)로 모터 정착.
         try? await Task.sleep(nanoseconds: 400_000_000)
+    }
 
-        // [4] walkReady (ROBOTIS deep squat) 로 매우 천천히 이동 — verify 우회 + 단일-shot + 5 초 정착.
-        //     CRITIC P1-C: 종전엔 `.idle` 이었으나 hotfix v2 "뒤로 넘어짐" 자세와 동일했음.
-        //     walkReady 는 hip ±36° / knee ±53° / ankle ±30° 의 검증된 균형 자세.
+    /// [4] + [5] + 결과 토스트.
+    ///
+    /// [4] walkReady (ROBOTIS deep squat) 로 매우 천천히 이동 — verify 우회 + 단일-shot + 5 초 정착.
+    ///     CRITIC P1-C: 종전엔 `.idle` 이었으나 hotfix v2 "뒤로 넘어짐" 자세와 동일했음.
+    ///     walkReady 는 hip ±36° / knee ±53° / ankle ±30° 의 검증된 균형 자세.
+    /// [5] 후속 메뉴들이 정상 동작하도록 모든 상태 + 하드웨어 레지스터 리셋 (`finalizeRecoveryState`).
+    ///
+    /// 결과 분기:
+    ///   - `diag.reached + pGainFailures == 0` → `.success`
+    ///   - `diag.reached + pGainFailures > 0` → `.failure` (부분 성공이지만 P_GAIN 경고)
+    ///   - `diag.cancelledByUser` → `.failure` ("복구 취소됨")
+    ///   - `diag.summary.isEmpty == false` → `.failure` (통신 진단)
+    ///   - else → `.failure` ("부분 완료")
+    private func reFinalizeAndReport(ctx: RecoverContext) async {
         let diag = await applyPoseSlowlyForRecovery(.walkReady)
-
-        // [5] 후속 메뉴들이 정상 동작하도록 모든 상태 + 하드웨어 레지스터 리셋.
+        ctx.diag = diag
         await finalizeRecoveryState()
 
         await MainActor.run {
             self.lastSafetyEvent = nil
-            let pGainSuffix = pGainFailures > 0
-                ? " (P_GAIN 복원 \(pGainFailures)개 실패 — 해당 관절 응답 약할 수 있음)"
+            let pGainSuffix = ctx.pGainFailures > 0
+                ? " (P_GAIN 복원 \(ctx.pGainFailures)개 실패 — 해당 관절 응답 약할 수 있음)"
                 : ""
             if diag.reached {
-                self.lastRecoveryOutcome = pGainFailures > 0 ? .failure : .success
+                self.lastRecoveryOutcome = ctx.pGainFailures > 0 ? .failure : .success
                 self.lastRecoveryResult = "복구 완료 — 기본 자세 + 토크 ON + 모든 메뉴 동작 가능\(pGainSuffix)"
             } else if diag.cancelledByUser {
                 self.lastRecoveryOutcome = .failure
