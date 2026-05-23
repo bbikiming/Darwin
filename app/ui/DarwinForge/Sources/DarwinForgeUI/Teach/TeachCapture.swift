@@ -78,9 +78,23 @@ public final class TeachCapture: ObservableObject {
     }
 
     /// 메타데이터 목록 저장.
+    ///
+    /// **사이클 211 (cycle 210 critic MINOR-3 응답)**: encode 실패 시 silent drop 차단 —
+    /// telemetry 발화 로 debug 가능. `Codable struct (PersistedSnapshotMeta)` 의 인코딩
+    /// 실패는 사실상 일어날 일이 거의 없지만 (3 필드 모두 String + 표준 JSON), 향후
+    /// 스키마 확장 시 silent regression 차단.
     private func saveMeta(_ list: [PersistedSnapshotMeta]) {
-        guard let data = try? JSONEncoder().encode(list) else { return }
-        defaults.set(data, forKey: Self.metaDefaultsKey)
+        do {
+            let data = try JSONEncoder().encode(list)
+            defaults.set(data, forKey: Self.metaDefaultsKey)
+        } catch {
+            Harness.shared.record(
+                .errorException, level: .error, actor: .system,
+                data: ["component": AnyCodable("TeachCapture.saveMeta"),
+                       "error_type": AnyCodable(String(describing: type(of: error))),
+                       "list_count": AnyCodable(list.count)]
+            )
+        }
     }
 
     /// 스냅샷 메타데이터 항목 추가.

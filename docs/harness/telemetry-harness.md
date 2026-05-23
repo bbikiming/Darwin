@@ -243,7 +243,7 @@ Phase 2 (후속 PR): Teach 모드, Studio 인스펙터, Expert 탭 세부 인터
 
 ---
 
-## 11. Phase 2 통합 현황 (cycles 178-204, 2026-05-23)
+## 11. Phase 2 통합 현황 (cycles 178-208, 2026-05-23)
 
 cycle 177 의 cross-menu audit 이후 Phase 2 instrumentation 가 광범위 진행. 통합
 포인트 (위 §7) 외에 다음 신규 영역 추가:
