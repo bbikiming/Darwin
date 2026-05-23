@@ -898,3 +898,89 @@ switch case 누락 → meta.errorCount undercount. 본 cycle 부터 정확 카�
 - codex review of cycles 184-188 (cycle 189 background).
 - 신규 cross-menu audit (cycle 190 background) — explore agent.
 - Teach mode telemetry / integration deep dive (cycle 191 background).
+
+---
+
+## 사이클 189-195 — 병렬 에이전트 audit + 후속 fix + 신규 audit doc 2건
+
+### 한 줄 결론
+
+3 백그라운드 에이전트 (critic + 2 explore) 동시 spawn 으로 (1) cycles 184-188
+재검증 (cycle 189) + (2) 신규 cross-menu audit 6 gap (cycle 190) + (3) Teach
+mode 7 telemetry × fire site 매핑 (cycle 191). 후속 P0 5건 처리 (cycles 192-194)
++ 2 audit doc commit (cycle 195).
+
+### 189 — codex critic review of cycles 184-188
+
+**VERDICT**: ACCEPT-WITH-RESERVATIONS.
+
+| Severity | 영역 | cycle 192+ 처리 |
+|---|---|---|
+| MAJOR-1 | cycle 188 errorCount switch 가 4 추가 .error level kind 누락 (connectFailure / poseApplyFailed / busEStop / walkLabEmergencyStop) | **cycle 192** errorCountedKinds 단일 SOT + 4 추가 + regression guard |
+| MINOR-1 | walkLabEmergencyStop 의 design 결정 (error vs warn) 문서화 | cycle 192 doc 명시 |
+
+### 190 — 신규 cross-menu gap audit (explore agent)
+
+`docs/diagnosis/CROSS_MENU_AUDIT_FOLLOWUP_2026-05-23.md` — 6 신규 gap:
+
+| # | Gap | 처리 |
+|---|---|---|
+| P0 #1 | Remote menu view-layer telemetry | cycle 182 의 shell layer 가 이미 처리 — deferred |
+| P0 #2 | Setup wizard untracked | **cycle 194** (mark() 단일 hook + auto-verify 통합) |
+| P1 #3 | Joint Control 실패 silent | cycle 196 (parallel agent) |
+| P1 #4 | Remote view command label loss | deferred (P0 #1 와 동일 영역) |
+| P2 #5 | Conversation clear ambiguous | cycle 181 의 claudeSessionCleared 가 이미 처리 — verified |
+| P2 #6 | Stale state on navigation | cycle 197 (parallel agent) |
+
+### 191 — Teach mode deep dive (explore agent)
+
+`docs/diagnosis/TEACH_MODE_AUDIT_2026-05-23.md` — 5 gap:
+
+| # | Gap | 처리 |
+|---|---|---|
+| P0 | teachTorqueChanged dead code (4 mutation site) | **cycle 193** (4 site wire + payload) |
+| P0 | dfTransferPoseToMotion orphan (poster + receiver 0) | **cycle 193** (Teach button + MotionStudio onReceive + page ID reassign) |
+| P1 | Teach → Motion direct export | cycle 193 에 통합 |
+| P1 | Snapshot disk persistence | deferred (larger work) |
+| P2 | WalkLabSession comparison UI | deferred |
+
+### 192-194 — P0 5건 처리
+
+**192**: errorCountedKinds 단일 source of truth — TelemetryRecorder 의 switch 가
+constant 기반 → 신규 error kind 추가 시 매번 본 list + 테스트 update 강제. **+7
+신규 tests** (HarnessErrorCountedKindsTests).
+
+**193**: Teach P0 — teachTorqueChanged 4 site wire (action: disable_all / enable_all
+/ toggle / capture_loop_auto_disable) + dfTransferPoseToMotion bridge (TeachModeView
+의 "film.stack" button → MotionStudioView 의 importPoseAsMotionPage). **+5 신규 tests**.
+
+**194**: Setup wizard 2 신규 TelemetryKind (setup.wizard_step_changed +
+setup.wizard_completed) + mark() 단일 hook + auto-verify path 통합. **+5 신규 tests**.
+
+### 195 — audit doc commit
+
+2 신규 doc (cycle 190 + 191 outputs) commit.
+
+### Telemetry namespace 누적 (cycle 195 종료)
+
+| Namespace | Before 178 | After 195 |
+|---|---|---|
+| `claude.*` | 3 | 8 |
+| `remote.*` | 0 | 4 |
+| `pilot.*` | 2 dead | 5 alive |
+| `teach.*` | 7 (1 dead) | **7 alive** (cycle 193 wire) |
+| `setup.*` | 0 | **2** (cycle 194 신규) |
+| `joint.*` | 0 | TBD (cycle 196) |
+| `ui.view_appeared` | 0 | TBD (cycle 197) |
+
+### 검증 (cycle 195 commit 시점)
+
+- 1344 → **1441** Swift tests (+97 across cycles 178-195).
+- swift build: 0 errors.
+- 89 commits ahead origin (cycles 119-195).
+
+### 남은 영역 (cycle 196+ 진행 중)
+
+- cycle 196: Joint Control failures silent (parallel agent).
+- cycle 197: Stale state .onAppear 트레이싱 (parallel agent).
+- cycle 198+: USER_PILOT_GUIDE 추가 + codex critic review batch.
