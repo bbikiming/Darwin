@@ -1305,7 +1305,14 @@ public final class ConnectionStore: ObservableObject {
         return true
     }
 
-    /// [2] 모든 관절 torque ON — SYNC_WRITE 한 패킷 형태. 2x 재시도 + 150ms 백오프.
+    /// [2] 모든 관절 torque ON — **per-joint write loop**. 2x 재시도 + 150ms 백오프.
+    ///
+    /// **사이클 252 (deployment readiness audit) — docstring 정정**:
+    /// 종전 주석은 "SYNC_WRITE 한 패킷 형태" 였으나 실제로는 `JointID.allCases` 순회하며
+    /// `bus.setTorque(j, true)` 를 개별 호출 — `fc_joint_set_torque_many` C-binding 이
+    /// `forge_core.h` 에 미노출 (Rust 측 `control::set_torque_many` 는 존재).
+    /// 1Mbps bus 기준 ~1ms/joint × 20 joint = ~20ms typical, 재시도 시 최대 ~40ms.
+    /// 응급 복구 경로에서는 안전 수치이나, 향후 FFI 노출 시 ~1ms 로 단축 가능.
     ///
     /// 반환: 성공 시 true. 실패 시 false (published state + dismiss 처리 완료).
     private func reTorqueOnAllJoints(ctx: RecoverContext) async -> Bool {
