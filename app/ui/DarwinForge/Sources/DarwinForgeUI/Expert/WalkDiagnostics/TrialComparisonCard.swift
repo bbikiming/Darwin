@@ -122,11 +122,20 @@ public struct TrialComparisonCard: View {
 
     // MARK: - Data load
 
+    /// 사이클 187 (codex MINOR fix cycle 183): WalkTrialStore.allIndex() 가 disk
+    /// IO + JSON parse → main thread 차단 위험. 신규: Task.detached 로 background
+    /// 에서 fetch + sort + truncate, 결과만 MainActor 로 publish.
     private func loadTrials() {
-        let all = WalkTrialStore.shared.allIndex()
-            .sorted { $0.startedAtIso > $1.startedAtIso }
-            .prefix(recentLimit)
-        trialIndex = Array(all)
+        let limit = recentLimit
+        Task.detached(priority: .userInitiated) {
+            let truncated: [TrialIndexEntry] = WalkTrialStore.shared.allIndex()
+                .sorted { $0.startedAtIso > $1.startedAtIso }
+                .prefix(limit)
+                .map { $0 }
+            await MainActor.run { [truncated] in
+                self.trialIndex = truncated
+            }
+        }
     }
 
     private func computeComparison() {

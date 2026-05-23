@@ -206,17 +206,24 @@ WalkLab 종료 시 trial 자동 저장 (pilotInputs 첨부 — cycle 7)
 
 ## 5. 우선순위 처리 계획
 
-### P0 즉시 (cycle 178+)
+### P0 즉시 (cycle 178+) — 실 cycle 매핑 (cycle 185 codex audit 후 정정)
 
-1. **#3.1 Studio motion play sim/real badge** — cycle 178.
-2. **#3.3 Pilot/MotionLibrary 중복 검증 + [placeholder] 일관** — cycle 179.
-3. **#3.2 Synth → MotionLibrary chain wire-up** — cycle 180 (도구 design 필요).
+1. **#3.3 Pilot/MotionLibrary 카탈로그 중복 검증** — **cycle 178** (regression guard).
+2. **#3.1 Studio sim/real 명시 DFStatusBadge** — **cycle 179**.
+3. **#3.2 Synth → MotionLibrary chain wire-up** — **cycle 180**.
 
-### P1 다음 sprint
+### P1 다음 sprint — 실 cycle 매핑
 
-4. **#3.4 Conversation harness hook** — cycle 181.
-5. **#3.5 Expert vs Trial Library 통합** — cycle 182.
-6. **#3.6 Remote SSH harness hook** — cycle 183.
+4. **#3.4 Conversation harness hook** — **cycle 181** (5 신규 telemetry kind).
+5. **#3.6 Remote SSH harness hook** — **cycle 182** (4 신규 telemetry kind).
+6. **#3.5 Expert vs Trial Library 통합** — **cycle 183** (TrialComparisonCard).
+
+### Cycle 185 — codex critic review of 178-183
+
+ACCEPT-WITH-RESERVATIONS. 1 MAJOR + 2 MINOR — cycle 187 에서 fix:
+- MAJOR: cycle 180 importSynthPages UInt8 overflow (existingMaxId+offset>255 silent clamp) → SynthMotionExporter.reassignPageIds 로 guard.
+- MINOR: cycle 181 DispatcherError String(describing:) 의 associated value PII → enum case name 전용 telemetryCase property.
+- MINOR: cycle 183 TrialComparisonCard main thread fetch → Task.detached.
 
 ---
 

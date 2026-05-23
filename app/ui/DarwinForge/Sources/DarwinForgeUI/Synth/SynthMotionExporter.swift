@@ -26,6 +26,10 @@ public enum SynthMotionExporter {
         case decodeFailed(String)
         /// 디코딩은 됐는데 pages 배열 이 비어있음 (의미 없는 결과).
         case noPages
+        /// 사이클 187 (codex MAJOR fix): UInt8 page ID overflow.
+        /// `existingMaxId + pages.count > 255` 시 ID 재할당 불가능.
+        /// associated: (existingMaxId, importCount).
+        case idOverflow(existingMaxId: Int, importCount: Int)
     }
 
     /// `resultJSON` (Synthesize 결과) → MotionPage 배열 추출.
@@ -57,6 +61,46 @@ public enum SynthMotionExporter {
             return "합성 결과 디코딩 실패 — \(detail)"
         case .noPages:
             return "합성 결과에 적용할 페이지가 없습니다"
+        case .idOverflow(let max, let count):
+            return "Motion Studio 의 page ID 가 최대치 (255) 초과 — 기존 max=\(max) + 새 \(count) 페이지. " +
+                   "기존 page 일부 삭제 후 다시 시도하세요."
         }
+    }
+
+    /// 사이클 187 (codex MAJOR fix): import 시 신규 page 의 ID 재할당 — overflow guard.
+    ///
+    /// # 동작
+    ///
+    /// 1. existingMaxId 가 (255 - importCount) 보다 크면 `.idOverflow` 반환.
+    /// 2. 안전한 경우 `existingMaxId + 1` 부터 순차 할당, name prefix "Synth · " 추가.
+    /// 3. UInt8(clamping:) 사용 X — 보장된 범위 내에서 직접 UInt8 변환.
+    ///
+    /// 종전 (cycle 180): `UInt8(clamping: existingMaxId + 1 + offset)` — 255 silently
+    /// clamp 로 duplicate ID 생성 가능. cycle 185 codex MAJOR finding.
+    public static func reassignPageIds(
+        existingMaxId: Int,
+        importPages: [MotionPage]
+    ) -> Result<[MotionPage], ExportError> {
+        let count = importPages.count
+        guard existingMaxId + count <= 255 else {
+            return .failure(.idOverflow(existingMaxId: existingMaxId, importCount: count))
+        }
+        var reassigned: [MotionPage] = []
+        for (offset, p) in importPages.enumerated() {
+            // 보장 범위 — overflow guard 통과 후 직접 UInt8 안전.
+            let newId = UInt8(existingMaxId + 1 + offset)
+            reassigned.append(MotionPage(
+                id: newId,
+                name: p.name.isEmpty ? "Synth \(newId)" : "Synth · \(p.name)",
+                compliance: p.compliance,
+                nextPage: p.nextPage,
+                exitPage: p.exitPage,
+                repeat: p.repeat,
+                speed: p.speed,
+                accel: p.accel,
+                steps: p.steps
+            ))
+        }
+        return .success(reassigned)
     }
 }

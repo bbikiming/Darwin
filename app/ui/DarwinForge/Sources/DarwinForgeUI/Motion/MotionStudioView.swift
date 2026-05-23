@@ -118,40 +118,35 @@ public struct MotionStudioView: View {
         .background(motionEditShortcuts)
     }
 
-    /// 사이클 180: Synth 합성 결과 페이지 일괄 import. 기존 motion.pages 와 ID 충돌 회피
-    /// 위해 신규 페이지의 ID 를 (현재 max + 1) 부터 재할당.
-    /// import 후 첫 신규 페이지 자동 선택 — 사용자가 즉시 확인 가능.
+    /// 사이클 180 + 187 (codex MAJOR fix): Synth 합성 결과 페이지 일괄 import.
+    ///
+    /// SynthMotionExporter.reassignPageIds 가 overflow 안전 보장 (UInt8 max=255).
+    /// overflow 시 lastError alert 으로 사용자에게 안내, motion 상태 변경 X.
+    /// 종전 (cycle 180): UInt8(clamping:) 로 silent 255 clamp → duplicate ID 위험.
     private func importSynthPages(_ pages: [MotionPage]) {
         guard !pages.isEmpty else { return }
-        pushUndoSnapshot()
         let existingMaxId = motion.pages.map { Int($0.id) }.max() ?? 0
-        var reassigned: [MotionPage] = []
-        for (offset, p) in pages.enumerated() {
-            let newId = UInt8(clamping: existingMaxId + 1 + offset)
-            // 신규 ID 부여 — 다른 필드 (steps / compliance / nextPage 등) 보존.
-            let renamed = MotionPage(
-                id: newId,
-                name: p.name.isEmpty ? "Synth \(newId)" : "Synth · \(p.name)",
-                compliance: p.compliance,
-                nextPage: p.nextPage,
-                exitPage: p.exitPage,
-                repeat: p.repeat,
-                speed: p.speed,
-                accel: p.accel,
-                steps: p.steps
-            )
-            reassigned.append(renamed)
-        }
-        motion = MotionDoc(
-            version: motion.version,
-            robotGeneration: motion.robotGeneration,
-            pages: motion.pages + reassigned
+        let result = SynthMotionExporter.reassignPageIds(
+            existingMaxId: existingMaxId,
+            importPages: pages
         )
-        // 첫 신규 페이지 선택 — 사용자 가 즉시 확인.
-        selectedPageIdx = motion.pages.count - reassigned.count
-        selectedStep = 0
-        applySelectedStepToPose()
-        isDirty = true
+        switch result {
+        case .success(let reassigned):
+            pushUndoSnapshot()
+            motion = MotionDoc(
+                version: motion.version,
+                robotGeneration: motion.robotGeneration,
+                pages: motion.pages + reassigned
+            )
+            // 첫 신규 페이지 선택 — 사용자 가 즉시 확인.
+            selectedPageIdx = motion.pages.count - reassigned.count
+            selectedStep = 0
+            applySelectedStepToPose()
+            isDirty = true
+        case .failure(let err):
+            // 사이클 187: overflow 시 사용자 알림. motion 무변화.
+            lastError = SynthMotionExporter.koreanMessage(for: err)
+        }
     }
 
     /// MotionStudio 전용 키프레임 단축키. opacity 0 + 0×0 frame 으로 hidden.

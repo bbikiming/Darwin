@@ -24,6 +24,19 @@ public final class IntentDispatcher: ObservableObject {
             case .forge(let msg): return msg
             }
         }
+
+        /// 사이클 187 (codex MINOR fix cycle 181): telemetry-friendly case name 만.
+        /// 종전: `String(describing: err)` 가 associated value (예: noBus("darwin.local
+        /// 에 연결 필요"), invalidArgs(...)) 본문 노출 → 부분 PII leak.
+        /// 신규: enum case name 만 — cycle 182 shellErrorCase 패턴 일관.
+        public var telemetryCase: String {
+            switch self {
+            case .noBus:        return "no_bus"
+            case .unknownTool:  return "unknown_tool"
+            case .invalidArgs:  return "invalid_args"
+            case .forge:        return "forge"
+            }
+        }
     }
 
     public struct ExecutionResult: Sendable, Equatable {

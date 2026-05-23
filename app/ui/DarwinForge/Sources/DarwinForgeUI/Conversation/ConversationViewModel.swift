@@ -181,12 +181,13 @@ public final class ConversationViewModel: ObservableObject {
                        "turn": AnyCodable(messages.count)]
             )
         } catch let err as IntentDispatcher.DispatcherError {
-            // 사이클 181 (P1 #3.4 fix): dispatcher 단 실패 — Claude 응답 자체는 정상 이지만
-            // 실 액션 실패 (예: bus 단절, 안전 차단). error_case 만 (메시지 본문 PII 회피).
+            // 사이클 181 + 187 (codex MINOR fix): dispatcher 실패. error_case 는
+            // enum case name 만 (cycle 187 — err.telemetryCase 신규). 종전
+            // `String(describing: err)` 가 associated value (사용자 입력 본문) 노출.
             Harness.shared.record(
                 .claudePlanExecutionFailed, level: .error, actor: .system,
                 data: ["tool": AnyCodable(String(describing: plan.tool)),
-                       "error_case": AnyCodable(String(describing: err))]
+                       "error_case": AnyCodable(err.telemetryCase)]
             )
             messages.append(Message(kind: .error, text: err.errorDescription ?? "알 수 없는 오류예요"))
         } catch {
