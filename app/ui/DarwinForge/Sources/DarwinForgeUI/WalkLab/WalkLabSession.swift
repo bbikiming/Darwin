@@ -1718,7 +1718,10 @@ public final class WalkLabSession {
 
     /// v1.11.25 audit-D — thermal cool-down 진행 중 flag.
     /// 60°C 도달 시 true → maxMotorTemp 가 thermalCooldownExitTemp 미만 도달까지 유지.
-    public private(set) var thermalCoolDownRequired: Bool = false
+    ///
+    /// **W2.10 / P0-2 (사이클 116)**: `private(set)` → `internal(set)` —
+    /// `WalkLabSession+Tick` 의 `tickRunSafetyPipeline()` 가 L4 thermal gate 에서 write.
+    public internal(set) var thermalCoolDownRequired: Bool = false
     /// cool-down 종료 임계 (°C). 60°C 알람 후 50°C 미만까지 보행 차단.
     public static let thermalCooldownExitTemp: Double = 50.0
 
@@ -1849,179 +1852,33 @@ public final class WalkLabSession {
     ///       → wake / disconnect 사이 robot 자세 변화 인지 못 한 채 송출 = 낙상 위험.
     /// 신규: 한 번이라도 bus = nil 관찰되면 cradleConfirmed 자동 false.
     ///       사용자가 "정비 스탠드에 거치됨" 토글 다시 체크해야 보행 가능.
-    private var lastSeenBusConnected: Bool = false
+    ///
+    /// **W2.10 / P0-2 (사이클 116)**: `private` → `internal` — `WalkLabSession+Tick` 의
+    /// `tickEnforceCradleOnDisconnect()` 가 read/write.
+    internal var lastSeenBusConnected: Bool = false
 
     /// **W2.7 (사이클 115)**: `private` → `internal` — `WalkLabSession+Start` 의
     /// `startScheduleTickLoop()` 가 simTimer closure 내부에서 호출.
+    ///
+    /// **W2.10 / P0-2 (사이클 116)**: 169줄 god method → 6-phase facade.
+    /// 분해 helper 는 `WalkLabSession+Tick.swift` 참조. 외부 API 변경 0,
+    /// 호출 site (simTimer closure) 변경 0, mutation 순서 100% 보존.
+    ///
+    /// # Phase 순서 (변경 금지 — 상세는 `WalkLabSession+Tick.swift` 참조)
+    ///
+    /// 1. `tickEnforceCradleOnDisconnect()` — bus disconnect → cradleConfirmed 해제
+    /// 2. `tickAdvanceEngineAndFootTrail()` — engine.tick + leftFoot/rightFoot/trail
+    /// 3. `tickUpdateVisualPose()` — sim mode 시 simWalkingPose → visualPose
+    /// 4. `tickPollSensorsAndBalanceState()` — IMU/temp/fall + balanceState + 로깅
+    /// 5. `tickRunSafetyPipeline()` — mitigation + 자동 정지 + L3/L4/L0 emergency
+    /// 6. `tickRecordSafetySample()` — 시계열 sample + 이벤트 전환 감지
     internal func tick() {
-        // 2026-05-17 disconnect 감지 + cradle 재확인 강제.
-        let currentlyConnected = store?.bus != nil
-        if lastSeenBusConnected && !currentlyConnected {
-            // 연결 끊김 감지 — cradleConfirmed 강제 해제 + 이벤트 로그.
-            if cradleConfirmed {
-                cradleConfirmed = false
-                logSafetyEvent(
-                    kind: .preflightFailure,
-                    message: "로봇 연결 끊김 — 거치 확인 자동 해제 (재연결 후 다시 확인 필요)"
-                )
-            }
-        }
-        lastSeenBusConnected = currentlyConnected
-
-        // **v1.14.8.2 (2026-05-21) — 2차 code-reviewer CRITICAL fix**:
-        // 종전 hard-coded 50ms. v1.14.8 Fix #2 가 tickDtSec 50→100ms 로 바꾼 후에도
-        // 이 값이 그대로 남아 engine 내부 phase 가 wall-clock 의 절반 속도로 진행 →
-        // 모든 preset 의 시각 보행 cadence 50% slow 회귀.
-        // 신규: tickDtSec 와 정합 — 단일 source of truth.
-        let foot = engine.tick(dtMs: UInt32(tickDtSec * 1000))
-        leftFoot = foot.leftXYZ
-        rightFoot = foot.rightXYZ
-        elapsedMs = UInt32(foot.elapsedMs)
-        phaseLabel = foot.phase.label
-
-        // foot trail 누적
-        footTrail.append(FootTrailPoint(
-            t: Date(),
-            left: foot.leftXYZ,
-            right: foot.rightXYZ
-        ))
-        if footTrail.count > 200 { footTrail.removeFirst(footTrail.count - 200) }
-        // **v1.14.8.1 (2026-05-21) perf**: lefts 캐시 parallel update.
-        // RobotScene3D 가 직접 read — body 마다 .map alloc 차단.
-        footTrailLefts.append(foot.leftXYZ)
-        if footTrailLefts.count > 200 { footTrailLefts.removeFirst(footTrailLefts.count - 200) }
-
-        // **Phase G11 (2026-05-15)**: sim mode 에서도 3D 모델 보행 시각화.
-        //
-        // 실 로봇 연결 안 됐을 때 (또는 ARM 안 된 상태) `isRobotWalking == false` 라
-        // `runContinuousWalk` 의 onPose 가 호출되지 않음. sim 50ms tick 으로 phase 보간 후
-        // visualPose 갱신해서 모델이 보행 따라 움직이도록.
-        //
-        // 실 로봇 송출 중 (`isRobotWalking == true`) 이면 onPose 가 권한 — sim 덮어쓰기 회피.
-        //
-        // **Phase G12 (Codex audit 4th pass, 2026-05-15)**: 이전 sim mode 가
-        // `(strideMm: 25, sideMm: 0, turnDeg: 0)` 하드코드 → preset 무시 → 모든 preset 이
-        // 동일 보행 자세로 시각화됐던 P0 버그. `defaultTuning(for: current)` 로 정정해서
-        // march/slowWalk/normalWalk/fastWalk/turnLeft/turnRight 가 각각 다른 보행 자세.
-        if !isRobotWalking, current != .idle {
-            let effectiveTuning: WalkMotionLibrary.AdvancedTuning = advanced
-                ? WalkMotionLibrary.AdvancedTuning(
-                    strideMm: strideMm, sideMm: sideMm, turnDeg: turnDeg,
-                    periodMs: customPeriodMs, footHeightMm: footHeightMm, balanceGain: balanceGain
-                  )
-                : WalkMotionLibrary.defaultTuning(for: current)
-            let period = effectiveTuning.periodMs
-            let phaseFraction = (Double(elapsedMs).truncatingRemainder(dividingBy: period)) / period
-            let phasedTimeMs = phaseFraction * period
-            if let pose = WalkMotionLibrary.simWalkingPose(timeMs: phasedTimeMs, tuning: effectiveTuning) {
-                // **Stage 4 (v1.1 fall prevention)**: sim mode 에서도 corrector 적용
-                // → 시각화에 보정 효과 미리보기 (실 robot 미연결 상태에서도 검증).
-                visualPose = applyBalanceCorrectionIfEnabled(to: pose)
-            }
-        } else if current == .idle, !isRobotWalking {
-            // idle 상태 → walkReady 로 부드럽게 복귀 (sim).
-            visualPose = .walkReady
-        }
-
-        updateImuFromRealOrSim()
-        updateMotorTempFromRealOrSim()
-        updateFallPrediction()
-
-        // **Stage 2 (v1.1 fall prevention)**: 다단계 임계 분기.
-        // `autoFallPrevention = false` 면 emergency (30°) 만 작동 — 기존 동작 보존.
-        let maxTilt = max(abs(imuRollDeg), abs(imuPitchDeg))
-        balanceState = BalanceState.from(maxTilt: maxTilt)
-
-        // v1.9 (사용자 요청): 보행 중 매 tick 데이터 logging.
-        appendSessionSampleIfLogging()
-
-        // 2026-05-17 v1.7: cm.rs/lib.rs 10-bit ADC 정정 후 — IMU plausibility 통과 시만
-        // L3 hard gate + predictor 작동. `.looksValid16Bit` (enum 이름 보존, 의미는 "1g
-        // 중력 정상 감지") 또는 sim 모드 또는 아직 unknown 일 때 trust.
-        let imuTrustedForEmergency = (imuScaleSuspicion == .looksValid16Bit
-                                      || imuScaleSuspicion == .unknown  // 아직 진단 X — 보수적 trust
-                                      || imuSource == .sim)             // sim 모드는 항상 신뢰
-
-        if autoFallPrevention {
-            applyBalanceMitigation()
-
-            // **v1.8 (2026-05-17) 정정**: predictor emergency 비활성화 — 사용자 보고
-            // "조금만 기울어도 중단". score 60 임계가 정상 보행 (5-15° 흔들림) 에서도
-            // 자주 트리거. 진짜 fall (실제 30°+ 누적) 은 L3 hard gate (50°) 가 잡음.
-            // 향후 score 가중치 보정 후 재활성 — 현재는 정보용 표시만.
-        }
-
-        // 자동 stop (시간 초과)
-        if let start = startTime {
-            let secs = Date().timeIntervalSince(start)
-            if current.maxDurationSec > 0 && Int(secs) >= current.maxDurationSec {
-                stop()
-            }
-        }
-
-        // L3 — 균형 손실 (실 IMU 또는 sim 둘 다 동일 임계).
-        // **v1.8 (2026-05-17) 정정 — hysteresis 추가**: 30° → 50° (ROBOTIS FALLEN 수준).
-        // 그리고 한 sample 만 충족해도 즉시 trigger 던 종전 → 3 연속 sample (600ms @ 5Hz)
-        // 충족 시만 trigger. 정상 보행의 순간적 spike 노이즈 흡수.
-        let l3MaxTilt = max(abs(imuRollDeg), abs(imuPitchDeg))
-        if imuTrustedForEmergency, l3MaxTilt >= 50 {
-            l3HardGateConsecutiveSamples += 1
-        } else {
-            l3HardGateConsecutiveSamples = 0
-        }
-        if l3HardGateConsecutiveSamples >= 3 {
-            balanceLost = true
-            logSafetyEvent(
-                kind: .emergencyTriggered,
-                message: String(format: "L3 hard gate — tilt R%+.1f° P%+.1f° 3샘플 연속 ≥50° → 정지",
-                                imuRollDeg, imuPitchDeg)
-            )
-            emergencyStop(trigger: .balanceLostL3)
-            l3HardGateConsecutiveSamples = 0
-        }
-
-        // L4 — 온도 임계
-        if maxMotorTemp >= 60 {
-            thermalAlarm = true
-            // v1.11.25 audit-D — cool-down gate 활성. 60°C 도달 시점부터 50°C 미만 도달까지
-            // 모든 preset 차단. 종전: banner "닫기" 즉시 풀림 → 1초 후 재시작 가능.
-            thermalCoolDownRequired = true
-            logSafetyEvent(
-                kind: .thermalAlarm,
-                message: String(format: "모터 %.1f°C — 60°C 임계 도달 → 정지 + cool-down %.0f°C 대기",
-                                maxMotorTemp, Self.thermalCooldownExitTemp)
-            )
-            emergencyStop(trigger: .thermalOverheat)
-        } else if thermalCoolDownRequired && maxMotorTemp < Self.thermalCooldownExitTemp {
-            // v1.11.25 audit-D — cool-down 완료. 50°C 미만 도달 시 gate 해제.
-            thermalCoolDownRequired = false
-            logSafetyEvent(
-                kind: .thermalAlarm,
-                message: String(format: "모터 %.1f°C — cool-down 완료 (%.0f°C 미만)",
-                                maxMotorTemp, Self.thermalCooldownExitTemp)
-            )
-        }
-
-        // 2026-05-17 안전 강화 — L0 voltage layer (under-volt 자동 정지).
-        // 사용자 보고 fix: 종전 단일 sample < 9.5V 가 transient droop (보행 시작 시
-        // 모터 일제 활성화) 에 false-positive trigger. 연속 N tick 동안 지속 시만 trigger.
-        // ROBOTIS-OP2 LiPo 11.1V nominal, 10.5V cutoff. 9.5V 이하 = critical
-        // (모터 brown-out 위험, 배터리 영구 손상).
-        updateVoltageDroopTracking()
-        if voltageDroopConsecutiveSamples >= Self.voltageDroopTriggerCount,
-           let v = store?.lastTelemetry?.board?.voltageVolts {
-            // v1.11.25 audit log-D — voltageDroop dedicated case (kind 재사용 제거).
-            logSafetyEvent(
-                kind: .voltageDroop,
-                message: String(format: "L0 배터리 %.1fV — %d 연속 sample critical → 정지",
-                                v, Self.voltageDroopTriggerCount)
-            )
-            emergencyStop(trigger: .voltageDroop)
-            voltageDroopConsecutiveSamples = 0   // 리셋
-        }
-
-        // Monitoring dashboard — 시계열 sample 기록 + 이벤트 전환 감지.
-        recordSafetySampleAndEvents()
+        tickEnforceCradleOnDisconnect()
+        tickAdvanceEngineAndFootTrail()
+        tickUpdateVisualPose()
+        tickPollSensorsAndBalanceState()
+        tickRunSafetyPipeline()
+        tickRecordSafetySample()
     }
 
     // MARK: - Safety Sampling (사이클 111 Phase 9 — extension 이동)
@@ -2212,9 +2069,45 @@ public final class WalkLabSession {
     /// **v1.22.5 사이클 94 (Phase 6)**: private → internal — `+Logging.swift` extension 의
     /// `appendSessionSampleIfLogging` 가 sample age 계산 위해 read.
     /// computed property 라 본체 잔존 (store 접근). 본체는 `var` (extension getter 불가).
+    ///
+    /// **사이클 254 (V-P0-1) testability hook**: `#if DEBUG` 에서 `_testOverrideLastImuSampleAt`
+    /// 가 non-nil 이면 store-derived 값 대신 강제 값 사용. production (release) 빌드에서는
+    /// 분기 자체가 컴파일 제외 — zero overhead.
     var lastImuSampleAt: Date? {
-        store?.lastImuSuccessAt
+        #if DEBUG
+        if let override = _testOverrideLastImuSampleAt { return override }
+        #endif
+        return store?.lastImuSuccessAt
     }
+
+    #if DEBUG
+    /// **사이클 254 (V-P0-1) — IMU sample 시각 강제 override (테스트 전용)**.
+    ///
+    /// `lastImuSampleAt` 는 store-derived computed property 라 단위 테스트에서 직접
+    /// inject 할 수 없다. 본 hook 으로 `bcEvaluateFreshnessGate` 의 busConnected+IMU
+    /// nil / 경계값 경로를 단리 검증 가능.
+    ///
+    /// 사용법:
+    /// - `nil` (default): production path — store?.lastImuSuccessAt 사용.
+    /// - `Optional(nil)` (= `.some(nil)`): IMU 한 번도 안 온 상태 강제.
+    /// - `Optional(date)` (= `.some(date)`): 특정 시각 강제.
+    ///
+    /// **운영 코드에서 절대 사용 금지.** XCTest 환경에서만 호출해야 함.
+    internal var _testOverrideLastImuSampleAt: Date?? = nil
+
+    /// **사이클 254 (V-P0-1) — bus 연결 상태 강제 override (테스트 전용)**.
+    ///
+    /// `busConnected` 는 `store?.bus != nil` 이라 단위 테스트에서 실 Bus 없이 true 로
+    /// 만들 수 없다. 본 hook 으로 `bcEvaluateFreshnessGate` 의 busConnected=true 경로를
+    /// 단리 검증 가능.
+    ///
+    /// 사용법:
+    /// - `nil` (default): production path — `store?.bus != nil` 사용.
+    /// - `true` / `false`: 강제 값.
+    ///
+    /// **운영 코드에서 절대 사용 금지.** XCTest 환경에서만 호출해야 함.
+    internal var _testOverrideBusConnected: Bool? = nil
+    #endif
 
     // 사이클 94 분할: appendSessionSampleIfLogging / finalizeSessionLog /
     // triggerAutoLoopIfActive / loadSummaryFromDisk / extractSessionIdFromSummary /

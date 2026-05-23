@@ -150,7 +150,11 @@ extension WalkLabSession {
         let imuAgeMs: Double? = lastImuSampleAt.map {
             Date().timeIntervalSince($0) * 1000.0
         }
+        #if DEBUG
+        let busConnected = _testOverrideBusConnected ?? (store?.bus != nil)
+        #else
         let busConnected = (store?.bus != nil)
+        #endif
         if busConnected && lastImuSampleAt == nil {
             // 실 robot 연결됐지만 IMU 한 번도 안 옴 → 가장 위험 (보정 불가).
             bcResetStateForBlockedReturn(pose: pose)
@@ -421,20 +425,25 @@ extension WalkLabSession {
 
     /// Corrections deg delta 를 pose 의 각 joint raw 에 적용.
     /// **v1.22.0 사이클 100 (Phase 5)**: `private static` → `internal static`.
+    /// **v1.22.X 사이클 115 (P0-3)**: Golden Principle #1 — `var dict` mutation 제거,
+    /// `reduce(into:)` 로 새 dict 생성. 동작 불변 (byte-identical) — `pose.positions` 키
+    /// 집합 보존 (corrections-only 키 추가 안 함), `abs(delta) > 1e-6` 게이트 동일.
     static func applyCorrections(_ c: BalanceCorrector.Corrections, to pose: RobotPose) -> RobotPose {
-        var dict = pose.positions
         let deltas: [JointID: Double] = [
             .rHipRoll: c.rHipRoll, .lHipRoll: c.lHipRoll,
             .rKnee: c.rKnee, .lKnee: c.lKnee,
             .rAnklePitch: c.rAnklePitch, .lAnklePitch: c.lAnklePitch,
             .rAnkleRoll: c.rAnkleRoll, .lAnkleRoll: c.lAnkleRoll
         ]
-        for (jid, delta) in deltas {
-            guard abs(delta) > 1e-6 else { continue }
-            guard let base = dict[jid] else { continue }
+        let updated = pose.positions.reduce(into: [JointID: Int]()) { acc, entry in
+            let (jid, base) = entry
+            guard let delta = deltas[jid], abs(delta) > 1e-6 else {
+                acc[jid] = base
+                return
+            }
             let baseDeg = Kinematics.degrees(fromRaw: base)
-            dict[jid] = Kinematics.raw(fromDegrees: baseDeg + delta)
+            acc[jid] = Kinematics.raw(fromDegrees: baseDeg + delta)
         }
-        return RobotPose(positions: dict)
+        return RobotPose(positions: updated)
     }
 }
