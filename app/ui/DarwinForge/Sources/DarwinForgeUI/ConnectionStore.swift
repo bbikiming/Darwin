@@ -1664,101 +1664,160 @@ public final class ConnectionStore: ObservableObject {
     /// IMU 전용 polling loop. joint/board read 와 분리되어 bus contention 회피.
     /// 사이클 159 (P0-1 fix): period 는 imuFastPollActive flag 에 따라 동적 — fast 시 50ms,
     /// slow 시 200ms. WalkLabSession 가 walk start/stop 시 flag toggle.
+    ///
+    /// **W2.12 (2026-05-24)**: 96줄 god method → facade + 5 helpers (~15줄 facade).
+    /// 동작 100% 보존: cancel 체크 → bus guard → read (background hop) → success/failure
+    /// 분기 → rate-change telemetry → sleep. health.recordImuSuccess/Failure 호출 순서와
+    /// 50Hz/5Hz timing 보존 (helper dispatch 비용 ~900ns/iter ≪ 20ms frame budget).
+    ///
+    /// helpers (prefix `imuLoop`):
+    ///   - `imuLoopReadOnce(bus:)` — Task.detached bus.readImu() 래핑
+    ///   - `imuLoopHandleSuccess(_:state:)` — recordImuSuccess + 보정/회복/scale telemetry
+    ///   - `imuLoopHandleFailure(_:state:)` — recordImuFailure + unavailable/stale telemetry
+    ///   - `imuLoopMaybeEmitRateChange(state:)` — fast↔slow 전환 telemetry + 현재 fastNow 반환
+    ///   - `imuLoopInterval(fastMode:)` — fast=50ms / slow=200ms 매핑
     private func runImuLoop() async {
         // **v1.14.2 (2026-05-21) — IMU 상태 전환 트래킹**.
         // 매 iter 진입 전 직전 상태를 보고, 전환 발생 시 telemetry 발화.
+        // 사이클 159: 모드 전환 telemetry — fast↔slow 첫 전환에 .imuPollRateChanged 발화.
+        let state = ImuLoopState(initialFastMode: self.imuFastPollActive)
+        while !Task.isCancelled, let bus = self.bus {
+            switch await imuLoopReadOnce(bus: bus) {
+            case .success(let value): imuLoopHandleSuccess(value, state: state)
+            case .failure(let error): imuLoopHandleFailure(error, state: state)
+            }
+            let fastNow = imuLoopMaybeEmitRateChange(state: state)
+            try? await Task.sleep(nanoseconds: imuLoopInterval(fastMode: fastNow))
+        }
+    }
+
+    // MARK: - runImuLoop helpers (W2.12)
+
+    /// `runImuLoop` per-loop 가변 상태 — 직전 iteration 의 IMU 상태/모드 캐시.
+    ///
+    /// reference type 으로 helper 들 사이에서 inout 없이 누적 (W2.8 `ApsContext` /
+    /// W2.9 `RecoverContext` 와 동일 패턴).
+    ///
+    /// 동시성: `@MainActor` 인 ConnectionStore.runImuLoop 안에서만 만들어지고
+    /// 사용 — main actor 안에서만 접근. `Sendable` 표기 없음.
+    private final class ImuLoopState {
         var prevImuUnavailable: Bool = false
         var prevImuStale: Bool = false
         var prevScaleSuspicion: ImuScaleSuspicion = .unknown
-        // 사이클 159: 모드 전환 telemetry — fast↔slow 첫 전환에 .imuPollRateChanged 발화.
-        var prevFastMode: Bool = self.imuFastPollActive
-        while !Task.isCancelled, let bus = self.bus {
-            let imuResult: Result<ImuRaw, Error> = await Task.detached(priority: .userInitiated) {
-                do { return .success(try bus.readImu()) }
-                catch { return .failure(error) }
-            }.value
-            switch imuResult {
-            case .success(let value):
-                // **v1.14.2** — 회복 검출: 직전 unavailable 또는 stale 이었으면 telemetry.
-                let wasUnavailable = prevImuUnavailable
-                let wasStale = prevImuStale
-                let priorFailures = self.imuConsecutiveFailures
-                self.health.recordImuSuccess(raw: value)
-                self.diagnoseImuScale(value)
-                if let snap = self.lastTelemetry {
-                    self.lastTelemetry = TelemetrySnapshot(board: snap.board, joints: snap.joints, imu: value)
-                }
-                // 회복 telemetry — 직전이 unavailable/stale 이었으면.
-                if wasUnavailable {
-                    harness.record(
-                        .imuRecovered, level: .notice, actor: .robot,
-                        data: ["from_state": AnyCodable("unavailable"),
-                               "prior_failures": AnyCodable(priorFailures)],
-                        context: harnessContext()
-                    )
-                } else if wasStale {
-                    harness.record(
-                        .imuRecovered, level: .notice, actor: .robot,
-                        data: ["from_state": AnyCodable("stale"),
-                               "prior_failures": AnyCodable(priorFailures)],
-                        context: harnessContext()
-                    )
-                }
-                // Scale suspicion 전환.
-                if imuScaleSuspicion != prevScaleSuspicion, prevScaleSuspicion != .unknown {
-                    harness.record(
-                        .imuScaleChanged, level: .notice, actor: .robot,
-                        data: ["from": AnyCodable(prevScaleSuspicion.rawValue),
-                               "to": AnyCodable(imuScaleSuspicion.rawValue),
-                               "accelz_mag_avg": AnyCodable(imuAccelZMagnitudeAvg)],
-                        context: harnessContext()
-                    )
-                }
-                prevScaleSuspicion = imuScaleSuspicion
-                prevImuUnavailable = false
-                prevImuStale = false
+        var prevFastMode: Bool
 
-            case .failure(let error):
-                self.health.recordImuFailure(error: error)
-                // **v1.14.2** — 상태 전환 검출 (failure 누적이 임계 넘는 첫 순간).
-                let nowUnavailable = isImuUnavailable
-                let nowStale = isImuStale && !nowUnavailable
-                if nowUnavailable, !prevImuUnavailable {
-                    let errMsg = error.localizedDescription
-                    harness.record(
-                        .imuUnavailable, level: .warn, actor: .robot,
-                        data: ["consecutive_failures": AnyCodable(imuConsecutiveFailures),
-                               "error_len": AnyCodable(errMsg.count),
-                               "error_hash": AnyCodable(Harness.shortHash(errMsg))],
-                        context: harnessContext()
-                    )
-                    prevImuUnavailable = true
-                } else if nowStale, !prevImuStale, !nowUnavailable {
-                    harness.record(
-                        .imuStale, level: .warn, actor: .robot,
-                        data: ["consecutive_failures": AnyCodable(imuConsecutiveFailures),
-                               "stale_for_s": AnyCodable(
-                                   lastImuSuccessAt.map { Date().timeIntervalSince($0) } ?? 0)],
-                        context: harnessContext()
-                    )
-                    prevImuStale = true
-                }
-            }
-            // 사이클 159 (P0-1 fix): 동적 polling period — walk 활성 시 50ms, idle 시 200ms.
-            // flag 변경 telemetry — 전환 시 한 번.
-            let fastNow = self.imuFastPollActive
-            if fastNow != prevFastMode {
-                harness.record(
-                    .imuPollRateChanged, level: .info, actor: .robot,
-                    data: ["fast_mode": AnyCodable(fastNow),
-                           "period_ms": AnyCodable(fastNow ? 50 : 200)],
-                    context: harnessContext()
-                )
-                prevFastMode = fastNow
-            }
-            let periodNs: UInt64 = fastNow ? 50_000_000 : 200_000_000
-            try? await Task.sleep(nanoseconds: periodNs)
+        init(initialFastMode: Bool) {
+            self.prevFastMode = initialFastMode
         }
+    }
+
+    /// IMU 1 회 read — Task.detached 로 background hop. 동작 보존: 종전과 동일하게
+    /// `Result<ImuRaw, Error>` 반환, success/failure 외 분기 없음.
+    private func imuLoopReadOnce(bus: any BusInterface) async -> Result<ImuRaw, Error> {
+        await Task.detached(priority: .userInitiated) {
+            do { return .success(try bus.readImu()) }
+            catch { return .failure(error) }
+        }.value
+    }
+
+    /// IMU read 성공 처리 — recordImuSuccess → scale 진단 → lastTelemetry 업데이트 →
+    /// 회복/scale-change telemetry → state 갱신.
+    ///
+    /// 호출 순서 보존 (W4.2.1 패턴): recordImuSuccess 먼저, diagnoseImuScale 다음,
+    /// lastTelemetry 마지막. wasUnavailable/wasStale/priorFailures 는 record 전 snapshot.
+    private func imuLoopHandleSuccess(_ value: ImuRaw, state: ImuLoopState) {
+        // **v1.14.2** — 회복 검출: 직전 unavailable 또는 stale 이었으면 telemetry.
+        let wasUnavailable = state.prevImuUnavailable
+        let wasStale = state.prevImuStale
+        let priorFailures = self.imuConsecutiveFailures
+        self.health.recordImuSuccess(raw: value)
+        self.diagnoseImuScale(value)
+        if let snap = self.lastTelemetry {
+            self.lastTelemetry = TelemetrySnapshot(board: snap.board, joints: snap.joints, imu: value)
+        }
+        // 회복 telemetry — 직전이 unavailable/stale 이었으면.
+        if wasUnavailable {
+            harness.record(
+                .imuRecovered, level: .notice, actor: .robot,
+                data: ["from_state": AnyCodable("unavailable"),
+                       "prior_failures": AnyCodable(priorFailures)],
+                context: harnessContext()
+            )
+        } else if wasStale {
+            harness.record(
+                .imuRecovered, level: .notice, actor: .robot,
+                data: ["from_state": AnyCodable("stale"),
+                       "prior_failures": AnyCodable(priorFailures)],
+                context: harnessContext()
+            )
+        }
+        // Scale suspicion 전환.
+        if imuScaleSuspicion != state.prevScaleSuspicion, state.prevScaleSuspicion != .unknown {
+            harness.record(
+                .imuScaleChanged, level: .notice, actor: .robot,
+                data: ["from": AnyCodable(state.prevScaleSuspicion.rawValue),
+                       "to": AnyCodable(imuScaleSuspicion.rawValue),
+                       "accelz_mag_avg": AnyCodable(imuAccelZMagnitudeAvg)],
+                context: harnessContext()
+            )
+        }
+        state.prevScaleSuspicion = imuScaleSuspicion
+        state.prevImuUnavailable = false
+        state.prevImuStale = false
+    }
+
+    /// IMU read 실패 처리 — recordImuFailure → 상태 전환 검출 (unavailable / stale 첫 진입) →
+    /// 해당 telemetry 발화 → state 갱신.
+    ///
+    /// 호출 순서 보존: recordImuFailure 가 isImuUnavailable / isImuStale 의 입력이므로
+    /// 반드시 먼저 호출. 그 다음 nowUnavailable / nowStale 계산.
+    private func imuLoopHandleFailure(_ error: Error, state: ImuLoopState) {
+        self.health.recordImuFailure(error: error)
+        // **v1.14.2** — 상태 전환 검출 (failure 누적이 임계 넘는 첫 순간).
+        let nowUnavailable = isImuUnavailable
+        let nowStale = isImuStale && !nowUnavailable
+        if nowUnavailable, !state.prevImuUnavailable {
+            let errMsg = error.localizedDescription
+            harness.record(
+                .imuUnavailable, level: .warn, actor: .robot,
+                data: ["consecutive_failures": AnyCodable(imuConsecutiveFailures),
+                       "error_len": AnyCodable(errMsg.count),
+                       "error_hash": AnyCodable(Harness.shortHash(errMsg))],
+                context: harnessContext()
+            )
+            state.prevImuUnavailable = true
+        } else if nowStale, !state.prevImuStale, !nowUnavailable {
+            harness.record(
+                .imuStale, level: .warn, actor: .robot,
+                data: ["consecutive_failures": AnyCodable(imuConsecutiveFailures),
+                       "stale_for_s": AnyCodable(
+                           lastImuSuccessAt.map { Date().timeIntervalSince($0) } ?? 0)],
+                context: harnessContext()
+            )
+            state.prevImuStale = true
+        }
+    }
+
+    /// 사이클 159 (P0-1 fix): fast↔slow 모드 전환 1 회 telemetry → 현재 fastNow 반환.
+    /// 반환값은 호출자(`runImuLoop`)가 `imuLoopInterval` 에 넘겨 동적 sleep 결정.
+    private func imuLoopMaybeEmitRateChange(state: ImuLoopState) -> Bool {
+        let fastNow = self.imuFastPollActive
+        if fastNow != state.prevFastMode {
+            harness.record(
+                .imuPollRateChanged, level: .info, actor: .robot,
+                data: ["fast_mode": AnyCodable(fastNow),
+                       "period_ms": AnyCodable(fastNow ? 50 : 200)],
+                context: harnessContext()
+            )
+            state.prevFastMode = fastNow
+        }
+        return fastNow
+    }
+
+    /// IMU polling 주기 (nanoseconds). fast (walk 활성) = 50ms = 20Hz,
+    /// slow (idle) = 200ms = 5Hz. WalkLabSession 의 50ms tick 과 1:1 sync (fast mode).
+    private func imuLoopInterval(fastMode: Bool) -> UInt64 {
+        fastMode ? 50_000_000 : 200_000_000
     }
 
     private static let lightSampleJoints: [JointID] =

@@ -28,7 +28,7 @@ extension WalkLabSession {
     /// **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: `.unknown` fallback case 추가.
     /// `WalkPreflightFailure.emergencyActive(trigger:)` payload 가 trigger 정보를 보존
     /// — `_lastEmergencyTrigger` 가 nil 인 edge case (init 직후 race) 에 안전한 fallback.
-    public enum EmergencyTrigger: String, Sendable {
+    public enum EmergencyTrigger: String, Sendable, Codable {
         /// 사용자 비상정지 버튼 / ESC 키.
         case userClick
         /// L3 hard gate — IMU tilt ≥ 50° 3 sample 연속.
@@ -119,7 +119,7 @@ extension WalkLabSession {
     /// | `.warning` | 35-45° | 보행 속도 70% 자동 감속 |
     /// | `.danger` | 45-50° | 자세 동결 |
     /// | `.emergency` | ≥ 50° | 토크 OFF + walkReady (ROBOTIS FALLEN 수준) |
-    public enum BalanceState: Int, Comparable, Equatable, Sendable {
+    public enum BalanceState: Int, Comparable, Equatable, Sendable, Codable {
         case normal = 0, caution, warning, danger, emergency
 
         public static func < (l: BalanceState, r: BalanceState) -> Bool {
@@ -157,7 +157,7 @@ extension WalkLabSession {
     }
 
     /// 안전 상태 한 시점 스냅샷 — sparkline 차트 source.
-    public struct SafetySample: Equatable, Sendable {
+    public struct SafetySample: Equatable, Sendable, Codable {
         public let timestamp: Date
         public let rollDeg: Double
         public let pitchDeg: Double
@@ -184,8 +184,8 @@ extension WalkLabSession {
     }
 
     /// 안전 이벤트 한 건 — 이벤트 로그 row.
-    public struct SafetyEvent: Identifiable, Equatable, Sendable {
-        public enum Kind: String, Equatable, Sendable {
+    public struct SafetyEvent: Identifiable, Equatable, Sendable, Codable {
+        public enum Kind: String, Equatable, Sendable, Codable {
             case sessionStart
             case sessionStop
             case stateChange
@@ -271,8 +271,8 @@ extension WalkLabSession {
     }
 
     /// 보행 cycle 시작 전 preflight 실패 사유.
-    public struct WalkPreflightFailure: Equatable, Sendable {
-        public enum Cause: Equatable, Sendable {
+    public struct WalkPreflightFailure: Equatable, Sendable, Codable {
+        public enum Cause: Equatable, Sendable, Codable {
             case noConnection
             case cradleNotConfirmed
             case dxlPowerFailed(String)

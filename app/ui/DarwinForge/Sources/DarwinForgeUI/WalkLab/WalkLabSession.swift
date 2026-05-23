@@ -80,6 +80,13 @@ public final class WalkLabSession {
     /// 접근 가능 — fine-grained tracking 으로 무관 property 변화 시 view 재평가 skip.
     public var inputs: WalkInputState = WalkInputState()
 
+    /// 사이클 V262-1 (Wave 4.1.2, ADR-002 Phase 4.1.2) — safety state value struct storage.
+    /// 5개 safety property (`balanceState` / `safetyTimeline` / `safetyEvents` /
+    /// `lastPreflightFailure` / `startBlockedReason`) 의 단일 storage. 종전 stored
+    /// property 들은 backward-compat computed delegate 로 transparent forwarding.
+    /// 외부 view/test 코드 (`session.balanceState = .normal` 등) 전부 무수정.
+    public var safetyState: WalkSafetyState = .initial
+
     /// 보폭 (앞, mm/cycle). 0..50. WalkEngine 의 x (m) 와 매핑: x_m = strideMm / 1000.
     public var strideMm: Double {
         get { inputs.strideMm }
@@ -251,7 +258,12 @@ public final class WalkLabSession {
     /// 현재 IMU 기반 안전 상태. tick() 마다 갱신.
     /// **W2.7 (사이클 115)**: `private(set)` → `internal(set)` — `WalkLabSession+Start`
     /// 의 `startResetSessionState(_:)` 가 `.normal` reset 필요.
-    public internal(set) var balanceState: BalanceState = .normal
+    /// **사이클 V262-1 (Wave 4.1.2)**: stored → computed delegate (위임 → `safetyState.balanceState`).
+    /// 외부 caller 무수정. internal(set) 유지 — same-module extension write 보존.
+    public var balanceState: BalanceState {
+        get { safetyState.balanceState }
+        set { safetyState.balanceState = newValue }
+    }
     /// 자동 fall prevention 토글. false 면 emergency (50°) 만 작동. default true.
     public var autoFallPrevention: Bool = true
 
@@ -672,7 +684,12 @@ public final class WalkLabSession {
     /// 시계열 안전 sample buffer — 최근 10초 (10Hz tick × 100, max 250).
     /// **사이클 111 (Phase 9)**: `private(set)` → `internal(set)` — `WalkLabSession+SafetySampling`
     /// 의 `recordSafetySampleAndEvents()` 가 write 필요.
-    public internal(set) var safetyTimeline: [SafetySample] = []
+    /// **사이클 V262-1 (Wave 4.1.2)**: stored → computed delegate (위임 → `safetyState.safetyTimeline`).
+    /// 외부 caller 무수정. internal(set) 유지 — same-module extension write 보존.
+    public var safetyTimeline: [SafetySample] {
+        get { safetyState.safetyTimeline }
+        set { safetyState.safetyTimeline = newValue }
+    }
     /// **v1.14.8 (2026-05-21) perf #6**: 정규화 캐시.
     /// FallPreventionMonitor.timeSeriesRow 가 body 마다 250×3 = 750 atan/asin 호출
     /// 하던 비용을 sample 추가 시 1회로 amortize. View 는 directly read.
@@ -681,7 +698,12 @@ public final class WalkLabSession {
     /// **사이클 111 (Phase 9)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var normalizedSafetyTimeline: [NormalizedSafetySample] = []
     /// 안전 이벤트 로그 — 최근 50건 (가장 최신이 last). 별도 보존 — start() reset 시에도 유지.
-    public private(set) var safetyEvents: [SafetyEvent] = []
+    /// **사이클 V262-1 (Wave 4.1.2)**: stored → computed delegate (위임 → `safetyState.safetyEvents`).
+    /// `private(set)` 의미 유지 — getter 만 public, setter 는 `WalkLabSession.swift` body
+    /// 내부에서만 `safetyState.safetyEvents = ...` 로 mutate.
+    public var safetyEvents: [SafetyEvent] {
+        get { safetyState.safetyEvents }
+    }
     /// 모니터링 대시보드 펼침 상태 — UI 토글. 앱 재시작 후에도 유지 (UserDefaults).
     /// 키: `df.walklab.monitoringExpanded`. UI 가 @AppStorage 로 binding 추천.
     ///
@@ -918,7 +940,12 @@ public final class WalkLabSession {
     /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
     /// `WalkLabSession+StartCycle` extension 의 task spawn helper 가 갱신 필요.
     public internal(set) var lastCycleResult: WalkCycleResult?
-    public internal(set) var lastPreflightFailure: WalkPreflightFailure?
+    /// **사이클 V262-1 (Wave 4.1.2)**: stored → computed delegate (위임 → `safetyState.lastPreflightFailure`).
+    /// 외부 caller 무수정. internal(set) 유지 — same-module extension write 보존.
+    public var lastPreflightFailure: WalkPreflightFailure? {
+        get { safetyState.lastPreflightFailure }
+        set { safetyState.lastPreflightFailure = newValue }
+    }
 
     // MARK: - v1.11.24 audit (2026-05-20): 상태 분리
     //
@@ -956,7 +983,12 @@ public final class WalkLabSession {
     ///
     /// **사이클 115 (P1)**: setter `private(set)` → `internal(set)` —
     /// `WalkLabSession+StartCycle` extension 의 preflight helper 가 갱신 필요.
-    public internal(set) var startBlockedReason: String?
+    /// **사이클 V262-1 (Wave 4.1.2)**: stored → computed delegate (위임 → `safetyState.startBlockedReason`).
+    /// 외부 caller 무수정. internal(set) 유지 — same-module extension write 보존.
+    public var startBlockedReason: String? {
+        get { safetyState.startBlockedReason }
+        set { safetyState.startBlockedReason = newValue }
+    }
 
     /// 첫 setPosition 성공 시 true. 실제 명령이 motor 까지 도달했는지 회고적 진단용.
     /// `runWalkCycle` / `runContinuousWalk` 의 onBusWriteFailure callback 의 역.
@@ -1930,19 +1962,22 @@ public final class WalkLabSession {
     /// WalkLabOnboardBridge (다른 파일, 같은 module) 가 onboard send 실패 시 직접
     /// 호출하기 위해 노출. external 모듈에선 여전히 비공개.
     func logSafetyEvent(kind: SafetyEvent.Kind, message: String) {
-        var newEvents = safetyEvents
+        // 사이클 V262-1 (Wave 4.1.2): safetyEvents 는 get-only computed delegate.
+        // 본체 mutation 은 safetyState.safetyEvents 에 직접 — `private(set)` 의미 보존.
+        var newEvents = safetyState.safetyEvents
         newEvents.append(SafetyEvent(timestamp: Date(), kind: kind, message: message))
         if newEvents.count > Self.safetyEventsMaxCount {
             newEvents.removeFirst(newEvents.count - Self.safetyEventsMaxCount)
         }
-        safetyEvents = newEvents
+        safetyState.safetyEvents = newEvents
         // 2026-05-17 안전 강화: 영구 로그 — UserDefaults postmortem.
         Self.persistEvent(kind: kind, message: message)
     }
 
     /// 이벤트 로그 비우기 — UI 의 "지우기" 버튼.
     public func clearSafetyEvents() {
-        safetyEvents.removeAll()
+        // 사이클 V262-1 (Wave 4.1.2): safetyEvents 는 get-only — safetyState 에 직접 mutate.
+        safetyState.safetyEvents.removeAll()
     }
 
     // MARK: - 영구 이벤트 로그 (2026-05-17 안전 강화)
