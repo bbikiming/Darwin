@@ -213,8 +213,9 @@ final class HarnessRealRobotSmokeTests: XCTestCase {
         Harness.shared.record(.connectAttempt, level: .info, actor: .user)
         Harness.shared.record(.connectSuccess, level: .notice, actor: .system,
                                 data: ["rtt_ms": AnyCodable(7.5)])
-        Harness.shared.record(.busReadFail, level: .error, actor: .robot,
-                                data: ["op": AnyCodable("readState")])
+        // cycle 225 critic P1: busReadFail 는 .warn — busWriteFail (.error) 로 변경.
+        Harness.shared.record(.busWriteFail, level: .error, actor: .robot,
+                                data: ["op": AnyCodable("emergencyStop")])
         try await waitForFlush()
 
         // 종료 전: meta.eventCount > 0, ended nil.

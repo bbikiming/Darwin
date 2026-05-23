@@ -87,7 +87,7 @@ final class HarnessRecorderTests: XCTestCase {
             kind: .connectSuccess, level: .notice, actor: .system))
         await recorder.enqueue(TelemetryEvent(
             session: "x", seq: 0, wall: "t", mono: 0,
-            kind: .busReadFail, level: .error, actor: .robot))
+            kind: .busWriteFail, level: .error, actor: .robot))
         await recorder.enqueue(TelemetryEvent(
             session: "x", seq: 0, wall: "t", mono: 0,
             kind: .heartbeat, level: .trace, actor: .system))
@@ -96,7 +96,7 @@ final class HarnessRecorderTests: XCTestCase {
         let snapshot = await recorder.meta
         XCTAssertEqual(snapshot.eventCount, 3)
         XCTAssertEqual(snapshot.connectCount, 1)
-        XCTAssertEqual(snapshot.errorCount, 1, "busReadFail at .error level counts as error")
+        XCTAssertEqual(snapshot.errorCount, 1, "busWriteFail at .error level counts as error")
         XCTAssertGreaterThan(snapshot.sizeBytes, 0)
     }
 

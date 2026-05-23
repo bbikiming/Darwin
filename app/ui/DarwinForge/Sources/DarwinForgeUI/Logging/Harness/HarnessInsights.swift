@@ -25,6 +25,7 @@ public struct Insight: Sendable, Equatable, Identifiable {
     }
     public enum Kind: String, Codable, Sendable {
         case connection, imu, bus, walklab, pose, harness, idle, motion, pilot
+        case setup, remote, claude
     }
 }
 
@@ -49,6 +50,14 @@ public enum HarnessInsights {
         out.append(contentsOf: pilotVoiceMissRatioInsight(analysis, events))
         out.append(contentsOf: setupConnRepeatedFailure(analysis, events))  // cycle 218
         out.append(contentsOf: setupConnWizardFrequency(analysis, events))  // cycle 218
+        out.append(contentsOf: pilotSafetyGateBlockedFrequent(analysis, events))   // cycle 225
+        out.append(contentsOf: pilotActionBarRiskCancelFrequent(analysis, events)) // cycle 225
+        out.append(contentsOf: claudeIntentErrorPattern(analysis, events))         // cycle 225
+        out.append(contentsOf: walklabDiagnosticsExportFailure(analysis, events))  // cycle 225
+        out.append(contentsOf: walklabBalanceRiskyPattern(analysis, events))       // cycle 225
+        out.append(contentsOf: walklabCalibrationIncomplete(analysis, events))     // cycle 225
+        out.append(contentsOf: pilotDemoModeFailure(analysis, events))             // cycle 225
+        out.append(contentsOf: walklabDataDeletionFrequent(analysis, events))      // cycle 225
         return out
     }
 
@@ -465,6 +474,182 @@ public enum HarnessInsights {
             recommendation: "연결 환경 안정화 후 사용 권장. USB 또는 네트워크 경로 고정 설정 검토.",
             eventRefs: starts.prefix(5).map(\.i),
             confidence: 0.6
+        )]
+    }
+
+    // MARK: - Pilot safety / action bar (cycle 225)
+
+    /// ARM 하지 않고 모션 시도 반복 — safety_gate_blocked ≥5.
+    private static func pilotSafetyGateBlockedFrequent(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let blocked = events.filter { $0.k.rawValue == TelemetryKind.pilotSafetyGateBlocked.rawValue }
+        let count = blocked.count
+        guard count >= 5 else { return [] }
+        return [Insight(
+            id: "pilot.safety_gate_blocked_frequent#\(a.summary.firstEventAt ?? "")",
+            ruleID: "pilot.safety_gate_blocked_frequent",
+            severity: .notice, kind: .pilot,
+            title: "안전 게이트 차단 \(count)회 — ARM 필요",
+            evidence: "세션 중 pilot.safety_gate_blocked \(count)회. ARM 하지 않고 모션 시도 반복.",
+            recommendation: "Drag-to-ARM 조작 숙지 필요. ARM 상태에서만 모션 송출 가능.",
+            eventRefs: Array(blocked.prefix(5).map(\.i)),
+            confidence: 0.7
+        )]
+    }
+
+    /// HighRisk 확인 대화상자 취소 반복 — action_bar_risk_cancelled ≥3.
+    private static func pilotActionBarRiskCancelFrequent(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let cancelled = events.filter { $0.k.rawValue == TelemetryKind.pilotActionBarRiskCancelled.rawValue }
+        let count = cancelled.count
+        guard count >= 3 else { return [] }
+        return [Insight(
+            id: "pilot.action_bar_risk_cancel_frequent#\(a.summary.firstEventAt ?? "")",
+            ruleID: "pilot.action_bar_risk_cancel_frequent",
+            severity: .notice, kind: .pilot,
+            title: "위험 모션 취소 반복 \(count)회",
+            evidence: "HighRisk 확인 대화상자에서 \(count)회 취소. 의도치 않은 위험 모션 접근 패턴.",
+            recommendation: "Action Bar 슬롯 배치 재검토. 위험 모션을 자주 취소하면 슬롯에서 제거 권장.",
+            eventRefs: Array(cancelled.prefix(5).map(\.i)),
+            confidence: 0.65
+        )]
+    }
+
+    // MARK: - Claude intent (cycle 225)
+
+    /// Claude 도구 dispatch 에러 반복 — intent_error ≥3.
+    private static func claudeIntentErrorPattern(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let errors = events.filter { $0.k.rawValue == TelemetryKind.claudeIntentError.rawValue }
+        let count = errors.count
+        guard count >= 3 else { return [] }
+        return [Insight(
+            id: "claude.intent_error_pattern#\(a.summary.firstEventAt ?? "")",
+            ruleID: "claude.intent_error_pattern",
+            severity: .warn, kind: .claude,
+            title: "Claude 도구 dispatch 에러 \(count)회",
+            evidence: "세션 중 claude.intent_error \(count)회. AI 도구 실행 실패 반복.",
+            recommendation: "연결 상태 확인. Claude 응답 내 tool 이름 / 인자 오류 가능성. 대화 초기화 시도.",
+            eventRefs: Array(errors.prefix(5).map(\.i)),
+            confidence: 0.75
+        )]
+    }
+
+    // MARK: - WalkLab extended (cycle 225)
+
+    /// 보행 진단 CSV 익스포트 실패 — diagnostics_export(success=false) ≥1.
+    private static func walklabDiagnosticsExportFailure(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let failures = events.filter {
+            $0.k.rawValue == TelemetryKind.walklabDiagnosticsExport.rawValue
+                && ($0.d.raw["success"]?.value as? Bool) == false
+        }
+        let count = failures.count
+        guard count >= 1 else { return [] }
+        return [Insight(
+            id: "walklab.diagnostics_export_failure#\(a.summary.firstEventAt ?? "")",
+            ruleID: "walklab.diagnostics_export_failure",
+            severity: .warn, kind: .walklab,
+            title: "보행 진단 CSV 익스포트 실패",
+            evidence: "\(count)건 익스포트 실패. 파일 권한 또는 디스크 공간 문제.",
+            recommendation: "익스포트 대상 경로 쓰기 권한 확인. 디스크 여유 공간 점검.",
+            eventRefs: Array(failures.prefix(5).map(\.i)),
+            confidence: 0.8
+        )]
+    }
+
+    /// 위험 balance 설정 승인 반복 — balance_risky_confirmed ≥2.
+    private static func walklabBalanceRiskyPattern(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let risky = events.filter { $0.k.rawValue == TelemetryKind.walklabBalanceRiskyConfirmed.rawValue }
+        let count = risky.count
+        guard count >= 2 else { return [] }
+        return [Insight(
+            id: "walklab.balance_risky_pattern#\(a.summary.firstEventAt ?? "")",
+            ruleID: "walklab.balance_risky_pattern",
+            severity: .warn, kind: .walklab,
+            title: "위험 balance 설정 승인 \(count)회 — 주의",
+            evidence: "세션 중 balance_risky_confirmed \(count)회. 안전 범위 밖 gain/sign 사용.",
+            recommendation: "모든 위험 설정은 sim 에서 먼저 검증 권장. 낙상 대비 크레들 고정 확인.",
+            eventRefs: Array(risky.prefix(5).map(\.i)),
+            confidence: 0.7
+        )]
+    }
+
+    /// 캘리브레이션 미완료 — capture_start 후 capture_done 없는 축.
+    private static func walklabCalibrationIncomplete(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let starts = events.filter { $0.k.rawValue == TelemetryKind.walklabCalibrationCaptureStart.rawValue }
+        let dones = events.filter { $0.k.rawValue == TelemetryKind.walklabCalibrationCaptureDone.rawValue }
+        let doneAxes = Set(dones.compactMap { $0.d.raw["axis"]?.value as? String })
+        let incomplete = starts.compactMap { $0.d.raw["axis"]?.value as? String }
+            .filter { !doneAxes.contains($0) }
+        let unique = Array(Set(incomplete))
+        guard !unique.isEmpty else { return [] }
+        let refs = starts.filter {
+            guard let ax = $0.d.raw["axis"]?.value as? String else { return false }
+            return unique.contains(ax)
+        }
+        return [Insight(
+            id: "walklab.calibration_incomplete#\(a.summary.firstEventAt ?? "")",
+            ruleID: "walklab.calibration_incomplete",
+            severity: .notice, kind: .walklab,
+            title: "캘리브레이션 미완료 — \(unique.joined(separator: ", "))",
+            evidence: "calibration_capture_start 후 capture_done 없는 축: \(unique.joined(separator: ", ")). 캘리브레이션 중단됨.",
+            recommendation: "캘리브레이션 미완료 축은 IMU 보정이 적용되지 않음. 해당 축 재캡처 필요.",
+            eventRefs: Array(refs.prefix(5).map(\.i)),
+            confidence: 0.75
+        )]
+    }
+
+    // MARK: - Pilot demo mode (cycle 225)
+
+    /// 데모 모드 전환 실패 반복 — demo_mode_result(success=false) ≥2.
+    private static func pilotDemoModeFailure(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let failures = events.filter {
+            $0.k.rawValue == TelemetryKind.pilotDemoModeResult.rawValue
+                && ($0.d.raw["success"]?.value as? Bool) == false
+        }
+        let count = failures.count
+        guard count >= 2 else { return [] }
+        return [Insight(
+            id: "pilot.demo_mode_failure#\(a.summary.firstEventAt ?? "")",
+            ruleID: "pilot.demo_mode_failure",
+            severity: .warn, kind: .pilot,
+            title: "데모 모드 전환 실패 \(count)회",
+            evidence: "pilot.demo_mode_result(success=false) \(count)회. 모드 전환 중 에러 반복.",
+            recommendation: "로봇 연결 상태 확인. ball-follow 전환 시 카메라 / HSV 설정 점검.",
+            eventRefs: Array(failures.prefix(5).map(\.i)),
+            confidence: 0.75
+        )]
+    }
+
+    // MARK: - WalkLab data deletion (cycle 225)
+
+    /// 보행 데이터 대량 삭제 — data_session_deleted ≥3.
+    private static func walklabDataDeletionFrequent(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let deleted = events.filter { $0.k.rawValue == TelemetryKind.walklabDataSessionDeleted.rawValue }
+        let count = deleted.count
+        guard count >= 3 else { return [] }
+        return [Insight(
+            id: "walklab.data_deletion_frequent#\(a.summary.firstEventAt ?? "")",
+            ruleID: "walklab.data_deletion_frequent",
+            severity: .info, kind: .walklab,
+            title: "보행 데이터 세션 \(count)건 삭제",
+            evidence: "세션 중 \(count)건 삭제. 대량 데이터 정리 또는 품질 불만 가능성.",
+            recommendation: "자동 정리 정책 활용 검토. 삭제 사유 분석하여 trial 품질 개선.",
+            eventRefs: Array(deleted.prefix(5).map(\.i)),
+            confidence: 0.5
         )]
     }
 

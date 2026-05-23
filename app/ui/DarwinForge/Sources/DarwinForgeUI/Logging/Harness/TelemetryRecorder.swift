@@ -116,14 +116,16 @@ public actor TelemetryRecorder {
     ///
     /// # 제외
     ///
-    /// `pilotEStop` (level=.warn, 사용자 안전 액션 — 시스템 오류 X). 분석 시 별도 카운트.
+    /// - `pilotEStop` (level=.warn, 사용자 안전 액션 — 시스템 오류 X). 분석 시 별도 카운트.
+    /// - `busReadFail` (level=.warn, 개별 read 실패는 일시적 — busReadFailureCount 별도 추적.
+    ///    threshold 초과 시만 bus e-stop 으로 escalate).
+    /// - user-recoverable 실패 (파일 export 등) 는 `.error` emit 이더라도 제외.
     public static let errorCountedKinds: [TelemetryKind] = [
         // System
         .errorException,
         // Connection
         .connectFailure,
-        // Bus
-        .busReadFail,
+        // Bus — busReadFail 은 .warn, busWriteFail 만 .error.
         .busWriteFail,
         .busEStop,
         // Pose

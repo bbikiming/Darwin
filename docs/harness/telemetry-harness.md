@@ -264,11 +264,13 @@ cycle 177 의 cross-menu audit 이후 Phase 2 instrumentation 가 광범위 진�
 | `ui.view_appeared` | 1 (cross-menu navigation) | 197 |
 | `walklab.freshness_changed` | 1 (didSet hook) | 200 |
 
-### errorCountedKinds 단일 source of truth (cycle 223)
+### errorCountedKinds 단일 source of truth (cycle 225)
 
 `TelemetryRecorder.errorCountedKinds` constant 가 모든 error-level kind 매핑.
-신규 추가 시 본 list + 7 tests update 강제. 현재 13 kind (errorException +
-4 connect/bus + 1 pose + 1 walk + 3 claude + 1 remote + 1 joint + 1 pilot).
+신규 추가 시 본 list + 7 tests update 강제. 현재 12 kind (errorException +
+3 connect/bus + 1 pose + 1 walk + 3 claude + 1 remote + 1 joint + 1 pilot).
+cycle 225 critic P1: `busReadFail` 제거 (level=.warn, 개별 read 실패는 일시적
+— busReadFailureCount 별도 추적, threshold 초과 시만 bus e-stop escalate).
 
 ### PII redaction 패턴 (cycles 182, 187, 202)
 
@@ -281,3 +283,5 @@ cycle 177 의 cross-menu audit 이후 Phase 2 instrumentation 가 광범위 진�
 
 - `pilot.e_stop` (level=.warn, 사용자 안전 액션 — 시스템 오류 X).
 - `ui.view_appeared` (level=.trace, navigation 분석 — 사고 X).
+- `bus.read_fail` (level=.warn, 개별 read 실패는 일시적 — busReadFailureCount 별도 추적).
+- user-recoverable 실패 (파일 export 등) — `.error` emit 이더라도 시스템 오류 X.

@@ -63,7 +63,7 @@ public struct PilotActionBar: View {
             }
         }
         // **사이클 121 (audit #11)**: channel.lastError observer — 비-nil 변경 시 banner 표시 + 5초 후 dismiss.
-        .onChange(of: channel.lastError) { newError in
+        .onChange(of: channel.lastError) { _, newError in
             guard let err = newError, !err.isEmpty else { return }
             // Gate-rejection 메시지는 pilotSafetyGateBlocked 에서 이미 기록됨 — errorException 중복 방지.
             let isGateRejection = err.hasPrefix("먼저 ARM") || err.hasPrefix("위험 동작")
@@ -262,7 +262,7 @@ public struct PilotActionBar: View {
         // 종전엔 라벨 VStack 안 텍스트 3개 (이름/duration/등급) 가 한 줄로 합쳐져
         // 읽혔음 → 사용자 인지 어려움.
         .accessibilityLabel(meta.displayNameKo)
-        .accessibilityHint("\(meta.safetyClass.koreanLabel), \(meta.durationMs/1000)초, 단축키 \(keyIndex)")
+        .accessibilityHint("\(meta.safetyClass.koreanLabel), \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초, 단축키 \(keyIndex)")
     }
 
     private func safetyColor(_ s: SafetyClass) -> Color {
