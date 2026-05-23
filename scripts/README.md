@@ -20,3 +20,9 @@
 ## Phase 5+
 
 - `build-release.sh` — Mac `.app` 번들 (서명은 추후)
+
+## 사이클 270+ (V270-2)
+
+- [`fitness-check.sh`](fitness-check.sh) — Architectural fitness function gate
+  (파일 LOC 800 ceiling, SwiftLint custom rules). pre-commit hook 으로 사용 권장.
+  상세: [`docs/guides/FITNESS_FUNCTIONS.md`](../docs/guides/FITNESS_FUNCTIONS.md)
