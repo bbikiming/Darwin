@@ -76,8 +76,23 @@ public final class WalkLabSession {
     // 가 있던 `correctorIntensityLevel` / `customHipRollGain` 등은 delegate setter 안에서
     // 동일 effect 재현.
 
-    /// 보행 slider 12개의 value struct storage. UI 가 `@Bindable session.inputs` 로 직접
-    /// 접근 가능 — fine-grained tracking 으로 무관 property 변화 시 view 재평가 skip.
+    /// 보행 slider 12개의 value struct storage.
+    ///
+    /// **사이클 264 (검증 III critic MAJOR-2 정정)**: 종전 docstring 의 "fine-grained
+    /// tracking 으로 무관 property 변화 시 view 재평가 skip" 주장은 **잘못됨**.
+    /// `WalkInputState` 는 value struct — 한 field mutation 시 전체 struct replacement,
+    /// `@Observable` 가 `inputs` property 자체의 write 를 detect → 모든 `inputs.*` read
+    /// view 가 invalidate. 오히려 backward-compat computed delegate (`session.strideMm`)
+    /// 가 더 granular (각 delegate 가 @Observable 의 별개 property 로 tracked).
+    ///
+    /// 본 struct 의 실제 benefit:
+    ///   1. **개념적 grouping** (slider 12개 = 한 묶음)
+    ///   2. **Codable snapshot/swap** (preset save/load + experiment 직렬화)
+    ///   3. **Equatable** 기반 change detection (test 에서 변경 비교)
+    ///   4. **Sendable** (cross-actor 전달 가능, Wave 4 actor 추출 준비)
+    ///
+    /// 진짜 fine-grained tracking 이 필요하면 12개 individual @Observable property
+    /// (현재 delegate 패턴) 이 정답. struct 추출은 다른 가치.
     public var inputs: WalkInputState = WalkInputState()
 
     /// 사이클 V262-1 (Wave 4.1.2, ADR-002 Phase 4.1.2) — safety state value struct storage.
@@ -2162,7 +2177,24 @@ public final class WalkLabSession {
     /// **운영 코드에서 절대 사용 금지.** XCTest 환경에서만 호출해야 함.
     internal var _testOverrideBusConnected: Bool? = nil
 
-    /// **사이클 259 (V259-1) — tick() pipeline 강제 호출 testability hook**.
+    /// **사이클 264 (V264-1) — L0 voltage gate full-fire testability hook**.
+    ///
+    /// `updateVoltageDroopTracking()` 의 voltage read site
+    /// (`store?.lastTelemetry?.board?.voltageVolts`) 는 store=nil 환경에서 항상 nil →
+    /// counter 가 reset 되어 full-fire 경로가 unreachable. 본 hook 으로 store 없이도
+    /// 임의 voltage 값을 inject → 카운터 증분/reset + L0 gate 발화 검증 가능.
+    ///
+    /// `voltageForGate` computed property 가 본 값을 우선 반환.
+    ///
+    /// 사용법:
+    /// - `nil` (default): production path — `store?.lastTelemetry?.board?.voltageVolts`.
+    /// - `8.0`: 임계(9.5V) 미달 강제 — 카운터 증분.
+    /// - `11.5`: 정상 voltage 강제 — 카운터 reset.
+    ///
+    /// **운영 코드에서 절대 사용 금지.** XCTest 환경에서만 호출해야 함.
+    internal var _testOverrideVoltageVolts: Double? = nil
+
+    /// **사이클 264 (V264-1) — tick() pipeline 강제 호출 testability hook**.
     ///
     /// L3/L4/L0 safety gate 는 `tick()` 진입 없이 unreachable — 직접 테스트 불가.
     /// 본 hook 은 `imuRollDeg/imuPitchDeg` 를 직접 override 한 뒤 `tick()` 의 safety

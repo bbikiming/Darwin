@@ -148,6 +148,88 @@ final class SafetyPipelineTests: XCTestCase {
                        "voltage droop trigger count = 5 (50ms tick × 5 = 250ms 지속)")
     }
 
+    // MARK: - L0 voltage droop full-fire (V264-1 — _testOverrideVoltageVolts inject)
+
+    /// 5회 연속 임계 미달 voltage → emergencyStop(.voltageDroop) 자동 발화
+    ///
+    /// 임계: 9.5V. `_testOverrideVoltageVolts` 로 store 없이 8.0V 주입.
+    func testL0VoltageGateFiresEmergencyAfter5ConsecutiveLowSamples() {
+        let session = WalkLabSession()
+        session.cradleConfirmed = true
+        // 5회 연속 8.0V (9.5V 임계 미달) — voltageDroopTriggerCount=5 충족 시 발화.
+        session._testOverrideVoltageVolts = 8.0
+        for i in 1...WalkLabSession.voltageDroopTriggerCount {
+            session._testForceTick(rollDeg: 0, pitchDeg: 0)
+            if i < WalkLabSession.voltageDroopTriggerCount {
+                XCTAssertFalse(session.emergencyStopActive,
+                               "\(i)회 — \(WalkLabSession.voltageDroopTriggerCount)회 미달, emergency 미발화")
+            }
+        }
+        XCTAssertTrue(session.emergencyStopActive,
+                      "5회 연속 8.0V (< 9.5V) → emergencyStop(.voltageDroop) 발화")
+        XCTAssertEqual(session.lastEmergencyTrigger, .voltageDroop,
+                       "L0 gate 발화 후 lastEmergencyTrigger = .voltageDroop")
+    }
+
+    /// 정상 voltage 1회 삽입 시 counter reset → 이후 4회 low 는 emergency 미발화
+    ///
+    /// 비유: 5회 연속 저혈압이 위험 기준. 4회 후 한 번 정상 → 카운터 초기화.
+    func testL0VoltageGateResetsCounterOnSingleSafeSample() {
+        let session = WalkLabSession()
+        session.cradleConfirmed = true
+
+        // 4회 low voltage.
+        session._testOverrideVoltageVolts = 8.0
+        for _ in 1...4 {
+            session._testForceTick(rollDeg: 0, pitchDeg: 0)
+        }
+        XCTAssertFalse(session.emergencyStopActive, "4회 — trigger 미달, emergency 아직 없음")
+
+        // 1회 정상 voltage → counter reset.
+        session._testOverrideVoltageVolts = 11.5
+        session._testForceTick(rollDeg: 0, pitchDeg: 0)
+        XCTAssertEqual(session.voltageDroopConsecutiveSamples, 0,
+                       "정상 sample 1회 → counter = 0 (reset)")
+
+        // reset 후 4회 low → emergency 미발화 (5 미달).
+        session._testOverrideVoltageVolts = 8.0
+        for _ in 1...4 {
+            session._testForceTick(rollDeg: 0, pitchDeg: 0)
+        }
+        XCTAssertFalse(session.emergencyStopActive,
+                       "reset 후 4회 low → 5 미달, emergency 미발화")
+    }
+
+    /// 정확히 9.5V (임계값) 에서는 counter 증가 없음 — boundary (≥ 9.5V = 정상)
+    ///
+    /// `updateVoltageDroopTracking` 의 `if v < 9.5` — 9.5V 는 안전 zone.
+    func testL0VoltageGateBoundaryAtCriticalThreshold() {
+        let session = WalkLabSession()
+        session.cradleConfirmed = true
+
+        // 정확히 9.5V — critical 미달 아님.
+        session._testOverrideVoltageVolts = 9.5
+        for _ in 1...WalkLabSession.voltageDroopTriggerCount {
+            session._testForceTick(rollDeg: 0, pitchDeg: 0)
+        }
+        XCTAssertFalse(session.emergencyStopActive,
+                       "9.5V (임계값) — v < 9.5 조건 불충족, counter 미증가, emergency 미발화")
+        XCTAssertEqual(session.voltageDroopConsecutiveSamples, 0,
+                       "9.5V — counter = 0 (정상 zone)")
+
+        // 9.4V (임계값 0.1V 미달) — counter 증가.
+        session._testOverrideVoltageVolts = 9.4
+        for i in 1...WalkLabSession.voltageDroopTriggerCount {
+            session._testForceTick(rollDeg: 0, pitchDeg: 0)
+            if i < WalkLabSession.voltageDroopTriggerCount {
+                XCTAssertEqual(session.voltageDroopConsecutiveSamples, i,
+                               "9.4V \(i)회 → counter = \(i)")
+            }
+        }
+        XCTAssertTrue(session.emergencyStopActive,
+                      "9.4V 5회 연속 (< 9.5V) → emergency 발화")
+    }
+
     // MARK: - cradleConfirmed auto-clear on bus disconnect
 
     /// bus disconnect 감지 (lastSeenBusConnected=true → store.bus=nil) 시

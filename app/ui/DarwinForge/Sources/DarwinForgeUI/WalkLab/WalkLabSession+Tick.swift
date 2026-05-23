@@ -266,9 +266,10 @@ extension WalkLabSession {
         }
 
         // L0 voltage layer (under-volt 자동 정지).
+        // **사이클 264 (V264-1)**: voltage read → `voltageForGate` 위임 (testability).
         updateVoltageDroopTracking()
         if voltageDroopConsecutiveSamples >= Self.voltageDroopTriggerCount,
-           let v = store?.lastTelemetry?.board?.voltageVolts {
+           let v = voltageForGate {
             // v1.11.25 audit log-D — voltageDroop dedicated case (kind 재사용 제거).
             logSafetyEvent(
                 kind: .voltageDroop,

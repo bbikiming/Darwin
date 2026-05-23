@@ -42,12 +42,37 @@ extension WalkLabSession {
 
     // MARK: - L0 voltage droop tracking
 
+    /// **사이클 264 (V264-1)** — voltage read site 의 단일 진입점.
+    ///
+    /// production: `store?.lastTelemetry?.board?.voltageVolts` (store 없으면 nil).
+    /// test (`#if DEBUG`): `_testOverrideVoltageVolts` 가 non-nil 이면 우선 반환 →
+    /// store 없이도 임의 voltage 로 gate 경로 검증 가능.
+    ///
+    /// `updateVoltageDroopTracking` + `tickRunSafetyPipeline` 의 log site 양쪽이
+    /// 본 property 를 공유 — voltage source 단일화.
+    var voltageForGate: Double? {
+        #if DEBUG
+        if let override = _testOverrideVoltageVolts { return override }
+        #endif
+        return store?.lastTelemetry?.board?.voltageVolts
+    }
+
     /// L0 voltage droop tracking — tick() 안에서 호출.
     /// `voltageDroopConsecutiveSamples` 가 임계 `voltageDroopTriggerCount` 도달 시
     /// tick() 의 본체 가드에서 emergency 발화. 본 method 는 카운터만 증감.
+    ///
+    /// **사이클 264 (V264-1)**: voltage read → `voltageForGate` 위임 (testability).
+    /// guard 조건: bus 연결됐거나 test override 가 주입됐거나 + voltage 유효 (> 0).
     internal func updateVoltageDroopTracking() {
-        guard let s = store, s.bus != nil,
-              let v = s.lastTelemetry?.board?.voltageVolts,
+        let hasVoltageSource: Bool = {
+            if store?.bus != nil { return true }
+            #if DEBUG
+            if _testOverrideVoltageVolts != nil { return true }
+            #endif
+            return false
+        }()
+        guard hasVoltageSource,
+              let v = voltageForGate,
               v > 0   // sensor 미응답 (0) 가드
         else {
             voltageDroopConsecutiveSamples = 0
