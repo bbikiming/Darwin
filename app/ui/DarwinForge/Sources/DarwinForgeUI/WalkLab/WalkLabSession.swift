@@ -159,7 +159,9 @@ public final class WalkLabSession {
     /// 새 SIMD3 배열 alloc + RobotScene3D struct 가 매번 다른 배열 → updateNSView
     /// 강제 호출. Fix #4 의 SceneKit fps 30 절감 일부 무효화.
     /// 신규: tick() 에서 footTrail 과 parallel update → view 는 캐시 read.
-    public private(set) var footTrailLefts: [SIMD3<Double>] = []
+    /// **W2.7 (사이클 115)**: `private(set)` → `internal(set)` — `WalkLabSession+Start`
+    /// 의 `startResetSessionState(_:)` 가 removeAll() 필요.
+    public internal(set) var footTrailLefts: [SIMD3<Double>] = []
     public var imuRollDeg: Double = 0
     public var imuPitchDeg: Double = 0
     /// **Stage 1 (v1.1 fall prevention)**: IMU 출처 표시 — UI 가 sim/real/stale 구분.
@@ -195,12 +197,16 @@ public final class WalkLabSession {
     /// runWalkCycle/runContinuousWalk 의 exit phase (walkReady 복귀 setPosition) 가
     /// 토크 OFF 이후 호출되는 race 차단용. emergency 시 true → exit 자체 skip.
     /// start/reset 시 false 리셋.
-    public private(set) var emergencyStopActive: Bool = false
+    /// **W2.7 (사이클 115)**: `private(set)` → `internal(set)` — `WalkLabSession+Start`
+    /// 의 `startResetSessionState(_:)` 가 false reset 필요.
+    public internal(set) var emergencyStopActive: Bool = false
     /// **v1.21.2 사이클 67 (코덱스 MEDIUM-3 fix)** — 마지막 emergency trigger 보존.
     /// `emergencyStop(trigger:)` 시 capture, `start(_:)` root guard 가 preflight failure
     /// payload 로 사용 → 사용자에게 "어떤 trigger 가 emergency 유발" 명시 노출.
     /// `exitEmergencyMode()` 시 nil reset (recovery 완료 = 과거 trigger 무관).
-    private var _lastEmergencyTrigger: EmergencyTrigger?
+    /// **W2.7 (사이클 115)**: `private` → `internal` — `WalkLabSession+Start` 의
+    /// `startGuardEmergency(_:)` 및 `startResetSessionState(_:)` 가 read/write 필요.
+    internal var _lastEmergencyTrigger: EmergencyTrigger?
 
     /// **사이클 67** — 외부 read-only accessor. WalkTrialAutoGenerator 등 root guard 우회
     /// path 가 동일 trigger payload 생성에 사용. nil 이면 아직 emergency 미발생 또는
@@ -213,7 +219,9 @@ public final class WalkLabSession {
     // MARK: - Stage 2 (v1.1 fall prevention): 다단계 임계
 
     /// 현재 IMU 기반 안전 상태. tick() 마다 갱신.
-    public private(set) var balanceState: BalanceState = .normal
+    /// **W2.7 (사이클 115)**: `private(set)` → `internal(set)` — `WalkLabSession+Start`
+    /// 의 `startResetSessionState(_:)` 가 `.normal` reset 필요.
+    public internal(set) var balanceState: BalanceState = .normal
     /// 자동 fall prevention 토글. false 면 emergency (50°) 만 작동. default true.
     public var autoFallPrevention: Bool = true
 
@@ -470,9 +478,12 @@ public final class WalkLabSession {
         }
     }
     /// session start 시점의 IMU 출처 ("sim"/"real"/"stale"). start() 가 갱신.
-    public private(set) var imuSourceAtStart: String = "sim"
+    /// **W2.7 (사이클 115)**: `private(set)` → `internal(set)` — `WalkLabSession+Start`
+    /// 의 `startCaptureImuSnapshot()` 가 갱신 필요.
+    public internal(set) var imuSourceAtStart: String = "sim"
     /// session start 시점의 IMU scale 의심 ("normal"/"saturated"/"unknown" 등).
-    public private(set) var imuScaleSuspicionAtStart: String = "unknown"
+    /// **W2.7 (사이클 115)**: `private(set)` → `internal(set)` — 동일 사유.
+    public internal(set) var imuScaleSuspicionAtStart: String = "unknown"
     /// 운영자 메모 — UI 에서 1줄 입력. v2 header 에 그대로 기록.
     public var operatorNote: String? = nil
     /// A/B 비교 tag — `WalkComparisonTag.arm` 으로 "A"/"B" 구분. nil 이면 비교 의도 없음.
@@ -982,8 +993,12 @@ public final class WalkLabSession {
     /// **사이클 109 (Phase 8)**: `private` → `internal` — `WalkLabSession+BalanceMitigation`
     /// 의 `applyBalanceMitigation()` 가 `engine.setCommand(...)` 호출 필요.
     internal let engine: WalkEngine
-    private var simTimer: Timer?
-    private var startTime: Date?
+    /// **W2.7 (사이클 115)**: `private` → `internal` — `WalkLabSession+Start` 의
+    /// `startScheduleTickLoop()` 가 invalidate + scheduledTimer 재할당 필요.
+    internal var simTimer: Timer?
+    /// **W2.7 (사이클 115)**: `private` → `internal` — `WalkLabSession+Start` 의
+    /// `startScheduleTickLoop()` 가 `startTime = Date()` 갱신 필요.
+    internal var startTime: Date?
     /// Sim IMU 본체 흔들림 위상 (rad). tick 마다 ω·dt 누적.
     /// **사이클 97 (Phase 3)**: `private` → `internal` — `WalkLabSession+SensorUpdates`
     /// extension 의 `updateSimIMU` 가 read/write. module 내부만 접근.
@@ -1136,163 +1151,47 @@ public final class WalkLabSession {
     /// 현재: `quickPreflight(for:)` 로 **state 변경 전에** 모든 free 검사. 차단 시 즉시 return
     ///       하고 `lastPreflightFailure` + `startBlockedReason` + `requestedPreset` 만 기록.
     ///       `current` / `engine` / `simTimer` / `activeRobotPreset` 등은 변경하지 않음.
+    ///
+    /// **사이클 115 (W2.7)**: 162-line god method → facade. Phase 별 helper 는
+    /// `WalkLabSession+Start.swift` (`start` prefix). 동작 100% 보존, 외부 API 변경 0.
     public func start(_ preset: WalkLabPreset) {
         // === P0-1 — state 변경 전 preflight ===
         // `requestedPreset` 는 시도 자체를 기록 (성공/실패 무관) — 사용자 진단용.
         requestedPreset = preset
 
-        // **v1.20.46 사이클 61 — 코덱스 CRITICAL fix (root-level emergency guard)**:
-        // 종전: bridge.handlePreset / handleMove / handleMotion 만 emergencyStopActive 검사 →
-        // WalkLabView 의 일반 preset 버튼 (tap()), risk sheet 등 bridge 우회 path 가 직접
-        // session.start 호출 시 emergency guard 우회. 게다가 본 메서드 line 1059 에서
-        // emergencyStopActive = false 로 자동 해제 → "Space (emergency) → preset 버튼 클릭"
-        // 시퀀스가 robot 재작동.
-        // 신규: 모든 public start entry 차단. 사용자 명시 recovery (exitEmergencyMode) 전까지
-        // 어떤 path 도 start 진행 불가. emergency guard 가 한 곳에 모임.
-        // **v1.21.1 사이클 66 — 코덱스 CRITICAL-1 fix**: 전용 `.emergencyActive` cause 사용.
-        // 종전: `.noConnection` 재사용 → facade (pilotStart) 가 failure.userMessage 를
-        // "시뮬 모드 — 로봇 미연결" 로 전달 → 사용자 mental model corruption (emergency
-        // 차단을 connection 문제로 오인). 신규: `.emergencyActive` 의 userMessage 가
-        // 명시 recovery 안내. diagnosticCode = "emergencyActive" 로 telemetry 도 정확.
-        //
-        // **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: trigger payload 도 전달.
-        // 사용자 메시지에 "(L3 균형 손실)" 같은 출처 라벨 노출 + diagnosticCode 가
-        // `emergencyActive_balanceLostL3` 형식으로 telemetry trigger 별 분류 가능.
-        // `_lastEmergencyTrigger` 가 nil 인 race (init 직후 외부에서 flag set) 는
-        // `.unknown` fallback — safe degrade.
-        if emergencyStopActive {
-            let f = WalkPreflightFailure(cause: .emergencyActive(trigger: _lastEmergencyTrigger ?? .unknown))
-            lastPreflightFailure = f
-            lastRobotEvent = f.userMessage
-            startBlockedReason = f.diagnosticCode
-            logSafetyEvent(
-                kind: .preflightFailure,
-                message: "start 차단 — \(f.diagnosticCode): emergency 상태에서 recovery 없이 재시작 시도"
-            )
-            harness.record(
-                .walkLabStartBlocked, level: .warn, actor: .user,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable(f.diagnosticCode),
-                       "guard": AnyCodable("root_emergency_guard")]
-            )
-            return
-        }
+        // Phase 1 — emergencyStopActive 차단 (recovery 없으면 어떤 path 도 진행 불가).
+        if startGuardEmergency(preset) { return }
 
-        if let failure = quickPreflight(for: preset) {
-            lastPreflightFailure = failure
-            lastRobotEvent = failure.userMessage
-            startBlockedReason = failure.diagnosticCode
-            logSafetyEvent(
-                kind: .preflightFailure,
-                message: "start 차단 — \(failure.diagnosticCode): \(failure.userMessage)"
-            )
-            harness.record(
-                .walkLabStartBlocked, level: .warn, actor: .user,
-                data: ["requested_preset": AnyCodable(preset.label),
-                       "reason": AnyCodable(failure.diagnosticCode),
-                       "active_preset": AnyCodable(activeRobotPreset?.label ?? "none")]
-            )
-            return
-        }
+        // Phase 2 — quickPreflight (cradle / risk / IMU / thermal cool-down 등).
+        if startCheckQuickPreflight(preset) { return }
+
         // preflight 통과 — state 변경 진입.
-        // **v1.12.2 (Codex P1-5 fix)** — walkLabStart 발행을 startWalkCycle 진입 후로
-        // 이동. quickPreflight 만 통과한 시점에는 아직 startWalkCycle 의 추가 guard
-        // (walkCycleTask 중복 / bus 재확인 / cradle 재확인 / balance critical 등)
-        // 가 남아 있어 false-positive 가능.
+        // v1.12.2 (Codex P1-5 fix) — walkLabStart 는 startWalkCycle 진입 후로 이동
+        // (quickPreflight 만 통과한 시점에는 추가 guard 가 남아 있어 false-positive 가능).
         lastPreflightFailure = nil
         startBlockedReason = nil
 
-        // **사이클 117 (explore agent dead-code fix)**: onboardHealthCheckWarnings
-        // production wire-up. 사이클 97 분할 후 production 호출 site 0 이었음 (explore
-        // agent flagged). 본 site 에서 호출 — non-blocking 진단 로그 (preflight 통과 후
-        // robot/cradle/autoOnboardBrokering state 가 silent failure 위험 있을 때 경고).
-        // preflight 차단 사유와 중복 아닌 새 정보 (autoOnboardBrokering off 등) 만 잡힘.
-        let onboardWarnings = onboardHealthCheckWarnings()
-        for warning in onboardWarnings {
-            logSafetyEvent(
-                kind: .preflightFailure,
-                message: "[onboard 진단] \(warning)"
-            )
-        }
+        // Phase 3 — onboard health-check 진단 로그 (non-blocking).
+        startLogOnboardWarnings()
 
-        // v1.11.24 audit iter2-C — 고급 모드에서 slider 동기화는 preflight 통과 후에만.
-        // 종전: tap() 가 start() 호출 전에 loadPresetDefaultsToSliders 호출 → start() 가
-        // preflight 차단되면 slider 만 바뀌고 motor task 는 안 바뀜 (UX 불일치).
-        if advanced && preset != .idle {
-            loadPresetDefaultsToSliders(preset)
-        }
+        // Phase 4 — advanced 모드 slider 기본값 load (preflight 통과 후에만).
+        startSyncAdvancedSliders(preset)
 
-        // §3 wiring: session start 시점 snapshot — v2 header 에 그대로 기록.
-        imuSourceAtStart = {
-            switch imuSource {
-            case .sim:   return "sim"
-            case .real:  return "real"
-            case .stale: return "stale"
-            }
-        }()
-        imuScaleSuspicionAtStart = (store?.imuScaleSuspicion ?? .unknown).rawValue
+        // Phase 5 — IMU source / scale snapshot (v2 header 기록용).
+        startCaptureImuSnapshot()
 
-        // **v1.15.0 (2026-05-21) Phase 1**: Trial 시작 capture — finalize 시 outcome 계산용.
+        // Phase 6a — Trial 시작 capture (finalize 시 outcome 계산용).
         captureTrialStart(preset: preset)
 
-        current = preset
-        let cmd = effectiveCommand
-        engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
-        engine.setPeriodMs(effectivePeriodMs)
-        footTrail.removeAll()
-        footTrailLefts.removeAll()  // v1.14.8.1 parallel cache reset
-        simSwayPhase = 0
-        balanceLost = false
-        thermalAlarm = false
-        // v1.11.22.1: emergency flag clear — 새 session 시작 시 exit-phase 허용.
-        emergencyStopActive = false
-        // 사이클 67: trigger payload 도 cleanup — 다음 emergency 까지 stale 차단.
-        _lastEmergencyTrigger = nil
-        // v1.8: hysteresis reset — 이전 cycle 잔존 데이터로 false trigger 차단.
-        warningStateConsecutiveSamples = 0
-        dangerStateConsecutiveSamples = 0
-        l3HardGateConsecutiveSamples = 0
-        // **Stage 3 (v1.1 fall prevention)**: 새 보행 시작 시 buffer reset —
-        // 이전 cycle 의 stale sample 로 score 거짓 발동 방지.
-        imuBuffer.removeAll()
-        lastBufferPushAt = nil
-        fallPrediction = .zero
-        balanceState = .normal
-        // **Phase D 정정 (Agent 4 P1)**: imu 값도 reset — 이전 cycle 의 stale 28°
-        // 가 남아 있으면 첫 tick 에 잘못된 balanceState 발동.
-        imuRollDeg = 0
-        imuPitchDeg = 0
-        imuSource = .sim
-        // **2026-05-16**: 모터 온도 source reset — 새 session 의 첫 tick 에서
-        // updateMotorTempFromRealOrSim 이 정확한 source 로 갱신.
-        motorTempSource = .sim
-        // **Phase D 정정 (Agent 4 P2)**: 이전 cycle 결과/preflight failure 도 reset.
-        lastPreflightFailure = nil
-        lastCycleResult = nil
-        // **Stage 4 (v1.1 fall prevention)**: corrector ramp 재시작.
-        correctionEnabledAt = enableBalanceCorrection ? Date() : nil
-        lastCorrections = nil
-        lastSafePose = nil
-        // **Monitoring dashboard reset**: 시계열 buffer / 이전 상태 reset.
-        // safetyEvents 는 유지 — 사용자가 이전 세션의 이벤트 확인 가능.
-        safetyTimeline.removeAll()
-        // **v1.14.8 (2026-05-21) perf #6**: normalized 캐시도 동기 reset.
-        normalizedSafetyTimeline.removeAll()
-        previousBalanceState = .normal
-        previousImuSource = .sim
-        previousMotorTempSource = .sim
-        previousRecommendEmergency = false
-        rampCompletedLogged = false
-        logSafetyEvent(kind: .sessionStart, message: "보행 시작 — \(preset.label)")
-        startTime = Date()
+        // Phase 6b — preset → current + engine command 전파 (sim engine wiring).
+        startApplyPresetToEngine(preset)
 
-        simTimer?.invalidate()
-        // v1.11.2 (2026-05-18): CI Swift 5.9 호환 — Task closure 에 weak self 재캡쳐.
-        simTimer = Timer.scheduledTimer(withTimeInterval: tickDtSec, repeats: true) { _ in
-            Task { @MainActor [weak self] in
-                self?.tick()
-            }
-        }
+        // Phase 7 — 세션-local state reset (foot trail / IMU / balance / thermal /
+        // monitoring) + .sessionStart 전이 로그.
+        startResetSessionState(preset)
+
+        // Phase 8 — startTime 기록 + simTimer scheduledTimer.
+        startScheduleTickLoop()
 
         // 실 보행 cycle 송출 — bus 연결 + cradle 확인 시 WalkMotionLibrary 의
         // 합성 step 시퀀스를 직접 모터에 전송. preset 종료 / cancel 시 walkReady 복귀.
@@ -1952,7 +1851,9 @@ public final class WalkLabSession {
     ///       사용자가 "정비 스탠드에 거치됨" 토글 다시 체크해야 보행 가능.
     private var lastSeenBusConnected: Bool = false
 
-    private func tick() {
+    /// **W2.7 (사이클 115)**: `private` → `internal` — `WalkLabSession+Start` 의
+    /// `startScheduleTickLoop()` 가 simTimer closure 내부에서 호출.
+    internal func tick() {
         // 2026-05-17 disconnect 감지 + cradle 재확인 강제.
         let currentlyConnected = store?.bus != nil
         if lastSeenBusConnected && !currentlyConnected {
