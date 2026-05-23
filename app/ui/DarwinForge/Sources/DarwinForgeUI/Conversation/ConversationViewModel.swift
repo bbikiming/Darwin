@@ -44,9 +44,23 @@ public final class ConversationViewModel: ObservableObject {
     private let commander: ClaudeCommander
     private let dispatcher: IntentDispatcher
 
-    public init(commander: ClaudeCommander, dispatcher: IntentDispatcher) {
+    // MARK: - Harness DI (Wave 3 Phase 3.2, 사이클 242)
+    //
+    // 종전: `Harness.shared.record(...)` 직접 호출 → RecordingHarness 주입 불가.
+    // 신규: init 시점에 HarnessFacade 주입 (default = LiveHarness.shared — 기존 호출
+    //       site 무손상). 테스트는 RecordingHarness 주입으로 plan approve/reject/clear
+    //       등 사용자 행동 telemetry 검증.
+    //
+    // **default arg = nil pattern**: LiveHarness.shared 는 @MainActor 격리. Swift 6
+    // strict concurrency 에서 nonisolated default arg evaluation warning 회피용.
+    private let harness: any HarnessFacade
+
+    public init(commander: ClaudeCommander,
+                dispatcher: IntentDispatcher,
+                harness: (any HarnessFacade)? = nil) {
         self.commander = commander
         self.dispatcher = dispatcher
+        self.harness = harness ?? LiveHarness.shared
     }
 
     // MARK: - Public actions
@@ -58,7 +72,7 @@ public final class ConversationViewModel: ObservableObject {
         inputText = ""
         messages.append(Message(kind: .user, text: text))
         // v1.12.0 telemetry — Claude 프롬프트 송신. PII 회피: 본문 X, 길이만.
-        Harness.shared.record(
+        harness.record(
             .claudePromptSent, level: .info, actor: .user,
             data: ["text_length": AnyCodable(text.count),
                    "turn": AnyCodable(messages.count)]
@@ -77,7 +91,7 @@ public final class ConversationViewModel: ObservableObject {
         guard let plan = message.pendingPlan else { return }
         markResolved(message.id)
         // 사이클 181 (P1 #3.4 fix): HITL plan 승인 telemetry. PII 회피 — tool name 만.
-        Harness.shared.record(
+        harness.record(
             .claudePlanApproved, level: .info, actor: .user,
             data: ["tool": AnyCodable(String(describing: plan.tool)),
                    "turn": AnyCodable(messages.count)]
@@ -90,7 +104,7 @@ public final class ConversationViewModel: ObservableObject {
         markResolved(message.id)
         // 사이클 181 (P1 #3.4 fix): HITL plan 거부 telemetry. tool name 만 — UX 분석 용.
         let tool = message.pendingPlan.map { String(describing: $0.tool) } ?? "unknown"
-        Harness.shared.record(
+        harness.record(
             .claudePlanRejected, level: .info, actor: .user,
             data: ["tool": AnyCodable(tool),
                    "turn": AnyCodable(messages.count)]
@@ -101,7 +115,7 @@ public final class ConversationViewModel: ObservableObject {
     public func clear() {
         // 사이클 181 (P1 #3.4 fix): clear 시 telemetry — 사용자 행동 분석 (혼란 / 재시작 등).
         let count = messages.count
-        Harness.shared.record(
+        harness.record(
             .claudeSessionCleared, level: .info, actor: .user,
             data: ["messages_cleared": AnyCodable(count)]
         )
@@ -119,7 +133,7 @@ public final class ConversationViewModel: ObservableObject {
             let plan = try await commander.plan(userText: text)
             // **v1.14.2 (2026-05-21)** — Claude 응답 수신 telemetry. PII 회피 — plan
             // 본문은 X, tool 이름 / refuse 여부 / 확인 필요 여부만.
-            Harness.shared.record(
+            harness.record(
                 .claudeResponseReceived, level: .info, actor: .claude,
                 data: ["tool": AnyCodable(String(describing: plan.tool)),
                        "needs_confirmation": AnyCodable(plan.needs_confirmation),
@@ -144,7 +158,7 @@ public final class ConversationViewModel: ObservableObject {
             }
         } catch let err as ClaudeCommander.CommanderError {
             // **v1.14.2** — Claude 에러 telemetry. case 만 (메시지 본문 X).
-            Harness.shared.record(
+            harness.record(
                 .claudeError, level: .error, actor: .claude,
                 data: ["error_case": AnyCodable(String(describing: err)),
                        "turn": AnyCodable(messages.count)]
@@ -152,7 +166,7 @@ public final class ConversationViewModel: ObservableObject {
             handleClaudeError(err)
         } catch {
             let errMsg = error.localizedDescription
-            Harness.shared.record(
+            harness.record(
                 .claudeError, level: .error, actor: .claude,
                 data: ["error_case": AnyCodable("parseFailed"),
                        "error_len": AnyCodable(errMsg.count),
@@ -174,7 +188,7 @@ public final class ConversationViewModel: ObservableObject {
             }
             messages.append(Message(kind: .system, text: displayText))
             // 사이클 181 (P1 #3.4 fix): plan 성공 telemetry — 분석 용 (도구 별 성공률).
-            Harness.shared.record(
+            harness.record(
                 .claudePlanExecuted, level: .info, actor: .system,
                 data: ["tool": AnyCodable(String(describing: plan.tool)),
                        "was_clipped": AnyCodable(result.wasClipped),
@@ -184,14 +198,14 @@ public final class ConversationViewModel: ObservableObject {
             // 사이클 181 + 187 (codex MINOR fix): dispatcher 실패. error_case 는
             // enum case name 만 (cycle 187 — err.telemetryCase 신규). 종전
             // `String(describing: err)` 가 associated value (사용자 입력 본문) 노출.
-            Harness.shared.record(
+            harness.record(
                 .claudePlanExecutionFailed, level: .error, actor: .system,
                 data: ["tool": AnyCodable(String(describing: plan.tool)),
                        "error_case": AnyCodable(err.telemetryCase)]
             )
             messages.append(Message(kind: .error, text: err.errorDescription ?? "알 수 없는 오류예요"))
         } catch {
-            Harness.shared.record(
+            harness.record(
                 .claudePlanExecutionFailed, level: .error, actor: .system,
                 data: ["tool": AnyCodable(String(describing: plan.tool)),
                        "error_case": AnyCodable("generic")]

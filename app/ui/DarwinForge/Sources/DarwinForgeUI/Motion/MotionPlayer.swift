@@ -35,7 +35,22 @@ public final class MotionPlayer: ObservableObject {
     private var timer: Timer?
     private var lastTickTime: Date?
 
-    public init() {}
+    // MARK: - Harness DI (Wave 3 Phase 3.2, 사이클 242)
+    //
+    // 종전: `Harness.shared.record(...)` 직접 호출 → 테스트에서 RecordingHarness 주입 불가.
+    // 신규: init 시점에 HarnessFacade 주입 (default = LiveHarness.shared — 기존 호출 site
+    //       무손상). 테스트는 RecordingHarness 주입으로 record 호출 검증.
+    //
+    // **default arg = nil pattern**: LiveHarness.shared 는 @MainActor 격리. default arg
+    // expression 은 caller context 에서 evaluate — Swift 6 strict concurrency 에서
+    // 직접 default 값으로 사용 시 nonisolated context warning. nil sentinel + init body
+    // 안에서 LiveHarness.shared fallback 으로 우회 (class 가 @MainActor 라 init body 는
+    // 자동 격리됨).
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
+    }
 
     // MARK: - Control
 
@@ -48,7 +63,7 @@ public final class MotionPlayer: ObservableObject {
         self.currentStepIndex = 0
         // **v1.14.2 (2026-05-21)** — motion 페이지 로드 telemetry.
         // 사용자가 어떤 motion 을 선택했는지 추적 — play 시작 전 의도 분리.
-        Harness.shared.record(
+        harness.record(
             .motionLoad, level: .info, actor: .user,
             data: ["page_id": AnyCodable(page.id),
                    "page_name_hash": AnyCodable(Harness.shortHash(page.name)),
@@ -64,7 +79,7 @@ public final class MotionPlayer: ObservableObject {
         lastTickTime = .now
         timer?.invalidate()
         // v1.12.2 telemetry — 모션 재생 시작 (page name redacted).
-        Harness.shared.record(
+        harness.record(
             .motionPlayStart, level: .info, actor: .user,
             data: ["page_name_hash": AnyCodable(Harness.shortHash(p.name)),
                    "page_id": AnyCodable(p.id),
@@ -99,7 +114,7 @@ public final class MotionPlayer: ObservableObject {
             _ = p
         }
         if wasPlaying, let name = pageNameForHarness {
-            Harness.shared.record(
+            harness.record(
                 .motionPlayAbort, level: .info, actor: .user,
                 data: ["page_name_hash": AnyCodable(Harness.shortHash(name)),
                        "elapsed_ms": AnyCodable(elapsedForHarness)]
@@ -207,7 +222,7 @@ public final class MotionPlayer: ObservableObject {
             // mode == .playing 일 때만 발행. 사용자가 seek(toEnd) 등으로 elapsedMs 를
             // 끝으로 옮긴 뒤 recompute 호출 시 misfire 안 됨 (mode == .stop / .paused).
             if mode == .playing {
-                Harness.shared.record(
+                harness.record(
                     .motionPlayComplete, level: .info, actor: .system,
                     data: ["page_name_hash": AnyCodable(Harness.shortHash(page.name)),
                            "page_id": AnyCodable(page.id),

@@ -40,7 +40,7 @@ public final class WalkLabSession {
                 kind: .stateChange,
                 message: "정비 스탠드 거치 토글: \(oldValue ? "ON→OFF" : "OFF→ON")"
             )
-            Harness.shared.record(
+            harness.record(
                 .walkLabConfigChange, level: .info, actor: .user,
                 data: ["field": AnyCodable("cradleConfirmed"),
                        "new_value": AnyCodable(cradleConfirmed)]
@@ -56,7 +56,7 @@ public final class WalkLabSession {
                 kind: .stateChange,
                 message: "고급 모드 토글: \(advanced ? "OFF→ON" : "ON→OFF")"
             )
-            Harness.shared.record(
+            harness.record(
                 .walkLabConfigChange, level: .info, actor: .user,
                 data: ["field": AnyCodable("advanced"),
                        "new_value": AnyCodable(advanced)]
@@ -96,7 +96,7 @@ public final class WalkLabSession {
                     ? "⚠️ 안전 한도 해제 ON — Smart-clamp 무시 (사용자 명시)"
                     : "안전 한도 해제 OFF — Smart-clamp 재활성"
             )
-            Harness.shared.record(
+            harness.record(
                 .walkLabConfigChange, level: forceOverrideSafety ? .warn : .info,
                 actor: .user,
                 data: ["field": AnyCodable("forceOverrideSafety"),
@@ -302,7 +302,7 @@ public final class WalkLabSession {
                 )
                 // **v1.14.2 (2026-05-21)** — config 변경 telemetry. 사용자 의도 추적 —
                 // "보행 시작 직전에 보정 끄거나 켰는가" 같은 진단에 필수.
-                Harness.shared.record(
+                harness.record(
                     .walkLabConfigChange, level: .info, actor: .user,
                     data: ["field": AnyCodable("enableBalanceCorrection"),
                            "value": AnyCodable(enableBalanceCorrection),
@@ -1031,7 +1031,23 @@ public final class WalkLabSession {
         )
     }
 
-    public init() {
+    // MARK: - Harness DI (Wave 3 Phase 3.2, 사이클 242)
+    //
+    // 종전: `harness.record(...)` 직접 호출 (24 사이트: WalkLabSession 11 +
+    //       WalkLabSession+StartCycle 13) → RecordingHarness 주입 불가.
+    // 신규: init 시점에 HarnessFacade 주입 (default = LiveHarness.shared — 기존 호출
+    //       site 무손상). 같은 class 의 extension (WalkLabSession+StartCycle) 도 같은
+    //       `self.harness` 접근 가능 (internal property — same module).
+    //
+    // **internal**: extension WalkLabSession 가 같은 module 안에서 read 함. private 시
+    // extension 접근 불가.
+    //
+    // **default arg = nil pattern**: LiveHarness.shared 는 @MainActor 격리. Swift 6
+    // strict concurrency 에서 nonisolated default arg evaluation warning 회피용.
+    internal let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
         self.engine = WalkEngine()
         // v1.7: enableBalanceCorrection default ON 이라 ramp 시작 시점을 init 시 기록.
         if enableBalanceCorrection {
@@ -1153,7 +1169,7 @@ public final class WalkLabSession {
                 kind: .preflightFailure,
                 message: "start 차단 — \(f.diagnosticCode): emergency 상태에서 recovery 없이 재시작 시도"
             )
-            Harness.shared.record(
+            harness.record(
                 .walkLabStartBlocked, level: .warn, actor: .user,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable(f.diagnosticCode),
@@ -1170,7 +1186,7 @@ public final class WalkLabSession {
                 kind: .preflightFailure,
                 message: "start 차단 — \(failure.diagnosticCode): \(failure.userMessage)"
             )
-            Harness.shared.record(
+            harness.record(
                 .walkLabStartBlocked, level: .warn, actor: .user,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable(failure.diagnosticCode),
@@ -1334,7 +1350,7 @@ public final class WalkLabSession {
 
         if wasRunningForHarness {
             // v1.12.0 telemetry — 정상 정지.
-            Harness.shared.record(
+            harness.record(
                 .walkLabStop, level: .notice, actor: .user,
                 data: ["duration_s": AnyCodable(durationForHarness),
                        "preset": AnyCodable(current.label)]
@@ -1404,7 +1420,7 @@ public final class WalkLabSession {
 
         // v1.12.0 telemetry — WalkLab 비상 정지.
         let tiltForHarness = max(abs(imuRollDeg), abs(imuPitchDeg))
-        Harness.shared.record(
+        harness.record(
             .walkLabEmergencyStop, level: .error,
             actor: trigger.harnessActor,
             data: ["tilt_deg": AnyCodable(tiltForHarness),
@@ -1615,7 +1631,7 @@ public final class WalkLabSession {
                 kind: .stateChange,
                 message: "자동 onboard brokering: \(autoOnboardBrokering ? "OFF→ON" : "ON→OFF")"
             )
-            Harness.shared.record(
+            harness.record(
                 .walkLabConfigChange, level: .info, actor: .user,
                 data: ["field": AnyCodable("autoOnboardBrokering"),
                        "new_value": AnyCodable(autoOnboardBrokering)]
@@ -1824,7 +1840,7 @@ public final class WalkLabSession {
         sideMm = 0
         // **v1.14.2 (2026-05-21)** — preset 슬라이더 기본값 적용 telemetry.
         // 사용자 의도 추적 — "어떤 preset 의 기본 튜닝을 가져왔는가".
-        Harness.shared.record(
+        harness.record(
             .walkLabPresetApplied, level: .info, actor: .user,
             data: ["preset": AnyCodable(preset.label),
                    "stride_mm": AnyCodable(strideMm),
@@ -2189,7 +2205,7 @@ public final class WalkLabSession {
             // 사이클 200: transition telemetry — 50ms tick 의 no-op set 차단 (oldValue
             // == newValue) + 실 전환 시점만 발화. cycle 160 이 추가한 enum 의 분포 분석.
             guard oldValue != balanceCorrectionFreshness else { return }
-            Harness.shared.record(
+            harness.record(
                 .walkLabFreshnessChanged, level: .info, actor: .system,
                 data: ["from": AnyCodable(oldValue.rawValue),
                        "to": AnyCodable(balanceCorrectionFreshness.rawValue)]

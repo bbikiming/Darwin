@@ -208,6 +208,10 @@ public struct RootView: View {
         .environmentObject(experimentLoop)
         // **v1.14.9 (2026-05-21) Fix #7** — @Observable 은 .environment(_:) 로 주입.
         .environment(walkLabSession)
+        // **Wave 3 Phase 3.2 (사이클 242)** — Harness DI 주입. RemoteShellView 등
+        // `@Environment(\.harness)` 사용 View 가 production LiveHarness 받음.
+        // 미주입 시 NoopHarness default → 디스크 telemetry 누락. 필수.
+        .environment(\.harness, LiveHarness.shared)
         // **사이클 73 (2026-05-22) 코덱스 HIGH-2 fix** — TelloPilotHud 가 status banner /
         // "활성화" 토글 / "다시 시도" 버튼 표시할 수 있도록 owner reference 전파.
         // 옵셔널 — bridge alloc 전 (cold start race) 면 nil. SwiftUI 의 @Environment(...self)

@@ -52,7 +52,7 @@ extension WalkLabSession {
         if walkCycleTask != nil || onboardWalkingActive {
             lastRobotEvent = "⚠️ 보행 진행 중 — 정지(■) 후 다시 시도하세요 (\(preset.label))"
             // v1.12.2 (Codex P1-5) — 실 cycle 시작 거부도 telemetry.
-            Harness.shared.record(
+            harness.record(
                 .walkLabStartBlocked, level: .warn, actor: .user,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable("alreadyWalking")]
@@ -78,7 +78,7 @@ extension WalkLabSession {
             lastRobotEvent = "🛑 시뮬레이션만 — 로봇 미연결. \(preset.label) 보행 신호는 송출 안 됨. 사이드바에서 연결 후 재시도"
             // v1.12.2 (Codex P1-5) — quickPreflight 통과 후라도 race 로 bus 가 사라진
             // 시점 추적용. 사용자가 "preflight 통과인데 왜 모터 안 움직이지?" 답 가능.
-            Harness.shared.record(
+            harness.record(
                 .walkLabStartBlocked, level: .warn, actor: .system,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable("noConnectionRace")]
@@ -90,7 +90,7 @@ extension WalkLabSession {
             lastPreflightFailure = f
             startBlockedReason = f.diagnosticCode  // v1.11.24 audit iter2-D
             lastRobotEvent = f.userMessage + " (\(preset.label))"
-            Harness.shared.record(
+            harness.record(
                 .walkLabStartBlocked, level: .warn, actor: .user,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable("cradleNotConfirmedRace")]
@@ -141,7 +141,7 @@ extension WalkLabSession {
             startBlockedReason = f.diagnosticCode  // v1.11.24 audit iter2-D
             lastRobotEvent = f.userMessage
             // v1.12.2 (Codex re-review fix) — start_blocked 발행.
-            Harness.shared.record(
+            harness.record(
                 .walkLabStartBlocked, level: .warn, actor: .user,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable(f.diagnosticCode)]
@@ -168,7 +168,7 @@ extension WalkLabSession {
             lastPreflightFailure = failure
             startBlockedReason = failure.diagnosticCode  // v1.11.24 audit iter2-D
             lastRobotEvent = failure.userMessage + " (\(preset.label))"
-            Harness.shared.record(
+            harness.record(
                 .walkLabStartBlocked, level: .warn, actor: .system,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable(failure.diagnosticCode)]
@@ -189,7 +189,7 @@ extension WalkLabSession {
             lastRobotEvent = f.userMessage + " (\(preset.label))"
             logSafetyEvent(kind: .preflightFailure,
                            message: "보행 차단 — IMU unavailable (bus 연결 후 sample 없음)")
-            Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .system,
+            harness.record(.walkLabStartBlocked, level: .warn, actor: .system,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable(f.diagnosticCode)])
             return true
@@ -201,7 +201,7 @@ extension WalkLabSession {
             lastRobotEvent = f.userMessage + " (\(preset.label))"
             logSafetyEvent(kind: .preflightFailure,
                            message: "보행 차단 — IMU stale (5초+ 지연)")
-            Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .system,
+            harness.record(.walkLabStartBlocked, level: .warn, actor: .system,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable(f.diagnosticCode)])
             return true
@@ -214,7 +214,7 @@ extension WalkLabSession {
             lastRobotEvent = f.userMessage + " (\(preset.label))"
             logSafetyEvent(kind: .preflightFailure,
                            message: "보행 차단 — IMU plausibility \(store.imuScaleSuspicion.rawValue)")
-            Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .system,
+            harness.record(.walkLabStartBlocked, level: .warn, actor: .system,
                 data: ["requested_preset": AnyCodable(preset.label),
                        "reason": AnyCodable(f.diagnosticCode),
                        "imu_scale": AnyCodable(store.imuScaleSuspicion.rawValue)])
@@ -276,7 +276,7 @@ extension WalkLabSession {
             startBlockedReason = f.diagnosticCode
             logSafetyEvent(kind: .preflightFailure,
                            message: "Onboard 시작 차단 — SSH 미연결")
-            Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .user,
+            harness.record(.walkLabStartBlocked, level: .warn, actor: .user,
                 data: ["requested_preset": AnyCodable(presetLabel),
                        "reason": AnyCodable(f.diagnosticCode)])
             return true
@@ -288,14 +288,14 @@ extension WalkLabSession {
             startBlockedReason = f.diagnosticCode
             logSafetyEvent(kind: .preflightFailure,
                            message: "Onboard 시작 차단 — autoOnboardBrokering OFF")
-            Harness.shared.record(.walkLabStartBlocked, level: .warn, actor: .user,
+            harness.record(.walkLabStartBlocked, level: .warn, actor: .user,
                 data: ["requested_preset": AnyCodable(presetLabel),
                        "reason": AnyCodable(f.diagnosticCode)])
             return true
         }
         // precheck 통과 — onboard cycle 활성. ACK 는 bridge 가 별도 trace.
         // v1.12.2 (Codex re-review fix) — onboard 도 실제 cycle 시작 시점에 발행.
-        Harness.shared.record(
+        harness.record(
             .walkLabStart, level: .notice, actor: .user,
             data: ["preset": AnyCodable(presetLabel),
                    "engine": AnyCodable("robotisOnboard"),
@@ -477,7 +477,7 @@ extension WalkLabSession {
         motorWriteStepCount = 0
         lastRobotEvent = "🤖 연속 보행 시작 — \(presetLabel)"
         // v1.12.2 (Codex re-review fix) — 실 motor task spawn 직전. 모든 guard pass.
-        Harness.shared.record(
+        harness.record(
             .walkLabStart, level: .notice, actor: .user,
             data: ["preset": AnyCodable(presetLabel),
                    "engine": AnyCodable(String(describing: walkingEngine)),
@@ -567,7 +567,7 @@ extension WalkLabSession {
         motorWriteStepCount = 0
         lastRobotEvent = "🤖 보행 cycle 송출 시작 — \(presetLabel)"
         // v1.12.2 (Codex re-review fix) — single-cycle 도 실 task spawn 직전.
-        Harness.shared.record(
+        harness.record(
             .walkLabStart, level: .notice, actor: .user,
             data: ["preset": AnyCodable(presetLabel),
                    "engine": AnyCodable(String(describing: walkingEngine)),

@@ -18,6 +18,15 @@ public struct RemoteShellView: View {
     @State private var showSetupWizard: Bool? = nil
     @Environment(\.dfWindowWidth) private var winWidth
 
+    // MARK: - Harness DI (Wave 3 Phase 3.2, 사이클 242)
+    //
+    // 종전: `harness.record(...)` 직접 호출 (4 사이트) → Preview / 단위 테스트에서
+    //       NoopHarness 주입 불가 (실제 디스크 IO 발생).
+    // 신규: SwiftUI Environment 주입 (default = NoopHarness 정의된 EnvironmentValues+Harness).
+    //       Root level (RootView / DarwinForgeApp) 에서 `.environment(\.harness, LiveHarness.shared)`
+    //       주입 필수 — 없으면 NoopHarness 받아 telemetry 누락.
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     /// 셋업 wizard 표시 여부 — SSH 채널 OK 면 자동 hide.
@@ -96,7 +105,7 @@ public struct RemoteShellView: View {
                 .buttonStyle(.borderless)
 
                 Button {
-                    Harness.shared.record(
+                    harness.record(
                         .remoteModeToggled,
                         level: .info,
                         actor: .user,
@@ -150,7 +159,7 @@ public struct RemoteShellView: View {
 
     private func quickActionButton(_ action: QuickAction) -> some View {
         Button {
-            Harness.shared.record(
+            harness.record(
                 .remoteQuickAction,
                 level: action.category == .danger ? .warn : .info,
                 actor: .user,
@@ -202,7 +211,7 @@ public struct RemoteShellView: View {
     private var modeToggle: some View {
         Button {
             let toMode = shouldShowSetupWizard ? "shell" : "wizard"
-            Harness.shared.record(
+            harness.record(
                 .remoteModeToggled,
                 level: .info,
                 actor: .user,
@@ -505,7 +514,7 @@ public struct RemoteShellView: View {
 
     private func presetChip(_ label: String, cmd: String) -> some View {
         Button {
-            Harness.shared.record(
+            harness.record(
                 .remotePresetChip,
                 level: .info,
                 actor: .user,
