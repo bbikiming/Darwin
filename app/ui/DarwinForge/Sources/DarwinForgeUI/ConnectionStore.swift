@@ -1823,121 +1823,182 @@ public final class ConnectionStore: ObservableObject {
     private static let lightSampleJoints: [JointID] =
         [.headPan, .headTilt, .rShoulderPitch, .rKnee]
 
+    /// 1Hz telemetry polling loop. board+FSR (1Hz) + joints (5Hz, cadence별 분기) read →
+    /// lastTelemetry publish → sparkline append.
+    ///
+    /// **W2.13 (2026-05-24)**: 121줄 god method → facade + 5 helpers (~15줄 facade).
+    /// 동작 100% 보존: tick % 5 board+FSR 분기, cadence (.full/.light/.off), didFail
+    /// 누적, mid-loop self.bus nil-guard 2회, resetBusFailureCounter 게이트, 60-cap
+    /// sparkline 호출 순서 — 모두 그대로. helper dispatch 비용 ~1µs/sec (1Hz polling).
+    ///
+    /// helpers (prefix `telemetryLoop`):
+    ///   - `telemetryLoopOnce(bus:state:)` — 한 cycle 본체 (tick 증가/exit 신호 포함)
+    ///   - `telemetryLoopReadBoard(bus:didFail:)` — 1Hz board read + RTT
+    ///     + handleBusError. didFail inout 누적.
+    ///   - `telemetryLoopPollFsr(bus:)` — 1Hz FSR L/R read + updateFsr / bumpFailure /
+    ///     disable @ 3회 + telemetrySkip 이벤트.
+    ///   - `telemetryLoopAppendSparklines(board:snap:)` — 1Hz voltage / avgTemp 60-cap
+    ///     append.
     private func runTelemetryLoop(periodNs: UInt64) async {
-        var tick = 0
+        let state = TelemetryLoopState()
         while !Task.isCancelled, let bus = self.bus {
-            // 2026-05-17 perf audit T3.2 fix: bus I/O 를 background thread 에서 수행.
-            // 종전: boardSnapshot (~200ms timeout) / readImu / readState 가 MainActor
-            //       에서 동기 실행 → main thread 200-400ms stall → UI freeze.
-            // 신규: Task.detached 로 background hop. Bus 가 `@unchecked Sendable` 이고
-            //       BusActor 의 cross-thread access 안전성 보장됨 (Dynamixel SDK 가 mutex).
-            //       결과만 MainActor 에서 publish — UI freeze 해소.
-
-            // P0-D: 보드 read는 매 5 tick (1 Hz). throw 감지 시 watchdog 카운터 +1.
-            // **사이클 141 (Swift 6 warning fix)**: imu 는 재할당 없음 → let.
-            var didFail = false
-            var board: BoardSnapshot? = lastTelemetry?.board
-            let imu: ImuRaw? = lastTelemetry?.imu
-            if tick % 5 == 0 {
-                let t0 = Date()
-                // background bus I/O.
-                let result: Result<BoardSnapshot, Error> = await Task.detached(priority: .userInitiated) {
-                    do { return .success(try bus.boardSnapshot()) }
-                    catch { return .failure(error) }
-                }.value
-                switch result {
-                case .success(let snap):
-                    board = snap
-                    let rtt = Date().timeIntervalSince(t0) * 1000
-                    self.health.recordSuccess(rttMs: rtt)
-                case .failure(let error):
-                    didFail = true
-                    self.health.recordFailure()
-                    handleBusError(error)
-                }
-
-                // v1.11.25 audit P0 robot-D — FSR polling (board read 와 같은 1Hz cadence).
-                // board 미장착 robot 일부에서는 timeout fail — 3회 연속 실패 시 자동 disable
-                // 하여 polling spam 차단. 한 번 disable 되면 다음 connect 까지 재시도 안 함.
-                if !self.fsrPollingDisabled {
-                    let fsrResult: (Result<FsrReading, Error>, Result<FsrReading, Error>) =
-                        await Task.detached(priority: .userInitiated) {
-                            let l: Result<FsrReading, Error> = {
-                                do { return .success(try bus.readFsrLeft()) }
-                                catch { return .failure(error) }
-                            }()
-                            let r: Result<FsrReading, Error> = {
-                                do { return .success(try bus.readFsrRight()) }
-                                catch { return .failure(error) }
-                            }()
-                            return (l, r)
-                        }.value
-                    let leftOpt: FsrReading? = {
-                        if case .success(let l) = fsrResult.0 { return l } else { return nil }
-                    }()
-                    let rightOpt: FsrReading? = {
-                        if case .success(let r) = fsrResult.1 { return r } else { return nil }
-                    }()
-                    let fsrOk = (leftOpt != nil) || (rightOpt != nil)
-                    if fsrOk {
-                        self.health.updateFsr(left: leftOpt, right: rightOpt)
-                    } else {
-                        self.health.bumpFsrFailure()
-                        if self.health.fsrConsecutiveFailures >= 3 {
-                            self.health.disableFsrPolling()
-                            // event tee — Harness 가 trace.
-                            harness.record(
-                                .telemetrySkip, level: .info, actor: .system,
-                                data: ["reason": AnyCodable("fsr_board_missing"),
-                                       "consecutive_failures": AnyCodable(self.health.fsrConsecutiveFailures)]
-                            )
-                        }
-                    }
-                }
-            }
-
-            // v1.10: IMU read 는 runImuLoop (50ms 전용 Task) 가 담당.
-            // 여기서는 lastTelemetry.imu 만 reuse (이전 update 결과).
-            // runImuLoop 가 자체적으로 lastTelemetry 의 imu 필드 갱신.
-
-            // 카운터 임계 도달 시 self.bus가 nil이 되어 다음 iteration의 while 조건에서 종료.
-            if self.bus == nil { return }
-
-            // Joint reads — background. readJoints 자체는 MainActor (per-joint
-            // counter 업데이트 때문) 이지만 read 호출만 background로 위임.
-            let joints: [JointID: JointState]
-            switch cadence {
-            case .full:
-                joints = await readJointsDetached(bus: bus, list: JointID.allCases, didFail: &didFail)
-            case .light:
-                joints = await readJointsDetached(bus: bus, list: Self.lightSampleJoints, didFail: &didFail)
-            case .off:
-                return
-            }
-
-            // 이 사이에 watchdog가 trigger됐으면 종료.
-            if self.bus == nil { return }
-
-            // 한 사이클 내 모든 호출이 성공하면 카운터 reset.
-            if !didFail { resetBusFailureCounter() }
-
-            let snap = TelemetrySnapshot(board: board, joints: joints, imu: imu)
-            self.lastTelemetry = snap
-            // 주요 관절 캐시 업데이트.
-            for (j, s) in joints { self.jointStates[j] = s }
-
-            // 1초당 1회 sparkline에 추가.
-            if tick % 5 == 0 {
-                if let v = board?.voltageVolts {
-                    health.appendVoltage(v)
-                }
-                if let t = snap.avgTemperature {
-                    health.appendAvgTemp(t)
-                }
-            }
-
-            tick += 1
+            guard await telemetryLoopOnce(bus: bus, state: state) else { return }
             try? await Task.sleep(nanoseconds: periodNs)
+        }
+    }
+
+    // MARK: - runTelemetryLoop helpers (W2.13)
+
+    /// `runTelemetryLoop` per-loop 가변 상태 — tick 카운터 누적.
+    ///
+    /// reference type 으로 helper 호출 간 누적 (W2.12 `ImuLoopState` 패턴 동일).
+    /// `@MainActor` 인 ConnectionStore.runTelemetryLoop 안에서만 만들어지고 사용 —
+    /// main actor 안에서만 접근. `Sendable` 표기 없음.
+    private final class TelemetryLoopState {
+        /// 5 tick = 1 초. board+FSR read / sparkline append 가 5 tick 마다.
+        var tick: Int = 0
+    }
+
+    /// 1 회 cycle — board+FSR (tick%5) → joint read (cadence) → publish → sparkline →
+    /// tick 증가. 반환값이 false 면 호출자(`runTelemetryLoop`)가 루프 종료.
+    ///
+    /// 동작 보존: mid-loop `self.bus == nil` 2회 guard → false 반환. cadence `.off` →
+    /// false 반환. `didFail` 는 board read 와 joint read 양쪽에서 누적되어 마지막에
+    /// `resetBusFailureCounter` 게이트로 사용.
+    ///
+    /// 2026-05-17 perf audit T3.2: bus I/O 는 helper 안에서 Task.detached 로 background.
+    /// v1.10: IMU read 는 runImuLoop 가 담당. 여기서는 lastTelemetry.imu reuse 만.
+    /// 사이클 141 (Swift 6 warning fix): imu 는 재할당 없음 → let.
+    private func telemetryLoopOnce(bus: any BusInterface, state: TelemetryLoopState) async -> Bool {
+        var didFail = false
+        var board: BoardSnapshot? = lastTelemetry?.board
+        let imu: ImuRaw? = lastTelemetry?.imu
+
+        // P0-D: 보드 read는 매 5 tick (1 Hz). throw 감지 시 watchdog 카운터 +1.
+        if state.tick % 5 == 0 {
+            board = await telemetryLoopReadBoard(bus: bus, didFail: &didFail) ?? board
+            if !self.fsrPollingDisabled {
+                await telemetryLoopPollFsr(bus: bus)
+            }
+        }
+
+        // 카운터 임계 도달 시 self.bus가 nil이 되어 다음 iteration의 while 조건에서 종료.
+        if self.bus == nil { return false }
+
+        // Joint reads — background. readJoints 자체는 MainActor (per-joint
+        // counter 업데이트 때문) 이지만 read 호출만 background로 위임.
+        let joints: [JointID: JointState]
+        switch cadence {
+        case .full:
+            joints = await readJointsDetached(bus: bus, list: JointID.allCases, didFail: &didFail)
+        case .light:
+            joints = await readJointsDetached(bus: bus, list: Self.lightSampleJoints, didFail: &didFail)
+        case .off:
+            return false
+        }
+
+        // 이 사이에 watchdog가 trigger됐으면 종료.
+        if self.bus == nil { return false }
+
+        // 한 사이클 내 모든 호출이 성공하면 카운터 reset.
+        if !didFail { resetBusFailureCounter() }
+
+        let snap = TelemetrySnapshot(board: board, joints: joints, imu: imu)
+        self.lastTelemetry = snap
+        // 주요 관절 캐시 업데이트.
+        for (j, s) in joints { self.jointStates[j] = s }
+
+        // 1초당 1회 sparkline에 추가.
+        if state.tick % 5 == 0 {
+            telemetryLoopAppendSparklines(board: board, snap: snap)
+        }
+
+        state.tick += 1
+        return true
+    }
+
+    /// 1Hz board snapshot read — Task.detached background hop. RTT 측정 후
+    /// success → recordSuccess(rttMs:), failure → recordFailure + handleBusError +
+    /// didFail = true. 성공 시 BoardSnapshot, 실패 시 nil 반환 (호출자가 이전 board
+    /// 유지).
+    ///
+    /// 호출 순서 보존 (W4.2.1 패턴): success 시 recordSuccess 먼저, failure 시
+    /// recordFailure → handleBusError 순.
+    private func telemetryLoopReadBoard(
+        bus: any BusInterface,
+        didFail: inout Bool
+    ) async -> BoardSnapshot? {
+        let t0 = Date()
+        let result: Result<BoardSnapshot, Error> = await Task.detached(priority: .userInitiated) {
+            do { return .success(try bus.boardSnapshot()) }
+            catch { return .failure(error) }
+        }.value
+        switch result {
+        case .success(let snap):
+            let rtt = Date().timeIntervalSince(t0) * 1000
+            self.health.recordSuccess(rttMs: rtt)
+            return snap
+        case .failure(let error):
+            didFail = true
+            self.health.recordFailure()
+            handleBusError(error)
+            return nil
+        }
+    }
+
+    /// v1.11.25 audit P0 robot-D — FSR L/R polling (board read 와 같은 1Hz cadence).
+    /// board 미장착 robot 일부에서는 timeout fail — 3회 연속 실패 시 자동 disable
+    /// 하여 polling spam 차단. 한 번 disable 되면 다음 connect 까지 재시도 안 함.
+    ///
+    /// 호출자(`telemetryLoopOnce`)가 `fsrPollingDisabled` guard 후 호출 — 여기서는
+    /// 이미 활성 상태라 가정. L/R 중 하나라도 success 면 updateFsr (HealthStore 가
+    /// fsrConsecutiveFailures reset 처리), 둘 다 fail 이면 bumpFsrFailure 후 3회 도달 시
+    /// disableFsrPolling + telemetrySkip 이벤트.
+    private func telemetryLoopPollFsr(bus: any BusInterface) async {
+        let fsrResult: (Result<FsrReading, Error>, Result<FsrReading, Error>) =
+            await Task.detached(priority: .userInitiated) {
+                let l: Result<FsrReading, Error> = {
+                    do { return .success(try bus.readFsrLeft()) }
+                    catch { return .failure(error) }
+                }()
+                let r: Result<FsrReading, Error> = {
+                    do { return .success(try bus.readFsrRight()) }
+                    catch { return .failure(error) }
+                }()
+                return (l, r)
+            }.value
+        let leftOpt: FsrReading? = {
+            if case .success(let l) = fsrResult.0 { return l } else { return nil }
+        }()
+        let rightOpt: FsrReading? = {
+            if case .success(let r) = fsrResult.1 { return r } else { return nil }
+        }()
+        let fsrOk = (leftOpt != nil) || (rightOpt != nil)
+        if fsrOk {
+            self.health.updateFsr(left: leftOpt, right: rightOpt)
+        } else {
+            self.health.bumpFsrFailure()
+            if self.health.fsrConsecutiveFailures >= 3 {
+                self.health.disableFsrPolling()
+                // event tee — Harness 가 trace.
+                harness.record(
+                    .telemetrySkip, level: .info, actor: .system,
+                    data: ["reason": AnyCodable("fsr_board_missing"),
+                           "consecutive_failures": AnyCodable(self.health.fsrConsecutiveFailures)]
+                )
+            }
+        }
+    }
+
+    /// 1Hz sparkline append — voltage / avgTemperature 가 있으면 60-cap append.
+    /// HealthStore (`appendVoltage` / `appendAvgTemp`) 가 내부적으로 60-cap deque
+    /// 관리.
+    private func telemetryLoopAppendSparklines(board: BoardSnapshot?, snap: TelemetrySnapshot) {
+        if let v = board?.voltageVolts {
+            health.appendVoltage(v)
+        }
+        if let t = snap.avgTemperature {
+            health.appendAvgTemp(t)
         }
     }
 
