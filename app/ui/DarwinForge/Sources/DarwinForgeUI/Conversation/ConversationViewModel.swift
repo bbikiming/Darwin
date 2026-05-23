@@ -76,16 +76,35 @@ public final class ConversationViewModel: ObservableObject {
     public func approve(_ message: Message) {
         guard let plan = message.pendingPlan else { return }
         markResolved(message.id)
+        // 사이클 181 (P1 #3.4 fix): HITL plan 승인 telemetry. PII 회피 — tool name 만.
+        Harness.shared.record(
+            .claudePlanApproved, level: .info, actor: .user,
+            data: ["tool": AnyCodable(String(describing: plan.tool)),
+                   "turn": AnyCodable(messages.count)]
+        )
         Task { await runPlan(plan) }
     }
 
     /// 사용자 "닫기" 버튼 — toolCall 거부.
     public func reject(_ message: Message) {
         markResolved(message.id)
+        // 사이클 181 (P1 #3.4 fix): HITL plan 거부 telemetry. tool name 만 — UX 분석 용.
+        let tool = message.pendingPlan.map { String(describing: $0.tool) } ?? "unknown"
+        Harness.shared.record(
+            .claudePlanRejected, level: .info, actor: .user,
+            data: ["tool": AnyCodable(tool),
+                   "turn": AnyCodable(messages.count)]
+        )
         messages.append(Message(kind: .system, text: "알겠어요. 그 명령은 실행하지 않을게요."))
     }
 
     public func clear() {
+        // 사이클 181 (P1 #3.4 fix): clear 시 telemetry — 사용자 행동 분석 (혼란 / 재시작 등).
+        let count = messages.count
+        Harness.shared.record(
+            .claudeSessionCleared, level: .info, actor: .user,
+            data: ["messages_cleared": AnyCodable(count)]
+        )
         messages.removeAll()
         lastError = nil
     }
@@ -154,9 +173,28 @@ public final class ConversationViewModel: ObservableObject {
                 displayText += "\n· 안전 범위로 자동 조정됐어요."
             }
             messages.append(Message(kind: .system, text: displayText))
+            // 사이클 181 (P1 #3.4 fix): plan 성공 telemetry — 분석 용 (도구 별 성공률).
+            Harness.shared.record(
+                .claudePlanExecuted, level: .info, actor: .system,
+                data: ["tool": AnyCodable(String(describing: plan.tool)),
+                       "was_clipped": AnyCodable(result.wasClipped),
+                       "turn": AnyCodable(messages.count)]
+            )
         } catch let err as IntentDispatcher.DispatcherError {
+            // 사이클 181 (P1 #3.4 fix): dispatcher 단 실패 — Claude 응답 자체는 정상 이지만
+            // 실 액션 실패 (예: bus 단절, 안전 차단). error_case 만 (메시지 본문 PII 회피).
+            Harness.shared.record(
+                .claudePlanExecutionFailed, level: .error, actor: .system,
+                data: ["tool": AnyCodable(String(describing: plan.tool)),
+                       "error_case": AnyCodable(String(describing: err))]
+            )
             messages.append(Message(kind: .error, text: err.errorDescription ?? "알 수 없는 오류예요"))
         } catch {
+            Harness.shared.record(
+                .claudePlanExecutionFailed, level: .error, actor: .system,
+                data: ["tool": AnyCodable(String(describing: plan.tool)),
+                       "error_case": AnyCodable("generic")]
+            )
             messages.append(Message(kind: .error, text: error.localizedDescription))
         }
     }

@@ -145,6 +145,21 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let claudePromptSent: TelemetryKind = "claude.prompt_sent"
     public static let claudeResponseReceived: TelemetryKind = "claude.response_received"
     public static let claudeError: TelemetryKind = "claude.error"
+    /// 사이클 181 (P1 #3.4 fix, cycle 177 audit): HITL plan 사용자 승인.
+    /// data: tool, turn.
+    public static let claudePlanApproved: TelemetryKind = "claude.plan_approved"
+    /// 사이클 181: HITL plan 사용자 거부.
+    /// data: tool, turn.
+    public static let claudePlanRejected: TelemetryKind = "claude.plan_rejected"
+    /// 사이클 181: Plan 실행 단계 (dispatcher) 실패 — Claude 응답 자체는 정상 이지만
+    /// 실 액션 실패. data: tool, error_case.
+    public static let claudePlanExecutionFailed: TelemetryKind = "claude.plan_execution_failed"
+    /// 사이클 181: Plan 실행 성공 — dispatcher 가 정상 결과 반환.
+    /// data: tool, was_clipped, turn.
+    public static let claudePlanExecuted: TelemetryKind = "claude.plan_executed"
+    /// 사이클 181: 대화 세션 clear — 사용자가 history 비움.
+    /// data: messages_cleared.
+    public static let claudeSessionCleared: TelemetryKind = "claude.session_cleared"
 
     // System
     public static let heartbeat: TelemetryKind = "heartbeat.tick"
