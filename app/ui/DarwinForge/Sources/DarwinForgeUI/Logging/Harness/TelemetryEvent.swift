@@ -264,9 +264,6 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// OneClick 전체 실패 — 모든 후보 unreachable.
     /// data: candidate_count.
     public static let setupConnOneClickAllFailed: TelemetryKind = "setup.conn_oneclick_all_failed"
-    /// 수동 경로에서 retry (다시 검색/다시 시도 버튼).
-    /// data: path, step_id.
-    public static let setupConnRetry: TelemetryKind = "setup.conn_retry"
     /// 수동 경로 connect 시도 (runUSBPath / runNetworkPath / runBonjourPath).
     /// data: path.
     public static let setupConnPathConnect: TelemetryKind = "setup.conn_path_connect"

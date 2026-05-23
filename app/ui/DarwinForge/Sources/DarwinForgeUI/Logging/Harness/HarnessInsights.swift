@@ -47,6 +47,8 @@ public enum HarnessInsights {
         out.append(contentsOf: idleRules(analysis, events))
         out.append(contentsOf: pilotVoiceErrorInsight(analysis, events))    // v1.20.8 cycle 215
         out.append(contentsOf: pilotVoiceMissRatioInsight(analysis, events))
+        out.append(contentsOf: setupConnRepeatedFailure(analysis, events))  // cycle 218
+        out.append(contentsOf: setupConnWizardFrequency(analysis, events))  // cycle 218
         return out
     }
 
@@ -425,6 +427,44 @@ public enum HarnessInsights {
             recommendation: "주변 소음 줄이거나 마이크 가까이 발화. 키워드 목록 확인 (걸어/멈춰/비상).",
             eventRefs: [],
             confidence: 0.65
+        )]
+    }
+
+    // MARK: - Connection wizard (cycle 218)
+
+    /// setup.conn_oneclick_all_failed 가 3회 이상이면 사용자가 연결에 어려움을 겪는 것.
+    private static func setupConnRepeatedFailure(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let failures = events.filter { $0.k.rawValue == TelemetryKind.setupConnOneClickAllFailed.rawValue }
+        guard failures.count >= 3 else { return [] }
+        return [Insight(
+            id: "setup.conn_repeated_failure#\(a.summary.firstEventAt ?? "")",
+            ruleID: "setup.conn_repeated_failure",
+            severity: .warn, kind: .connection,
+            title: "OneClick 전체 실패 \(failures.count)회 — 연결 환경 문제 의심",
+            evidence: "세션 중 setup.conn_oneclick_all_failed 가 \(failures.count) 회 발생. 모든 후보 unreachable.",
+            recommendation: "USB 케이블 / 포트 확인. 네트워크 endpoint 면 socat / IP / 방화벽 점검. 수동 경로 시도 권장.",
+            eventRefs: failures.prefix(5).map(\.i),
+            confidence: 0.8
+        )]
+    }
+
+    /// setup.conn_wizard_started 가 5회 이상이면 연결 불안정으로 마법사를 반복 진입.
+    private static func setupConnWizardFrequency(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let starts = events.filter { $0.k.rawValue == TelemetryKind.setupConnWizardStarted.rawValue }
+        guard starts.count >= 5 else { return [] }
+        return [Insight(
+            id: "setup.conn_wizard_frequency#\(a.summary.firstEventAt ?? "")",
+            ruleID: "setup.conn_wizard_frequency",
+            severity: .notice, kind: .connection,
+            title: "연결 마법사 \(starts.count)회 진입 — 연결 불안정 의심",
+            evidence: "세션 중 setup.conn_wizard_started 가 \(starts.count) 회. 연결이 끊어져 반복 재시도 가능성.",
+            recommendation: "연결 환경 안정화 후 사용 권장. USB 또는 네트워크 경로 고정 설정 검토.",
+            eventRefs: [],
+            confidence: 0.6
         )]
     }
 

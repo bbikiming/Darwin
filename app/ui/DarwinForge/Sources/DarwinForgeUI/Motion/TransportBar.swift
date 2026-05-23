@@ -164,8 +164,9 @@ public struct TransportBar: View {
         let isPlaying = player.mode == .playing
         return Button {
             if isPlaying {
-                Harness.shared.record(.motionPlayAbort, level: .info, actor: .user,
-                                     data: ["source": AnyCodable("transport_pause")])
+                // pause ≠ abort — 구분하여 uiButtonTapped 로 기록.
+                Harness.shared.record(.uiButtonTapped, level: .info, actor: .user,
+                                     data: ["button": AnyCodable("transport_pause")])
                 player.pause()
             } else {
                 Harness.shared.record(.motionPlayStart, level: .info, actor: .user)

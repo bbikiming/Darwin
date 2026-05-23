@@ -65,8 +65,9 @@ public struct EStopButton: View {
     }
 
     private func trigger() {
-        Harness.shared.record(.pilotEStop, level: .warn, actor: .user,
-                              data: ["source": AnyCodable("estop_button")])
+        // UI 레벨 기록만 — pilotEStop SOT 는 WalkLabRCBridge.
+        Harness.shared.record(.uiButtonTapped, level: .trace, actor: .user,
+                              data: ["button": AnyCodable("estop_button")])
         Task { @MainActor in
             let r = await dispatcher.emergencyStop()
             lastAcknowledgement = r.speak
