@@ -41,6 +41,16 @@ final class HarnessInsightsCycle226Tests: XCTestCase {
         XCTAssertTrue(insights.contains { $0.ruleID == "claude.error_pattern" })
     }
 
+    func testClaudeErrorPatternKindIsClaude() {
+        let events = (0..<3).map { i in
+            ev(.claudeError, actor: .claude, seq: UInt64(i), secondsFromBase: Double(i))
+        }
+        let analysis = SessionAnalyzer.analyze(events: events)
+        let insights = HarnessInsights.compute(analysis: analysis, events: events)
+        let found = insights.first { $0.ruleID == "claude.error_pattern" }
+        XCTAssertEqual(found?.kind, .claude)
+    }
+
     func testClaudeErrorPatternDoesNotFireBelow3() {
         let events = (0..<2).map { i in
             ev(.claudeError, actor: .claude, seq: UInt64(i))
@@ -108,6 +118,18 @@ final class HarnessInsightsCycle226Tests: XCTestCase {
         XCTAssertFalse(insights.contains { $0.ruleID == "remote.command_error_pattern" })
     }
 
+    func testJointActionFailedKindIsMotion() {
+        let events = (0..<3).map { i in
+            ev(.jointActionFailed, seq: UInt64(i), secondsFromBase: Double(i))
+        }
+        let analysis = SessionAnalyzer.analyze(events: events)
+        let insights = HarnessInsights.compute(analysis: analysis, events: events)
+        let found = insights.first { $0.ruleID == "joint.action_failed_pattern" }
+        XCTAssertEqual(found?.kind, .motion)
+    }
+
+    // MARK: - remote.command_error_pattern
+
     func testRemoteCommandErrorKindIsRemote() {
         let events = (0..<3).map { i in
             ev(.remoteCommandError, seq: UInt64(i), secondsFromBase: Double(i))
@@ -148,10 +170,20 @@ final class HarnessInsightsCycle226Tests: XCTestCase {
         XCTAssertEqual(found?.severity, .warn)
     }
 
+    func testErrorExceptionSeverityWarnAt2() {
+        let events = (0..<2).map { i in
+            ev(.errorException, seq: UInt64(i), secondsFromBase: Double(i))
+        }
+        let analysis = SessionAnalyzer.analyze(events: events)
+        let insights = HarnessInsights.compute(analysis: analysis, events: events)
+        let found = insights.first { $0.ruleID == "error.exception_pattern" }
+        XCTAssertEqual(found?.severity, .warn, "count=2 는 .warn 유지 — .critical 은 3 이상")
+    }
+
     // MARK: - bus.write_storm
 
     func testBusWriteStormFiresWhenHighRate() {
-        // 30초 안에 10건 bus write fail = 분당 20회
+        // 27초 (0~27) 안에 10건 bus write fail ≈ 분당 22.2회
         var events: [TelemetryEvent] = []
         for i in 0..<10 {
             events.append(ev(.busWriteFail, level: .error, actor: .robot,
@@ -171,6 +203,19 @@ final class HarnessInsightsCycle226Tests: XCTestCase {
         let analysis = SessionAnalyzer.analyze(events: events)
         let insights = HarnessInsights.compute(analysis: analysis, events: events)
         XCTAssertFalse(insights.contains { $0.ruleID == "bus.write_storm" })
+    }
+
+    func testBusWriteStormDoesNotFireAtLowRate() {
+        // 10건이지만 600초(10분)에 분산 = 분당 1회 — threshold 미달
+        var events: [TelemetryEvent] = []
+        for i in 0..<10 {
+            events.append(ev(.busWriteFail, level: .error, actor: .robot,
+                             seq: UInt64(i), secondsFromBase: Double(i) * 60))
+        }
+        let analysis = SessionAnalyzer.analyze(events: events)
+        let insights = HarnessInsights.compute(analysis: analysis, events: events)
+        XCTAssertFalse(insights.contains { $0.ruleID == "bus.write_storm" },
+                       "count ≥5 이지만 rate < 5/min → fire 하면 안 됨")
     }
 
     func testBusWriteStormSeverityIsCritical() {
