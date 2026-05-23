@@ -909,7 +909,11 @@ public final class WalkLabSession {
 
     /// 마지막 `start(_:)` 가 시도한 preset (preflight 실패 포함). UI 의 "마지막 요청"
     /// 표시 및 로거 header 의 `requestedPreset` 필드에 기록.
-    public private(set) var requestedPreset: WalkLabPreset?
+    ///
+    /// **사이클 V257-1 (W2.11)**: setter `private(set)` → `internal(set)` —
+    /// `WalkLabSession+Stop.swift` 의 `stopFinalizeDiagnosticReset` / `esResetDiagnosticFlags`
+    /// 가 nil reset 필요.
+    public internal(set) var requestedPreset: WalkLabPreset?
 
     /// preflight 차단 사유 — `WalkPreflightFailure.diagnosticCode`. 로거 header 의
     /// `startBlockedReason` 필드. nil = preflight 통과 (성공 또는 미시도).
@@ -1009,7 +1013,9 @@ public final class WalkLabSession {
     /// 필요. module 내부 접근만 허용, 외부 module 은 여전히 not visible.
     internal var walkCycleTask: Task<Void, Never>?
     /// 고급 슬라이더 연속 drag 중 실 보행 page 재합성을 debounce.
-    private var walkTuningRestartTask: Task<Void, Never>?
+    // 사이클 V257-1 (W2.11): private → internal — `WalkLabSession+Stop.swift` 의
+    // `stopResetSessionState()` / `esCancelAllTasks()` 가 cancel + nil 필요.
+    internal var walkTuningRestartTask: Task<Void, Never>?
 
     /// Sim 한 tick 의 dt (s).
     /// **v1.14.8 (2026-05-21) perf #2**: 50ms → 100ms (20Hz → 10Hz).
@@ -1235,74 +1241,52 @@ public final class WalkLabSession {
     }
 
     /// 정지 — 시뮬 멈춤, 기록 누적, 실 보행 cycle cancel + walkReady 복귀.
+    ///
+    /// **사이클 V257-1 (W2.11)**: 68-line god method → facade. Phase 별 helper 는
+    /// `WalkLabSession+Stop.swift` (`stop` prefix). 동작 100% 보존, 외부 API 변경 0.
+    ///
+    /// **순서 보존 (data-flow)**:
+    /// - Phase 1 (finalizeTrial) MUST 在 simTimer invalidate 前 — sessionLogger 가
+    ///   아직 살아있을 때 file path 추출.
+    /// - `wasRunning` / `startTimeSnapshot` 은 simTimer invalidate 後, state mutation
+    ///   前에 capture — 원본 의 `wasRunning = startTime != nil` (line 1248) 시점 유지.
+    /// - `.sessionStop` 로그 (`current.label` 사용) 는 `current = .idle` 前에 발행.
     public func stop() {
-        // **v1.15.0 (2026-05-21) Phase 1**: Trial 종료 hook — capture → Analyzer → Store → label sheet.
-        // simTimer invalidate 전에 호출 — sessionLogger 가 아직 살아있을 때 file path 추출.
-        finalizeTrialIfPending(endReason: .userStop)
+        // Phase 1 — Trial 종료 hook (simTimer invalidate 前 호출 필수).
+        stopFinalizeTrialBeforeTimer()
 
+        // wasRunningForHarness / durationForHarness — 원본 line 1243-1244 시점 snapshot.
         let wasRunningForHarness = startTime != nil
         let durationForHarness: Double = startTime.map { Date().timeIntervalSince($0) } ?? 0
-        simTimer?.invalidate()
-        simTimer = nil
-        engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
+
+        // Phase 2 — simTimer invalidate + engine zero.
+        stopTeardownSimEngine()
+
+        // wasRunning / startTimeSnapshot — 원본 line 1248 시점 snapshot
+        // (simTimer invalidate 後, mutation 前). startTime 은 아직 set 상태.
         let wasRunning = startTime != nil
+        let startTimeSnapshot = startTime
 
-        if wasRunningForHarness {
-            // v1.12.0 telemetry — 정상 정지.
-            harness.record(
-                .walkLabStop, level: .notice, actor: .user,
-                data: ["duration_s": AnyCodable(durationForHarness),
-                       "preset": AnyCodable(current.label)]
-            )
-        }
-        if let start = startTime {
-            history.insert(WalkLabRecord(
-                preset: current,
-                durationSec: Int(Date().timeIntervalSince(start)),
-                endedAt: Date()
-            ), at: 0)
-            if history.count > 12 { history.removeLast() }
-        }
-        startTime = nil
-        if wasRunning {
-            logSafetyEvent(kind: .sessionStop, message: "정상 정지 — \(current.label)")
-        }
-        current = .idle
-        // v1.11.24 audit P1-1 — 실 motor task 가 멈춘 시점에 activeRobotPreset clear.
-        activeRobotPreset = nil
-        // sway 도 zero 로 디케이 — 다음 tick 에서 매끄럽게 감소.
+        // Phase 3 — 정상 정지 telemetry (wasRunningForHarness 일 때, current.label 사용).
+        stopEmitNormalStopTelemetry(wasRunning: wasRunningForHarness, durationSec: durationForHarness)
 
-        // **v1.11.7 (2026-05-18, GPT HIGH-2)** — onboard 모드도 lifecycle 정리.
-        // walkingEngine == .robotisOnboard 일 때 walkCycleTask 가 없으므로 별도 cleanup.
-        if onboardWalkingActive {
-            onboardWalkingActive = false
-            onboardAckStatus = nil
-            logSafetyEvent(kind: .sessionStop,
-                message: "ROBOTIS Onboard 정지 — robot 측 SSH stop 명령 별도 필요")
-        }
+        // Phase 4 — history record 적재 (startTime != nil 일 때, current.label 사용).
+        stopAppendHistoryRecord(startTime: startTimeSnapshot)
 
-        // 실 보행 cycle cancel — Task 내부에서 walkReady 복귀 후 종료.
-        if wasRunning {
-            cancelWalkCycle(eventLabel: "정지 — 직립 자세 복귀")
-        }
-        // v1.11.24 audit P1-1 — invariant: stop() 후엔 항상 isRobotWalking=false.
-        // cancelWalkCycle 은 walkCycleTask 가 nil 이면 reset 안 함 (test/sim 경로).
-        isRobotWalking = false
-        // 사이클 159 (P0-1 fix): stop() 도 IMU slow polling 복원 — finalize race 회피.
-        store?.imuFastPollActive = false
-        // v1.11.24 audit iter2-B — 진단 필드 reset. 종전: 다음 session 의 로그 헤더에
-        // 이전 session 의 requestedPreset / startBlockedReason 등이 leak.
-        motorWriteStarted = false
-        motorWriteStepCount = 0
-        requestedPreset = nil
-        startBlockedReason = nil
-        onboardAckStatus = nil
-        // v1.11.25 audit-C — stop() 후 highRisk preset 재시작 시 위험 동의 재확인 강제.
-        // 종전: emergencyStop 만 reset → 사용자가 jog 동의 → 일반 정지 → 즉시 다시 jog 가능.
-        // 매 보행 세션마다 idempotent 동의 위반.
-        riskAcknowledged = false
-        walkTuningRestartTask?.cancel()
-        walkTuningRestartTask = nil
+        // Phase 5 — .sessionStop 로그 (current.label 사용) + state reset
+        // (startTime=nil, current=.idle, activeRobotPreset=nil).
+        // 본 helper 내부에서 startTime=nil → logSafetyEvent → current=.idle 순 보존
+        // (원본 line 1266 → 1268 → 1270 sequence).
+        stopLogSessionStopAndIdle(wasRunning: wasRunning)
+
+        // Phase 6 — onboardWalkingActive cleanup (별도 .sessionStop 로그).
+        stopCleanupOnboardIfActive()
+
+        // Phase 7 — wasRunning 일 때 walkCycle cancel (current=.idle 後, 원본 line 1286).
+        stopCancelWalkCycleIfRunning(wasRunning: wasRunning)
+
+        // Phase 8 — 잔여 진단 필드 / riskAck / walkTuningRestart cleanup.
+        stopFinalizeDiagnosticReset()
     }
 
     /// 비상 정지 — Stop + risk reset + 실 로봇 토크 OFF.
@@ -1310,69 +1294,40 @@ public final class WalkLabSession {
     /// **v1.11.25 audit log-G**: trigger 출처 명시. 종전: 모든 emergency Harness 가
     /// actor=.user → 자동 trigger (balance lost / thermal / voltage) 와 사용자 클릭
     /// 구분 불가. 발생률 통계 추출 막힘.
+    ///
+    /// **사이클 V257-1 (W2.11)**: 63-line god method → facade. Phase 별 helper 는
+    /// `WalkLabSession+Stop.swift` (`es` prefix). 동작 100% 보존, 외부 API 변경 0.
+    ///
+    /// **Safety-critical 순서 절대 보존**:
+    /// 1. esEmitEmergencyTelemetry — live tilt capture (mutation 前)
+    /// 2. esRaiseEmergencyFlag — emergencyStopActive=true FIRST (exit-phase race guard)
+    /// 3. esCancelAllTasks — walkCycleTask + walkTuningRestartTask cancel
+    /// 4. esExecuteHardwareEStop — store.emergencyStop() (HARDWARE FFI: torque OFF + P_GAIN=0)
+    /// 5. esTeardownSimAndEngine — simTimer + engine + pilot EMA hard-zero
     public func emergencyStop(trigger: EmergencyTrigger = .userClick) {
-        // **v1.15.0 (2026-05-21) Phase 1**: Trial 종료 hook — capture → Analyzer → Store → label sheet.
-        // trigger 가 fallPredictorRecommend 면 .fallPredictorTriggered, 그 외는 .emergencyStop.
-        let trialEndReason: EndReason = (trigger == .fallPredictorRecommend)
-            ? .fallPredictorTriggered : .emergencyStop
-        finalizeTrialIfPending(endReason: trialEndReason)
+        // Phase 1 — Trial 종료 hook (endReason 분기: fallPredictor vs emergency).
+        esFinalizeTrialIfPending(trigger: trigger)
 
-        // v1.12.0 telemetry — WalkLab 비상 정지.
-        let tiltForHarness = max(abs(imuRollDeg), abs(imuPitchDeg))
-        harness.record(
-            .walkLabEmergencyStop, level: .error,
-            actor: trigger.harnessActor,
-            data: ["tilt_deg": AnyCodable(tiltForHarness),
-                   "fall_score": AnyCodable(fallPrediction.score),
-                   "preset": AnyCodable(current.label),
-                   "trigger_source": AnyCodable(trigger.rawValue)]
-        )
-        // **v1.11.22.1 (Codex HIGH-1 fix)** — exit-phase race 차단:
-        // 0. emergencyStopActive flag 먼저 set → walkCycleTask 의 exit phase 가
-        //    walkReady setPosition 시도 전 check 하여 skip. 토크 OFF 이후 명령 무효 보장.
-        emergencyStopActive = true
-        // **v1.21.2 사이클 67 (코덱스 MEDIUM-3 fix)** — trigger payload 보존.
-        // start() root guard 의 .emergencyActive(trigger:) 가 사용자에게 출처 명시.
-        _lastEmergencyTrigger = trigger
-        // 1. 보행 cycle 즉시 cancel — 모터 송출 중지.
-        walkCycleTask?.cancel()
-        walkCycleTask = nil
-        walkTuningRestartTask?.cancel()
-        walkTuningRestartTask = nil
-        isRobotWalking = false
-        // 2. 토크 OFF — 토크 OFF 가 들어가야 임의 모터 명령 잔여를 무력화.
-        store?.emergencyStop()
-        // 3. 시뮬 정지.
-        simTimer?.invalidate()
-        simTimer = nil
-        engine.setCommand(x: 0, y: 0, a: 0, enabled: false)
-        // **v1.20.14.1 사이클 20-fix HIGH 2 (코덱스)** — pilot EMA 잔재 hard-zero.
-        // 종전: emergencyStop 후 engine.setCommand(0,...) 만 zero, session.strideMm 잔재 →
-        // 차후 syncCommandToEngine 가 stale 값 재송출 가능.
-        strideMm = 0
-        sideMm = 0
-        turnDeg = 0
-        startTime = nil
-        let tilt = max(abs(imuRollDeg), abs(imuPitchDeg))
-        logSafetyEvent(
-            kind: .emergencyTriggered,
-            message: String(format: "비상 정지 — 토크 OFF (tilt %.1f°, score %.0f)",
-                            tilt, fallPrediction.score)
-        )
-        current = .idle
-        // v1.11.24 audit P1-1 — 실 motor task 가 멈춘 시점에 activeRobotPreset clear.
-        activeRobotPreset = nil
-        onboardWalkingActive = false
-        onboardAckStatus = nil
-        // v1.11.24 audit iter2-B — 진단 필드 reset.
-        motorWriteStarted = false
-        motorWriteStepCount = 0
-        requestedPreset = nil
-        startBlockedReason = nil
-        riskAcknowledged = false
-        balanceLost = false
-        lastRobotEvent = "🛑 토크 OFF — 비상 정지"
-        // 온도는 그대로 — 사용자가 확인 후 자연 냉각.
+        // Phase 2 — emergency telemetry 발행 (live tilt, mutation 前 capture).
+        esEmitEmergencyTelemetry(trigger: trigger)
+
+        // Phase 3 — emergency flag 상승 (CRITICAL: exit-phase race guard, 순서 절대).
+        esRaiseEmergencyFlag(trigger: trigger)
+
+        // Phase 4 — 모든 Task cancel + isRobotWalking=false.
+        esCancelAllTasks()
+
+        // Phase 5 — 하드웨어 emergency stop (FFI: torque OFF + P_GAIN=0 simultaneous).
+        esExecuteHardwareEStop()
+
+        // Phase 6 — sim timer / engine cleanup + pilot EMA hard-zero + startTime=nil.
+        esTeardownSimAndEngine()
+
+        // Phase 7 — emergency 이벤트 로그 + current=.idle + activeRobot/onboard cleanup.
+        esLogEmergencyEvent()
+
+        // Phase 8 — 잔여 진단 / risk / balance / lastRobotEvent reset.
+        esResetDiagnosticFlags()
     }
 
     /// 실 로봇에 정적 자세 송출. bus 미연결 / cradle 미확인 / cancelled 시 skip.

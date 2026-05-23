@@ -132,60 +132,28 @@ public struct MotionStudioView: View {
         .background(motionEditShortcuts)
     }
 
-    /// 사이클 180 + 187 (codex MAJOR fix): Synth 합성 결과 페이지 일괄 import.
-    ///
-    /// SynthMotionExporter.reassignPageIds 가 overflow 안전 보장 (UInt8 max=255).
-    /// overflow 시 lastError alert 으로 사용자에게 안내, motion 상태 변경 X.
-    /// 종전 (cycle 180): UInt8(clamping:) 로 silent 255 clamp → duplicate ID 위험.
+    /// 사이클 257 (W4.3.4): Synth import 위임 + pose refresh + lastError 매핑.
+    /// 데이터 변환 / mutation 은 `MotionImportActions`, view-state (pose / lastError) 는 잔류.
     private func importSynthPages(_ pages: [MotionPage]) {
-        guard !pages.isEmpty else { return }
-        let existingMaxId = doc.motion.pages.map { Int($0.id) }.max() ?? 0
-        let result = SynthMotionExporter.reassignPageIds(
-            existingMaxId: existingMaxId,
-            importPages: pages
-        )
+        let result = MotionImportActions.importSynthPages(pages, in: doc)
         switch result {
-        case .success(let reassigned):
-            MotionPageActions.pushUndoSnapshot(in: doc)
-            doc.motion = MotionDoc(
-                version: doc.motion.version,
-                robotGeneration: doc.motion.robotGeneration,
-                pages: doc.motion.pages + reassigned
-            )
-            // 첫 신규 페이지 선택 — 사용자 가 즉시 확인.
-            doc.selectedPageIdx = doc.motion.pages.count - reassigned.count
-            doc.selectedStep = 0
+        case .success(let payload):
+            // payload == nil 이면 빈 배열 입력 (no-op) — pose refresh 불필요.
+            guard payload != nil else { return }
             applySelectedStepToPose()
-            doc.isDirty = true
         case .failure(let err):
             // 사이클 187: overflow 시 사용자 알림. motion 무변화.
             lastError = SynthMotionExporter.koreanMessage(for: err)
         }
     }
 
-    /// 사이클 193 — Teach 스냅샷 자세를 단일 step MotionPage 로 import.
-    ///
-    /// SynthMotionExporter.reassignPageIds 로 overflow-safe ID 부여.
+    /// 사이클 257 (W4.3.4): Teach 자세 import 위임 + pose refresh + toast + telemetry.
+    /// 데이터 변환 / mutation 은 `MotionImportActions`, side-effect (toast / telemetry) 는 잔류.
     private func importPoseAsMotionPage(_ pose: RobotPose) {
-        let existingMaxId = doc.motion.pages.map { Int($0.id) }.max() ?? 0
-        let step = MotionStep.from(pose: pose, playMs: 256, pauseMs: 0)
-        let draft = MotionPage(id: 1, name: "티칭 자세 \(existingMaxId + 1)", steps: [step])
-        let result = SynthMotionExporter.reassignPageIds(
-            existingMaxId: existingMaxId,
-            importPages: [draft]
-        )
+        let result = MotionImportActions.importPoseAsMotionPage(pose, in: doc)
         switch result {
-        case .success(let reassigned):
-            MotionPageActions.pushUndoSnapshot(in: doc)
-            doc.motion = MotionDoc(
-                version: doc.motion.version,
-                robotGeneration: doc.motion.robotGeneration,
-                pages: doc.motion.pages + reassigned
-            )
-            doc.selectedPageIdx = doc.motion.pages.count - 1
-            doc.selectedStep = 0
+        case .success(let payload):
             applySelectedStepToPose()
-            doc.isDirty = true
             transferToast = "✅ Motion 페이지 추가됨"
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -194,13 +162,11 @@ public struct MotionStudioView: View {
             // 사이클 203 (cycle 199 critic missing #3): Teach → Motion transfer telemetry.
             // motionPageCreated 패턴 일관 (cycle 191 audit 의 recommended) — 신규 페이지
             // ID + source 만 (pose 좌표 X — PII 회피).
-            if let newId = reassigned.first?.id {
-                harness.record(
-                    .motionPageCreated, level: .info, actor: .user,
-                    data: ["new_id": AnyCodable(Int(newId)),
-                           "source": AnyCodable("teach_transfer")]
-                )
-            }
+            harness.record(
+                .motionPageCreated, level: .info, actor: .user,
+                data: ["new_id": AnyCodable(Int(payload.firstAddedId)),
+                       "source": AnyCodable("teach_transfer")]
+            )
         case .failure(let err):
             lastError = SynthMotionExporter.koreanMessage(for: err)
         }
@@ -1204,6 +1170,8 @@ public struct MotionStudioView: View {
         saveCurrentStepFromPose()
     }
 
+    /// 사이클 257 (W4.3.4): .mtn 파일 import 위임 + pose refresh + lastError 매핑.
+    /// NSOpenPanel + 파일 read 는 view 잔류 (UI 책임), 데이터 변환은 `MotionImportActions`.
     private func importMotionPanel() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
@@ -1212,13 +1180,7 @@ public struct MotionStudioView: View {
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let mtn = try String(contentsOf: url, encoding: .utf8)
-                let json = try Motion.mtnToJSON(mtn, generation: "op2")
-                // 사이클 250 (W4.3.2): 로컬 변수명 `doc` 가 store property 와 충돌하지
-                // 않도록 `imported` 로 rename.
-                let imported = try MotionDoc.from(json: json)
-                self.doc.motion = imported
-                self.doc.selectedPageIdx = 0
-                self.doc.selectedStep = 0
+                try MotionImportActions.importMotionFromMTN(mtn, in: doc)
                 applySelectedStepToPose()
             } catch {
                 lastError = error.localizedDescription
