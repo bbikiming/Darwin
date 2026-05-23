@@ -463,7 +463,7 @@ public enum HarnessInsights {
             title: "연결 마법사 \(starts.count)회 진입 — 연결 불안정 의심",
             evidence: "세션 중 setup.conn_wizard_started 가 \(starts.count) 회. 연결이 끊어져 반복 재시도 가능성.",
             recommendation: "연결 환경 안정화 후 사용 권장. USB 또는 네트워크 경로 고정 설정 검토.",
-            eventRefs: [],
+            eventRefs: starts.prefix(5).map(\.i),
             confidence: 0.6
         )]
     }

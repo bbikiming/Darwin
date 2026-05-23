@@ -153,6 +153,60 @@ final class HarnessUtilizationTests: XCTestCase {
         XCTAssertTrue(insights.contains { $0.ruleID == "harness.dropped_present" })
     }
 
+    // MARK: - Insights — Connection wizard (cycle 218)
+
+    func testSetupConnRepeatedFailureFiresAtThreshold() {
+        // 3회 oneclick_all_failed → insight 발화.
+        let events: [TelemetryEvent] = (1...3).map { i in
+            ev(.setupConnOneClickAllFailed, level: .notice, actor: .system,
+               seq: UInt64(i), secondsFromBase: Double(i))
+        }
+        let a = SessionAnalyzer.analyze(events: events)
+        let insights = HarnessInsights.compute(analysis: a, events: events)
+        let match = insights.first { $0.ruleID == "setup.conn_repeated_failure" }
+        XCTAssertNotNil(match, "3회 이상이면 setup.conn_repeated_failure 발화돼야 함")
+        XCTAssertEqual(match?.severity, .warn)
+        XCTAssertEqual(match?.kind, .connection)
+    }
+
+    func testSetupConnRepeatedFailureDoesNotFireBelowThreshold() {
+        // 2회 oneclick_all_failed → insight 미발화.
+        let events: [TelemetryEvent] = (1...2).map { i in
+            ev(.setupConnOneClickAllFailed, level: .notice, actor: .system,
+               seq: UInt64(i), secondsFromBase: Double(i))
+        }
+        let a = SessionAnalyzer.analyze(events: events)
+        let insights = HarnessInsights.compute(analysis: a, events: events)
+        XCTAssertFalse(insights.contains { $0.ruleID == "setup.conn_repeated_failure" },
+                        "2회면 임계 미달 — 발화 X")
+    }
+
+    func testSetupConnWizardFrequencyFiresAtThreshold() {
+        // 5회 wizard_started → insight 발화.
+        let events: [TelemetryEvent] = (1...5).map { i in
+            ev(.setupConnWizardStarted, level: .info, actor: .user,
+               seq: UInt64(i), secondsFromBase: Double(i))
+        }
+        let a = SessionAnalyzer.analyze(events: events)
+        let insights = HarnessInsights.compute(analysis: a, events: events)
+        let match = insights.first { $0.ruleID == "setup.conn_wizard_frequency" }
+        XCTAssertNotNil(match, "5회 이상이면 setup.conn_wizard_frequency 발화돼야 함")
+        XCTAssertEqual(match?.severity, .notice)
+        XCTAssertEqual(match?.kind, .connection)
+    }
+
+    func testSetupConnWizardFrequencyDoesNotFireBelowThreshold() {
+        // 4회 wizard_started → insight 미발화.
+        let events: [TelemetryEvent] = (1...4).map { i in
+            ev(.setupConnWizardStarted, level: .info, actor: .user,
+               seq: UInt64(i), secondsFromBase: Double(i))
+        }
+        let a = SessionAnalyzer.analyze(events: events)
+        let insights = HarnessInsights.compute(analysis: a, events: events)
+        XCTAssertFalse(insights.contains { $0.ruleID == "setup.conn_wizard_frequency" },
+                        "4회면 임계 미달 — 발화 X")
+    }
+
     // MARK: - Insights — clean session ≠ no insight
 
     func testCleanSessionProducesNoCriticalInsights() {
