@@ -55,6 +55,12 @@ public final class TeachCapture: ObservableObject {
                 // 일부 실패해도 계속.
             }
         }
+        // v1.12.3 telemetry — 전체 토크 해제.
+        Harness.shared.record(
+            .teachTorqueChanged, level: .info, actor: .user,
+            data: ["action": AnyCodable("disable_all"),
+                   "joint_count": AnyCodable(JointID.allCases.count)]
+        )
     }
 
     /// 모든 관절 토크 ON — 현재 자세 유지 (저장한 자세 hold).
@@ -68,6 +74,12 @@ public final class TeachCapture: ObservableObject {
                 // 일부 실패해도 계속.
             }
         }
+        // v1.12.3 telemetry — 전체 토크 ON.
+        Harness.shared.record(
+            .teachTorqueChanged, level: .info, actor: .user,
+            data: ["action": AnyCodable("enable_all"),
+                   "joint_count": AnyCodable(JointID.allCases.count)]
+        )
     }
 
     /// 한 관절만 토글.
@@ -80,6 +92,13 @@ public final class TeachCapture: ObservableObject {
         } catch {
             // ignore
         }
+        // v1.12.3 telemetry — 단일 관절 토크 토글.
+        Harness.shared.record(
+            .teachTorqueChanged, level: .info, actor: .user,
+            data: ["action": AnyCodable("toggle"),
+                   "joint": AnyCodable(joint.name),
+                   "new_state": AnyCodable(nextState ? "on" : "off")]
+        )
     }
 
     // MARK: - Live capture
@@ -116,6 +135,7 @@ public final class TeachCapture: ObservableObject {
     }
 
     private func captureLoop(store: ConnectionStore) async {
+        var autoDisableFired = false
         while !Task.isCancelled {
             guard let bus = store.bus else {
                 isCapturing = false
@@ -137,6 +157,15 @@ public final class TeachCapture: ObservableObject {
             readMs = rtt
             if failed == JointID.allCases.count {
                 consecutiveFailures += 1
+                // v1.12.3 telemetry — 첫 auto-disable 전환만 기록 (루프 스팸 방지).
+                if !autoDisableFired {
+                    autoDisableFired = true
+                    Harness.shared.record(
+                        .teachTorqueChanged, level: .info, actor: .user,
+                        data: ["action": AnyCodable("capture_loop_auto_disable"),
+                               "joint_count": AnyCodable(JointID.allCases.count)]
+                    )
+                }
                 if consecutiveFailures > 5 {
                     isCapturing = false
                     return

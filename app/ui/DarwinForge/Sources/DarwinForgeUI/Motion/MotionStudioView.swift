@@ -26,6 +26,8 @@ public struct MotionStudioView: View {
     @State private var aiBuilderText: String = ""
     @State private var aiBuilderToast: String?
     @State private var torqueSidebarOpen: Bool = true
+    /// 사이클 193 — Teach → Motion transfer 토스트.
+    @State private var transferToast: String?
 
     // MARK: - Edit workflow state
 
@@ -89,6 +91,20 @@ public struct MotionStudioView: View {
                 TorqueLoadSidebar(isOpen: $torqueSidebarOpen)
             }
         }
+        .overlay(alignment: .bottom) {
+            if let toast = transferToast {
+                Text(toast)
+                    .font(.system(size: DFFontSize.s11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, DFSpace.md)
+                    .padding(.vertical, DFSpace.xs)
+                    .background(DFColor.success.opacity(0.92))
+                    .clipShape(Capsule())
+                    .padding(.bottom, DFSpace.lg)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: transferToast)
         .alert(
             "동작 처리 중 문제가 생겼어요",
             isPresented: Binding(get: { lastError != nil }, set: { if !$0 { lastError = nil } }),
@@ -111,6 +127,13 @@ public struct MotionStudioView: View {
         .onReceive(NotificationCenter.default.publisher(for: .dfImportSynthPagesToMotionStudio)) { note in
             if let pages = note.object as? [MotionPage] {
                 importSynthPages(pages)
+            }
+        }
+        // 사이클 193 (P0 #2): Teach → MotionStudio 자세 전달.
+        // TeachModeView 스냅샷 행의 "Motion에 보내기" 버튼이 본 notification 발화.
+        .onReceive(NotificationCenter.default.publisher(for: .dfTransferPoseToMotion)) { note in
+            if let pose = note.object as? RobotPose {
+                importPoseAsMotionPage(pose)
             }
         }
         // Hidden keyboard shortcuts — TextField focus 시 macOS 가 first responder 처리,
@@ -145,6 +168,36 @@ public struct MotionStudioView: View {
             isDirty = true
         case .failure(let err):
             // 사이클 187: overflow 시 사용자 알림. motion 무변화.
+            lastError = SynthMotionExporter.koreanMessage(for: err)
+        }
+    }
+
+    /// 사이클 193 — Teach 스냅샷 자세를 단일 step MotionPage 로 import.
+    ///
+    /// SynthMotionExporter.reassignPageIds 로 overflow-safe ID 부여.
+    private func importPoseAsMotionPage(_ pose: RobotPose) {
+        let existingMaxId = motion.pages.map { Int($0.id) }.max() ?? 0
+        let step = MotionStep.from(pose: pose, playMs: 256, pauseMs: 0)
+        let draft = MotionPage(id: 1, name: "티칭 자세 \(existingMaxId + 1)", steps: [step])
+        let result = SynthMotionExporter.reassignPageIds(
+            existingMaxId: existingMaxId,
+            importPages: [draft]
+        )
+        switch result {
+        case .success(let reassigned):
+            pushUndoSnapshot()
+            motion = MotionDoc(
+                version: motion.version,
+                robotGeneration: motion.robotGeneration,
+                pages: motion.pages + reassigned
+            )
+            selectedPageIdx = motion.pages.count - 1
+            selectedStep = 0
+            applySelectedStepToPose()
+            isDirty = true
+            transferToast = "✅ Motion 페이지 추가됨"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { transferToast = nil }
+        case .failure(let err):
             lastError = SynthMotionExporter.koreanMessage(for: err)
         }
     }

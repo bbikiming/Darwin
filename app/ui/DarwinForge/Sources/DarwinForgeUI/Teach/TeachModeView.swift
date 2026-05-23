@@ -319,6 +319,22 @@ public struct TeachModeView: View {
             .buttonStyle(.plain)
             .help("Studio 에서 세부 편집 — 자동으로 스튜디오로 이동")
 
+            // 사이클 193 (P0 #2): Teach → Motion Studio 자세 전달.
+            Button {
+                NotificationCenter.default.post(
+                    name: .dfTransferPoseToMotion, object: s.pose
+                )
+                NotificationCenter.default.post(
+                    name: .dfSwitchSection, object: "motion"
+                )
+            } label: {
+                Image(systemName: "film.stack")
+                    .font(.system(size: DFFontSize.s10))
+                    .foregroundStyle(DFColor.forge)
+            }
+            .buttonStyle(.plain)
+            .help("Motion Studio 에 페이지로 추가 — 자동으로 이동")
+
             Button {
                 capture.applySnapshot(s, store: store)
             } label: {
