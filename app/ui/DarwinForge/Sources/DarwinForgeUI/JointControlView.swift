@@ -81,17 +81,17 @@ struct JointDetailView: View {
 
             HStack(spacing: DFSpace.sm3) {
                 Button("Torque ON") {
-                    runJointAction { try store.bus?.setTorque(joint, enable: true) }
+                    runJointAction("torque_on") { try store.bus?.setTorque(joint, enable: true) }
                 }
                 Button("Torque OFF") {
-                    runJointAction { try store.bus?.setTorque(joint, enable: false) }
+                    runJointAction("torque_off") { try store.bus?.setTorque(joint, enable: false) }
                 }
                 Button("Refresh") {
                     store.refreshJointState(joint)
                 }
                 Spacer()
                 Button {
-                    runJointAction { try store.bus?.emergencyStop() }
+                    runJointAction("e_stop") { try store.bus?.emergencyStop() }
                 } label: {
                     Label("E-Stop ALL", systemImage: "exclamationmark.octagon.fill")
                 }
@@ -168,22 +168,38 @@ struct JointDetailView: View {
     }
 
     private func commitPosition() {
-        runJointAction {
+        runJointAction("set_position") {
             _ = try store.bus?.setPosition(joint, raw: UInt16(goalPosition))
             store.refreshJointState(joint)
         }
     }
 
-    private func runJointAction(_ action: () throws -> Void) {
+    private func runJointAction(_ actionName: String, _ action: () throws -> Void) {
         guard store.bus != nil else {
             lastError = "Not connected"
             return
         }
+        Harness.shared.record(
+            .jointActionRequested, level: .info, actor: .user,
+            data: [
+                "action": AnyCodable(actionName),
+                "joint_id": AnyCodable(joint.rawValue),
+                "joint_name": AnyCodable(joint.name)
+            ]
+        )
         do {
             try action()
             lastError = nil
         } catch {
             lastError = error.localizedDescription
+            Harness.shared.record(
+                .jointActionFailed, level: .error, actor: .user,
+                data: [
+                    "action": AnyCodable(actionName),
+                    "joint_id": AnyCodable(joint.rawValue),
+                    "error_case": AnyCodable(error.localizedDescription)
+                ]
+            )
         }
     }
 }

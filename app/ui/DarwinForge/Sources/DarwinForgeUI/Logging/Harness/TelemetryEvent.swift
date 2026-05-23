@@ -84,6 +84,9 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     public static let imuPollRateChanged: TelemetryKind = "imu.poll_rate_changed"
 
     // UI
+    /// 사이클 197 (cycle 190 audit P2 #6): 탭/뷰 전환 시 onAppear 진입 기록.
+    /// data: view_name. navigation 패턴 분석 + cross-menu stale state 감시용.
+    public static let uiViewAppeared: TelemetryKind = "ui.view_appeared"
     public static let uiSectionChanged: TelemetryKind = "ui.section_changed"
     public static let uiTabChanged: TelemetryKind = "ui.tab_changed"
     public static let uiPaletteOpened: TelemetryKind = "ui.palette_opened"
@@ -173,6 +176,14 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// 사이클 181: 대화 세션 clear — 사용자가 history 비움.
     /// data: messages_cleared.
     public static let claudeSessionCleared: TelemetryKind = "claude.session_cleared"
+
+    // Joint control (사이클 196, cycle 190 audit P1 #3)
+    /// JointControlView 의 버튼 (Torque ON/OFF, action buttons) 클릭 시 발화.
+    /// data: action, joint_id, joint_name.
+    public static let jointActionRequested: TelemetryKind = "joint.action_requested"
+    /// JointControlView 버튼 핸들러 에서 에러 catch 시 발화 (level=.error).
+    /// data: action, joint_id, error_case.
+    public static let jointActionFailed: TelemetryKind = "joint.action_failed"
 
     // Setup wizard (사이클 194, cycle 190 audit P0 #2)
     /// InitialSetupWizard 의 step status 변경 (vnc/robotSetup/macSSHKey/connect ×

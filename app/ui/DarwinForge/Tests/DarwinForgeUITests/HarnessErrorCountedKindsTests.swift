@@ -74,12 +74,12 @@ final class HarnessErrorCountedKindsTests: XCTestCase {
     }
 
     /// **검증 #5**: count regression — 신규 추가 시 본 테스트 깨져서 doc update 강제.
-    /// cycle 192: 10건 (errorException + 4 connect/bus + 1 pose + 1 walk + 2 claude + 1 remote).
+    /// cycle 196: 11건 (errorException + 4 connect/bus + 1 pose + 1 walk + 2 claude + 1 remote + 1 joint).
     /// 변경 시 USER_PILOT_GUIDE + harness/telemetry-harness.md 도 sync 필요.
     func testTotalErrorCountedKindCount() {
         XCTAssertEqual(
-            TelemetryRecorder.errorCountedKinds.count, 10,
-            "cycle 192 의 10건 — 변경 시 doc + audit 동기화 필요"
+            TelemetryRecorder.errorCountedKinds.count, 11,
+            "cycle 196 의 11건 — 변경 시 doc + audit 동기화 필요"
         )
     }
 

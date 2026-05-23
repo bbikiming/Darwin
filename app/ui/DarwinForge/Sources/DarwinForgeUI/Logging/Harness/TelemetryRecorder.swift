@@ -134,7 +134,9 @@ public actor TelemetryRecorder {
         .claudeError,
         .claudePlanExecutionFailed,
         // Remote (cycle 182)
-        .remoteCommandError
+        .remoteCommandError,
+        // Joint control (cycle 196)
+        .jointActionFailed
     ]
 
     /// 사이클 192: O(1) lookup set — every record() 호출 마다 contains() check.
