@@ -2043,6 +2043,32 @@ public final class ConnectionStore: ObservableObject {
         await telemetryLoopPollFsr(bus: bus)
     }
 
+    /// **V267-2 testability hook** — `telemetryLoopOnce` 를 지정 tick 으로 1회 직접 호출.
+    ///
+    /// 비유: 비행 시뮬레이터에서 "tick 0 = 이착륙" / "tick 1 = 순항" 시나리오를 별도로
+    /// 재현하듯, 루프 전체 없이 특정 tick 의 cadence 분기 동작만 단위 검증.
+    ///
+    /// `runTelemetryLoop` async 루프를 실행하지 않고 tick 기반 1Hz/5Hz cadence 분기
+    /// (board read at tick%5==0, joint read by cadence, cadence .off → false 반환) 을
+    /// 단독 검증. `self.cadence` 는 `_testSetCadence(_:)` 로 사전 설정.
+    ///
+    /// - Returns: `telemetryLoopOnce` 의 반환값 (false = 루프 종료 신호 — cadence .off 또는
+    ///   mid-loop bus 소멸 시).
+    @discardableResult
+    internal func _testTelemetryOnce(bus: any BusInterface, tick: Int = 0) async -> Bool {
+        let state = TelemetryLoopState()
+        state.tick = tick
+        return await telemetryLoopOnce(bus: bus, state: state)
+    }
+
+    /// **V267-2 testability hook** — `cadence` 직접 설정 (internal, XCTest 전용).
+    ///
+    /// `startTelemetry(cadence:)` 는 pollTask 까지 생성하므로 cadence 만 조정할 때는
+    /// 본 hook 사용. production 코드에서는 항상 `startTelemetry(cadence:)` 경유.
+    internal func _testSetCadence(_ c: TelemetryCadence) {
+        self.cadence = c
+    }
+
     /// 1Hz sparkline append — voltage / avgTemperature 가 있으면 60-cap append.
     /// HealthStore (`appendVoltage` / `appendAvgTemp`) 가 내부적으로 60-cap deque
     /// 관리.

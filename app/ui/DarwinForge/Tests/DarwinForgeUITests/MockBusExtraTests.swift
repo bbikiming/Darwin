@@ -265,6 +265,97 @@ final class MockBusExtraTests: XCTestCase {
             break  // notConnected / rejected / cancelled / criticalLoad — 예상 외지만 허용
         }
     }
+
+    // =========================================================================
+    // MARK: - V267-2: runTelemetryLoop cadence 분기 검증
+    // =========================================================================
+    //
+    // 비유: 항공기 엔진 점검 스케줄이 "매 1시간 = 보드 점검, 매 12분 = 연료 점검"으로
+    // 분리된 것처럼, telemetryLoop 의 1Hz board read (tick%5==0) 와 5Hz joint read (매 tick)
+    // 분기가 tick 값에 따라 올바르게 동작하는지 단위 검증.
+
+    /// cadence .off → `telemetryLoopOnce` 가 즉시 false 반환 (루프 종료 신호).
+    ///
+    /// 비유: 비행 시뮬레이터 전원을 끄면 조종 입력이 즉시 무효화되는 것처럼,
+    /// cadence .off 상태에서 한 cycle 시도 시 joint read 없이 false 반환.
+    func testTelemetryLoopOffCadenceReturnsFalseImmediately() async {
+        store._testSetCadence(.off)
+        mockBus.boardSnapshotResponse = BoardSnapshot(
+            modelNumber: 740, version: 1, voltageRaw: 120, button: 0
+        )
+
+        let result = await store._testTelemetryOnce(bus: mockBus, tick: 0)
+
+        XCTAssertFalse(result, "cadence .off → telemetryLoopOnce returns false (루프 종료 신호)")
+        // joint reads 가 발화되지 않았으므로 positionWrites 없음.
+        XCTAssertTrue(mockBus.positionWrites.isEmpty, "cadence .off → joint read 발화 없음")
+    }
+
+    /// cadence .light, tick=0 → board read 발화 (tick%5==0, 1Hz).
+    ///
+    /// tick 0 에서 board snapshot read 가 발화되면 `health.successCount` 가 1 증가.
+    /// 비유: 매 5분마다 엔진 온도를 점검하는 것처럼 tick%5==0 에만 board read 발화.
+    func testTelemetryLoopLightCadenceTick0TriggersBoardRead() async {
+        store._testSetCadence(.light)
+        let beforeSuccess = store.health.successCount
+        mockBus.boardSnapshotResponse = BoardSnapshot(
+            modelNumber: 740, version: 1, voltageRaw: 120, button: 0
+        )
+
+        _ = await store._testTelemetryOnce(bus: mockBus, tick: 0)
+
+        XCTAssertEqual(
+            store.health.successCount, beforeSuccess + 1,
+            "tick=0 (tick%5==0) → board read 발화 → health.successCount +1"
+        )
+    }
+
+    /// cadence .light, tick=1 → board read 발화 안 함 (tick%5!=0, 5Hz joint only).
+    ///
+    /// tick 1 에서는 board snapshot 이 호출되지 않으므로 `health.successCount` 변화 없음.
+    /// 비유: 매 5분 점검 스케줄에서 1분, 2분, 3분, 4분은 점검 없이 통과.
+    func testTelemetryLoopLightCadenceTick1SkipsBoardRead() async {
+        store._testSetCadence(.light)
+        // tick=0 으로 board read 한 번 해서 baseline successCount 설정.
+        mockBus.boardSnapshotResponse = BoardSnapshot(
+            modelNumber: 740, version: 1, voltageRaw: 120, button: 0
+        )
+        _ = await store._testTelemetryOnce(bus: mockBus, tick: 0)
+        let baselineSuccess = store.health.successCount
+
+        // tick=1 — board read 없어야 함.
+        _ = await store._testTelemetryOnce(bus: mockBus, tick: 1)
+
+        XCTAssertEqual(
+            store.health.successCount, baselineSuccess,
+            "tick=1 (tick%5!=0) → board read 미발화 → successCount 변화 없음"
+        )
+    }
+
+    /// cadence .full, tick=0 → 루프 계속 (true 반환) + joint reads 발화.
+    ///
+    /// .full cadence 에서 한 cycle 이 완료되면 true 반환 (루프 유지),
+    /// 16개 joint 에 대한 readState 호출이 발화됨을 jointStates 갱신으로 확인.
+    /// 비유: 모든 관절을 풀 점검하는 모드 — 하나도 빠짐없이 모든 서보 상태를 읽음.
+    func testTelemetryLoopFullCadenceTick0ReturnsTrueAndUpdatesJoints() async {
+        store._testSetCadence(.full)
+        mockBus.boardSnapshotResponse = BoardSnapshot(
+            modelNumber: 740, version: 1, voltageRaw: 120, button: 0
+        )
+
+        let result = await store._testTelemetryOnce(bus: mockBus, tick: 0)
+
+        XCTAssertTrue(result, "cadence .full → telemetryLoopOnce returns true (루프 유지)")
+        // 16 joint 모두 read 됐으면 jointStates 가 비어있지 않음.
+        XCTAssertFalse(
+            store.jointStates.isEmpty,
+            "cadence .full → JointID.allCases read → jointStates 갱신됨"
+        )
+        XCTAssertEqual(
+            store.jointStates.count, JointID.allCases.count,
+            "cadence .full → 16개 전체 joint 상태 갱신 (JointID.allCases 수와 일치)"
+        )
+    }
 }
 
 // =============================================================================

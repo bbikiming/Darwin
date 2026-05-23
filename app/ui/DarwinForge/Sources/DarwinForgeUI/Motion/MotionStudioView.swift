@@ -1,28 +1,43 @@
 import ForgeCore
-import os
 import SwiftUI
 
-/// RoboPlus Motion 대체 — 페이지 / step 키프레임 타임라인 에디터.
+/// RoboPlus Motion 대체 — 페이지 / step 키프레임 타임라인 에디터의 facade view.
 ///
-/// Layout:
-/// - 좌측: 페이지 목록 + 임포트 / 새 페이지
-/// - 중앙: 3D 미러 + 타임라인 + 재생 바
-/// - 우측: 선택 step 자세 인스펙터
+/// ## Layout
+/// - 좌측: 페이지 목록 + 임포트 / 새 페이지 (`MotionStudioSidebar`)
+/// - 중앙: 3D 미러 (`MotionStudioCanvas`) + 타임라인 (`MotionStudioTimeline`)
+/// - 우측: 선택 step 자세 인스펙터 (`MotionStudioInspector`)
+///
+/// ## Wave 4.3 분할 완성 (사이클 246-267)
+///
+/// 본 facade 가 자체 보유하는 책임:
+/// - GeometryReader 기반 compact/regular layout 분기
+/// - View-local @State (`player` / `camera` / `stagedPose` / `rightWidth` 등)
+/// - 7 sub-view 의 owner — callback 으로 cross-cutting mutation 위임
+/// - notification observer (Synth/Teach import → doc 직접 호출)
+/// - 키프레임 단축키 cluster (⌘Z/C/V/K 등)
+/// - NSOpenPanel/NSSavePanel dialog (UI 책임 — 변환은 actions 모듈)
+///
+/// 분할 결과 (1782 → ~580 LOC, -67%):
+/// - `StarterMotionLibrary` (W4.3.1): 250 LOC starter document 분리
+/// - `MotionDocumentStore` (W4.3.2): 12 @State → @Observable store
+/// - `MotionPageActions` (W4.3.3): 14 mutation 정적 함수
+/// - `MotionImportActions` (W4.3.4): 3 import 함수 (Synth / Teach / .mtn)
+/// - `MotionStudioSidebar` (W4.3.5): page list + 컨텍스트 메뉴 + AI 빌더
+/// - `MotionStudioInspector` (W4.3.5): pose editing inspector
+/// - `MotionStudioCanvas` (W4.3.6): 3D 뷰포트 + sourceMode badge
+/// - `MotionStudioTimeline` (W4.3.6): step list + playback transport
 public struct MotionStudioView: View {
     @EnvironmentObject var store: ConnectionStore
     @StateObject private var player = MotionPlayer()
     @StateObject private var camera = CameraController()
 
-    /// 사이클 250 (Wave 4.3.2) — document 라이프사이클 state 12개를 `MotionDocumentStore`
-    /// 로 추출. MotionStudioView 의 view-only state 와 명확히 분리.
-    /// motion / selectedPageIdx / selectedStep / isDirty / renamingPageIdx /
-    /// renameDraft / deletingPageIdx / executingOnRobot / hoveredPageIdx /
-    /// undoStack / redoStack / copiedStep + maxUndoDepth.
-    ///
-    /// **사이클 251 (P0 critic fix)**: `@Observable` 매크로 migration 으로
-    /// `@StateObject` → `@State` 변경. `@StateObject` 는 `ObservableObject`
-    /// 전용이며, `@Observable` 타입은 `@State` (또는 binding 필요 시
-    /// `@Bindable`) 로 보유해야 함.
+    /// 사이클 250-251 (Wave 4.3.2) — document 라이프사이클 state 12개 (`motion` /
+    /// `selectedPageIdx` / `selectedStep` / `isDirty` / `renamingPageIdx` /
+    /// `renameDraft` / `deletingPageIdx` / `executingOnRobot` / `hoveredPageIdx` /
+    /// `undoStack` / `redoStack` / `copiedStep`) 를 `@Observable MotionDocumentStore`
+    /// 로 추출. `@Observable` 타입은 `@State` 로 보유 (`@StateObject` 는
+    /// `ObservableObject` 전용).
     @State private var doc = MotionDocumentStore()
 
     @State private var lastError: String?
@@ -195,7 +210,7 @@ public struct MotionStudioView: View {
     }
 
     /// MotionStudio 전용 키프레임 단축키. opacity 0 + 0×0 frame 으로 hidden.
-    @ViewBuilder
+    /// 단일 ZStack 본문이므로 `@ViewBuilder` 불필요 (사이클 267 cleanup).
     private var motionEditShortcuts: some View {
         ZStack {
             Button("Undo") { undo() }
@@ -217,17 +232,12 @@ public struct MotionStudioView: View {
         .allowsHitTesting(false)
     }
 
-    // MARK: - AI Motion Builder
+    // MARK: - Compact mode picker
     //
-    // 사이클 258 (W4.3.5) — AI 빌더 패널 / runAIBuilder 는 `MotionStudioSidebar`
-    // 로 이동. 사이드바 전용 위젯이므로 owner 책임 분리.
-
-    // MARK: - Sidebar (pages)
-    //
-    // 사이클 258 (W4.3.5) — sidebar / CategoryGroup / groupedPagesByCategory /
-    // pageListRow / pageContextMenu / renameSheet 모두 `MotionStudioSidebar`
-    // 로 이동. View 가 1251 줄 god view 였던 문제 해소.
-    // formatSeconds 도 sidebar 내부 helper 로 이동 (compact picker 는 미사용).
+    // 사이클 258 (W4.3.5) 분할 — 다음 멤버는 `MotionStudioSidebar` 로 이동:
+    //   AI 빌더 패널 + runAIBuilder, sidebar / CategoryGroup / groupedPagesByCategory /
+    //   pageListRow / pageContextMenu / renameSheet / formatSeconds.
+    // 본 facade 는 컴팩트 모드 picker (sidebar 미표시 시 대체 UI) 만 잔류.
 
     /// 컴팩트 모드 — sidebar 대신 헤더의 picker로 페이지 선택.
     private var compactPagePicker: some View {
@@ -324,9 +334,6 @@ public struct MotionStudioView: View {
         return .editing
     }
 
-    // 사이클 259 (W4.3.6) — `timelineSection` / `transportRow` 는
-    // `MotionStudioTimeline` 으로 이동. centerColumn 에서 직접 호출.
-
     /// "로봇에 실행" — 현재 페이지를 1배속으로 재생 + sendToHardware 일시 활성 + 끝나면 복귀.
     /// LIVE 토글과 다름: 명시적 "한 번 실행" semantic, 진행 중 버튼 disabled + 상태 표시.
     private func runCurrentPageOnRobot() {
@@ -350,14 +357,11 @@ public struct MotionStudioView: View {
         }
     }
 
-    // 사이클 259 (W4.3.6) — `stepDetailRow` / `keyframeStepperField` /
-    // `keyframeIconButton` / `updateSelectedStepTiming` 는 `MotionStudioTimeline`
-    // 으로 이동 (키프레임 편집 cluster 와 결속된 view-private helper).
-
-    // MARK: - Right (inspector)
+    // MARK: - Right inspector toggle
     //
-    // 사이클 258 (W4.3.5) — rightColumn 컴퓨티드 프로퍼티는 `MotionStudioInspector`
-    // 로 이동. closed handle 만 view 잔류 (sidebar 접힘 토글 UI).
+    // 사이클 258-259 (W4.3.5/6) — rightColumn / stepDetailRow / keyframeStepperField /
+    // keyframeIconButton / updateSelectedStepTiming 은 `MotionStudioInspector` 와
+    // `MotionStudioTimeline` 으로 각각 이동. closed handle 만 잔류 (sidebar 접힘 토글).
 
     private var motionInspectorClosedHandle: some View {
         Button {
@@ -515,8 +519,9 @@ public struct MotionStudioView: View {
         applySelectedStepToPose()
     }
 
-    var canUndo: Bool { !doc.undoStack.isEmpty }
-    var canRedo: Bool { !doc.redoStack.isEmpty }
+    /// 사이클 267 (W4.3.7 cleanup): internal → private (외부 호출자 없음 — 본 facade 전용).
+    private var canUndo: Bool { !doc.undoStack.isEmpty }
+    private var canRedo: Bool { !doc.redoStack.isEmpty }
 
     // MARK: - Copy / Paste / Split (키프레임)
 
@@ -577,14 +582,9 @@ public struct MotionStudioView: View {
         }
     }
 
-    // MARK: - Helpers
-    //
-    // 사이클 258 (W4.3.5) — RenameTarget 은 MotionStudioSidebar 로 이동
-    // (사이드바 전용 sheet item).
+    // 사이클 258-259 (W4.3.5/6) — RenameTarget / Array safe subscript helper 는
+    // 각각 MotionStudioSidebar / MotionStudioTimeline 으로 이동 (전용 helper).
 }
-
-// 사이클 259 (W4.3.6) — Array safe subscript 는 stepDetailRow 전용
-// helper 였으므로 `MotionStudioTimeline` 으로 동반 이동 (fileprivate).
 
 /// MotionStudio 우측 자세 편집기 width를 드래그로 조절하는 splitter.
 struct MotionInspectorSplitter: View {
