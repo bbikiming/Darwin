@@ -99,6 +99,49 @@ public actor TelemetryRecorder {
     public static let flushIntervalMs: UInt64 = 250
     public static let queueCapacity = 4096                        // overflow → drop
 
+    // MARK: - errorCount mapping (cycle 192, codex critic MAJOR-1 cycle 188 fix)
+
+    /// 사이클 192: errorCount switch 단일 source of truth.
+    /// 본 list 의 kind 가 level=.error 로 emit 시 meta.errorCount += 1.
+    ///
+    /// # 비유
+    ///
+    /// 회사 의 사고 보고서 분류 표 — 신규 사고 유형 (cycle 181 plan_execution_failed,
+    /// cycle 182 remote.command_error 등) 추가 시 본 표 + 테스트 둘 다 update 강제.
+    /// 한 곳 만 바뀌면 분석 통계 false zero.
+    ///
+    /// # 포함
+    ///
+    /// 시스템 오류 / 안전 위반 / 통신 실패 — 운영자 가 즉시 알아야 하는 사건.
+    ///
+    /// # 제외
+    ///
+    /// `pilotEStop` (level=.warn, 사용자 안전 액션 — 시스템 오류 X). 분석 시 별도 카운트.
+    public static let errorCountedKinds: [TelemetryKind] = [
+        // System
+        .errorException,
+        // Connection
+        .connectFailure,
+        // Bus
+        .busReadFail,
+        .busWriteFail,
+        .busEStop,
+        // Pose
+        .poseApplyFailed,
+        // WalkLab
+        .walkLabEmergencyStop,
+        // Claude
+        .claudeError,
+        .claudePlanExecutionFailed,
+        // Remote (cycle 182)
+        .remoteCommandError
+    ]
+
+    /// 사이클 192: O(1) lookup set — every record() 호출 마다 contains() check.
+    /// 정적 — `errorCountedKinds` 의 raw value 만 사용.
+    public static let errorCountedRawValues: Set<String> =
+        Set(errorCountedKinds.map { $0.rawValue })
+
     // MARK: State
 
     public private(set) var meta: TelemetrySessionMeta
@@ -164,20 +207,18 @@ public actor TelemetryRecorder {
         inFlight.append(stamped)
 
         // Counter updates for meta.
-        // 사이클 188: 신규 error-level kinds (cycle 181/182) 도 errorCount 에 반영.
-        // 종전: 4 kind 만 한정 → 신규 plan_execution_failed / remote.command_error 가
-        // silent — meta.errorCount 가 실제 보다 낮아 분석 도구 (SessionAnalysis) 가
-        // "오류 없음" 으로 오판.
-        // pilotEStop 은 의도적으로 level=.warn (사용자 정의 안전 액션, 시스템 오류 X) →
-        // 본 switch 의 errorCount 에는 포함 X. 분석 시 별도 카운트 가능 (kind 이름 으로).
-        switch stamped.k.rawValue {
-        case TelemetryKind.connectSuccess.rawValue: meta.connectCount &+= 1
-        case TelemetryKind.errorException.rawValue, TelemetryKind.claudeError.rawValue,
-             TelemetryKind.busReadFail.rawValue, TelemetryKind.busWriteFail.rawValue,
-             TelemetryKind.claudePlanExecutionFailed.rawValue,
-             TelemetryKind.remoteCommandError.rawValue:
+        // 사이클 192 (codex critic MAJOR-1 cycle 188 fix): error-level emit sites 전수
+        // 매핑. 종전 6 kind 만 → 4 누락 (connectFailure / poseApplyFailed / busEStop /
+        // walkLabEmergencyStop) 추가. `Self.errorCountedKinds` 단일 source of truth —
+        // 신규 error kind 추가 시 본 constant + 테스트 update 강제.
+        //
+        // **regression-proof**: 매 추가 시점에 errorCountedKinds + errorCountedRawValues
+        // 둘 다 sync 필요 — 테스트 (testErrorCountedKindsRawValuesMatch) 가 강제.
+        if Self.errorCountedRawValues.contains(stamped.k.rawValue) {
             if stamped.lv == .error { meta.errorCount &+= 1 }
-        default: break
+        }
+        if stamped.k.rawValue == TelemetryKind.connectSuccess.rawValue {
+            meta.connectCount &+= 1
         }
 
         let now = Date()
