@@ -101,6 +101,11 @@ public final class VoicePilotAdapter {
     public func start() {
         guard !isListening else { return }
         isListening = true
+        // 사이클 213 telemetry — Voice adapter 활성화.
+        Harness.shared.record(
+            .pilotAdapterStarted, level: .info, actor: .user,
+            data: ["source": AnyCodable("voice")]
+        )
         lastError = nil
         // callback 은 이미 @MainActor 격리 — recognizer 가 main 에서 호출 보장.
         // 실 SF impl 은 SFSpeechRecognizer.recognitionTask 콜백을 MainActor hop 후 발화.
@@ -115,6 +120,13 @@ public final class VoicePilotAdapter {
         } catch {
             isListening = false
             lastError = "음성 인식 시작 실패: \(error.localizedDescription)"
+            // 사이클 213 telemetry — 음성 인식 시작 실패.
+            Harness.shared.record(
+                .pilotVoiceError, level: .error, actor: .system,
+                data: ["source": AnyCodable("voice"),
+                       "error_type": AnyCodable(String(describing: type(of: error))),
+                       "phase": AnyCodable("start")]
+            )
         }
     }
 
@@ -122,12 +134,24 @@ public final class VoicePilotAdapter {
     public func stop() {
         guard isListening else { return }
         isListening = false
+        // 사이클 213 telemetry — Voice adapter 비활성화.
+        Harness.shared.record(
+            .pilotAdapterStopped, level: .info, actor: .user,
+            data: ["source": AnyCodable("voice")]
+        )
         recognizer.stop()
     }
 
     /// recognizer 에러 콜백 — listening flag 해제 + 메시지 기록.
     private func handleError(_ message: String) {
         lastError = message
+        // 사이클 213 telemetry — 런타임 음성 인식 에러 (PII redacted).
+        Harness.shared.record(
+            .pilotVoiceError, level: .error, actor: .system,
+            data: ["source": AnyCodable("voice"),
+                   "error_type": AnyCodable(Harness.shortHash(message)),
+                   "phase": AnyCodable("runtime")]
+        )
         isListening = false
     }
 
@@ -170,6 +194,12 @@ public final class VoicePilotAdapter {
         }
         // unknown keyword — silent. lastMatchedKeyword nil 처리해서 "들리긴 했으나 매칭 X" 시각화.
         lastMatchedKeyword = nil
+        // 사이클 213 telemetry — 음성 인식은 됐으나 키워드 미매칭.
+        Harness.shared.record(
+            .pilotVoiceKeyword, level: .trace, actor: .system,
+            data: ["matched": AnyCodable(false),
+                   "keyword": AnyCodable("none")]
+        )
     }
 
     // MARK: - Keyword tables (immutable)

@@ -169,6 +169,23 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: source, intent_kind.
     public static let pilotBridgeDisabled: TelemetryKind = "pilot.bridge_disabled"
 
+    // Pilot adapter lifecycle (사이클 213)
+    /// 입력 어댑터 시작 — 어떤 소스가 active 상태인지 추적.
+    /// data: source ("gamepad"/"dji"/"voice"), controller_name.
+    public static let pilotAdapterStarted: TelemetryKind = "pilot.adapter_started"
+    /// 입력 어댑터 정지 — 세션 중 사용 기간 분석용.
+    /// data: source.
+    public static let pilotAdapterStopped: TelemetryKind = "pilot.adapter_stopped"
+    /// 컨트롤러 연결/해제 — 하드웨어 가용성 추적.
+    /// data: source, controller_name, connected (Bool).
+    public static let pilotControllerChanged: TelemetryKind = "pilot.controller_changed"
+    /// 음성 인식 에러 — 권한 거부, 엔진 실패 등.
+    /// data: source, error_type (PII redacted).
+    public static let pilotVoiceError: TelemetryKind = "pilot.voice_error"
+    /// 음성 키워드 매칭 결과 — match/miss 비율 분석용.
+    /// data: matched (Bool), keyword (matched 시).
+    public static let pilotVoiceKeyword: TelemetryKind = "pilot.voice_keyword"
+
     // Claude
     public static let claudePromptSent: TelemetryKind = "claude.prompt_sent"
     public static let claudeResponseReceived: TelemetryKind = "claude.response_received"

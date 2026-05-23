@@ -117,6 +117,13 @@ public final class GamepadPilotAdapter {
         guard !isRunning else { return }
         isRunning = true
 
+        // 사이클 213 telemetry — Gamepad adapter 활성화.
+        Harness.shared.record(
+            .pilotAdapterStarted, level: .info, actor: .user,
+            data: ["source": AnyCodable("gamepad"),
+                   "controller_name": AnyCodable(connectedControllerName ?? "none")]
+        )
+
         // 현재 연결된 컨트롤러 즉시 인식.
         refreshConnectedController()
 
@@ -148,6 +155,12 @@ public final class GamepadPilotAdapter {
     public func stop() {
         guard isRunning else { return }
         isRunning = false
+
+        // 사이클 213 telemetry — Gamepad adapter 비활성화.
+        Harness.shared.record(
+            .pilotAdapterStopped, level: .info, actor: .user,
+            data: ["source": AnyCodable("gamepad")]
+        )
 
         pollTimer?.invalidate()
         pollTimer = nil
@@ -275,7 +288,17 @@ public final class GamepadPilotAdapter {
     // MARK: - Controller binding
 
     private func refreshConnectedController() {
+        let prev = connectedControllerName
         connectedControllerName = source.controllerName
+        // 사이클 213 telemetry — 컨트롤러 연결/해제 변경 감지.
+        if prev != connectedControllerName {
+            Harness.shared.record(
+                .pilotControllerChanged, level: .info, actor: .system,
+                data: ["source": AnyCodable("gamepad"),
+                       "controller_name": AnyCodable(connectedControllerName ?? "none"),
+                       "connected": AnyCodable(connectedControllerName != nil)]
+            )
+        }
     }
 }
 
