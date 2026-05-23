@@ -24,7 +24,7 @@ public struct MotionLibraryView: View {
     private static let starterPages: [StarterEntry] = {
         // Sprint 8 prebundled (5) + Sprint 11 ReferenceMotionLibrary (19) +
         // Sprint 16 OfficialCatalogReference (16) — 한 곳에서 모으기.
-        let all = MotionStudioView.starterPages()
+        let all = StarterMotionLibrary.starterPages()
         return all.map { StarterEntry(page: $0) }
     }()
 
