@@ -1313,3 +1313,102 @@ Wave 2 거대 함수 분해 + 동시성 표준화 (사이클 240), Wave 3 Harnes
 - `docs/architecture/adr-002-wave-4-decomposition.md` (Wave 4 rollback +
   timing gate).
 - `docs/guides/DEPLOYMENT.md` (.app bundle 빌드 + 배포 절차).
+
+---
+
+## 사이클 260-264 — 아키텍처 고도화 III + 검증 사이클 III (2026-05-24)
+
+### 한 줄 결론
+
+Wave 4 god object 분할 4 phase 추가 (W4.2.1/2 + W4.1.1/2) + god method 2건
+분해 (W2.12 `runImuLoop` / W2.13 `runTelemetryLoop`) + 검증 III critic 권장
+P0 fix (L0 voltage full-fire test + documentation 정정). Tests 1944 → 1947
+(+3 신규). critic course correction 발견 — Wave 4 struct extraction 의
+LOC churn 경고.
+
+### 사이클 260: Wave 4.2.1 ConnectionHealthStore + flaky fix + docs
+
+- `ConnectionHealthStore` `@MainActor ObservableObject` (216줄):
+  19개 `@Published` 이동 (통계 / IMU / Bus / Sparkline / FSR), mutator API
+  (`recordSuccess` / `recordImuSuccess` / `appendVoltage` / `updateFsr` 등
+  semantic 묶음).
+- 40+ callsite backward-compat computed delegate (view migration 없음).
+- `TelloStateListenerOwnerTests.testBridgeNilIsSafe` flaky fix:
+  `@MainActor` task starvation under parallel load → `await MainActor.run {}`
+  추가.
+- `USER_PILOT_GUIDE` 248-259 섹션 추가 (+92줄).
+
+### 사이클 261: Wave 4.2.2 ConnectionTransportStore + Wave 4.1.1 WalkInputState
+
+- `ConnectionTransportStore` (149줄): 9개 `@Published` state-only 분리
+  (`availablePorts` / `status` / `activeEndpoint` 등). lifecycle 메서드는
+  `ConnectionStore` 잔존 — cross-cutting 의존성으로 hardware safety 우선.
+- `WalkInputState` struct (144줄, `Sendable`+`Equatable`+`Codable`):
+  12개 slider value struct (`strideMm` / `sideMm` / `turnDeg` /
+  `footHeightMm` / `balanceGain` / `correctorIntensityLevel` /
+  `customXXXGain` 등). `didSet` 부수 효과 모두 setter 에 보존.
+
+### 사이클 262: Wave 4.1.2 WalkSafetyState + W2.12 runImuLoop 분해
+
+- `WalkSafetyState` struct (118줄, `Sendable`+`Codable`):
+  5개 safety state property (`balanceState` / `safetyTimeline` /
+  `safetyEvents` / `lastPreflightFailure` / `startBlockedReason`).
+  `preflightStatus` 는 computed 라 잔존. `WalkPreflightFailure.Cause` 등
+  5 type `Codable` conformance 추가.
+- **W2.12** `runImuLoop` 96줄 → 14줄 facade (-85%): 6 helper +
+  `ImuLoopState` class (W2.8/9 `ApsContext`/`RecoverContext` 패턴 일관).
+  50Hz hot path timing 보존 (~900ns dispatch overhead, frame budget 0.0045%).
+
+### 사이클 263: W2.13 runTelemetryLoop 분해 + 검증 III
+
+- **W2.13** `runTelemetryLoop` 117줄 → 7줄 facade (-94%): 5 helper +
+  `TelemetryLoopState` class. light/full cadence 분기 + FSR polling +
+  W4.2.1 health mutator 순서 보존.
+- 검증 III critic 3차: **ACCEPT-WITH-RESERVATIONS**
+  - MAJOR 1: Wave 4 struct extraction LOC +838 (god object 더 커짐 —
+    delegate 비용).
+  - MAJOR 2: `WalkInputState` fine-grained tracking 주장 잘못됨 (value struct
+    라 전체 변경 invalidate).
+  - Missing: L0 voltage full-fire / ADR-002 timing baseline / delegate
+    removal plan.
+  - Wave 4 viability: course correction 권장 (W4.3 끝까지 → W4.1/2 PAUSE →
+    timing baseline → actor PoC).
+
+### 사이클 264: 검증 III P0 fix
+
+- L0 voltage full-fire test 3건 (`SafetyPipelineTests` 15 → 18):
+  `_testOverrideVoltageVolts` hook + `voltageForGate` computed
+  - `testL0VoltageGateFiresEmergencyAfter5ConsecutiveLowSamples`
+  - `testL0VoltageGateResetsCounterOnSingleSafeSample`
+  - `testL0VoltageGateBoundaryAtCriticalThreshold` (9.5V boundary)
+- `WalkInputState` documentation 정정 (line 80): "fine-grained tracking"
+  잘못된 claim → 4가지 실제 benefit 명시 (개념적 grouping / `Codable` /
+  `Equatable` / `Sendable`).
+
+### 누적 metric (사이클 260 시작 → 264 종료)
+
+| 영역 | Before (260) | After (264) | 변화 |
+|---|---|---|---|
+| Tests | 1929 | 1947 | +18 |
+| god method 분해 | 8건 | 10건 (+W2.12, W2.13) | -226줄 추가 |
+| Wave 4 phase | W4.3 5/7 | +W4.1 2/6 + W4.2 2/6 | 4 phase 추가 |
+| `MotionStudioView` | 929 | 929 (W4.3 잔존 2 phase) | 변경 X |
+| `WalkLabSession` 본체 | 2266 | 2356 | +90 (delegate 비용) |
+| `ConnectionStore` | 1858 | 2021 | +163 (delegate 비용) |
+| ADR | 2건 | 2건 (V264-2 추가 예정) | — |
+
+### 사이클 반복 구조 (3회 검증 완료)
+
+검증 I (252-254) → 검증 II (258-259) → 검증 III (263-264). 매 검증마다
+critic + test-coverage 발견 → 다음 cycle 즉시 fix. 5번째 반복 안정 작동.
+
+critic 의 핵심 통찰 — struct extraction 의 LOC churn 위험: backward-compat
+delegate 없는 W4.3 (`MotionStudioView` 1782 → 929) 와 달리 W4.1/W4.2 는
+delegate 유지로 god object 더 커짐. 다음 사이클 (265+) 에서 course correction.
+
+### 참고
+
+- `docs/architecture/adr-002-wave-4-decomposition.md` (Wave 4 분할 계획).
+- `docs/architecture/timing-baseline.md` (V265-1, ADR-002 timing gate
+  인프라).
+- `docs/guides/DEPLOYMENT.md` (.app bundle 빌드).

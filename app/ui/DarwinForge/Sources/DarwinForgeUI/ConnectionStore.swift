@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import ForgeCore
+import os.signpost
 
 /// 앱 전체에 공유되는 연결 상태. 한 번에 하나의 Bus만 활성.
 @MainActor
@@ -1682,14 +1683,38 @@ public final class ConnectionStore: ObservableObject {
         // 사이클 159: 모드 전환 telemetry — fast↔slow 첫 전환에 .imuPollRateChanged 발화.
         let state = ImuLoopState(initialFastMode: self.imuFastPollActive)
         while !Task.isCancelled, let bus = self.bus {
+            // **사이클 265 (V265-1) — ADR-002 timing baseline signpost**.
+            // Instruments Time Profiler 에서 `imu_iter` interval 시각화 가능. release
+            // build 에서도 lightweight (signpost ID 비활성 시 ~10ns overhead).
+            // 측정 가이드: docs/architecture/timing-baseline.md
+            let signpostID = Self.imuLoopSignposter.makeSignpostID()
+            let signpostState = Self.imuLoopSignposter.beginInterval("imu_iter", id: signpostID)
             switch await imuLoopReadOnce(bus: bus) {
             case .success(let value): imuLoopHandleSuccess(value, state: state)
             case .failure(let error): imuLoopHandleFailure(error, state: state)
             }
             let fastNow = imuLoopMaybeEmitRateChange(state: state)
+            Self.imuLoopSignposter.endInterval("imu_iter", signpostState)
             try? await Task.sleep(nanoseconds: imuLoopInterval(fastMode: fastNow))
         }
     }
+
+    /// **사이클 265 (V265-1) — ADR-002 timing baseline 측정 인프라**.
+    ///
+    /// `runImuLoop` 의 매 iteration 을 Instruments 에서 `imu_iter` interval 로 시각화.
+    /// W4.1.4 (TelemetryPoller actor 추출) 진입 전 P50/P95/P99 baseline 기록 → actor
+    /// 추출 후 동일 측정 → P99 < 5ms regression 가드.
+    ///
+    /// **OSLog 카테고리**: subsystem `com.robotis.darwinforge`, category `imu_loop`.
+    /// Instruments Custom Intervals 에서 filter 가능.
+    ///
+    /// **성능**: release build 에서도 signposter 활성. interval begin/end ~10-30ns
+    /// (Instruments capture 없을 때 거의 zero overhead). 20Hz polling × 30ns =
+    /// 0.0001% CPU overhead — ADR-002 의 50Hz freshness gate 영향 없음.
+    private static let imuLoopSignposter = OSSignposter(
+        subsystem: "com.robotis.darwinforge",
+        category: "imu_loop"
+    )
 
     // MARK: - runImuLoop helpers (W2.12)
 

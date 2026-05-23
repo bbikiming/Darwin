@@ -1,6 +1,7 @@
 import Combine
 import ForgeCore
 import Observation
+import os.signpost
 import SwiftUI
 
 /// Walk Lab 의 observable model — 현재 프리셋 / 고급 슬라이더 / 시뮬 결과 / 안전 상태.
@@ -1938,7 +1939,15 @@ public final class WalkLabSession {
     /// 4. `tickPollSensorsAndBalanceState()` — IMU/temp/fall + balanceState + 로깅
     /// 5. `tickRunSafetyPipeline()` — mitigation + 자동 정지 + L3/L4/L0 emergency
     /// 6. `tickRecordSafetySample()` — 시계열 sample + 이벤트 전환 감지
+    ///
+    /// **사이클 265 (V265-1) — ADR-002 timing baseline signpost**.
+    /// Instruments Time Profiler 에서 `walk_tick` interval 시각화. W4.2.3 (WalkEngineRuntime
+    /// actor 추출) 진입 전 P50/P95/P99 기록 → actor 추출 후 동일 측정 → P99 < 5ms 가드.
+    /// 측정 가이드: `docs/architecture/timing-baseline.md`.
     internal func tick() {
+        let signpostID = Self.walkTickSignposter.makeSignpostID()
+        let signpostState = Self.walkTickSignposter.beginInterval("walk_tick", id: signpostID)
+        defer { Self.walkTickSignposter.endInterval("walk_tick", signpostState) }
         tickEnforceCradleOnDisconnect()
         tickAdvanceEngineAndFootTrail()
         tickUpdateVisualPose()
@@ -1946,6 +1955,21 @@ public final class WalkLabSession {
         tickRunSafetyPipeline()
         tickRecordSafetySample()
     }
+
+    /// **사이클 265 (V265-1) — ADR-002 timing baseline 측정 인프라**.
+    ///
+    /// `tick()` 의 매 호출을 Instruments 에서 `walk_tick` interval 로 시각화. simTimer 의
+    /// 10Hz fire rate × ~50ms tick budget → ADR-002 의 5ms P99 threshold 검증.
+    ///
+    /// **OSLog 카테고리**: subsystem `com.robotis.darwinforge`, category `walk_tick`.
+    /// Instruments Custom Intervals 에서 filter 가능.
+    ///
+    /// **성능**: release build 에서도 signposter 활성. interval begin/end ~10-30ns.
+    /// 10Hz × 30ns = 0.00003% CPU overhead — tick budget 영향 무시 가능.
+    private static let walkTickSignposter = OSSignposter(
+        subsystem: "com.robotis.darwinforge",
+        category: "walk_tick"
+    )
 
     // MARK: - Safety Sampling (사이클 111 Phase 9 — extension 이동)
     //
