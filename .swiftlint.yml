@@ -107,5 +107,21 @@ custom_rules:
       - ".*/Harness/HarnessInspectorView\\.swift"
       - ".*/DarwinForgeApp\\.swift"
 
+  # 사이클 252 (security review) — Harness.shared (no-dot, 변수 할당 형태) bypass 차단.
+  # 위 `_direct_access` regex 는 `.` 가 필수 → `let h = Harness.shared` 우회 가능.
+  # 본 rule 은 변수 할당 형태도 차단.
+  df_no_harness_shared_assignment:
+    name: "Harness.shared 변수 할당 금지"
+    regex: '(?<!\w)Harness\.shared(?!\.)'
+    message: "let h = Harness.shared 우회 패턴 금지. @Environment(\\.harness) 또는 init injection 사용."
+    severity: warning
+    excluded:
+      - ".*Tests.*"
+      - ".*/Harness/Harness\\.swift"
+      - ".*/Harness/HarnessProtocols\\.swift"
+      - ".*/Harness/LiveHarness\\.swift"
+      - ".*/Harness/HarnessInspectorView\\.swift"
+      - ".*/DarwinForgeApp\\.swift"
+
 # MARK: - Reporter
 reporter: "xcode"   # Xcode 빌드 시 inline 경고

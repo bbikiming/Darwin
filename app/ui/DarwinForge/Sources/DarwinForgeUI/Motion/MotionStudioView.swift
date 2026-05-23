@@ -18,7 +18,12 @@ public struct MotionStudioView: View {
     /// motion / selectedPageIdx / selectedStep / isDirty / renamingPageIdx /
     /// renameDraft / deletingPageIdx / executingOnRobot / hoveredPageIdx /
     /// undoStack / redoStack / copiedStep + maxUndoDepth.
-    @StateObject private var doc = MotionDocumentStore()
+    ///
+    /// **사이클 251 (P0 critic fix)**: `@Observable` 매크로 migration 으로
+    /// `@StateObject` → `@State` 변경. `@StateObject` 는 `ObservableObject`
+    /// 전용이며, `@Observable` 타입은 `@State` (또는 binding 필요 시
+    /// `@Bindable`) 로 보유해야 함.
+    @State private var doc = MotionDocumentStore()
 
     @State private var lastError: String?
     @State private var sendToHardware: Bool = false
@@ -507,7 +512,14 @@ public struct MotionStudioView: View {
         VStack(alignment: .leading, spacing: DFSpace.md) {
             Text("동작 이름 변경")
                 .font(DFFont.title)
-            TextField("동작 이름", text: $doc.renameDraft)
+            // 사이클 251 (P0 critic fix): `@Observable` migration 후 `$doc.X` 직접
+            // projection 불가 — `Binding(get:set:)` 으로 명시적 binding 생성.
+            // 파일 내 다른 store-property bindings (line 346, 375 등) 와 동일 패턴.
+            TextField("동작 이름",
+                      text: Binding(
+                        get: { doc.renameDraft },
+                        set: { doc.renameDraft = $0 }
+                      ))
                 .textFieldStyle(.roundedBorder)
                 .font(DFFont.body)
                 .onSubmit {
@@ -541,7 +553,13 @@ public struct MotionStudioView: View {
         HStack(spacing: DFSpace.sm) {
             Image(systemName: "list.bullet.rectangle")
                 .foregroundStyle(DFColor.accent)
-            Picker("동작", selection: $doc.selectedPageIdx) {
+            // 사이클 251 (P0 critic fix): `@Observable` migration 후 `$doc.X` 직접
+            // projection 불가 — `Binding(get:set:)` 으로 picker selection 생성.
+            Picker("동작",
+                   selection: Binding(
+                    get: { doc.selectedPageIdx },
+                    set: { doc.selectedPageIdx = $0 }
+                   )) {
                 ForEach(Array(doc.motion.pages.enumerated()), id: \.offset) { idx, page in
                     Text(page.name.isEmpty ? "동작 \(page.id)" : page.name).tag(idx)
                 }
