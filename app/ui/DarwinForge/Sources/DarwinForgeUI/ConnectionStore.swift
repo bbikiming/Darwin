@@ -748,9 +748,89 @@ public final class ConnectionStore: ObservableObject {
     }
 
     /// Internal implementation — pose 적용 본체. 외부 wrapper 가 결과를 텔레메트리로 발행.
+    ///
+    /// **W2.8 (2026-05-23)**: 133줄 god function → facade + 5 helpers (~25줄 facade).
+    /// 동작 100% 보존: bus guard → SafeMotion.verify → step loop (speed/position write +
+    /// watchdog) → result aggregation. helper prefix `aps` = applyPoseSmoothly.
+    ///
+    /// helpers:
+    ///   - `apsBuildContext` — bus / current pose read / verdict / step gen / counter init
+    ///   - `apsWriteStepSpeeds` — per-joint speed write + DFLog
+    ///   - `apsWriteStepPositions` — per-joint position write + lowerBody check + DFLog
+    ///   - `apsRunWatchdog` — async load watchdog (returns early-return signal or nil)
+    ///   - `apsBuildResult` — 하체/통신/상체 분기 → lastSafetyEvent + PoseApplyResult
     private func applyPoseSmoothlyImpl(target: RobotPose, profile p: MotorSpeedProfile) async -> PoseApplyResult {
+        // 1) 컨텍스트 구축 — bus / 현재 자세 / verdict / steps / 카운터 초기화.
+        let ctxResult = apsBuildContext(target: target, profile: p)
+        switch ctxResult {
+        case .earlyReturn(let result): return result
+        case .ok(let ctx):
+            isMovingPose = true
+            isMovingPoseCancelled = false
+            defer { isMovingPose = false }
+
+            // 2) step loop — 각 step 마다 cancel → speed write → position write → watchdog.
+            for (stepIdx, step) in ctx.steps.enumerated() {
+                if isMovingPoseCancelled { return .cancelled }
+                apsWriteStepSpeeds(step, ctx: ctx)
+                apsWriteStepPositions(step, ctx: ctx)
+                if let earlyReturn = await apsRunWatchdog(ctx: ctx) {
+                    return earlyReturn
+                }
+                if stepIdx < ctx.steps.count - 1 {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+            }
+
+            // 3) 결과 집계 — 하체/통신/상체 분기 + lastSafetyEvent 설정.
+            return apsBuildResult(ctx)
+        }
+    }
+
+    // MARK: - applyPoseSmoothly helpers (W2.8)
+
+    /// `apsBuildContext` 결과 — 즉시 종료(notConnected/rejected) vs 정상 컨텍스트.
+    private enum ApsContextResult {
+        case earlyReturn(PoseApplyResult)
+        case ok(ApsContext)
+    }
+
+    /// `applyPoseSmoothlyImpl` per-call 가변 상태. reference type 으로 step loop /
+    /// watchdog 사이에서 inout 없이 누적 카운터 공유.
+    ///
+    /// 동시성: `@MainActor` 인 ConnectionStore 안에서만 만들어지고 사용되므로 main actor
+    /// 안에서만 접근. `Sendable` 표기 없음 — actor boundary 를 넘지 않는다.
+    private final class ApsContext {
+        let bus: Bus
+        let steps: [RobotPose]
+        let speed: UInt16
+        let stepDuration: Double
+        let totalJoints: Int
+        // Codex 2차: position / speed 실패 분리 + 하체 (균형) 실패 별도 set.
+        var positionFailureCount: Int = 0
+        var speedFailureCount: Int = 0
+        var lowerBodyPositionFails: Set<JointID> = []
+        var failedJointsUnique: Set<JointID> = []
+        var lastWriteError: String? = nil
+
+        init(bus: Bus, steps: [RobotPose], speed: UInt16, stepDuration: Double, totalJoints: Int) {
+            self.bus = bus
+            self.steps = steps
+            self.speed = speed
+            self.stepDuration = stepDuration
+            self.totalJoints = totalJoints
+        }
+    }
+
+    /// step 1) — bus 미연결 / SafeMotion.verify 거부면 즉시 종료, 아니면 컨텍스트 반환.
+    ///
+    /// 동작 보존:
+    ///   - `bus == nil` → `.notConnected` (lastSafetyEvent 미설정).
+    ///   - readState 실패 → 해당 관절은 target 값(또는 2048) fallback (원본과 동일).
+    ///   - verdict 거부 → `lastSafetyEvent` 작성 후 `.rejected(reason:)`.
+    private func apsBuildContext(target: RobotPose, profile p: MotorSpeedProfile) -> ApsContextResult {
         guard let bus = bus else {
-            return .notConnected
+            return .earlyReturn(.notConnected)
         }
 
         // 1) 현재 자세 read — 안전 검증의 기준.
@@ -774,12 +854,8 @@ public final class ConnectionStore: ObservableObject {
         )
         if !verdict.allowsProceed {
             self.lastSafetyEvent = "⚠ 자세 변경 거부 — \(verdict.message)"
-            return .rejected(reason: verdict.message)
+            return .earlyReturn(.rejected(reason: verdict.message))
         }
-
-        isMovingPose = true
-        isMovingPoseCancelled = false
-        defer { isMovingPose = false }
 
         // 3) 큰 변화면 분할. 60°를 단위로 중간 자세 만들기.
         let steps: [RobotPose] = Self.makeSafeSteps(
@@ -787,95 +863,114 @@ public final class ConnectionStore: ObservableObject {
             maxDeltaDeg: SafeMotion.maxStepDegrees
         )
 
-        let speed = p.rawSpeedValue
-        let stepDuration = max(0.3, p.durationSeconds / Double(steps.count))
-        let totalJoints = JointID.allCases.count
-        // Codex 2차: position / speed 실패를 분리 + 하체 (균형) 실패는 별도 set.
-        var positionFailureCount: Int = 0
-        var speedFailureCount: Int = 0
-        var lowerBodyPositionFails: Set<JointID> = []
-        var failedJointsUnique: Set<JointID> = []
-        var lastWriteError: String? = nil
+        let ctx = ApsContext(
+            bus: bus,
+            steps: steps,
+            speed: p.rawSpeedValue,
+            stepDuration: max(0.3, p.durationSeconds / Double(steps.count)),
+            totalJoints: JointID.allCases.count
+        )
+        return .ok(ctx)
+    }
 
-        for (stepIdx, step) in steps.enumerated() {
-            if isMovingPoseCancelled { return .cancelled }
-
-            for j in step.positions.keys {
-                do { try bus.setMovingSpeed(j, speed: speed) }
-                catch {
-                    speedFailureCount += 1
-                    failedJointsUnique.insert(j)
-                    lastWriteError = "\(j.name) 목표 속도 전송: \(error.localizedDescription)"
-                    // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
-                    // 카테고리=connection (DFLog.swift: ConnectionStore/SerialPort/SSH/NetworkProbe).
-                    // privacy=.public: joint.name + bus error 는 PII X (precedent: line 1381 readState).
-                    DFLog.connection.warning("setMovingSpeed 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                }
-            }
-            for (j, raw) in step.positions {
-                do { _ = try bus.setPosition(j, raw: UInt16(clamping: raw)) }
-                catch {
-                    positionFailureCount += 1
-                    failedJointsUnique.insert(j)
-                    if Self.lowerBodyJoints.contains(j) {
-                        lowerBodyPositionFails.insert(j)
-                    }
-                    lastWriteError = "\(j.name) 목표 위치 전송: \(error.localizedDescription)"
-                    // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
-                    DFLog.connection.warning("setPosition 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                }
-            }
-
-            let watchdogTicks = max(1, Int(stepDuration * 10))
-            for _ in 0..<watchdogTicks {
-                if isMovingPoseCancelled { return .cancelled }
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                if let dangerJoint = await checkCriticalLoad() {
-                    self.lastSafetyEvent = "🛑 \(dangerJoint.koreanLabel) 부하 위험 — 자세 변경 중단"
-                    _ = try? bus.emergencyStop()
-                    isMovingPoseCancelled = true
-                    return .criticalLoad(joint: dangerJoint.koreanLabel)
-                }
-            }
-
-            if stepIdx < steps.count - 1 {
-                try? await Task.sleep(nanoseconds: 100_000_000)
+    /// step 2-a) — 한 step 의 모든 관절에 setMovingSpeed 일괄 전송. 실패 시 카운터 누적
+    /// + DFLog.connection.warning (W1.2 silent-failure 진단 trail 보존).
+    private func apsWriteStepSpeeds(_ step: RobotPose, ctx: ApsContext) {
+        for j in step.positions.keys {
+            do { try ctx.bus.setMovingSpeed(j, speed: ctx.speed) }
+            catch {
+                ctx.speedFailureCount += 1
+                ctx.failedJointsUnique.insert(j)
+                ctx.lastWriteError = "\(j.name) 목표 속도 전송: \(error.localizedDescription)"
+                // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
+                // 카테고리=connection (DFLog.swift: ConnectionStore/SerialPort/SSH/NetworkProbe).
+                // privacy=.public: joint.name + bus error 는 PII X (precedent: line 1381 readState).
+                DFLog.connection.warning("setMovingSpeed 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             }
         }
+    }
 
-        let totalWrites = totalJoints * 2 * steps.count
+    /// step 2-b) — 한 step 의 모든 관절에 setPosition 일괄 전송. 하체 관절 실패는
+    /// `lowerBodyPositionFails` 에 별도 누적 (balance-critical → 결과 분기에서 hard fail).
+    private func apsWriteStepPositions(_ step: RobotPose, ctx: ApsContext) {
+        for (j, raw) in step.positions {
+            do { _ = try ctx.bus.setPosition(j, raw: UInt16(clamping: raw)) }
+            catch {
+                ctx.positionFailureCount += 1
+                ctx.failedJointsUnique.insert(j)
+                if Self.lowerBodyJoints.contains(j) {
+                    ctx.lowerBodyPositionFails.insert(j)
+                }
+                ctx.lastWriteError = "\(j.name) 목표 위치 전송: \(error.localizedDescription)"
+                // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
+                DFLog.connection.warning("setPosition 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// step 2-c) — stepDuration 동안 100 ms 폴링. critical 부하 감지 시 emergencyStop +
+    /// cancel 플래그 + `.criticalLoad` 반환. cancel 감지 시 `.cancelled` 반환.
+    ///
+    /// 반환값: 즉시 종료 결과 (있으면), `nil` 이면 다음 step 진행 가능.
+    /// 동작 보존:
+    ///   - sleep 전 `isMovingPoseCancelled` 체크 → 100 ms sleep → checkCriticalLoad.
+    ///   - critical 감지 순서: lastSafetyEvent 작성 → emergencyStop → cancel 플래그 → return.
+    private func apsRunWatchdog(ctx: ApsContext) async -> PoseApplyResult? {
+        let watchdogTicks = max(1, Int(ctx.stepDuration * 10))
+        for _ in 0..<watchdogTicks {
+            if isMovingPoseCancelled { return .cancelled }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if let dangerJoint = await checkCriticalLoad() {
+                self.lastSafetyEvent = "🛑 \(dangerJoint.koreanLabel) 부하 위험 — 자세 변경 중단"
+                _ = try? ctx.bus.emergencyStop()
+                isMovingPoseCancelled = true
+                return .criticalLoad(joint: dangerJoint.koreanLabel)
+            }
+        }
+        return nil
+    }
+
+    /// step 3) — 결과 분기 + `lastSafetyEvent` 설정.
+    ///
+    /// 분기 우선순위 (원본 보존):
+    ///   1. lowerBodyPositionFails 있음 → `.writeFailed` (균형 위험, hard fail).
+    ///   2. 총 실패 >= 절반 → `.writeFailed` (통신 자체가 죽음).
+    ///   3. position OR speed 실패 > 0 → `.partialFailure` (상체 부분 실패, 진행 가능).
+    ///   4. 모두 통과 → `lastSafetyEvent = nil` + `.completed`.
+    private func apsBuildResult(_ ctx: ApsContext) -> PoseApplyResult {
+        let totalWrites = ctx.totalJoints * 2 * ctx.steps.count
 
         // **하체 position write 실패 1개라도 → writeFailed (균형 위험)**.
-        if !lowerBodyPositionFails.isEmpty {
-            self.lastSafetyEvent = "🛑 하체 \(lowerBodyPositionFails.count)개 목표 위치 전송 실패 — 균형 위험"
+        if !ctx.lowerBodyPositionFails.isEmpty {
+            self.lastSafetyEvent = "🛑 하체 \(ctx.lowerBodyPositionFails.count)개 목표 위치 전송 실패 — 균형 위험"
             return .writeFailed(
-                positionFailed: positionFailureCount,
-                speedFailed: speedFailureCount,
-                totalJoints: failedJointsUnique.count,
-                sample: lastWriteError
+                positionFailed: ctx.positionFailureCount,
+                speedFailed: ctx.speedFailureCount,
+                totalJoints: ctx.failedJointsUnique.count,
+                sample: ctx.lastWriteError
             )
         }
 
         // 모든 write 절반 이상 실패 → writeFailed (통신 자체가 죽음).
-        let totalFailures = positionFailureCount + speedFailureCount
+        let totalFailures = ctx.positionFailureCount + ctx.speedFailureCount
         if totalFailures >= max(1, totalWrites / 2) {
             self.lastSafetyEvent = "통신 절반 이상 실패 — bus 점검 필요"
             return .writeFailed(
-                positionFailed: positionFailureCount,
-                speedFailed: speedFailureCount,
-                totalJoints: failedJointsUnique.count,
-                sample: lastWriteError
+                positionFailed: ctx.positionFailureCount,
+                speedFailed: ctx.speedFailureCount,
+                totalJoints: ctx.failedJointsUnique.count,
+                sample: ctx.lastWriteError
             )
         }
 
         // 상체만 부분 실패 → partialFailure (시각 이상 가능, fall risk 없음).
-        if positionFailureCount > 0 || speedFailureCount > 0 {
-            self.lastSafetyEvent = "상체 부분 실패 — 위치 \(positionFailureCount)개·속도 \(speedFailureCount)개"
+        if ctx.positionFailureCount > 0 || ctx.speedFailureCount > 0 {
+            self.lastSafetyEvent = "상체 부분 실패 — 위치 \(ctx.positionFailureCount)개·속도 \(ctx.speedFailureCount)개"
             return .partialFailure(
-                positionFailed: positionFailureCount,
-                speedFailed: speedFailureCount,
-                totalJoints: failedJointsUnique.count,
-                sample: lastWriteError
+                positionFailed: ctx.positionFailureCount,
+                speedFailed: ctx.speedFailureCount,
+                totalJoints: ctx.failedJointsUnique.count,
+                sample: ctx.lastWriteError
             )
         }
 
