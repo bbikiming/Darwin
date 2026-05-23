@@ -1110,3 +1110,68 @@ silent. didSet hook + oldValue!=newValue 가드 로 단일 site 처리. 사용�
 - cycle 191 P1 Snapshot disk persistence (12h, 크기 우선순위 deferred).
 - cycle 191 P2 WalkLabSession comparison UI (6h).
 - 다음 sprint: codex critic of cycles 199-203 (자체 검증).
+
+---
+
+## 사이클 205-208 — 병렬 배치 3 (critic ACCEPT + Teach 잔여 P1/P2 처리)
+
+### 한 줄 결론
+
+3 백그라운드 에이전트 (critic + 2 implementer) 동시 spawn 으로 (1) cycles 199-204
+ACCEPT (no MAJOR) + (2) Teach snapshot 영속화 (cycle 191 deferred P1) + (3)
+PoseDeltaCalculator pure model (cycle 191 deferred P2) + (4) harness spec 갱신.
+
+### 205 — codex critic review cycles 199-204
+
+**VERDICT**: ACCEPT (no CRITICAL, no MAJOR).
+
+3 MINOR (non-blocking):
+1. WalkLabFreshnessTelemetryTests recorder-level integration 없음 — systemic (모든 kind 동일 패턴).
+2. cycle 203 transfer telemetry 가 `reassigned.first?.id` 만 — multi-page transfer 시 undercount (현재 single-pose import 만 호출됨).
+3. cycle 204 doc "~50 alive" 실측 88 (rough estimate).
+
+### 206 — Teach snapshot metadata 영속화 (P1 deferred)
+
+`TeachCapture.swift` 의 PersistedSnapshotMeta (id/name/timestamp, joint data X — PII 경계) UserDefaults 영속. `init(defaults:)` DI + restorePersistedMetadata() →
+신규 `teach.snapshot_meta_restored` telemetry (data: count). 사용자 재시작 시 "직전
+N 스냅샷 있었음" 표시 가능 (pose 자체는 재캡처 필요 — 의도).
+
+신규 6 tests (TeachSnapshotPersistenceTests, UserDefaults suiteName UUID isolation).
+
+### 207 — PoseDeltaCalculator pure model (P2 deferred)
+
+`Teach/PoseDeltaCalculator.swift` 신규 — 두 RobotPose 의 joint-by-joint diff +
+RMS (root mean square) + peak mismatch joint. UI 통합 deferred.
+
+신규 6 tests (PoseDeltaCalculatorTests, JointID.allCases 순회 검증).
+
+### 208 — harness spec Phase 2 status
+
+`docs/harness/telemetry-harness.md` §11 신규 — cycle 177+ 의 9 namespace 누적
+표 + errorCountedKinds SOT + PII redaction 패턴 + 의도된 제외 명시.
+
+### Telemetry namespace 누적 (cycle 208 종료)
+
+| Namespace | After 208 |
+|---|---|
+| `claude.*` | 8 |
+| `remote.*` | 4 |
+| `pilot.*` | 5 alive |
+| `teach.*` | 8 (cycle 206 신규 1) |
+| `setup.*` | 2 |
+| `joint.*` | 2 |
+| `ui.view_appeared` | 1 |
+| `walklab.freshness_changed` | 1 |
+| **errorCountedKinds (SOT)** | 11 |
+
+### 검증 (cycle 208 종료)
+
+- 1344 → **1466** Swift tests (+122 cycles 178-208).
+- swift build: 0 errors, 0 warnings (1 pre-existing macOS deprecation).
+- 97 commits ahead origin.
+
+### 남은 영역
+
+- cycle 209 (이 doc).
+- cycle 210+ critic review of 205-208 (background, in progress).
+- 후속 cycles: UI 통합 (PoseDeltaCalculator → WalkLabIntegrationCards), Snapshot 복원 UI 표시.
