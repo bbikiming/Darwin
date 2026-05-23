@@ -43,7 +43,10 @@ public final class ConnectionStore: ObservableObject {
             }
         }
     }
-    @Published public var bus: Bus?
+    /// 사이클 255 — `Bus` 구체 클래스 대신 `BusInterface` protocol 로 추상화.
+    /// recovery / preflight / poseApply 의 unit test 에서 `MockBus` 주입 가능.
+    /// 메서드 호출은 동일 (Bus 가 BusInterface conformance) — caller 코드 변경 없음.
+    @Published public var bus: (any BusInterface)?
     @Published public var jointStates: [JointID: JointState] = [:]
 
     /// 현재 활성 endpoint (.usbSerial 또는 .network). 연결 해제 시 nil.
@@ -801,7 +804,7 @@ public final class ConnectionStore: ObservableObject {
     /// 동시성: `@MainActor` 인 ConnectionStore 안에서만 만들어지고 사용되므로 main actor
     /// 안에서만 접근. `Sendable` 표기 없음 — actor boundary 를 넘지 않는다.
     private final class ApsContext {
-        let bus: Bus
+        let bus: any BusInterface
         let steps: [RobotPose]
         let speed: UInt16
         let stepDuration: Double
@@ -813,7 +816,7 @@ public final class ConnectionStore: ObservableObject {
         var failedJointsUnique: Set<JointID> = []
         var lastWriteError: String? = nil
 
-        init(bus: Bus, steps: [RobotPose], speed: UInt16, stepDuration: Double, totalJoints: Int) {
+        init(bus: any BusInterface, steps: [RobotPose], speed: UInt16, stepDuration: Double, totalJoints: Int) {
             self.bus = bus
             self.steps = steps
             self.speed = speed
@@ -1219,13 +1222,13 @@ public final class ConnectionStore: ObservableObject {
     /// 동시성: `@MainActor` 인 ConnectionStore 안에서만 만들어지고 사용 — main actor 안에서만 접근.
     /// `Sendable` 표기 없음 — actor boundary 를 넘지 않는다.
     private final class RecoverContext {
-        let bus: Bus
+        let bus: any BusInterface
         /// [2.5] P_GAIN 복원 실패 관절 수. `reRestorePGains` 가 write, `reFinalizeAndReport` 가 read.
         var pGainFailures: Int = 0
         /// [4] `applyPoseSlowlyForRecovery` 결과. `reFinalizeAndReport` 가 write & read.
         var diag: RecoveryDiagnostics? = nil
 
-        init(bus: Bus) {
+        init(bus: any BusInterface) {
             self.bus = bus
         }
     }
@@ -1870,7 +1873,7 @@ public final class ConnectionStore: ObservableObject {
     /// - 그 외 (`.io`, `.codec`, `.generic`): bus-level 실패 — global watchdog 트리거.
     ///   (PosixSerial 자체 read() throw = port closed = 전체 bus dead)
     /// 종전엔 모든 에러가 handleBusError 로 → 단일 모터 고장이 전체 disconnect 유발.
-    private func readJoints(bus: Bus, list: [JointID], didFail: inout Bool) -> [JointID: JointState] {
+    private func readJoints(bus: any BusInterface, list: [JointID], didFail: inout Bool) -> [JointID: JointState] {
         var out: [JointID: JointState] = [:]
         for j in list {
             do {
@@ -1906,7 +1909,7 @@ public final class ConnectionStore: ObservableObject {
     /// 2026-05-17 T3.2 perf: readJoints 의 bus.readState 호출만 background 위임.
     /// per-joint counter 업데이트 + watchdog 호출은 MainActor 격리 유지.
     /// MainActor 동기 readJoints 대비: ~20 joint × ~5ms = 100ms freeze 해소.
-    private func readJointsDetached(bus: Bus, list: [JointID], didFail: inout Bool) async -> [JointID: JointState] {
+    private func readJointsDetached(bus: any BusInterface, list: [JointID], didFail: inout Bool) async -> [JointID: JointState] {
         // Background: 모든 joint read 를 한 번에 위임 (per-joint Task.detached 의 overhead 회피).
         let results: [(JointID, Result<JointState, Error>)] = await Task.detached(priority: .userInitiated) {
             var out: [(JointID, Result<JointState, Error>)] = []

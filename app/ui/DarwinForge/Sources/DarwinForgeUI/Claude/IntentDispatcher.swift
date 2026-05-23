@@ -420,7 +420,7 @@ public final class IntentDispatcher: ObservableObject {
 
     /// 모든 관절에 토크 켜기 — FFI에 batch 함수 없어 loop.
     /// (실 로봇 운영 시: SYNC_WRITE를 통한 batch 토크 설정은 forge-core가 내부적으로 1회로 묶음)
-    private func setTorqueAll(bus: Bus, enable: Bool) throws {
+    private func setTorqueAll(bus: any BusInterface, enable: Bool) throws {
         if !enable {
             // 모든 토크 OFF는 emergency_stop이 단일 SYNC_WRITE로 처리.
             try bus.emergencyStop()

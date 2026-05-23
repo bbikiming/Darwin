@@ -137,6 +137,26 @@ public struct JointState: Sendable, Equatable {
         self.presentVoltageRaw = ffi.present_voltage
         self.presentTemperature = ffi.present_temperature
     }
+
+    /// 사이클 255 — 테스트 / 시뮬레이션용 public init.
+    /// MockBus 가 in-memory 위치/torque 로부터 JointState 합성할 때 사용.
+    public init(id: JointID,
+                torqueEnabled: Bool,
+                goalPosition: UInt16,
+                presentPosition: UInt16,
+                presentSpeed: UInt16,
+                presentLoad: UInt16,
+                presentVoltageRaw: UInt8,
+                presentTemperature: UInt8) {
+        self.id = id
+        self.torqueEnabled = torqueEnabled
+        self.goalPosition = goalPosition
+        self.presentPosition = presentPosition
+        self.presentSpeed = presentSpeed
+        self.presentLoad = presentLoad
+        self.presentVoltageRaw = presentVoltageRaw
+        self.presentTemperature = presentTemperature
+    }
 }
 
 /// CM-730/CM-740 IMU raw + accel 기반 roll/pitch 도 — Sprint 18 Phase D3 → v1.7 정정.
@@ -234,6 +254,18 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.version = ffi.version
         self.voltageRaw = ffi.voltage_raw
         self.button = ffi.button
+    }
+
+    /// 사이클 255 — 테스트 / 시뮬레이션용 public init.
+    /// MockBus + recovery/preflight test 가 BoardSnapshot 직접 생성.
+    public init(modelNumber: UInt16,
+                version: UInt8,
+                voltageRaw: UInt8,
+                button: UInt8) {
+        self.modelNumber = modelNumber
+        self.version = version
+        self.voltageRaw = voltageRaw
+        self.button = button
     }
 }
 

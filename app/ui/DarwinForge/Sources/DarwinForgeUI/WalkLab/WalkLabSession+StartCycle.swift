@@ -70,7 +70,7 @@ extension WalkLabSession {
     /// **순서 보존**: store/bus guard → cradle guard. 각 guard 별 별도 telemetry
     /// (noConnectionRace vs cradleNotConfirmedRace) 발행 + lastPreflightFailure /
     /// startBlockedReason / lastRobotEvent 업데이트 순서 원본 동일.
-    internal func swcResolveStoreAndCradle(_ preset: WalkLabPreset) -> (ConnectionStore, Bus)? {
+    internal func swcResolveStoreAndCradle(_ preset: WalkLabPreset) -> (ConnectionStore, any BusInterface)? {
         guard let store = store, let bus = store.bus else {
             let f = WalkPreflightFailure(cause: .noConnection)
             lastPreflightFailure = f
@@ -162,7 +162,7 @@ extension WalkLabSession {
     /// 3. `store.isImuStale` — 5s+ 지연
     /// 4. `imuScaleSuspicion ∈ {suspectedLegacy10Bit, outOfRange}` — 1g 감지 실패
     /// 5. (모두 통과) → state clear
-    internal func swcGuardHardwarePreflight(_ preset: WalkLabPreset, store: ConnectionStore, bus: Bus) -> Bool {
+    internal func swcGuardHardwarePreflight(_ preset: WalkLabPreset, store: ConnectionStore, bus: any BusInterface) -> Bool {
         // Preflight — dxl_power ON + 모든 토크 ON. 하체 1개라도 실패면 차단.
         if let failure = preflightForWalkCycle(bus: bus) {
             lastPreflightFailure = failure
@@ -453,7 +453,7 @@ extension WalkLabSession {
     ///    MainActor.run finalize
     internal func swcSpawnContinuousWalkTask(
         _ preset: WalkLabPreset,
-        bus: Bus,
+        bus: any BusInterface,
         store: ConnectionStore,
         prev: Task<Void, Never>?,
         presetLabel: String,
@@ -544,7 +544,7 @@ extension WalkLabSession {
     /// 5. Task.detached spawn — runWalkCycle(loop=false) → MainActor.run finalize
     internal func swcSpawnJogCycleTask(
         _ preset: WalkLabPreset,
-        bus: Bus,
+        bus: any BusInterface,
         store: ConnectionStore,
         prev: Task<Void, Never>?,
         presetLabel: String,

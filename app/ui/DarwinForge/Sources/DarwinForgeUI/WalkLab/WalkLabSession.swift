@@ -1800,7 +1800,7 @@ public final class WalkLabSession {
     ///
     /// **사이클 115 (P1)**: `private` → `internal` — `WalkLabSession+StartCycle`
     /// extension 의 preflight helper 가 본 method 호출 필요.
-    internal func preflightForWalkCycle(bus: Bus) -> WalkPreflightFailure? {
+    internal func preflightForWalkCycle(bus: any BusInterface) -> WalkPreflightFailure? {
         // 1. dxl_power ON.
         do { try bus.setDxlPower(true) }
         catch { return WalkPreflightFailure(cause: .dxlPowerFailed(error.localizedDescription)) }

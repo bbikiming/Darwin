@@ -44,7 +44,7 @@ extension WalkLabSession {
     ///      - cancel / maxDuration / 하체 통신 실패 시 break.
     ///   4. **exit** step — walkReady 안전 복귀.
     internal static func runContinuousWalk(
-        bus: Bus, plan: WalkMotionLibrary.ContinuousWalkPlan, maxDurationSec: Int,
+        bus: any BusInterface, plan: WalkMotionLibrary.ContinuousWalkPlan, maxDurationSec: Int,
         lowerBodyJoints: Set<JointID>,
         onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil,
         transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil,
@@ -273,7 +273,7 @@ extension WalkLabSession {
     /// - playMs + pauseMs 동안 모터의 trapezoidal motion 자체 보간을 신뢰 → 그 후 다음 step.
     /// - Task.detached 이므로 main thread block 없음.
     internal static func runWalkCycle(
-        bus: Bus, page: MotionPage, maxDurationSec: Int,
+        bus: any BusInterface, page: MotionPage, maxDurationSec: Int,
         lowerBodyJoints: Set<JointID>,
         loop: Bool = true,
         onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil,
