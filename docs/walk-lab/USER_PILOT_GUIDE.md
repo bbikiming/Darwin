@@ -830,3 +830,71 @@ cycle 172 의 자이로 closed-loop 완성 이후 (1) 통합/유기 검증 3 cyc
 - USER_PILOT_GUIDE 의 신규 사용자 흐름 example (Synth→Motion, Trial 비교 사용법) screenshot 첨부.
 - codex review cycles 178-183 (별도 sprint).
 - 실 robot smoke test for Trial Comparison UX (cycle 184 의 doc 확장).
+
+---
+
+## 사이클 185-188 — codex review + 사후 fix + Pilot/Harness 보강
+
+### 한 줄 결론
+
+cycle 178-183 의 audit fix 에 critic agent (cycle 185) 의 1 MAJOR + 2 MINOR 적용
+(cycle 187) + Pilot WalkLabRCBridge 의 dead-code telemetry kind 활성 (cycle 186)
++ TelemetryRecorder 의 errorCount switch sync (cycle 188).
+
+### 185 — codex critic review of cycles 178-183
+
+**VERDICT**: ACCEPT-WITH-RESERVATIONS.
+
+| Severity | 영역 | cycle 187 처리 |
+|---|---|---|
+| MAJOR | cycle 180 importSynthPages UInt8 overflow (existingMaxId+offset>255 silent clamp → duplicate IDs) | SynthMotionExporter.reassignPageIds 신규 + .idOverflow ExportError case + UI 오류 alert |
+| MINOR | cycle 181 DispatcherError String(describing:) 의 associated value PII | DispatcherError.telemetryCase computed property 추가 |
+| MINOR | cycle 183 TrialComparisonCard.loadTrials() main thread fetch | Task.detached(priority: .userInitiated) 로 background fetch |
+| 문서 | audit doc #3.1 vs #3.3 mapping stale | WALKLAB_MENU_INTEGRATION_REVIEW 수정 + cycle 185 노트 |
+
+### 186 — Pilot WalkLabRCBridge Harness telemetry 활성
+
+종전: pilotModeChanged + pilotEStop 2 kind 정의돼 있으나 dead code (firing site 0).
+
+5 신규 TelemetryKind + WalkLabRCBridge wire-up:
+
+| Kind | 발화 시점 | data |
+|---|---|---|
+| `pilot.mode_changed` | handlePreset success / blocked | preset, source, result, message_hash |
+| `pilot.e_stop` | process(.emergency) | source, was_already_active |
+| `pilot.recovery_requested` | handleRecovery 성공 | source |
+| `pilot.intent_blocked` | emergency 동안 차단 | source, intent_kind |
+| `pilot.bridge_disabled` | bridge.enabled=false 차단 | source, intent_kind |
+
+PII redaction: intent_kind = case name 만 (associated value 제거), message → shortHash.
+
+### 187 — codex critic fix (MAJOR + 2 MINOR)
+
+위 cycle 185 표 참조. 7 신규 SynthMotionExporterOverflowTests 추가.
+
+### 188 — TelemetryRecorder.errorCount 신규 kind 반영
+
+cycle 181 (claudePlanExecutionFailed) + cycle 182 (remoteCommandError) 가 errorCount
+switch case 누락 → meta.errorCount undercount. 본 cycle 부터 정확 카운트. pilotEStop
+은 의도적 .warn level — 비카운트 (사용자 안전 액션은 시스템 오류 X 분류).
+
+### Telemetry namespace 누적 현황 (cycle 188 종료)
+
+| Namespace | Before 178 | After 188 |
+|---|---|---|
+| `claude.*` | 3 | **8** (+5 plan lifecycle) |
+| `remote.*` | 0 | **4** (lifecycle 전체) |
+| `pilot.*` | 2 dead | **5 alive** (cycle 186) |
+| **합계** | 5 | **17** (+12, 3 dead → alive) |
+
+### 검증
+
+- 1344 → **1424** Swift tests (+80 across 11 cycles 178-188, 0 failures, 61s).
+- swift build: 0 errors, 0 warnings.
+- 81 commits ahead origin.
+
+### 남은 영역 (deferred → cycles 189+)
+
+- codex review of cycles 184-188 (cycle 189 background).
+- 신규 cross-menu audit (cycle 190 background) — explore agent.
+- Teach mode telemetry / integration deep dive (cycle 191 background).
