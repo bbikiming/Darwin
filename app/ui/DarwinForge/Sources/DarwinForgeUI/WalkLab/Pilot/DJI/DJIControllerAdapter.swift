@@ -146,15 +146,16 @@ public final class DJIControllerAdapter {
         guard !isRunning else { return }
         isRunning = true
 
+        // 현재 연결된 컨트롤러 즉시 인식 — telemetry 전에 호출해서 정확한 이름 캡처.
+        refreshConnectedController()
+
         // 사이클 213 telemetry — DJI adapter 활성화.
+        // 사이클 214 critic MINOR-3: refreshConnectedController 후 호출 → 정확한 controller_name.
         Harness.shared.record(
             .pilotAdapterStarted, level: .info, actor: .user,
             data: ["source": AnyCodable("dji"),
                    "controller_name": AnyCodable(connectedControllerName ?? "none")]
         )
-
-        // 현재 연결된 컨트롤러 즉시 인식.
-        refreshConnectedController()
 
         // Polling — Timer.scheduledTimer 가 main RunLoop 에 자동 install.
         // 테스트에서는 start() 미호출 + pollOnce() 수동 호출.

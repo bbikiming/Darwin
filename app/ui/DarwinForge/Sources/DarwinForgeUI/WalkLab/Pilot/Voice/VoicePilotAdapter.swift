@@ -170,26 +170,31 @@ public final class VoicePilotAdapter {
         if Self.matchAny(lower, keywords: Self.emergencyKeywords) {
             bridge.handleEmergency(from: .voice)
             lastMatchedKeyword = "emergency"
+            recordKeywordMatch("emergency")
             return
         }
         if Self.matchAny(lower, keywords: Self.recoveryKeywords) {
             bridge.handleRecovery(from: .voice)
             lastMatchedKeyword = "recovery"
+            recordKeywordMatch("recovery")
             return
         }
         if Self.matchAny(lower, keywords: Self.marchKeywords) {
             bridge.handleMotion(id: "preset.march", from: .voice)
             lastMatchedKeyword = "preset.march"
+            recordKeywordMatch("preset.march")
             return
         }
         if Self.matchAny(lower, keywords: Self.idleKeywords) {
             bridge.handleMotion(id: "preset.idle", from: .voice)
             lastMatchedKeyword = "preset.idle"
+            recordKeywordMatch("preset.idle")
             return
         }
         if Self.matchAny(lower, keywords: Self.jogKeywords) {
             bridge.handleMotion(id: "preset.jog", from: .voice)
             lastMatchedKeyword = "preset.jog"
+            recordKeywordMatch("preset.jog")
             return
         }
         // unknown keyword — silent. lastMatchedKeyword nil 처리해서 "들리긴 했으나 매칭 X" 시각화.
@@ -199,6 +204,15 @@ public final class VoicePilotAdapter {
             .pilotVoiceKeyword, level: .trace, actor: .system,
             data: ["matched": AnyCodable(false),
                    "keyword": AnyCodable("none")]
+        )
+    }
+
+    /// 사이클 214 critic MINOR-1: 키워드 매칭 성공 시에도 telemetry 발화 — match/miss ratio 분석 가능.
+    private func recordKeywordMatch(_ keyword: String) {
+        Harness.shared.record(
+            .pilotVoiceKeyword, level: .trace, actor: .system,
+            data: ["matched": AnyCodable(true),
+                   "keyword": AnyCodable(keyword)]
         )
     }
 

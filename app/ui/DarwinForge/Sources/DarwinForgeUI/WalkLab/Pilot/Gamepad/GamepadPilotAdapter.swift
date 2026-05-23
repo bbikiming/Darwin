@@ -117,15 +117,16 @@ public final class GamepadPilotAdapter {
         guard !isRunning else { return }
         isRunning = true
 
+        // 현재 연결된 컨트롤러 즉시 인식 — telemetry 전에 호출해서 정확한 이름 캡처.
+        refreshConnectedController()
+
         // 사이클 213 telemetry — Gamepad adapter 활성화.
+        // 사이클 214 critic MINOR-3: refreshConnectedController 후 호출 → 정확한 controller_name.
         Harness.shared.record(
             .pilotAdapterStarted, level: .info, actor: .user,
             data: ["source": AnyCodable("gamepad"),
                    "controller_name": AnyCodable(connectedControllerName ?? "none")]
         )
-
-        // 현재 연결된 컨트롤러 즉시 인식.
-        refreshConnectedController()
 
         // GCController 알림 등록 — 실 GCController source 만 의미 있으나 mock 도 무해.
         connectObserver = NotificationCenter.default.addObserver(

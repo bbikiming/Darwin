@@ -145,6 +145,19 @@ final class HarnessRecorderTests: XCTestCase {
                        "pilotEStop@.warn 은 의도적 — errorCount 비반영")
     }
 
+    /// 사이클 214: pilotVoiceError 는 .error level — errorCount 반영 필수.
+    /// adapter telemetry (cycle 213) 추가 후 errorCountedKinds 에 포함.
+    func testPilotVoiceErrorBumpsErrorCount() async throws {
+        let recorder = try TelemetryRecorder(directory: tempDir, meta: makeMeta())
+        await recorder.enqueue(TelemetryEvent(
+            session: "x", seq: 0, wall: "t", mono: 0,
+            kind: .pilotVoiceError, level: .error, actor: .system))
+        await recorder.flush()
+        let snapshot = await recorder.meta
+        XCTAssertEqual(snapshot.errorCount, 1,
+                       "pilotVoiceError@.error → errorCount += 1")
+    }
+
     // MARK: - finalize
 
     func testFinalizeSetsEndedTimestamp() async throws {

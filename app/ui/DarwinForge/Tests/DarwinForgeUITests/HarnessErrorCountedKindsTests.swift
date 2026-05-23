@@ -49,7 +49,9 @@ final class HarnessErrorCountedKindsTests: XCTestCase {
             .errorException,
             .claudeError,
             .busReadFail,
-            .busWriteFail
+            .busWriteFail,
+            // cycle 214 — pilot adapter error.
+            .pilotVoiceError
         ]
         for k in must {
             XCTAssertTrue(
@@ -77,12 +79,12 @@ final class HarnessErrorCountedKindsTests: XCTestCase {
     }
 
     /// **검증 #5**: count regression — 신규 추가 시 본 테스트 깨져서 doc update 강제.
-    /// cycle 196: 11건 (errorException + 4 connect/bus + 1 pose + 1 walk + 2 claude + 1 remote + 1 joint).
+    /// cycle 214: 12건 (errorException + 4 connect/bus + 1 pose + 1 walk + 2 claude + 1 remote + 1 joint + 1 pilot).
     /// 변경 시 USER_PILOT_GUIDE + harness/telemetry-harness.md 도 sync 필요.
     func testTotalErrorCountedKindCount() {
         XCTAssertEqual(
-            TelemetryRecorder.errorCountedKinds.count, 11,
-            "cycle 196 의 11건 — 변경 시 doc + audit 동기화 필요"
+            TelemetryRecorder.errorCountedKinds.count, 12,
+            "cycle 214 의 12건 — 변경 시 doc + audit 동기화 필요"
         )
     }
 
