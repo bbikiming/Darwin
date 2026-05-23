@@ -146,7 +146,7 @@ public struct MotionStudioView: View {
         )
         switch result {
         case .success(let reassigned):
-            pushUndoSnapshot()
+            MotionPageActions.pushUndoSnapshot(in: doc)
             doc.motion = MotionDoc(
                 version: doc.motion.version,
                 robotGeneration: doc.motion.robotGeneration,
@@ -176,7 +176,7 @@ public struct MotionStudioView: View {
         )
         switch result {
         case .success(let reassigned):
-            pushUndoSnapshot()
+            MotionPageActions.pushUndoSnapshot(in: doc)
             doc.motion = MotionDoc(
                 version: doc.motion.version,
                 robotGeneration: doc.motion.robotGeneration,
@@ -964,9 +964,9 @@ public struct MotionStudioView: View {
             step.pauseTime = UInt8(clamping: quantized / 8)
         }
         guard step != oldStep else { return }   // 무의미한 변경 skip (undo 폭주 방지).
-        pushUndoSnapshot()
+        MotionPageActions.pushUndoSnapshot(in: doc)
         doc.motion.pages[doc.selectedPageIdx].steps[doc.selectedStep] = step
-        markDirty()
+        MotionPageActions.markDirty(in: doc)
         // Player 에 변경 반영 — 재생 중이면 다음 tick 부터 적용.
         if let page = currentPage {
             let wasPlaying = player.mode == .playing
@@ -1055,98 +1055,51 @@ public struct MotionStudioView: View {
         stagedPose = page.steps[doc.selectedStep].toPose()
     }
 
+    /// 사이클 256 (W4.3.3): 자세 → 현재 step mutation 위임.
+    /// stagedPose 만 view-state, mutation 로직은 `MotionPageActions`.
     private func saveCurrentStepFromPose() {
-        guard var page = currentPage,
-              doc.selectedStep < page.steps.count else { return }
-        let oldStep = page.steps[doc.selectedStep]
-        // 자세만 변경 — pose 의 byte-level 비교로 무의미 변경 skip (undo 폭주 방지).
-        let newStep = MotionStep.from(
-            pose: stagedPose,
-            playMs: oldStep.playMs,
-            pauseMs: oldStep.pauseMs
-        )
-        guard newStep != oldStep else { return }
-        pushUndoSnapshot()
-        page.steps[doc.selectedStep] = newStep
-        doc.motion.pages[doc.selectedPageIdx] = page
-        markDirty()
+        MotionPageActions.saveCurrentStepFromPose(stagedPose, in: doc)
     }
 
+    /// 사이클 256 (W4.3.3): 자세 → 새 step append 위임.
     private func addStepFromCurrentPose() {
-        guard var page = currentPage else { return }
-        pushUndoSnapshot()
-        let step = MotionStep.from(pose: stagedPose, playMs: 256, pauseMs: 0)
-        page.steps.append(step)
-        doc.motion.pages[doc.selectedPageIdx] = page
-        doc.selectedStep = page.steps.count - 1
-        markDirty()
+        MotionPageActions.addStepFromPose(stagedPose, in: doc)
     }
 
+    /// 사이클 256 (W4.3.3): 선택 step 삭제 + pose refresh.
+    /// applySelectedStepToPose 는 view-state (stagedPose) 갱신이므로 호출 사이트 책임.
     private func removeSelectedStep() {
-        guard var page = currentPage, page.steps.count > 1 else { return }
-        pushUndoSnapshot()
-        page.steps.remove(at: doc.selectedStep)
-        if doc.selectedStep >= page.steps.count { doc.selectedStep = page.steps.count - 1 }
-        doc.motion.pages[doc.selectedPageIdx] = page
+        MotionPageActions.removeSelectedStep(in: doc)
         applySelectedStepToPose()
-        markDirty()
     }
 
+    /// 사이클 256 (W4.3.3): 새 페이지 추가 + telemetry emit.
+    /// MotionPageActions 가 nextId 반환 → 동일한 telemetry payload 보장.
     private func addPage() {
-        pushUndoSnapshot()
-        let nextId = (doc.motion.pages.map { $0.id }.max() ?? 0) + 1
-        let newPage = MotionPage(id: nextId, name: "새 동작 \(nextId)",
-                                 steps: [.from(pose: .walkReady, playMs: 256, pauseMs: 0)])
-        doc.motion.pages.append(newPage)
-        doc.selectedPageIdx = doc.motion.pages.count - 1
-        doc.selectedStep = 0
-        markDirty()
+        let beforeCount = doc.motion.pages.count
+        let nextId = MotionPageActions.addPage(in: doc)
+        // 새 페이지 name 은 "새 동작 \(nextId)" — MotionPageActions 와 동일 패턴.
+        let newPageName = "새 동작 \(nextId)"
         // v1.12.2 telemetry — 페이지 생성 (name redacted).
         harness.record(
             .motionPageCreated, level: .info, actor: .user,
             data: ["page_id": AnyCodable(nextId),
-                   "name_hash": AnyCodable(Harness.shortHash(newPage.name)),
-                   "total_pages": AnyCodable(doc.motion.pages.count)]
+                   "name_hash": AnyCodable(Harness.shortHash(newPageName)),
+                   "total_pages": AnyCodable(beforeCount + 1)]
         )
     }
 
     // MARK: - Page management (duplicate / rename / delete / export)
 
-    /// 페이지 복제 — 같은 step 시퀀스, 새 ID, "<name> 복사본" suffix.
+    /// 사이클 256 (W4.3.3): 페이지 복제 + pose refresh.
     private func duplicatePage(at idx: Int) {
-        guard idx >= 0, idx < doc.motion.pages.count else { return }
-        pushUndoSnapshot()
-        let src = doc.motion.pages[idx]
-        let nextId = (doc.motion.pages.map { $0.id }.max() ?? 0) + 1
-        let copyName = src.name.isEmpty ? "동작 \(src.id) 복사본" : "\(src.name) 복사본"
-        let copy = MotionPage(
-            id: nextId,
-            name: copyName,
-            compliance: src.compliance,
-            nextPage: 0,        // 복제본은 next/exit 체인 끊음 — 안전.
-            exitPage: 0,
-            repeat: src.repeat,
-            speed: src.speed,
-            accel: src.accel,
-            steps: src.steps
-        )
-        // 원본 바로 다음 자리에 삽입.
-        doc.motion.pages.insert(copy, at: idx + 1)
-        doc.selectedPageIdx = idx + 1
-        doc.selectedStep = 0
-        markDirty()
+        MotionPageActions.duplicatePage(at: idx, in: doc)
         applySelectedStepToPose()
     }
 
-    /// 페이지 삭제 — 1 개 미만으로 줄지 않도록 보호.
+    /// 사이클 256 (W4.3.3): 페이지 삭제 + pose refresh + telemetry emit.
     private func deletePage(at idx: Int) {
-        guard doc.motion.pages.count > 1, idx >= 0, idx < doc.motion.pages.count else { return }
-        let removed = doc.motion.pages[idx]
-        pushUndoSnapshot()
-        doc.motion.pages.remove(at: idx)
-        doc.selectedPageIdx = max(0, min(doc.selectedPageIdx, doc.motion.pages.count - 1))
-        doc.selectedStep = 0
-        markDirty()
+        guard let removed = MotionPageActions.deletePage(at: idx, in: doc) else { return }
         applySelectedStepToPose()
         // v1.12.2 telemetry — 페이지 삭제 (name redacted).
         harness.record(
@@ -1157,27 +1110,21 @@ public struct MotionStudioView: View {
         )
     }
 
-    /// 페이지 이름 변경.
+    /// 사이클 256 (W4.3.3): 페이지 rename + telemetry emit.
     private func renamePage(at idx: Int, to newName: String) {
-        guard idx >= 0, idx < doc.motion.pages.count else { return }
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, doc.motion.pages[idx].name != trimmed else { return }
-        let oldName = doc.motion.pages[idx].name
-        let pageId = doc.motion.pages[idx].id
-        pushUndoSnapshot()
-        doc.motion.pages[idx].name = trimmed
-        markDirty()
+        guard let result = MotionPageActions.renamePage(at: idx, to: newName, in: doc) else { return }
         // v1.12.2 telemetry — 페이지 이름 변경 (names redacted to hashes).
         harness.record(
             .motionPageRenamed, level: .info, actor: .user,
-            data: ["page_id": AnyCodable(pageId),
-                   "from_hash": AnyCodable(Harness.shortHash(oldName)),
-                   "to_hash": AnyCodable(Harness.shortHash(trimmed)),
-                   "to_len": AnyCodable(trimmed.count)]
+            data: ["page_id": AnyCodable(result.pageId),
+                   "from_hash": AnyCodable(Harness.shortHash(result.oldName)),
+                   "to_hash": AnyCodable(Harness.shortHash(result.newName)),
+                   "to_len": AnyCodable(result.newName.count)]
         )
     }
 
-    /// 단일 페이지 .json 으로 내보내기 (NSSavePanel).
+    /// 사이클 256 (W4.3.3): 단일 페이지 .json export (NSSavePanel + write).
+    /// 데이터 변환은 MotionPageActions, file dialog 만 view 잔류.
     private func exportPage(at idx: Int) {
         guard idx >= 0, idx < doc.motion.pages.count else { return }
         let page = doc.motion.pages[idx]
@@ -1187,17 +1134,15 @@ public struct MotionStudioView: View {
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let single = MotionDoc(version: doc.motion.version,
-                                    robotGeneration: doc.motion.robotGeneration,
-                                    pages: [page])
-            let json = try single.toJSON(prettyPrinted: true)
+            let json = try MotionPageActions.exportPageJSON(at: idx, in: doc)
             try json.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             lastError = "내보내기 실패: \(error.localizedDescription)"
         }
     }
 
-    /// 전체 motion doc 을 .json 으로 저장 (NSSavePanel) — "다른 이름으로 저장".
+    /// 사이클 256 (W4.3.3): 전체 motion doc → JSON 저장 (NSSavePanel + write).
+    /// 성공 시 isDirty = false (clean 상태).
     private func saveDocAs() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = []
@@ -1205,7 +1150,7 @@ public struct MotionStudioView: View {
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let json = try doc.motion.toJSON(prettyPrinted: true)
+            let json = try MotionPageActions.documentJSON(of: doc)
             try json.write(to: url, atomically: true, encoding: .utf8)
             doc.isDirty = false   // 저장 완료 → clean 상태.
         } catch {
@@ -1213,48 +1158,18 @@ public struct MotionStudioView: View {
         }
     }
 
-    /// motion doc 변경 시 dirty flag set — UI 의 저장 버튼 활성화.
-    private func markDirty() { doc.isDirty = true }
-
     // MARK: - Undo / Redo
 
-    /// 모든 mutation 함수 시작에 호출 — 현재 motion 을 undo stack 에 push.
-    /// 50 개 초과 시 가장 오래된 항목 drop. redo stack 은 invalidate (새 분기).
-    private func pushUndoSnapshot() {
-        doc.undoStack.append(doc.motion)
-        if doc.undoStack.count > doc.maxUndoDepth { doc.undoStack.removeFirst() }
-        doc.redoStack.removeAll()
-    }
-
-    /// ⌘Z — 마지막 변경 되돌리기. 변경 없으면 noop.
+    /// 사이클 256 (W4.3.3): undo + pose refresh.
     private func undo() {
-        guard let prev = doc.undoStack.popLast() else { return }
-        doc.redoStack.append(doc.motion)
-        doc.motion = prev
-        // 인덱스 안전 보정 — pages / steps 가 줄어들 수 있음.
-        doc.selectedPageIdx = min(doc.selectedPageIdx, max(0, doc.motion.pages.count - 1))
-        if doc.selectedPageIdx >= 0, doc.selectedPageIdx < doc.motion.pages.count {
-            doc.selectedStep = min(doc.selectedStep, max(0, doc.motion.pages[doc.selectedPageIdx].steps.count - 1))
-        } else {
-            doc.selectedStep = 0
-        }
+        guard MotionPageActions.undo(in: doc) else { return }
         applySelectedStepToPose()
-        doc.isDirty = true
     }
 
-    /// ⌘⇧Z — 되돌린 변경을 다시 앞으로.
+    /// 사이클 256 (W4.3.3): redo + pose refresh.
     private func redo() {
-        guard let next = doc.redoStack.popLast() else { return }
-        doc.undoStack.append(doc.motion)
-        doc.motion = next
-        doc.selectedPageIdx = min(doc.selectedPageIdx, max(0, doc.motion.pages.count - 1))
-        if doc.selectedPageIdx >= 0, doc.selectedPageIdx < doc.motion.pages.count {
-            doc.selectedStep = min(doc.selectedStep, max(0, doc.motion.pages[doc.selectedPageIdx].steps.count - 1))
-        } else {
-            doc.selectedStep = 0
-        }
+        guard MotionPageActions.redo(in: doc) else { return }
         applySelectedStepToPose()
-        doc.isDirty = true
     }
 
     var canUndo: Bool { !doc.undoStack.isEmpty }
@@ -1262,68 +1177,20 @@ public struct MotionStudioView: View {
 
     // MARK: - Copy / Paste / Split (키프레임)
 
-    /// ⌘C — 현재 선택 step 을 클립보드 (in-memory `copiedStep`) 로.
-    /// 다른 동작에 paste 가능. 시스템 클립보드 (NSPasteboard) 와는 별개 —
-    /// 사용자가 TextField focus 시 ⌘C 는 텍스트 복사가 우선이라 충돌 없음.
+    /// 사이클 256 (W4.3.3): copy 위임.
     private func copySelectedStep() {
-        guard let page = currentPage,
-              doc.selectedStep >= 0, doc.selectedStep < page.steps.count else { return }
-        doc.copiedStep = page.steps[doc.selectedStep]
+        MotionPageActions.copySelectedStep(in: doc)
     }
 
-    /// ⌘V — 복사된 step 을 현재 위치 *다음에* 삽입. 자동으로 새 step 선택.
+    /// 사이클 256 (W4.3.3): paste + pose refresh.
     private func pasteStep() {
-        guard let step = doc.copiedStep,
-              var page = currentPage else { return }
-        pushUndoSnapshot()
-        let insertAt = min(page.steps.count, max(0, doc.selectedStep + 1))
-        page.steps.insert(step, at: insertAt)
-        doc.motion.pages[doc.selectedPageIdx] = page
-        doc.selectedStep = insertAt
-        markDirty()
+        MotionPageActions.pasteStep(in: doc)
         applySelectedStepToPose()
     }
 
-    /// ⌘K — 현재 선택 step 을 두 개로 분할.
-    ///
-    /// 동작:
-    ///   1. 이전 step (또는 walkReady) → 현재 step 의 자세를 0.5 lerp 한 *중간 자세*.
-    ///   2. playMs 의 절반을 첫 step 에 부여, 중간 자세 step 으로 변환.
-    ///   3. 남은 절반 playMs + 원래 자세 + 원래 pauseMs 를 두 번째 step 으로.
-    ///   4. 후반부 (원래 자세) 자동 선택 — split 후에도 사용자 의도 유지.
+    /// 사이클 256 (W4.3.3): split + pose refresh.
     private func splitSelectedStep() {
-        guard var page = currentPage,
-              doc.selectedStep >= 0, doc.selectedStep < page.steps.count else { return }
-        let original = page.steps[doc.selectedStep]
-        // playMs 가 16ms 미만이면 분할 무의미 (8ms × 2 단위).
-        guard original.playMs >= 16 else { return }
-        pushUndoSnapshot()
-
-        // 이전 자세 — selectedStep > 0 면 이전 step 의 toPose(), 아니면 walkReady.
-        let prevPose: RobotPose = doc.selectedStep > 0
-            ? page.steps[doc.selectedStep - 1].toPose()
-            : .walkReady
-        let curPose = original.toPose()
-        let midPose = prevPose.lerp(to: curPose, t: 0.5)
-
-        // 8ms quantize. playMs/2 → /16 × 8 단위 (.mtn raw quantize).
-        let halfPlay = (original.playMs / 16) * 8
-        let remainPlay = original.playMs - halfPlay
-
-        let firstHalf = MotionStep.from(pose: midPose,
-                                         playMs: halfPlay,
-                                         pauseMs: 0)
-        var secondHalf = original
-        secondHalf.playTime = UInt8(clamping: remainPlay / 8)
-        // pauseTime 은 원래 step 의 것 유지.
-
-        page.steps[doc.selectedStep] = firstHalf
-        page.steps.insert(secondHalf, at: doc.selectedStep + 1)
-        doc.motion.pages[doc.selectedPageIdx] = page
-
-        // 후반부 (원본 자세) 자동 선택.
-        doc.selectedStep += 1
-        markDirty()
+        MotionPageActions.splitSelectedStep(in: doc)
         applySelectedStepToPose()
     }
 
