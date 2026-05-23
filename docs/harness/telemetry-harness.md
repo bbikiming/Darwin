@@ -240,3 +240,40 @@ Phase 2 (후속 PR): Teach 모드, Studio 인스펙터, Expert 탭 세부 인터
 - 두 세션 diff (변경 전/후 비교)
 - 실 로봇 빌드 체크리스트 (`first_connect`, `walked_3_steps`, `emergency_stop_works`) 자동 마킹
 - Optional opt-in 익명 통계 업로드 (분기점 결정 필요)
+
+---
+
+## 11. Phase 2 통합 현황 (cycles 178-204, 2026-05-23)
+
+cycle 177 의 cross-menu audit 이후 Phase 2 instrumentation 가 광범위 진행. 통합
+포인트 (위 §7) 외에 다음 신규 영역 추가:
+
+| Namespace | 누적 kind | 추가 cycle |
+|---|---|---|
+| `claude.*` | 8 (planApproved/Rejected/Executed/Failed/SessionCleared 신규 5) | 181 |
+| `remote.*` | 4 (commandSent/Responded/Error/ChannelChanged) | 182 |
+| `pilot.*` | 5 (modeChanged/eStop/recoveryRequested/intentBlocked/bridgeDisabled — 2 dead 활성 + 3 신규) | 186 |
+| `teach.torque_changed` | wired 4 sites | 193 |
+| `teach.snapshot_meta_restored` | 신규 (app launch restoration) | 206 |
+| `setup.*` | 2 (wizardStepChanged/Completed) | 194 |
+| `joint.*` | 2 (actionRequested/Failed) | 196 |
+| `ui.view_appeared` | 1 (cross-menu navigation) | 197 |
+| `walklab.freshness_changed` | 1 (didSet hook) | 200 |
+
+### errorCountedKinds 단일 source of truth (cycle 192)
+
+`TelemetryRecorder.errorCountedKinds` constant 가 모든 error-level kind 매핑.
+신규 추가 시 본 list + 7 tests update 강제. 현재 11 kind (errorException +
+4 connect/bus + 1 pose + 1 walk + 2 claude + 1 remote + 1 joint).
+
+### PII redaction 패턴 (cycles 182, 187, 202)
+
+- 사용자 입력 본문 / 명령 본문 / 응답 본문 → `Harness.shortHash(...)` 만.
+- error type → `String(describing: type(of: error))` (controlled).
+- enum case → `.rawValue` 또는 case name string (associated value 제거).
+- 호스트명 → `Harness.shortHash(host)`.
+
+### 의도된 제외
+
+- `pilot.e_stop` (level=.warn, 사용자 안전 액션 — 시스템 오류 X).
+- `ui.view_appeared` (level=.trace, navigation 분석 — 사고 X).
