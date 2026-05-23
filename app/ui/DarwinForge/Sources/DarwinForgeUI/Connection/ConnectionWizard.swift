@@ -123,9 +123,18 @@ public struct ConnectionWizardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onAppear {
                 oneClick.bind(store: store, bonjour: bonjour)
+                Harness.shared.record(
+                    .setupConnWizardStarted, level: .info, actor: .user,
+                    data: ["has_last_endpoint": AnyCodable(store.lastSuccessfulEndpoint != nil),
+                           "is_advanced": AnyCodable(isAdvanced)]
+                )
                 if !isAdvanced && selectedPath == nil {
                     // 마지막 성공 endpoint 가 있으면 마법사 진입 즉시 자동 연결 시도.
                     if store.lastSuccessfulEndpoint != nil, store.bus == nil {
+                        Harness.shared.record(
+                            .setupConnOneClickFired, level: .info, actor: .system,
+                            data: ["trigger": AnyCodable("auto")]
+                        )
                         oneClick.runOneClick()
                     } else {
                         oneClick.runDiagnosticsOnly()
@@ -140,6 +149,14 @@ public struct ConnectionWizardView: View {
                     }
                 } else if case .error(let m) = new {
                     markCurrentStep(.failed(m))
+                }
+            }
+            .onChange(of: oneClick.phase) { _, newPhase in
+                if case .allFailed = newPhase {
+                    Harness.shared.record(
+                        .setupConnOneClickAllFailed, level: .notice, actor: .system,
+                        data: ["candidate_count": AnyCodable(oneClick.candidates.count)]
+                    )
                 }
             }
             .onDisappear { bonjour.stop(); oneClick.cancel() }
@@ -377,6 +394,10 @@ public struct ConnectionWizardView: View {
         }()
         let isScanning: Bool = oneClick.phase == .scanning
         Button {
+            Harness.shared.record(
+                .setupConnOneClickFired, level: .info, actor: .user,
+                data: ["trigger": AnyCodable("manual")]
+            )
             oneClick.runOneClick()
         } label: {
             HStack(spacing: DFSpace.sm) {
@@ -715,6 +736,10 @@ public struct ConnectionWizardView: View {
         HStack {
             Spacer()
             Button {
+                Harness.shared.record(
+                    .setupConnAdvancedToggle, level: .info, actor: .user,
+                    data: ["to_advanced": AnyCodable(true)]
+                )
                 isAdvanced = true
                 oneClick.cancel()
             } label: {
@@ -740,6 +765,10 @@ public struct ConnectionWizardView: View {
         VStack(alignment: .leading, spacing: DFSpace.md) {
             HStack {
                 Button {
+                    Harness.shared.record(
+                        .setupConnAdvancedToggle, level: .info, actor: .user,
+                        data: ["to_advanced": AnyCodable(false)]
+                    )
                     isAdvanced = false
                     oneClick.runDiagnosticsOnly()
                 } label: {
@@ -1458,6 +1487,10 @@ public struct ConnectionWizardView: View {
     // MARK: - Path actions
 
     private func selectPath(_ path: WizardPath) {
+        Harness.shared.record(
+            .setupConnPathSelected, level: .info, actor: .user,
+            data: ["path": AnyCodable(path.rawValue)]
+        )
         selectedPath = path
         switch path {
         case .usb:     setupUSBSteps()
@@ -1504,6 +1537,10 @@ public struct ConnectionWizardView: View {
     }
 
     private func runUSBPath() {
+        Harness.shared.record(
+            .setupConnPathConnect, level: .info, actor: .user,
+            data: ["path": AnyCodable("usb")]
+        )
         markStep("u4", .inProgress)
         store.autoConnect()
         // store.status onChange가 success/failed 갱신.
@@ -1533,6 +1570,12 @@ public struct ConnectionWizardView: View {
             markStep("n2", .failed("포트가 1~65535 사이의 숫자여야 해요"))
             return
         }
+        Harness.shared.record(
+            .setupConnPathConnect, level: .info, actor: .user,
+            data: ["path": AnyCodable("network"),
+                   "host_hash": AnyCodable(Harness.shortHash(host)),
+                   "port": AnyCodable(Int(port))]
+        )
         // 1, 2번은 사용자 액션. 3, 4번은 자동.
         markStep("n1", .success)
         markStep("n2", .success)
@@ -1564,6 +1607,11 @@ public struct ConnectionWizardView: View {
     }
 
     private func runBonjourPath(_ svc: BonjourBrowser.Discovered) {
+        Harness.shared.record(
+            .setupConnPathConnect, level: .info, actor: .user,
+            data: ["path": AnyCodable("bonjour"),
+                   "service_hash": AnyCodable(Harness.shortHash(svc.serviceName))]
+        )
         markStep("b1", .success)
         markStep("b2", .success)
         markStep("b3", .success)

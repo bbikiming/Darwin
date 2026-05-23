@@ -255,7 +255,7 @@ cycle 177 의 cross-menu audit 이후 Phase 2 instrumentation 가 광범위 진�
 |---|---|---|
 | `claude.*` | 8 (planApproved/Rejected/Executed/Failed/SessionCleared 신규 5) | 181 |
 | `remote.*` | 4 (commandSent/Responded/Error/ChannelChanged) | 182 |
-| `pilot.*` | 5 (modeChanged/eStop/recoveryRequested/intentBlocked/bridgeDisabled — 2 dead 활성 + 3 신규) | 186 |
+| `pilot.*` | 10 (modeChanged/eStop/recoveryRequested/intentBlocked/bridgeDisabled + adapterStarted/Stopped/controllerChanged/voiceError/voiceKeyword) | 213 |
 | `teach.torque_changed` | wired 4 sites | 193 |
 | `teach.snapshot_meta_restored` | 신규 (app launch restoration) | 206 |
 | `setup.*` | 2 (wizardStepChanged/Completed) | 194 |
@@ -266,8 +266,8 @@ cycle 177 의 cross-menu audit 이후 Phase 2 instrumentation 가 광범위 진�
 ### errorCountedKinds 단일 source of truth (cycle 192)
 
 `TelemetryRecorder.errorCountedKinds` constant 가 모든 error-level kind 매핑.
-신규 추가 시 본 list + 7 tests update 강제. 현재 11 kind (errorException +
-4 connect/bus + 1 pose + 1 walk + 2 claude + 1 remote + 1 joint).
+신규 추가 시 본 list + 7 tests update 강제. 현재 12 kind (errorException +
+4 connect/bus + 1 pose + 1 walk + 2 claude + 1 remote + 1 joint + 1 pilot).
 
 ### PII redaction 패턴 (cycles 182, 187, 202)
 

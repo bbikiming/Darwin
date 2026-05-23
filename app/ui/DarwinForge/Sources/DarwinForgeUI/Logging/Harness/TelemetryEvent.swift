@@ -186,6 +186,18 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: matched (Bool), keyword (matched 시).
     public static let pilotVoiceKeyword: TelemetryKind = "pilot.voice_keyword"
 
+    /// 사이클 214: TelloPilotHud UI 버튼/토글 사용자 액션.
+    /// data: action ("activate" / "retry" / "bridge_toggle"), enabled (Bool, 토글 시).
+    public static let pilotHudAction: TelemetryKind = "pilot.hud_action"
+
+    // Keyboard pilot panel UI telemetry
+    /// 키보드 패널에서 방향/emergency/recovery/motion/preset 키 입력.
+    /// data: key, phase ("down"/"up"). level=.trace (direction), .info (emergency/recovery).
+    public static let pilotKeyboardAction: TelemetryKind = "pilot.keyboard_action"
+    /// 키보드 패널 sensitivity slider 변경.
+    /// data: value (Double), label (String).
+    public static let pilotSensitivityChanged: TelemetryKind = "pilot.sensitivity_changed"
+
     // Claude
     public static let claudePromptSent: TelemetryKind = "claude.prompt_sent"
     public static let claudeResponseReceived: TelemetryKind = "claude.response_received"
@@ -222,6 +234,29 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// 모든 step completed 첫 전환 — 사용자 onboarding 성공 funnel 끝.
     /// data: elapsed_ms (Wizard 첫 진입 부터).
     public static let setupWizardCompleted: TelemetryKind = "setup.wizard_completed"
+
+    // Connection wizard (ConnectionWizardView — 런타임 연결 마법사)
+    /// ConnectionWizard onAppear — 세션 당 마법사 진입 횟수 추적.
+    /// data: has_last_endpoint, is_advanced.
+    public static let setupConnWizardStarted: TelemetryKind = "setup.conn_wizard_started"
+    /// 사용자가 수동 경로 (USB/Network/Bonjour) 선택.
+    /// data: path (rawValue).
+    public static let setupConnPathSelected: TelemetryKind = "setup.conn_path_selected"
+    /// OneClick 자동 연결 버튼 클릭 또는 자동 실행.
+    /// data: trigger ("auto"/"manual").
+    public static let setupConnOneClickFired: TelemetryKind = "setup.conn_oneclick_fired"
+    /// OneClick 전체 실패 — 모든 후보 unreachable.
+    /// data: candidate_count.
+    public static let setupConnOneClickAllFailed: TelemetryKind = "setup.conn_oneclick_all_failed"
+    /// 수동 경로에서 retry (다시 검색/다시 시도 버튼).
+    /// data: path, step_id.
+    public static let setupConnRetry: TelemetryKind = "setup.conn_retry"
+    /// 수동 경로 connect 시도 (runUSBPath / runNetworkPath / runBonjourPath).
+    /// data: path.
+    public static let setupConnPathConnect: TelemetryKind = "setup.conn_path_connect"
+    /// 수동 → 고급 토글 전환.
+    /// data: to_advanced (Bool).
+    public static let setupConnAdvancedToggle: TelemetryKind = "setup.conn_advanced_toggle"
 
     // Remote shell (사이클 182, P1 #3.6 fix, cycle 177 audit)
     /// 사용자가 RemoteShell 명령 송신. data: channel, cmd_len, cmd_hash.

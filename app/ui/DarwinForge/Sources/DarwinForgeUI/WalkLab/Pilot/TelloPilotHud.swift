@@ -288,6 +288,10 @@ public struct TelloPilotHud: View {
             Spacer()
             Button("Tello 활성화") {
                 owner.start()
+                Harness.shared.record(
+                    .pilotHudAction, level: .info, actor: .user,
+                    data: ["action": AnyCodable("activate")]
+                )
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.mini)
@@ -309,6 +313,10 @@ public struct TelloPilotHud: View {
                 Spacer()
                 Button("다시 시도") {
                     owner.start()
+                    Harness.shared.record(
+                        .pilotHudAction, level: .info, actor: .user,
+                        data: ["action": AnyCodable("retry")]
+                    )
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.mini)
@@ -361,6 +369,10 @@ public struct TelloPilotHud: View {
                     Spacer()
                     Button("Recover") {
                         bridge.handleRecovery(from: .ui)
+                        Harness.shared.record(
+                            .pilotRecoveryRequested, level: .notice, actor: .user,
+                            data: ["source": AnyCodable("hud")]
+                        )
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.mini)
@@ -460,9 +472,22 @@ public struct TelloPilotHud: View {
                     .toggleStyle(.button)
                     .controlSize(.small)
                     .font(.caption)
+                    .onChange(of: bridge.enabled) { _, newValue in
+                        Harness.shared.record(
+                            .pilotHudAction, level: .info, actor: .user,
+                            data: [
+                                "action": AnyCodable("bridge_toggle"),
+                                "enabled": AnyCodable(newValue),
+                            ]
+                        )
+                    }
                 Spacer()
                 Button(role: .destructive) {
                     bridge.handleEmergency(from: .ui)
+                    Harness.shared.record(
+                        .pilotEStop, level: .notice, actor: .user,
+                        data: ["source": AnyCodable("hud")]
+                    )
                 } label: {
                     Label("긴급정지", systemImage: "exclamationmark.octagon.fill")
                         .font(.caption.weight(.semibold))

@@ -264,6 +264,11 @@ public struct KeyboardPilotPanel: View {
 
     private func applySensitivity(_ multiplier: Double) {
         guard let bridge = session.pilotBridge else { return }
+        Harness.shared.record(
+            .pilotSensitivityChanged, level: .info, actor: .user,
+            data: ["value": AnyCodable(multiplier),
+                   "label": AnyCodable(sensitivityLabel)]
+        )
         let base = TelloRCMapper.Scale.default
         bridge.scale = TelloRCMapper.Scale(
             fb: base.fb * multiplier,
@@ -286,6 +291,10 @@ public struct KeyboardPilotPanel: View {
                     .foregroundStyle(DFColor.danger)
                 Spacer()
                 Button("Recover") {
+                    Harness.shared.record(
+                        .pilotKeyboardAction, level: .info, actor: .user,
+                        data: ["key": AnyCodable("recover"), "phase": AnyCodable("tap")]
+                    )
                     session.pilotBridge?.handleRecovery(from: .ui)
                 }
                 .buttonStyle(.borderedProminent)
@@ -375,6 +384,10 @@ public struct KeyboardPilotPanel: View {
         }
         // emergency 는 down 즉시 발화 (up 은 무시 — 한 번 발화하면 끝).
         if pilotKey == .emergency && press.phase == .down {
+            Harness.shared.record(
+                .pilotKeyboardAction, level: .info, actor: .user,
+                data: ["key": AnyCodable("emergency"), "phase": AnyCodable("down")]
+            )
             session.pilotBridge?.handleEmergency(from: .keyboard)
             // **v1.20.2.1 사이클 8-fix MEDIUM (코덱스)** — emergency 시 전체 pressedKeys clear.
             // 종전: `.emergency` 만 제거 → W 누른 채 Space 시 W 가 stale 한 상태로 UI 에 남음.
@@ -383,6 +396,10 @@ public struct KeyboardPilotPanel: View {
             return .handled
         }
         if press.phase == .down {
+            Harness.shared.record(
+                .pilotKeyboardAction, level: .trace, actor: .user,
+                data: ["key": AnyCodable(pilotKey.label), "phase": AnyCodable("down")]
+            )
             pressedKeys.insert(pilotKey)
         } else {
             pressedKeys.remove(pilotKey)

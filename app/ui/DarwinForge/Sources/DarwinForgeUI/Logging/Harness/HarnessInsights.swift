@@ -24,7 +24,7 @@ public struct Insight: Sendable, Equatable, Identifiable {
         case info, notice, warn, critical
     }
     public enum Kind: String, Codable, Sendable {
-        case connection, imu, bus, walklab, pose, harness, idle, motion
+        case connection, imu, bus, walklab, pose, harness, idle, motion, pilot
     }
 }
 
@@ -45,6 +45,8 @@ public enum HarnessInsights {
         out.append(contentsOf: poseRules(analysis, events))
         out.append(contentsOf: harnessRules(analysis))
         out.append(contentsOf: idleRules(analysis, events))
+        out.append(contentsOf: pilotVoiceErrorInsight(analysis, events))    // v1.20.8 cycle 215
+        out.append(contentsOf: pilotVoiceMissRatioInsight(analysis, events))
         return out
     }
 
@@ -380,6 +382,49 @@ public enum HarnessInsights {
             recommendation: "테스트 의도 명확하지 않다면 세션 닫고 새로 시작. 디스크 / 분석 노이즈 감소.",
             eventRefs: [],
             confidence: 0.6
+        )]
+    }
+
+    // MARK: - Pilot adapter (cycle 215)
+
+    /// 음성 인식 오류가 세션 내에서 3회 이상이면 HW/설정 문제 의심.
+    private static func pilotVoiceErrorInsight(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let voiceErrors = events.filter { $0.k.rawValue == TelemetryKind.pilotVoiceError.rawValue }
+        guard voiceErrors.count >= 3 else { return [] }
+        return [Insight(
+            id: "pilot.voice_error_pattern#\(voiceErrors.count)",
+            ruleID: "pilot.voice_error_chain",
+            severity: .warn, kind: .pilot,
+            title: "음성 인식 오류 \(voiceErrors.count) 회",
+            evidence: "세션 중 \(voiceErrors.count) 회 voice_error 발생. 마이크 권한/HW 확인 필요.",
+            recommendation: "시스템 환경 설정 > 개인정보 > 마이크 권한 확인. 외부 마이크 연결 상태 점검.",
+            eventRefs: Array(voiceErrors.prefix(5).map(\.i)),
+            confidence: 0.75
+        )]
+    }
+
+    /// 키워드 인식률 (match/miss ratio) 가 30% 미만이면 환경 소음 의심.
+    private static func pilotVoiceMissRatioInsight(
+        _ a: SessionAnalysis, _ events: [TelemetryEvent]
+    ) -> [Insight] {
+        let keywords = events.filter { $0.k.rawValue == TelemetryKind.pilotVoiceKeyword.rawValue }
+        guard keywords.count >= 5 else { return [] }
+        let matched = keywords.filter {
+            ($0.d.raw["matched"])?.value as? Bool == true
+        }.count
+        let ratio = Double(matched) / Double(keywords.count)
+        guard ratio < 0.3 else { return [] }
+        return [Insight(
+            id: "pilot.voice_low_match#\(percent(ratio))",
+            ruleID: "pilot.voice_low_match_rate",
+            severity: .notice, kind: .pilot,
+            title: "음성 키워드 매칭률 \(percent(ratio)) — 환경 소음 의심",
+            evidence: "\(keywords.count) 건 인식 중 \(matched) 건만 매칭. 비율 \(percent(ratio)).",
+            recommendation: "주변 소음 줄이거나 마이크 가까이 발화. 키워드 목록 확인 (걸어/멈춰/비상).",
+            eventRefs: [],
+            confidence: 0.65
         )]
     }
 
