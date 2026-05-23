@@ -2534,7 +2534,18 @@ public final class WalkLabSession {
     ///
     /// UI / HUD 가 본 상태를 표시해 사용자가 "보정 ON 인데 안 움직임" 침묵을 인지 가능.
     /// 종전: lastCorrectionApplied=false 만 internal — UI 분기 어려움.
-    public internal(set) var balanceCorrectionFreshness: BalanceCorrectionFreshness = .normal
+    public internal(set) var balanceCorrectionFreshness: BalanceCorrectionFreshness = .normal {
+        didSet {
+            // 사이클 200: transition telemetry — 50ms tick 의 no-op set 차단 (oldValue
+            // == newValue) + 실 전환 시점만 발화. cycle 160 이 추가한 enum 의 분포 분석.
+            guard oldValue != balanceCorrectionFreshness else { return }
+            Harness.shared.record(
+                .walkLabFreshnessChanged, level: .info, actor: .system,
+                data: ["from": AnyCodable(oldValue.rawValue),
+                       "to": AnyCodable(balanceCorrectionFreshness.rawValue)]
+            )
+        }
+    }
 
     /// 사이클 160: balanceCorrectionFreshness 의 표시 상태.
     public enum BalanceCorrectionFreshness: String, Sendable, Equatable, CaseIterable {

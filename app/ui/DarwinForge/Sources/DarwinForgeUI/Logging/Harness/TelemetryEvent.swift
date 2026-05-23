@@ -133,6 +133,10 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// v1.11.24 audit P1-3 — ROBOTIS Onboard ACK 결과 (성공/실패).
     /// data: status, latency_ms, cmd_id.
     public static let walkLabOnboardAck: TelemetryKind = "walklab.onboard_ack"
+    /// 사이클 200: balanceCorrectionFreshness state 전환 (cycle 160 enum 의 transition).
+    /// data: from, to. WalkLab IMU freshness gate (.normal/.degraded/.blocked) 의
+    /// 분포 분석 — 보정 차단 빈도 / IMU 지연 패턴 / sim vs real 비교.
+    public static let walkLabFreshnessChanged: TelemetryKind = "walklab.freshness_changed"
 
     // Pose
     public static let poseApplyStart: TelemetryKind = "pose.apply_start"
