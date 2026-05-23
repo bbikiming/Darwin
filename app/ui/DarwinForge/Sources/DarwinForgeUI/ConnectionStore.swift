@@ -5,12 +5,10 @@ import ForgeCore
 /// 앱 전체에 공유되는 연결 상태. 한 번에 하나의 Bus만 활성.
 @MainActor
 public final class ConnectionStore: ObservableObject {
-    public enum Status: Equatable {
-        case disconnected
-        case connecting(String)
-        case connected(BoardSnapshot)
-        case error(String)
-    }
+    /// Wave 4.2.2 (사이클 V261-1) — `ConnectionTransportStore.Status` 의 typealias.
+    /// 종전 `ConnectionStore.Status` 직접 path 가 view / test 코드에 산재 — backward-compat
+    /// 유지를 위해 typealias 로 노출. 신규 코드는 `ConnectionTransportStore.Status` 직접 사용 권장.
+    public typealias Status = ConnectionTransportStore.Status
 
     public enum TelemetryCadence: Sendable, Equatable {
         case off
@@ -20,21 +18,44 @@ public final class ConnectionStore: ObservableObject {
         case full
     }
 
-    @Published public var availablePorts: [String] = []
-    @Published public var selectedPort: String?
+    /// **Wave 4.2.2 (사이클 V261-1)** — transport state (port / status / endpoint /
+    /// reconnect) 격리 store. 직접 노출 + backward-compat computed property 가 기존 path
+    /// (`store.status` / `store.availablePorts` 등) 유지.
+    @Published public private(set) var transport: ConnectionTransportStore
+
+    // MARK: - Backward-compat delegate (transport)
+    //
+    // 모든 transport-related property 는 `transport` 로 위임. 외부 view/test 코드가 path
+    // `store.status`, `store.availablePorts`, `store.selectedPort`, `store.activeEndpoint`,
+    // `store.networkHost`, `store.networkPort`, `store.lastSuccessfulEndpoint`,
+    // `store.reconnectAttempt`, `store.isReconnecting` 그대로 사용 가능.
+
+    public var availablePorts: [String] {
+        get { transport.availablePorts }
+        set { transport.availablePorts = newValue }
+    }
+    public var selectedPort: String? {
+        get { transport.selectedPort }
+        set { transport.selectedPort = newValue }
+    }
     /// **v1.14.8 (2026-05-21) perf #5**: status 전환 시 Harness heartbeat start/stop.
     /// 종전: DarwinForgeApp 가 launch 시 always-on startHeartbeat → 미연결 idle 에서
     ///       매 1s Timer wake-up + record() 호출 (v1.14.4 guard 안에서 즉시 return 하지만
     ///       wake-up 자체가 main actor 부담).
     /// 신규: connected 전환 시만 heartbeat. disconnected/error/connecting 으로
-    ///       복귀하면 Timer 자체를 invalidate. didSet 은 동일 case 라도 발화하므로
-    ///       wasConnected vs isConnected boolean transition 으로 idempotent.
-    @Published public var status: Status = .disconnected {
-        didSet {
+    ///       복귀하면 Timer 자체를 invalidate. 종전 didSet 은 stored property 에서만 발화 →
+    ///       transport.status 가 stored 라 거기서 발화해야 하지만 transport store 는 harness 를
+    ///       모름. Wave 4.2.2 — heartbeat hook 은 setter 안에서 직접 처리. transport 의
+    ///       @Published 가 외부 view 구독 처리 + 본 setter 에서 heartbeat transition 처리.
+    public var status: Status {
+        get { transport.status }
+        set {
+            let oldValue = transport.status
+            transport.status = newValue
             let wasConnected: Bool
             if case .connected = oldValue { wasConnected = true } else { wasConnected = false }
             let isConnected: Bool
-            if case .connected = status { isConnected = true } else { isConnected = false }
+            if case .connected = newValue { isConnected = true } else { isConnected = false }
             guard wasConnected != isConnected else { return }
             if isConnected {
                 harness.startHeartbeat()
@@ -50,13 +71,22 @@ public final class ConnectionStore: ObservableObject {
     @Published public var jointStates: [JointID: JointState] = [:]
 
     /// 현재 활성 endpoint (.usbSerial 또는 .network). 연결 해제 시 nil.
-    @Published public var activeEndpoint: Endpoint?
+    public var activeEndpoint: Endpoint? {
+        get { transport.activeEndpoint }
+        set { transport.activeEndpoint = newValue }
+    }
 
     // ── 네트워크 endpoint (Manual entry) ──
     /// 사용자가 입력한 호스트 (예: "10.0.0.42" 또는 "op2.local").
-    @Published public var networkHost: String = ""
+    public var networkHost: String {
+        get { transport.networkHost }
+        set { transport.networkHost = newValue }
+    }
     /// 사용자가 입력한 포트 (default 5530 — `forge serve`).
-    @Published public var networkPort: UInt16 = 5530
+    public var networkPort: UInt16 {
+        get { transport.networkPort }
+        set { transport.networkPort = newValue }
+    }
 
     /// 가장 최근 폴링 텔레메트리 (StatusBar / Studio 등 위젯이 구독).
     @Published public var lastTelemetry: TelemetrySnapshot?
@@ -287,10 +317,12 @@ public final class ConnectionStore: ObservableObject {
         self.harness = harness ?? LiveHarness.shared
         // Wave 4.2.1 — health state 격리 store. init 시 빈 상태.
         self.health = ConnectionHealthStore()
+        // Wave 4.2.2 — transport state 격리 store.
+        self.transport = ConnectionTransportStore()
         // 앱 시작 시 마지막 성공 endpoint 복원.
         if let data = UserDefaults.standard.data(forKey: Self.lastEndpointKey),
            let ep = try? JSONDecoder().decode(Endpoint.self, from: data) {
-            self.lastSuccessfulEndpoint = ep
+            self.transport.restoreLastSuccessfulEndpoint(ep)
         }
 
         // 2026-05-17 chaos audit CRITICAL #2: macOS sleep 시 자동 emergency stop.
@@ -402,9 +434,9 @@ public final class ConnectionStore: ObservableObject {
                 let rtt = Date().timeIntervalSince(t0) * 1000
                 self.bus = bus
                 self.activeEndpoint = endpoint
-                self.lastSuccessfulEndpoint = endpoint
+                self.transport.recordSuccessfulEndpoint(endpoint)
                 self.persistLastEndpoint()
-                self.reconnectAttempt = 0
+                self.transport.endReconnecting()
                 self.status = .connected(snap)
                 self.lastTelemetry = TelemetrySnapshot(board: snap, joints: [:])
                 self.health.recordConnected(rttMs: rtt)
@@ -443,13 +475,15 @@ public final class ConnectionStore: ObservableObject {
     }
 
     // MARK: - Auto-reconnect (네트워크 drop 시 백오프 재시도)
+    //
+    // **Wave 4.2.2 (사이클 V261-1)** — backward-compat delegate: state 는 `transport` 에 보관.
 
     /// 연결이 마지막으로 성공한 endpoint. 자동 재연결의 후보.
-    @Published public private(set) var lastSuccessfulEndpoint: Endpoint?
+    public var lastSuccessfulEndpoint: Endpoint? { transport.lastSuccessfulEndpoint }
     /// 현재까지 시도한 재연결 횟수 (0 = 아직 안 함).
-    @Published public private(set) var reconnectAttempt: Int = 0
+    public var reconnectAttempt: Int { transport.reconnectAttempt }
     /// 자동 재연결 active 여부 (UI 배너 표시용).
-    @Published public private(set) var isReconnecting: Bool = false
+    public var isReconnecting: Bool { transport.isReconnecting }
 
     private var reconnectTask: Task<Void, Never>?
     private static let maxReconnectAttempts: Int = 5
@@ -458,15 +492,14 @@ public final class ConnectionStore: ObservableObject {
     public func cancelReconnect() {
         reconnectTask?.cancel()
         reconnectTask = nil
-        isReconnecting = false
-        reconnectAttempt = 0
+        transport.endReconnecting()
     }
 
     /// watchdog 또는 명시 호출로 끊긴 후 재연결 시도 (1, 2, 4, 8, 16초 백오프).
     public func startReconnectIfPossible() {
         guard let endpoint = lastSuccessfulEndpoint else { return }
         guard reconnectTask == nil else { return }
-        isReconnecting = true
+        transport.beginReconnecting()
         let target = endpoint
         // **v1.14.2 (2026-05-21)** — reconnect cycle 시작 발화.
         harness.record(
@@ -480,7 +513,7 @@ public final class ConnectionStore: ObservableObject {
             for attempt in 1...Self.maxReconnectAttempts {
                 if Task.isCancelled { break }
                 let delaySeconds = Double(1 << (attempt - 1))   // 1, 2, 4, 8, 16
-                self?.reconnectAttempt = attempt
+                self?.transport.updateReconnectAttempt(attempt)
                 try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
                 if Task.isCancelled { break }
                 guard let self else { break }
@@ -504,8 +537,7 @@ public final class ConnectionStore: ObservableObject {
                     self.status = .connected(snap)
                     self.lastTelemetry = TelemetrySnapshot(board: snap, joints: [:])
                     self.startTelemetry(cadence: .light)
-                    self.isReconnecting = false
-                    self.reconnectAttempt = 0
+                    self.transport.endReconnecting()
                     self.reconnectTask = nil
                     // **v1.14.2** — reconnect 성공도 connect_success 와 동일하게.
                     harness.record(
@@ -523,7 +555,7 @@ public final class ConnectionStore: ObservableObject {
                 }
             }
             // 모든 시도 실패.
-            self?.isReconnecting = false
+            self?.transport.endReconnecting()
             self?.reconnectTask = nil
             self?.status = .error(
                 "자동 재연결 \(Self.maxReconnectAttempts)회 모두 실패. 케이블·네트워크를 확인 후 수동으로 다시 연결해 주세요."
@@ -585,7 +617,7 @@ public final class ConnectionStore: ObservableObject {
         }
         // 진행 중 자세 적용이 있었으면 cancel.
         if isMovingPose { isMovingPoseCancelled = true }
-        lastSuccessfulEndpoint = nil   // 명시적 disconnect는 자동 재연결 후보 제거.
+        transport.clearLastSuccessfulEndpoint()   // 명시적 disconnect는 자동 재연결 후보 제거.
         stopTelemetry()
         bus = nil
         activeEndpoint = nil

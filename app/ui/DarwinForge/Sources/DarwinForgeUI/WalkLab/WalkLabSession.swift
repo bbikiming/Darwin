@@ -68,23 +68,53 @@ public final class WalkLabSession {
             }
         }
     }
+    // MARK: - UI slider 12개 (WalkInputState 위임)
+    //
+    // 사이클 V261-2 (Wave 4.1.1, ADR-002 Phase 4.1.1): 종전 stored property 12개 →
+    // `inputs: WalkInputState` 단일 storage + 12개 computed delegate.
+    // 외부 view/test 코드 (`session.strideMm = 30` 등) 전부 무수정. didSet 의 부수 효과
+    // 가 있던 `correctorIntensityLevel` / `customHipRollGain` 등은 delegate setter 안에서
+    // 동일 effect 재현.
+
+    /// 보행 slider 12개의 value struct storage. UI 가 `@Bindable session.inputs` 로 직접
+    /// 접근 가능 — fine-grained tracking 으로 무관 property 변화 시 view 재평가 skip.
+    public var inputs: WalkInputState = WalkInputState()
+
     /// 보폭 (앞, mm/cycle). 0..50. WalkEngine 의 x (m) 와 매핑: x_m = strideMm / 1000.
-    public var strideMm: Double = 0
+    public var strideMm: Double {
+        get { inputs.strideMm }
+        set { inputs.strideMm = newValue }
+    }
     /// 측면 보폭 (mm/cycle). -25..25. y_m = sideMm / 1000.
-    public var sideMm: Double = 0
+    public var sideMm: Double {
+        get { inputs.sideMm }
+        set { inputs.sideMm = newValue }
+    }
     /// 회전 (°/cycle). -20..20. a_rad = turnDeg * π/180.
-    public var turnDeg: Double = 0
-    public var customPeriodMs: Double = 600
+    public var turnDeg: Double {
+        get { inputs.turnDeg }
+        set { inputs.turnDeg = newValue }
+    }
+    public var customPeriodMs: Double {
+        get { inputs.customPeriodMs }
+        set { inputs.customPeriodMs = newValue }
+    }
     /// 발 들기 높이 (mm). **사이클 124 audit #1/#14 fix**: 종전 주석 "엔진 미반영
     /// (BLOCKER C3 까지)" 는 stale 정보 (사용자 비공개 issue tag).
     /// 현재 동작: WalkLabSession 의 Mac sparse engine 은 본 값 사용 (3D 시각화 반영).
     /// Onboard mode 의 실 robot daemon 은 본 필드 미전송 (별도 PRD).
     /// ApplyScope: 시뮬 + 시각화 ✓ / Onboard 송출 ✗.
-    public var footHeightMm: Double = 40
+    public var footHeightMm: Double {
+        get { inputs.footHeightMm }
+        set { inputs.footHeightMm = newValue }
+    }
     /// 균형 게인 (NimbRo lean_fb_gain 등가). **사이클 124 audit #2 fix**:
     /// Mac sparse engine 사용 ✓ / Onboard send 미반영 — ApplyScope.simOnly 명시.
     /// UI 가 ApplyScope badge 로 사용자 동작 범위 시각화 필요.
-    public var balanceGain: Double = 1.0
+    public var balanceGain: Double {
+        get { inputs.balanceGain }
+        set { inputs.balanceGain = newValue }
+    }
     /// 사용자 명시적 안전 한도 해제. Smart-clamp 무시, 단 critical 점수는 여전히 차단.
     /// v1.11.25 audit log-F — 안전 우회는 영구 기록 필수 (warn level + SE).
     public var forceOverrideSafety: Bool = false {
@@ -501,14 +531,20 @@ public final class WalkLabSession {
     /// - Mac sparse engine: 사용 ✓ (corrector multiplier 적용)
     /// - Onboard 모드 daemon: 송신 ✗ (별도 PRD — robot firmware 측에 동일 mapping 없음)
     /// - Onboard 모드에서 사용자가 슬라이더 조정해도 실 robot 자이로 보정 강도는 변경 안 됨.
-    public var correctorIntensityLevel: Int = 2 {
-        didSet {
-            let clamped = max(0, min(4, correctorIntensityLevel))
-            if clamped != correctorIntensityLevel {
-                correctorIntensityLevel = clamped
+    /// 사이클 V261-2 (Wave 4.1.1): `inputs: WalkInputState` 위임. setter 안에서 clamp +
+    /// corrector rebuild + safety event 발화 (종전 didSet 동등). 동작 100% 보존.
+    public var correctorIntensityLevel: Int {
+        get { inputs.correctorIntensityLevel }
+        set {
+            let clamped = max(0, min(4, newValue))
+            let oldValue = inputs.correctorIntensityLevel
+            guard clamped != oldValue else {
+                // clamp 결과가 oldValue 와 같아도 store 는 clamped 값으로 동기화
+                // (종전 didSet 의 self.correctorIntensityLevel = clamped + return 의 후속 효과 무.)
+                inputs.correctorIntensityLevel = clamped
                 return
             }
-            guard clamped != oldValue else { return }
+            inputs.correctorIntensityLevel = clamped
             // **v1.14.7 (2026-05-21) — 사용자 응답성 fix**: 종전 setter 안에서 동기로
             // makeCorrector + logSafetyEvent 실행 → 클릭 응답 지연. SwiftUI binding
             // 갱신은 즉시 (button highlight) — 무거운 작업은 다음 runloop tick 으로.
@@ -1472,7 +1508,12 @@ public final class WalkLabSession {
     /// **v1.11.4 (2026-05-18)** — hipPitchOffset trim slider 값 (UI 노출).
     /// 0~20°, default 13° (ROBOTIS Walking.cpp 원본).
     /// 사용자가 cradle 캘리브레이션 중 0/5/13° 비교해서 mean pitch bias 측정 가능.
-    public var hipPitchOffsetTrimDeg: Double = 13.0
+    ///
+    /// 사이클 V261-2 (Wave 4.1.1): `inputs: WalkInputState` 위임.
+    public var hipPitchOffsetTrimDeg: Double {
+        get { inputs.hipPitchOffsetTrimDeg }
+        set { inputs.hipPitchOffsetTrimDeg = newValue }
+    }
 
     /// **v1.11.6 (2026-05-18)** — `.robotisOnboard` 모드의 자동 brokering 토글.
     /// true 면 preset / tuning 변경 시 `WalkLabOnboardBridge` 가 300ms debounce 후
@@ -1539,17 +1580,40 @@ public final class WalkLabSession {
     /// gainProfile == .custom 일 때만 makeCorrector 가 이 값들을 적용.
     /// 종전 (v1.11.5.2 이하) `.custom` 은 robotisOriginal fallback — UI 라벨과 동작 불일치.
     /// default: robotisOriginal 값 (사용자가 명시 변경해야 effect).
-    public var customHipRollGain: Double = 0.5 {
-        didSet { rebuildCorrectorIfCustomChanged() }
+    /// 사이클 V261-2 (Wave 4.1.1): `inputs: WalkInputState` 위임. setter 안에서
+    /// rebuildCorrectorIfCustomChanged() 호출 (종전 didSet 동등). gainProfile==.custom
+    /// 일 때만 corrector 재생성, 그 외 profile 은 no-op.
+    public var customHipRollGain: Double {
+        get { inputs.customHipRollGain }
+        set {
+            let oldValue = inputs.customHipRollGain
+            inputs.customHipRollGain = newValue
+            if newValue != oldValue { rebuildCorrectorIfCustomChanged() }
+        }
     }
-    public var customKneeGain: Double = 0.3 {
-        didSet { rebuildCorrectorIfCustomChanged() }
+    public var customKneeGain: Double {
+        get { inputs.customKneeGain }
+        set {
+            let oldValue = inputs.customKneeGain
+            inputs.customKneeGain = newValue
+            if newValue != oldValue { rebuildCorrectorIfCustomChanged() }
+        }
     }
-    public var customAnklePitchGain: Double = 0.9 {
-        didSet { rebuildCorrectorIfCustomChanged() }
+    public var customAnklePitchGain: Double {
+        get { inputs.customAnklePitchGain }
+        set {
+            let oldValue = inputs.customAnklePitchGain
+            inputs.customAnklePitchGain = newValue
+            if newValue != oldValue { rebuildCorrectorIfCustomChanged() }
+        }
     }
-    public var customAnkleRollGain: Double = 1.0 {
-        didSet { rebuildCorrectorIfCustomChanged() }
+    public var customAnkleRollGain: Double {
+        get { inputs.customAnkleRollGain }
+        set {
+            let oldValue = inputs.customAnkleRollGain
+            inputs.customAnkleRollGain = newValue
+            if newValue != oldValue { rebuildCorrectorIfCustomChanged() }
+        }
     }
 
     /// custom gain 변경 시 corrector 재생성 (gainProfile == .custom 일 때만).

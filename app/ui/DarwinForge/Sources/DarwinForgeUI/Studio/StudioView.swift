@@ -966,8 +966,10 @@ struct ConnectionInlineControls: View {
 
     @ViewBuilder
     private var networkControls: some View {
-        TextField("호스트", text: $store.networkHost,
-                  prompt: Text("10.0.0.42 또는 op2.local"))
+        TextField("호스트", text: Binding(
+            get: { store.networkHost },
+            set: { store.networkHost = $0 }
+        ), prompt: Text("10.0.0.42 또는 op2.local"))
             .textFieldStyle(.roundedBorder)
             .frame(width: 160)
             .controlSize(.small)
@@ -976,7 +978,10 @@ struct ConnectionInlineControls: View {
         Text(":")
             .foregroundStyle(DFColor.textSecondary)
 
-        TextField("", value: $store.networkPort, format: .number.grouping(.never))
+        TextField("", value: Binding<UInt16>(
+            get: { store.networkPort },
+            set: { store.networkPort = $0 }
+        ), format: .number.grouping(.never))
             .textFieldStyle(.roundedBorder)
             .frame(width: 56)
             .controlSize(.small)
