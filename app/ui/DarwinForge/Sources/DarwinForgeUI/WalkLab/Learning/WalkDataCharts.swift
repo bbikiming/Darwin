@@ -278,8 +278,10 @@ enum WalkDataChartA11y {
             counts[ord, default: 0] += 1
         }
         let total = max(1, samples.count)
-        let normalPct = Int(Double(counts[0] ?? 0) / Double(total) * 100)
-        let dangerPct = Int(Double((counts[3] ?? 0) + (counts[4] ?? 0)) / Double(total) * 100)
+        let normalCnt: Int = counts[0] ?? 0
+        let normalPct: Int = Int(Double(normalCnt) / Double(total) * 100.0)
+        let dangerCnt: Int = (counts[3] ?? 0) + (counts[4] ?? 0)
+        let dangerPct: Int = Int(Double(dangerCnt) / Double(total) * 100.0)
         return String(
             format: "Balance 상태 시간 strip — sample %d개, 정상 %d%%, 위험 이상 %d%%",
             samples.count, normalPct, dangerPct
