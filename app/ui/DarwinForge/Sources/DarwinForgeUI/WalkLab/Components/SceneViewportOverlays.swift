@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import Accessibility
 import ForgeCore
 
 /// **V272-1 (2026-05-24) WCAG 1.4.1 fix — Scene attitude severity dual encoding**.
@@ -132,7 +133,7 @@ public struct SceneGyroMiniOverlay: View {
         let icon = SceneSeverity.icon(forAttitudeDeg: value, danger: danger)
         return HStack(spacing: 2) {
             Image(systemName: icon)
-                .font(.system(size: 8))
+                .font(DFIcon.micro)
                 .foregroundStyle(color)
             Text(axis)
                 .font(DFFont.micro)
@@ -145,7 +146,7 @@ public struct SceneGyroMiniOverlay: View {
 
     private var sourceChip: some View {
         Text(sourceLabel)
-            .font(.system(size: 8, weight: .bold))
+            .font(DFFont.hudPillBold)
             .foregroundStyle(sourceColor)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
@@ -227,23 +228,10 @@ public struct SceneWalkGraphOverlay: View {
 
     private var sparkline: some View {
         // Roll 진동 + walking phase line 합성.
-        Chart {
-            ForEach(Array(rollHistory.enumerated()), id: \.offset) { _, sample in
-                LineMark(
-                    x: .value("t", sample.0),
-                    y: .value("roll", sample.1)
-                )
-                .foregroundStyle(DFColor.accent)
-                .interpolationMethod(.catmullRom)
-            }
-            RuleMark(y: .value("zero", 0))
-                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
-                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
-        }
-        .chartYScale(domain: -20...20)
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        .frame(height: 32)
+        SceneWalkSparklineChart(
+            rollHistory: rollHistory,
+            phaseLabel: session.phaseLabel
+        )
     }
 
     private var statsRow: some View {
@@ -261,10 +249,10 @@ public struct SceneWalkGraphOverlay: View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label)
                 .foregroundStyle(DFColor.textSecondary)
-                .font(.system(size: 8))
+                .font(DFFont.pill)
             Text(value)
                 .foregroundStyle(DFColor.textPrimary)
-                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .font(DFFont.hudValueSemibold)
         }
     }
 
@@ -288,5 +276,74 @@ public struct SceneWalkGraphOverlay: View {
         let cutoff = now.addingTimeInterval(-10.0)
         phaseHistory.removeAll { $0.0 < cutoff }
         rollHistory.removeAll { $0.0 < cutoff }
+    }
+}
+
+// MARK: - Scene walk sparkline chart (V274-4 a11y)
+//
+// **V274-4 (2026-05-24) WCAG 1.1.1 + 1.3.1 fix — chart 구조 VoiceOver 노출**.
+// Scene overlay 의 작은 sparkline 도 chart 데이터를 갖고 있으므로 AXChartDescriptor
+// 로 series / axis 노출. VoiceOver 사용자가 보행 중 roll 진동 추이 청취 가능.
+struct SceneWalkSparklineChart: View {
+    let rollHistory: [(Date, Double)]
+    let phaseLabel: String
+
+    var body: some View {
+        Chart {
+            ForEach(Array(rollHistory.enumerated()), id: \.offset) { _, sample in
+                LineMark(
+                    x: .value("t", sample.0),
+                    y: .value("roll", sample.1)
+                )
+                .foregroundStyle(DFColor.accent)
+                .interpolationMethod(.catmullRom)
+            }
+            RuleMark(y: .value("zero", 0))
+                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
+                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+        }
+        .chartYScale(domain: -20...20)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .frame(height: 32)
+        .accessibilityChartDescriptor(self)
+    }
+}
+
+extension SceneWalkSparklineChart: AXChartDescriptorRepresentable {
+    func makeChartDescriptor() -> AXChartDescriptor {
+        let pts = WalkLabChartA11y.timeOffsetPoints(rollHistory)
+        let xMin = pts.map(\.x).min() ?? -10.0
+        let xMax = pts.map(\.x).max() ?? 0.0
+        let xAxis = AXNumericDataAxisDescriptor(
+            title: "시간 (초)",
+            range: xMin...xMax,
+            gridlinePositions: [xMin, (xMin + xMax) / 2, xMax]
+        ) { value in
+            String(format: "%.1f초 전", -value)
+        }
+        let yAxis = AXNumericDataAxisDescriptor(
+            title: "Roll (도)",
+            range: -20.0...20.0,
+            gridlinePositions: [-10, 0, 10]
+        ) { value in
+            "\(Int(value))도"
+        }
+        let series = AXDataSeriesDescriptor(
+            name: "Roll 진동",
+            isContinuous: true,
+            dataPoints: pts.map { AXDataPoint(x: $0.x, y: $0.y) }
+        )
+        return AXChartDescriptor(
+            title: "보행 sparkline (최근 10초)",
+            summary: WalkLabChartA11y.sceneWalkSparklineSummary(
+                rollHistory: rollHistory,
+                phaseLabel: phaseLabel
+            ),
+            xAxis: xAxis,
+            yAxis: yAxis,
+            additionalAxes: [],
+            series: [series]
+        )
     }
 }

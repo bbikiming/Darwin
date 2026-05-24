@@ -1,5 +1,15 @@
 import SwiftUI
 import Charts
+// `import Accessibility` 는 file-scoped — 같은 file 의 `GyroSparklineChart` struct (line 311~) 가
+// `AXChartDescriptor` / `AXNumericDataAxisDescriptor` / `AXDataPoint` / `AXDataSeriesDescriptor` /
+// `AXChartDescriptorRepresentable` 사용. 부모 `LiveGyroPanel` struct 는 SwiftUI 의
+// `.accessibilityLabel` / `.accessibilityElement` 만 사용 (SwiftUI 내장 — Accessibility import 불필요).
+//
+// **V275-3 critic 5차 MINOR-4 검토**: import 를 struct 단위로 분리 권고 받았으나 Swift import 는
+// file 단위 — 두 struct (`LiveGyroPanel`, `GyroSparklineChart`) 가 같은 file 에 있는 한 file 최상단에
+// 둘 수밖에 없다. 별도 file 분리는 chart 가 부모 view 의 `@State rollHistory` 를 init 으로 받는
+// 단순 prop drilling 관계라 분리 비용 대비 이득 미미 → 현 구조 유지.
+import Accessibility
 import ForgeCore
 
 /// **V272-1 (2026-05-24) WCAG 1.4.1 fix — Gyro 자세/각속도 severity dual encoding**.
@@ -148,7 +158,7 @@ public struct LiveGyroPanel: View {
         // **V272-1 WCAG 1.4.1 fix**: 색상-only → 아이콘 + 색상 dual encoding.
         HStack(spacing: 2) {
             Image(systemName: GyroSeverity.attitudeIcon(deg: value, danger: 50))
-                .font(.system(size: 8))
+                .font(DFIcon.micro)
                 .foregroundStyle(angleColor(value))
             Text(label)
                 .font(DFFont.micro)
@@ -173,7 +183,7 @@ public struct LiveGyroPanel: View {
             // **V272-1 WCAG 1.4.1 fix**: 색상-only → label 옆 severity 아이콘 추가.
             HStack(spacing: 4) {
                 Image(systemName: GyroSeverity.attitudeIcon(deg: value, danger: dangerThreshold))
-                    .font(.system(size: 10))
+                    .font(DFIcon.label)
                     .foregroundStyle(angleColor(value, danger: dangerThreshold))
                 Text(label)
                     .font(DFFont.micro)
@@ -224,7 +234,7 @@ public struct LiveGyroPanel: View {
         return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 3) {
                 Image(systemName: GyroSeverity.gyroIcon(dps: value, danger: 50))
-                    .font(.system(size: 8))
+                    .font(DFIcon.micro)
                     .foregroundStyle(color)
                 Text(axis)
                     .font(DFFont.micro)
@@ -251,36 +261,10 @@ public struct LiveGyroPanel: View {
                 Circle().fill(DFColor.forge).frame(width: 5, height: 5)
                 Text("Pitch").font(DFFont.micro).foregroundStyle(DFColor.textSecondary)
             }
-            Chart {
-                ForEach(Array(rollHistory.enumerated()), id: \.offset) { _, sample in
-                    LineMark(
-                        x: .value("t", sample.0),
-                        y: .value("roll", sample.1),
-                        series: .value("axis", "Roll")
-                    )
-                    .foregroundStyle(DFColor.accent)
-                }
-                ForEach(Array(pitchHistory.enumerated()), id: \.offset) { _, sample in
-                    LineMark(
-                        x: .value("t", sample.0),
-                        y: .value("pitch", sample.1),
-                        series: .value("axis", "Pitch")
-                    )
-                    .foregroundStyle(DFColor.forge)
-                }
-                RuleMark(y: .value("zero", 0))
-                    .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
-                    .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
-            }
-            .chartYScale(domain: -45...45)
-            .chartYAxis {
-                AxisMarks(values: [-30, 0, 30]) { _ in
-                    AxisGridLine().foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
-                    AxisValueLabel().font(DFFont.micro).foregroundStyle(DFColor.textSecondary)
-                }
-            }
-            .chartXAxis(.hidden)
-            .frame(height: 60)
+            GyroSparklineChart(
+                rollHistory: rollHistory,
+                pitchHistory: pitchHistory
+            )
         }
     }
 
@@ -321,5 +305,101 @@ public struct LiveGyroPanel: View {
         let cutoff = now.addingTimeInterval(-5.0)
         rollHistory.removeAll { $0.0 < cutoff }
         pitchHistory.removeAll { $0.0 < cutoff }
+    }
+}
+
+// MARK: - Gyro sparkline chart (V274-4 a11y)
+//
+// **V274-4 (2026-05-24) WCAG 1.1.1 + 1.3.1 fix — chart 구조 VoiceOver 노출**.
+// SwiftUI Charts framework 의 Chart 만으로는 VoiceOver 가 "chart" 만 announce 하고
+// 데이터 구조 (axis / series / data point) 를 navigate 불가. AXChartDescriptor 로
+// title / summary / x/y axis / series 를 노출해 VoiceOver 사용자가 데이터 탐색 가능.
+//
+// 추출 이유: AXChartDescriptorRepresentable 은 struct 단위 conformance — body 안의
+// inline Chart 에는 적용 불가. 작은 dedicated struct 로 분리.
+struct GyroSparklineChart: View {
+    let rollHistory: [(Date, Double)]
+    let pitchHistory: [(Date, Double)]
+
+    var body: some View {
+        Chart {
+            ForEach(Array(rollHistory.enumerated()), id: \.offset) { _, sample in
+                LineMark(
+                    x: .value("t", sample.0),
+                    y: .value("roll", sample.1),
+                    series: .value("axis", "Roll")
+                )
+                .foregroundStyle(DFColor.accent)
+            }
+            ForEach(Array(pitchHistory.enumerated()), id: \.offset) { _, sample in
+                LineMark(
+                    x: .value("t", sample.0),
+                    y: .value("pitch", sample.1),
+                    series: .value("axis", "Pitch")
+                )
+                .foregroundStyle(DFColor.forge)
+            }
+            RuleMark(y: .value("zero", 0))
+                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
+                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+        }
+        .chartYScale(domain: -45...45)
+        .chartYAxis {
+            AxisMarks(values: [-30, 0, 30]) { _ in
+                AxisGridLine().foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
+                AxisValueLabel().font(DFFont.micro).foregroundStyle(DFColor.textSecondary)
+            }
+        }
+        .chartXAxis(.hidden)
+        .frame(height: 60)
+        .accessibilityChartDescriptor(self)
+    }
+}
+
+extension GyroSparklineChart: AXChartDescriptorRepresentable {
+    func makeChartDescriptor() -> AXChartDescriptor {
+        // Axis 0 = 시간 (초 단위, 0 = now, 음수 = 과거).
+        // pinned reference = 가장 오래된 sample (보통 -5.0s) ~ 0.
+        let rollPts = WalkLabChartA11y.timeOffsetPoints(rollHistory)
+        let pitchPts = WalkLabChartA11y.timeOffsetPoints(pitchHistory)
+        let allOffsets = rollPts.map(\.x) + pitchPts.map(\.x)
+        let xMin = allOffsets.min() ?? -5.0
+        let xMax = allOffsets.max() ?? 0.0
+        let xAxis = AXNumericDataAxisDescriptor(
+            title: "시간 (초)",
+            range: xMin...xMax,
+            gridlinePositions: [xMin, (xMin + xMax) / 2, xMax]
+        ) { value in
+            String(format: "%.1f초 전", -value)
+        }
+        let yAxis = AXNumericDataAxisDescriptor(
+            title: "각도 (도)",
+            range: -45.0...45.0,
+            gridlinePositions: [-30, 0, 30]
+        ) { value in
+            "\(Int(value))도"
+        }
+        let rollSeries = AXDataSeriesDescriptor(
+            name: "Roll (좌우 기울기)",
+            isContinuous: true,
+            dataPoints: rollPts.map { AXDataPoint(x: $0.x, y: $0.y) }
+        )
+        let pitchSeries = AXDataSeriesDescriptor(
+            name: "Pitch (앞뒤 기울기)",
+            isContinuous: true,
+            dataPoints: pitchPts.map { AXDataPoint(x: $0.x, y: $0.y) }
+        )
+        let summary = WalkLabChartA11y.gyroSparklineSummary(
+            rollHistory: rollHistory,
+            pitchHistory: pitchHistory
+        )
+        return AXChartDescriptor(
+            title: "IMU 자세 sparkline (최근 5초)",
+            summary: summary,
+            xAxis: xAxis,
+            yAxis: yAxis,
+            additionalAxes: [],
+            series: [rollSeries, pitchSeries]
+        )
     }
 }
