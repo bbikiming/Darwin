@@ -182,6 +182,12 @@ public final class WalkLabSession {
     public var rightFoot: SIMD3<Double> = .zero
     public var footTrail: [FootTrailPoint] = []
 
+    /// **V287-2 (2026-05-24)** — ZMP stability monitor (observe-only default).
+    /// Vukobratović CoP gate, 2cm margin, 2-cycle hysteresis. enforce=false 면
+    /// telemetry/UI 만 갱신, 실 차단 X. 사용자가 명시 토글 시만 step veto 가능.
+    /// `tickRunSafetyPipeline()` 가 매 tick 평가.
+    public let zmpMonitor: ZMPMonitor = ZMPMonitor()
+
     // MARK: - v1.15.0 (2026-05-21) Phase 1 — Trial 통합 hook
     //
     // 신규 책임 (라벨 sheet 트리거 + start 시점 capture) 2개 stored property 만 추가.
@@ -1073,8 +1079,13 @@ public final class WalkLabSession {
     }
 
     /// SwiftUI 한계 우회 — `.onAppear` 에서 env 가 도착하면 호출.
+    ///
+    /// **V283-5 (2026-05-24)** — 양방향 weak 링크. `store.walkSession = self` 로
+    /// `ConnectionStore.emergencyStop()` 가 활성 session 의 8-phase 체인을 호출 가능.
+    /// 미수행 시 JointControlView 등 외부 UI 의 e-stop 이 bus FFI 만 수행 → cycle Task 잔존.
     public func attach(store: ConnectionStore) {
         self.store = store
+        store.walkSession = self
     }
 
     // MARK: - 내부

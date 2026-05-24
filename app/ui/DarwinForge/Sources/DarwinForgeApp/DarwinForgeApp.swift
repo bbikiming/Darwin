@@ -176,6 +176,15 @@ struct DarwinForgeApp: App {
     // .preferredColorScheme 와 \.dfTheme env 가 자식 view 에 전파.
     @StateObject private var themeManager = DFThemeManager()
 
+    // **V285 (2026-05-24)** — 사용자 요청 trial 90일 retention.
+    // 종전: `WalkTrialStore.shared` 가 lazy singleton → 워크랩 탭 진입 시까지 init 안 됨
+    // → background cleanup task 가 안 돔 → index.json 부재 + 72K trial 그대로 잔존.
+    // 신규: App init 시점에 강제 touch → init 안의 detached background task 가
+    // index rebuild + 90일 prune 즉시 실행. 사용자 UI 진입과 무관 자동 cleanup.
+    init() {
+        _ = WalkTrialStore.shared
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

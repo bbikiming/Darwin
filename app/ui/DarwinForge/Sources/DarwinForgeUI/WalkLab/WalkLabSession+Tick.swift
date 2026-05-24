@@ -214,6 +214,25 @@ extension WalkLabSession {
                                       || imuScaleSuspicion == .unknown  // 아직 진단 X — 보수적 trust
                                       || imuSource == .sim)             // sim 모드는 항상 신뢰
 
+        // V287-2 ZMP stability gate — observe-only default. evaluate 가 lastMargin /
+        // lastVerdict 갱신. enforce=false 면 verdict 가 .veto 까지 escalate 안 함.
+        // 사용자가 zmpMonitor.enforceEnabled = true 토글 시만 step veto path 진입.
+        let zmpVerdict = zmpMonitor.evaluate(
+            imuRollDeg: imuRollDeg,
+            imuPitchDeg: imuPitchDeg,
+            leftFootCenter: (x: leftFoot.x, y: leftFoot.y),
+            rightFootCenter: (x: rightFoot.x, y: rightFoot.y)
+        )
+        if case .veto = zmpVerdict {
+            // enforce ON + 2 cycle 위험 충족 — 보수적: emergencyStop 까진 아니고
+            // safety event 만 log. 향후 cycle 에서 amplitude scale / step skip 도입.
+            logSafetyEvent(
+                kind: .preflightFailure,
+                message: String(format: "L5 ZMP veto — margin %+.3fm < 0, 2 sample 연속",
+                                zmpMonitor.lastMargin)
+            )
+        }
+
         if autoFallPrevention {
             applyBalanceMitigation()
         }

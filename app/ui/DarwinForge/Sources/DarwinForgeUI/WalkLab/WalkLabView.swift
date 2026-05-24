@@ -376,22 +376,34 @@ public struct WalkLabView: View {
     ///
     /// 결과: default 노출 항목 15 → 5 (heroRow + side group×2 + actionBar + banner). 5±2 적합.
     private var mainDetailContent: some View {
-        ScrollView {
-            VStack(spacing: DFSpace.sm3) {
-                // 1. Primary banner — priority based, 한 번에 1개만 (Nielsen #8 minimalist).
+        // V284 재설계 (2026-05-24) — 사용자 피드백: 하단 영역 화면 밖 사라짐.
+        //
+        // # 책임 분할 (전체 사용 가능 세로 H):
+        //   • banner    : 조건부 ~44px (없으면 0)
+        //   • heroRow   : H - footerHeight - banner - padding (남는 공간 모두)
+        //   • footer    : 고정 324px (auxInfoDisclosure + actionBar + 로그/알림)
+        //
+        // # 반응형:
+        //   - 큰 화면 (H ≥ 924): heroRow 600+ / footer 324 / 잘 맞음
+        //   - 일반 화면 (H = 800): heroRow 400 / footer 324 / 잘 맞음
+        //   - 작은 화면 (H < 724): GeometryReader 가 minHeight 400 보장 → fallback ScrollView
+        //
+        // GeometryReader 로 전체화면 동작 + 작은 화면 자동 대응.
+        GeometryReader { geo in
+            let footerHeight: CGFloat = 324
+            let availableHeroH = max(400, geo.size.height - footerHeight - 24)
+            VStack(spacing: DFSpace.xs) {
                 primaryBanner
-
-                // 2. Primary hero: 3D scene + sceneInfoOverlay + 사이드 카드 2 그룹.
                 heroRow
-
-                // 3. Tertiary: 보조 정보 disclosure — LiveGyroPanel / simOnlyNotice / footTargetsCard.
-                //    기본 CLOSED. 사용자 명시 열기 시만 표시.
-                auxInfoDisclosure
-
-                // 4. Primary: actionBar — start/stop/emergency. 항상 표시.
-                actionBar
+                    .frame(height: availableHeroH)
+                VStack(spacing: DFSpace.xs) {
+                    auxInfoDisclosure
+                    actionBar
+                }
+                .frame(height: footerHeight)
             }
-            .padding(DFSpace.md)
+            .padding(.horizontal, DFSpace.sm)
+            .padding(.vertical, DFSpace.xs)
         }
     }
 
@@ -422,7 +434,7 @@ public struct WalkLabView: View {
     /// heroSidePanel 을 sub-file (`WalkLabSceneSection` / `WalkLabSidePanelSection`)
     /// 로 추출. behavior 0 변경 (Fowler "Extract Class").
     private var heroRow: some View {
-        HStack(spacing: DFSpace.sm3) {
+        HStack(spacing: DFSpace.xs) {
             WalkLabSceneSection(
                 showSceneOverlays: $showSceneOverlays,
                 blockingReasons: uniqueBlockingReasons()
@@ -431,10 +443,15 @@ public struct WalkLabView: View {
                 expandedRunGroup: $expandedRunGroup,
                 expandedDiagGroup: $expandedDiagGroup
             )
-                // v1.11 재작업: 고정 280 → 가변 (좁은 화면 260, 와이드 모니터 340 까지).
-                .frame(minWidth: 260, idealWidth: 280, maxWidth: 340)
+                // V284 (2026-05-24) — 사용자 요청 "3D 뷰 비율이 너무 작고 비효율적".
+                // 종전 maxWidth 340 → 260 으로 축소. side panel 은 secondary, scene 이 primary.
+                // 가로 절약분 = 3D scene 으로 흡수 (모델링 영역 +80px).
+                .frame(minWidth: 220, idealWidth: 240, maxWidth: 260)
         }
-        .frame(minHeight: 360)
+        // V284 재설계 (2026-05-24) — 부모 mainDetailContent 의 GeometryReader 가 명시
+        // height 부여 (availableHeroH = 화면 - footer 324 - padding). 본 frame 는
+        // minHeight 만 유지하여 작은 화면 fallback 보장 (400px 미달 차단).
+        .frame(minHeight: 400)
     }
 
     /// **V280-A**: Tertiary disclosure — LiveGyroPanel + simOnlyNotice + footTargetsCard.

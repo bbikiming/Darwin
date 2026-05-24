@@ -82,6 +82,22 @@ public final class ConnectionStore: ObservableObject {
     @Published public var bus: (any BusInterface)?
     @Published public var jointStates: [JointID: JointState] = [:]
 
+    /// V283-5 (2026-05-24) — WalkLabSession e-stop chain 양방향 weak 링크.
+    ///
+    /// 종전 (V283-3): `ConnectionStore.emergencyStop()` 는 bus FFI (torque OFF) + telemetry 만
+    /// 수행. WalkLabSession 의 8-phase 안전 체인 (isRobotWalking=false / walkCycleTask cancel /
+    /// sim teardown / pilot EMA hard-zero / safety event log) 무시. JointControlView /
+    /// TorqueLoadGrid / TorqueLoadSidebar / TeleopChannel / 메뉴 ⌘⇧. 어디서 e-stop 을 눌러도
+    /// 보행 cycle Task 가 살아남아 setPosition 재시도 → motor 무응답 + race window.
+    ///
+    /// 신규: 활성 WalkLabSession (`isWalkActive`) 가 있고 아직 emergency 진입 전이면
+    /// `walkSession.emergencyStop()` 8-phase 위임. Phase 5 의 `store?.emergencyStop()`
+    /// 재진입은 `emergencyStopActive` 가드로 차단 (Phase 3 가 set, Phase 5 이전).
+    ///
+    /// 등록: `WalkLabSession.attach(store:)` 가 양방향 weak set (`WalkLabView.onAppear`).
+    /// 양쪽 weak — RootView 가 둘 다 strong 보유 (singleton lifecycle).
+    weak var walkSession: WalkLabSession?
+
     /// 현재 활성 endpoint (.usbSerial 또는 .network). 연결 해제 시 nil.
     public var activeEndpoint: Endpoint? {
         get { transport.activeEndpoint }
@@ -1263,7 +1279,15 @@ public final class ConnectionStore: ObservableObject {
     }
 
     /// 응급 e-stop — 모든 관절 토크 OFF.
+    ///
+    /// **V283-5 (2026-05-24)** — 활성 WalkLabSession 가 있으면 8-phase 안전 체인 위임.
+    /// `walkSession.emergencyStop()` 의 Phase 5 가 본 메서드를 재호출하지만
+    /// `emergencyStopActive=true` (Phase 3 에서 set) 가드로 즉시 fall-through.
     public func emergencyStop() {
+        if let walk = walkSession, walk.isWalkActive, !walk.emergencyStopActive {
+            walk.emergencyStop()
+            return
+        }
         guard let bus else { return }
         // V283-4: e-stop 발동 시 dxlPower 상태를 OFF 로 리셋 — gate 일관성 유지.
         isDxlPowerOn = false

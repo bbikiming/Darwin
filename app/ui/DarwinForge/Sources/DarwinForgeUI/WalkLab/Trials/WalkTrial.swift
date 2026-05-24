@@ -56,6 +56,12 @@ public struct WalkTrial: Codable, Sendable, Identifiable, Equatable, Hashable {
     /// 시계열 데이터 참조. nil = timeseries 파일 없음 (sim mode 또는 logger 비활성).
     public let timeseries: TimeseriesRef?
 
+    /// **V285 (2026-05-24)** — start 시점 사이드바 메모 (사용자 명시 요청).
+    /// 종전: `operatorNote` 가 SessionHeader 의 `operatorNoteAtStart` 에만 저장 →
+    /// Trial Library 검색/표시 불가. 신규: Trial 본체에 영구 저장 → 검색 + 표시 + 학습.
+    /// nil / empty = 메모 입력 안 됨.
+    public let operatorNote: String?
+
     public init(
         id: String,
         startedAtIso: String,
@@ -65,7 +71,8 @@ public struct WalkTrial: Codable, Sendable, Identifiable, Equatable, Hashable {
         config: TrialConfig,
         outcome: TrialOutcome,
         label: UserLabel? = nil,
-        timeseries: TimeseriesRef? = nil
+        timeseries: TimeseriesRef? = nil,
+        operatorNote: String? = nil
     ) {
         self.id = id
         self.startedAtIso = startedAtIso
@@ -76,13 +83,14 @@ public struct WalkTrial: Codable, Sendable, Identifiable, Equatable, Hashable {
         self.outcome = outcome
         self.label = label
         self.timeseries = timeseries
+        self.operatorNote = operatorNote
     }
 
     // MARK: - Backward-compat 위한 decode (미래 필드 추가 대비)
 
     private enum CodingKeys: String, CodingKey {
         case id, startedAtIso, endedAtIso, durationSec, endReason
-        case config, outcome, label, timeseries
+        case config, outcome, label, timeseries, operatorNote
     }
 
     public init(from decoder: Decoder) throws {
@@ -96,6 +104,8 @@ public struct WalkTrial: Codable, Sendable, Identifiable, Equatable, Hashable {
         self.outcome = try c.decode(TrialOutcome.self, forKey: .outcome)
         self.label = try c.decodeIfPresent(UserLabel.self, forKey: .label)
         self.timeseries = try c.decodeIfPresent(TimeseriesRef.self, forKey: .timeseries)
+        // V285: backward-compat — 기존 trial json 에 없으면 nil.
+        self.operatorNote = try c.decodeIfPresent(String.self, forKey: .operatorNote)
     }
 }
 

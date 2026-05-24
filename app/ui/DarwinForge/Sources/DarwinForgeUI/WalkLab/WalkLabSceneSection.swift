@@ -49,7 +49,10 @@ struct WalkLabSceneSection: View {
             imuRollDeg: session.displayImuRollDeg,
             imuPitchDeg: session.displayImuPitchDeg
         )
-        .frame(minHeight: 360, maxHeight: .infinity)
+        // V284 (2026-05-24) — 사용자 요청 "3D 뷰 비율이 너무 작고 비효율적".
+        // minHeight 360 → 600 (RobotScene3D 가 ScrollView 안에서 항상 충분 세로 확보).
+        // maxHeight infinity 로 부모 heroRow 의 720+ 세로 가용분 흡수.
+        .frame(minHeight: 600, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.card)

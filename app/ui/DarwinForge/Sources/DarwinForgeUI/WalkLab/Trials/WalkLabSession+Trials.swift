@@ -25,6 +25,8 @@ struct TrialStartCapture {
     let loggerFilePath: URL?
     /// sessionLogger 의 sessionId — trial.id 와 동일.
     let loggerSessionId: String?
+    /// **V285 (2026-05-24)** — start 시점 사이드바 메모. finalize 시 WalkTrial 에 영구 저장.
+    let operatorNote: String?
 }
 
 extension WalkLabSession {
@@ -74,7 +76,9 @@ extension WalkLabSession {
             preset: preset,
             config: config,
             loggerFilePath: nil,  // logger 는 startWalkCycle 안에서 만들어짐 — finalize 시 다시 확인.
-            loggerSessionId: nil
+            loggerSessionId: nil,
+            // V285 (2026-05-24) — start 시점 사이드바 메모 캡쳐. empty/nil 명시 처리.
+            operatorNote: (operatorNote?.isEmpty == false) ? operatorNote : nil
         )
     }
 
@@ -153,7 +157,10 @@ extension WalkLabSession {
                 config: finalConfig,
                 outcome: outcome,
                 label: nil,
-                timeseries: timeseries
+                timeseries: timeseries,
+                // V285 (2026-05-24) — start 시점 메모 영구 보존.
+                // 사후 라벨 sheet 의 freeText 와 별개 (start vs after-session).
+                operatorNote: cap.operatorNote
             )
             // append 는 nonisolated → 어디서나 OK.
             WalkTrialStore.shared.append(trial)
