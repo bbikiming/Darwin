@@ -51,6 +51,7 @@ struct MotionStudioInspector: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(DFColor.textSecondary)
                 .help("자세 편집기 닫기")
+                .accessibilityLabel("자세 편집기 닫기")
             }
             .padding(.horizontal, DFSpace.md)
             .padding(.vertical, DFSpace.sm)

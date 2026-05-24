@@ -161,6 +161,7 @@ public struct PilotCameraView: View {
             }
             .menuStyle(.borderlessButton)
             .help("Expert 도구 — head PD / IMU 검증 / HSV 튜닝")
+            .accessibilityLabel("Expert 도구 메뉴")
         }
     }
 

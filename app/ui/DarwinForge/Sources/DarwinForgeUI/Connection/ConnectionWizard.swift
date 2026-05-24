@@ -997,7 +997,7 @@ public struct ConnectionWizardView: View {
                 ForEach(store.availablePorts, id: \.self) { p in
                     HStack {
                         Image(systemName: "circle.fill")
-                            .font(.system(size: 6))
+                            .font(DFIcon.micro)
                             .foregroundStyle(DFColor.success)
                         Text(URL(fileURLWithPath: p).lastPathComponent)
                             .font(DFFont.body.monospaced())

@@ -57,10 +57,12 @@ public struct WalkTrialLibraryView: View {
                     Image(systemName: "sparkles.rectangle.stack")
                 }
                 .help("Trial 자동 생성 — Recommender 학습용")
+                .accessibilityLabel("Trial 자동 생성기 열기")
                 Button(action: refresh) {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("새로고침")
+                .accessibilityLabel("Trial 목록 새로고침")
             }
         }
         .sheet(isPresented: $showingAutoGenerator) {
@@ -507,7 +509,7 @@ private struct TrialDetailView: View {
                                 Text(String(format: "%.0f%%", pct))
                                     .font(.caption.monospacedDigit())
                                 Text(state)
-                                    .font(.system(size: 9))
+                                    .font(DFFont.micro)
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 6)

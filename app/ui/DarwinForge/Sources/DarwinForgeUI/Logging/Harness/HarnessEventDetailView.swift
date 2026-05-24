@@ -142,6 +142,7 @@ struct HarnessEventDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("payload JSON 복사")
+                .accessibilityLabel("payload JSON 복사")
             }
             if event.d.raw.isEmpty {
                 Text("(빈 payload)")

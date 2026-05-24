@@ -211,6 +211,7 @@ public struct PilotHeadTrackerSettingsSheet: View {
                     }
                     .buttonStyle(.plain)
                     .help("기본값 \(String(format: format, defaultValue)) 로 복원")
+                    .accessibilityLabel("기본값으로 복원")
                 }
             }
             Slider(value: binding, in: range, step: step)

@@ -88,6 +88,7 @@ public struct WalkTrialLabelSheet: View {
             }
             .buttonStyle(.plain)
             .help("건너뛰기 (라벨 저장 안 함)")
+            .accessibilityLabel("라벨 저장 건너뛰기")
         }
     }
 
@@ -151,6 +152,8 @@ public struct WalkTrialLabelSheet: View {
                     .buttonStyle(.plain)
                     .keyboardShortcut(KeyEquivalent(Character("\(star)")), modifiers: [])
                     .help("\(star) 별점 (키보드 \(star))")
+                    .accessibilityLabel("별점 \(star)점")
+                    .accessibilityAddTraits(star == rating ? .isSelected : [])
                 }
                 Spacer()
                 if rating > 0 {

@@ -265,10 +265,12 @@ public struct MotionStudioView: View {
                 addPage()
             } label: { Image(systemName: "plus.circle") }
             .buttonStyle(.plain).help("새 동작")
+            .accessibilityLabel("새 동작")
             Button {
                 importMotionPanel()
             } label: { Image(systemName: "tray.and.arrow.down") }
             .buttonStyle(.plain).help("동작 가져오기")
+            .accessibilityLabel("동작 가져오기")
         }
     }
 

@@ -525,7 +525,7 @@ public struct ConnectionDashboardView: View {
             } else if isConnectedNow {
                 HStack(spacing: DFSpace.xs) {
                     Image(systemName: "circle.fill")
-                        .font(.system(size: 6))
+                        .font(DFIcon.micro)
                         .foregroundStyle(DFColor.success)
                     Text("실시간 폴링 중")
                         .font(DFFont.caption)

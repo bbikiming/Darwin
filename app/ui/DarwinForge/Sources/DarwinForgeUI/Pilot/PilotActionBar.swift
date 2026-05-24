@@ -149,6 +149,7 @@ public struct PilotActionBar: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("오류 메시지 닫기")
         }
         .padding(.horizontal, DFSpace.sm)
         .padding(.vertical, DFSpace.xs2)

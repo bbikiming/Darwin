@@ -39,9 +39,9 @@ public struct WalkLabApplyScopeBadge: View {
             case .compact:
                 HStack(spacing: 3) {
                     Image(systemName: scope.icon)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(DFFont.labelStrong)
                     Text(scope.label)
-                        .font(.system(size: 9, weight: .medium))
+                        .font(DFFont.micro)
                 }
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
@@ -58,7 +58,7 @@ public struct WalkLabApplyScopeBadge: View {
                             .font(.caption.weight(.semibold))
                         if let msg = scope.detailedMessage {
                             Text(msg)
-                                .font(.system(size: 10))
+                                .font(DFFont.label)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }

@@ -669,6 +669,7 @@ struct SessionDetailView: View {
             }
             .buttonStyle(.borderless)
             .help("필터 초기화")
+            .accessibilityLabel("필터 초기화")
 
             Spacer()
             Text("\(filtered.count) / \(events.count)")

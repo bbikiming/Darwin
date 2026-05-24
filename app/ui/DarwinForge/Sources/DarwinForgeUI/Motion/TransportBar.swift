@@ -197,6 +197,7 @@ public struct TransportBar: View {
         .buttonStyle(.plain)
         .keyboardShortcut(.space, modifiers: [])
         .help(isPlaying ? "일시 정지 (Space)" : "재생 (Space)")
+        .accessibilityLabel(isPlaying ? "일시 정지" : "재생")
     }
 
     private func transportButton(
@@ -219,6 +220,7 @@ public struct TransportBar: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     // MARK: - 1.5 Undo / Redo cluster
@@ -273,6 +275,7 @@ public struct TransportBar: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     // MARK: - 2. Loop + Speed
@@ -303,6 +306,7 @@ public struct TransportBar: View {
             }
             .buttonStyle(.plain)
             .help(player.isLooping ? "반복 재생 ON" : "반복 재생 OFF")
+            .accessibilityLabel(player.isLooping ? "반복 재생 끄기" : "반복 재생 켜기")
 
             // Speed selector — 0.5x / 1x / 2x cycle.
             Button {
@@ -584,6 +588,7 @@ public struct TransportBar: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     // MARK: - Background
