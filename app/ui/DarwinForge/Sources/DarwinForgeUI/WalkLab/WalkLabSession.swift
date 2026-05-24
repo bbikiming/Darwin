@@ -1154,6 +1154,11 @@ public final class WalkLabSession {
     public init(harness: (any HarnessFacade)? = nil) {
         self.harness = harness ?? LiveHarness.shared
         self.engine = WalkEngine()
+        // 사이클 V276-2 (Wave 4.1.3): ExperimentController weak session ref 주입.
+        // 본체 init 의 stored property default init 후 self 가 사용 가능 — controller
+        // 의 weak ref 라 retain cycle 없음. backward-compat delegate setter 들이 본
+        // session 의 stop()/logSafetyEvent 호출 시 weak self 안전 unwrap.
+        self.experimentCtl.session = self
         // v1.7: enableBalanceCorrection default ON 이라 ramp 시작 시점을 init 시 기록.
         if enableBalanceCorrection {
             correctionEnabledAt = Date()
@@ -1582,30 +1587,57 @@ public final class WalkLabSession {
         }
     }
 
+    // MARK: - Experiment system (사이클 V276-2 / Wave 4.1.3 — ExperimentController 위임)
+    //
+    // 종전 stored property 4개 (`activeExperimentId` / `activeBaselineSessionId` /
+    // `experimentLoop` / `rollbackSnapshot`) → `experimentCtl: ExperimentController` 단일
+    // storage + 4개 computed delegate. method 본체는 여전히
+    // `WalkLabSession+Experiment.swift` extension 에 잔존 (controller 의 stored property 를
+    // 위임 read/write). 외부 view/test 코드 (`session.activeExperimentId` 등) 전부 무수정.
+
+    /// **사이클 V276-2 (Wave 4.1.3)** — experiment lifecycle controller class storage.
+    /// 4개 experiment property (`activeExperimentId` / `activeBaselineSessionId` /
+    /// `experimentLoop` / `rollbackSnapshot`) 의 단일 storage. 종전 stored property
+    /// 들은 backward-compat computed delegate 로 transparent forwarding.
+    ///
+    /// init 직후 (line ~1156) `experimentCtl.session = self` 주입 — controller 의 weak
+    /// session ref 확보 (retain cycle 차단).
+    public var experimentCtl: ExperimentController = ExperimentController()
+
     /// **v1.11.14 (2026-05-19)** — A/B 실험 컨텍스트 (사용자 명시 승인 후 set).
     /// `nil` = 일반 보행 (실험 X). Logger header 의 experimentId/baselineSessionId 로 기록.
     ///
-    /// **사이클 97 (god object Phase 2)**: experiment system method/type 은
-    /// `WalkLabSession+Experiment.swift` 로 이동. stored property 는 본체 잔존 (Swift 제약).
-    public var activeExperimentId: String? = nil
-    public var activeBaselineSessionId: String? = nil
+    /// **사이클 V276-2 (Wave 4.1.3)**: stored → computed delegate (위임 → `experimentCtl.activeExperimentId`).
+    public var activeExperimentId: String? {
+        get { experimentCtl.activeExperimentId }
+        set { experimentCtl.activeExperimentId = newValue }
+    }
+
+    /// **사이클 V276-2 (Wave 4.1.3)**: stored → computed delegate (위임 → `experimentCtl.activeBaselineSessionId`).
+    public var activeBaselineSessionId: String? {
+        get { experimentCtl.activeBaselineSessionId }
+        set { experimentCtl.activeBaselineSessionId = newValue }
+    }
 
     /// **v1.11.14**: ExperimentLoopController weak ref — 세션 종료 시 자동 폐루프.
     /// RootView 가 setExperimentLoop(_:) 로 inject. weak 라 actor lifecycle 의존성 없음.
-    /// `@Published` 와 `weak` 호환 불가 — 단일 set 만 일어나므로 non-published 로 둠.
-    public weak var experimentLoop: ExperimentLoopController? = nil
+    ///
+    /// **사이클 V276-2 (Wave 4.1.3)**: stored → computed delegate (위임 → `experimentCtl.experimentLoop`).
+    public var experimentLoop: ExperimentLoopController? {
+        get { experimentCtl.experimentLoop }
+        set { experimentCtl.experimentLoop = newValue }
+    }
 
     /// rollback 용 snapshot. applyExperimentChange 가 set, rollbackExperiment 또는
     /// clearExperimentContext 가 clear.
     ///
-    /// **사이클 97**: `private(set)` → `internal(set)` 격상 — extension 의 write 허용
-    /// + 외부 API 는 read-only 유지.
-    public internal(set) var rollbackSnapshot: ExperimentSnapshot? = nil
-
-    // MARK: - Experiment system (moved to WalkLabSession+Experiment.swift in 사이클 97)
-    // ExperimentDeltas / ExperimentSnapshot / ApplyExperimentResult / setExperimentLoop /
-    // applyExperimentChange / clearExperimentContext / onboardHealthCheckWarnings* /
-    // rollbackExperiment — 모두 WalkLabSession+Experiment.swift 잔존.
+    /// **사이클 V276-2 (Wave 4.1.3)**: stored → computed delegate (위임 → `experimentCtl.rollbackSnapshot`).
+    /// 외부 API 는 read-only 가시성 유지 — `public internal(set)` 의미 보존 (delegate setter
+    /// 자체가 internal access 라 same-module extension 에서만 write 가능).
+    public internal(set) var rollbackSnapshot: ExperimentSnapshot? {
+        get { experimentCtl.rollbackSnapshot }
+        set { experimentCtl.rollbackSnapshot = newValue }
+    }
 
     /// **v1.11.7 (2026-05-18, GPT HIGH-2)** — ROBOTIS onboard 모드 활성 상태.
     /// startWalkCycle 진입 시 onboard 분기에서 true, stop / cancelWalkCycle 시 false.

@@ -1,12 +1,15 @@
 import Foundation
 import ForgeCore
 
-/// **v1.22.0 (2026-05-22) — 사이클 97: god object Phase 2 분할 (architect agent plan)**.
+/// **v1.22.0 (2026-05-22) — 사이클 97**: god object Phase 2 분할 (architect agent plan).
+/// **사이클 V276-2 (2026-05-24, Wave 4.1.3, ADR-002 Phase 4.1.3) — god object 추가 분해**:
+/// stored property 4개 → `ExperimentController` class 추출 + 본 extension method 들은
+/// controller 위임 forwarding 으로 간소화.
 ///
 /// `WalkLabSession.swift` (4331 line) 의 A/B 실험 system (~270 line) 을 본 extension 으로
-/// 이동 — Phase 2 plan 의 가장 큰 단일 분할. stored property 4개 (`activeExperimentId` /
-/// `activeBaselineSessionId` / `experimentLoop` / `rollbackSnapshot`) 는 Swift extension
-/// 제약으로 본체 잔존 — type / method 만 이동.
+/// 이동 — Phase 2 plan 의 가장 큰 단일 분할. 사이클 V276-2 에서 stored property 4개
+/// (`activeExperimentId` / `activeBaselineSessionId` / `experimentLoop` / `rollbackSnapshot`)
+/// 는 `ExperimentController` 로 이전 — 본체는 computed delegate forwarding 만 유지.
 ///
 /// # 비유
 ///
@@ -14,17 +17,21 @@ import ForgeCore
 /// 실험실 캐비넷에 잔존, 시험 절차 (method) 와 시험서식 (struct) 만 이전. 시험관은
 /// 캐비넷에 internal access 로 등록 / 회수.
 ///
+/// **V276-2 추가**: 등록부 (4 stored property) 는 별도 시험관 (`ExperimentController`)
+/// 의 캐비넷으로 이전 — 본 실험실은 등록부 위치만 안내 (delegate). 시험 절차는 본
+/// 실험실에 유지 (axis mutation 권한 필요).
+///
 /// # 분할 정책
 ///
-/// - **stored property 본체 잔존** (Swift 제약): `activeExperimentId` / `activeBaselineSessionId` /
-///   `experimentLoop` / `rollbackSnapshot`.
-/// - 본 cycle 에서 `rollbackSnapshot` 의 `public private(set)` → `public internal(set)` 으로
-///   access 격상 — extension 의 write 허용 + 외부 API 는 read-only 유지.
-/// - `activeExperimentId` / `activeBaselineSessionId` 는 이미 `public var` (외부 RW) — 변경 없음.
-/// - `experimentLoop` 도 이미 `public weak var` — 변경 없음.
+/// - **사이클 97 (Phase 2)**: type / method 만 이동, stored property 본체 잔존 (Swift 제약).
+/// - **사이클 V276-2 (Phase 4.1.3)**: stored property 4개 → `ExperimentController` class 이전.
+///   본체는 `experimentCtl: ExperimentController` 단일 storage + 4개 computed delegate.
 /// - method / nested type 이동: `ExperimentDeltas` / `ExperimentSnapshot` / `ApplyExperimentResult` /
 ///   `setExperimentLoop(_:)` / `applyExperimentChange(...)` / `clearExperimentContext()` /
 ///   `rollbackExperiment()` / `onboardHealthCheckWarnings()` / `onboardHealthCheckWarningsImpl(...)`.
+/// - V276-2: 단순 method (`setExperimentLoop` / `onboardHealthCheckWarningsImpl`) 는 controller
+///   로 이전 + 본 extension 은 wrapper forwarding. 복잡 method (`applyExperimentChange` /
+///   `rollbackExperiment`) 는 axis mutation 14+ field 의존 → extension 잔존.
 ///
 /// # 핵심 invariant
 ///
@@ -36,7 +43,7 @@ import ForgeCore
 ///
 /// # 회귀
 ///
-/// 1267 tests 회귀 0 — 외부 API 변경 0 (read 시 동일, write 는 module 내부만).
+/// V275-1 후 2130 tests baseline 회귀 0 — 외부 API 변경 0 (read/write delegate forwarding).
 extension WalkLabSession {
 
     /// **v1.11.14.1**: critic 이 제안 가능한 모든 non-config axis 의 delta.
@@ -109,11 +116,11 @@ extension WalkLabSession {
     /// **v1.11.14.1**: controller.onCleared callback 등록 — finalize/cancel 시 자동
     /// clearExperimentContext 호출. 종전엔 activeExperimentId 가 leak 되어 다음 일반
     /// 보행도 experiment 로 인식되는 버그.
+    ///
+    /// **사이클 V276-2 (Wave 4.1.3)**: 본체 forwarding — `ExperimentController.setExperimentLoop`
+    /// 에 위임. backward-compat signature 보존.
     public func setExperimentLoop(_ controller: ExperimentLoopController?) {
-        self.experimentLoop = controller
-        controller?.onCleared = { [weak self] in
-            self?.clearExperimentContext()
-        }
+        experimentCtl.setExperimentLoop(controller)
     }
 
     /// **v1.11.14**: ExperimentApprovalUI 가 사용자 승인 후 호출. axis 한 개만 변경.
@@ -132,8 +139,9 @@ extension WalkLabSession {
         }
         // **v1.11.14.1**: reentry 가드 — 활성 실험 진행 중에 새 실험 적용 차단.
         // 종전엔 activeExperimentId 덮어쓰기 + leak 으로 이전 실험 데이터 추적 단절.
-        if let existing = activeExperimentId {
-            return .failed(reason: "이미 활성 실험 (\(existing)) — 종료 후 재시도")
+        // **사이클 V276-2 (Wave 4.1.3)**: 가드 검사 → controller 위임 (invariant 분리).
+        if let reentryReason = experimentCtl.reentryGuardMessage() {
+            return .failed(reason: reentryReason)
         }
         // **v1.11.14.6 (2026-05-19) — cold 3차 추가 HIGH fix**: walkingEngine 변경 시
         // 보행 중이면 reject. didSet 이 walkCycleTask cancel 안 하므로, 보행 도중
@@ -143,7 +151,7 @@ extension WalkLabSession {
             return .failed(reason: "walkingEngine 변경은 보행 중 적용 불가 — 정지 (idle) 후 재시도")
         }
         // **v1.11.14.5 — 사용자 평가 CRIT 1 fix**: rollback snapshot 저장 (mutation 전).
-        rollbackSnapshot = ExperimentSnapshot(
+        let snapshot = ExperimentSnapshot(
             balanceExperimentConfig: balanceExperimentConfig,
             hipPitchOffsetTrimDeg: hipPitchOffsetTrimDeg,
             strideMm: strideMm, sideMm: sideMm, turnDeg: turnDeg,
@@ -179,8 +187,12 @@ extension WalkLabSession {
         if deltas.hasTuningSlider {
             advanced = true
         }
-        activeExperimentId = experimentId
-        activeBaselineSessionId = baselineSessionId
+        // **사이클 V276-2 (Wave 4.1.3)**: metadata set → controller 위임 (단일 책임).
+        experimentCtl.activateExperiment(
+            experimentId: experimentId,
+            baselineSessionId: baselineSessionId,
+            snapshot: snapshot
+        )
         logSafetyEvent(
             kind: .correctorOn,
             message: "실험 적용: \(experimentId) (baseline=\(baselineSessionId))"
@@ -192,49 +204,45 @@ extension WalkLabSession {
     /// **v1.11.14.5**: rollbackSnapshot 도 clear — 사용자가 변경 결과 수락한 것으로 간주.
     /// 종전엔 snapshot 남아있어 다음 applyExperimentChange 가 다른 baseline 으로 잘못
     /// 복원할 위험. 사용자가 rollback 원하면 rollbackExperiment() 명시 호출 필요.
-    public func clearExperimentContext() {
-        activeExperimentId = nil
-        activeBaselineSessionId = nil
-        rollbackSnapshot = nil
-    }
-
-    /// **v1.11.14.7 (2026-05-19)** — ROBOTIS Onboard 모드 health check.
-    /// startWalkCycle 의 onboard 분기에서 호출 — 잠재 silent failure 감지.
-    /// 반환: 경고 문자열 배열 (빈 배열 = 정상).
     ///
-    /// 체크 항목:
-    /// 1. ConnectionStore 의 SSH 채널 연결 (lastTelemetry.isRealRobot)
-    /// 2. autoOnboardBrokering 활성 여부
-    /// 3. 보행 명령 enabled 여부 (cradle confirmed)
-    nonisolated internal func onboardHealthCheckWarningsImpl(
-        isRobotConnected: Bool,
-        autoOnboardOn: Bool,
-        cradleOK: Bool
-    ) -> [String] {
-        var warnings: [String] = []
-        if !isRobotConnected {
-            warnings.append("실 robot SSH 미연결 — onboard 명령 silent fail 위험")
-        }
-        if !autoOnboardOn {
-            warnings.append("autoOnboardBrokering=OFF — 명령 수동 송출 필요")
-        }
-        if !cradleOK {
-            warnings.append("cradle 미확인 — 안전 절차 위반 가능")
-        }
-        return warnings
+    /// **사이클 V276-2 (Wave 4.1.3)**: 본체 forwarding — `ExperimentController.clearAllMetadata`
+    /// 에 위임. backward-compat signature 보존.
+    public func clearExperimentContext() {
+        experimentCtl.clearAllMetadata()
     }
 
     /// MainActor instance helper — startWalkCycle 에서 호출.
+    ///
+    /// **사이클 V276-2 (Wave 4.1.3)**: pure helper (`onboardHealthCheckWarningsImpl`)
+    /// 본체는 `ExperimentController` 로 이전 — 본 method 는 session-state 평가 후
+    /// controller 의 pure function 호출하는 thin wrapper.
     func onboardHealthCheckWarnings() -> [String] {
         let isRobotConnected: Bool = {
             // ConnectionStore.lastTelemetry?.isRealRobot — store 가 nil 일 수 있음.
             guard let store = self.store else { return false }
             return store.bus != nil
         }()
-        return onboardHealthCheckWarningsImpl(
+        return experimentCtl.onboardHealthCheckWarningsImpl(
             isRobotConnected: isRobotConnected,
             autoOnboardOn: autoOnboardBrokering,
             cradleOK: cradleConfirmed
+        )
+    }
+
+    /// **사이클 V276-fix backward-compat**: V276-2 에서 method 본체가
+    /// `ExperimentController.onboardHealthCheckWarningsImpl` 로 이전됨.
+    /// 외부 caller (test 의 `WalkLabSessionExtensionCoverageTests` 5건 + 잠재 production
+    /// 호출) signature 보존을 위해 thin forwarding wrapper 유지. ADR-002 의
+    /// W4.1.1/W4.1.2 backward-compat delegate 패턴과 동일.
+    public func onboardHealthCheckWarningsImpl(
+        isRobotConnected: Bool,
+        autoOnboardOn: Bool,
+        cradleOK: Bool
+    ) -> [String] {
+        return experimentCtl.onboardHealthCheckWarningsImpl(
+            isRobotConnected: isRobotConnected,
+            autoOnboardOn: autoOnboardOn,
+            cradleOK: cradleOK
         )
     }
 
@@ -276,9 +284,8 @@ extension WalkLabSession {
         enableBalanceCorrection = snapshot.enableBalanceCorrection
         advanced = snapshot.advanced
         let expId = activeExperimentId ?? "?"
-        activeExperimentId = nil
-        activeBaselineSessionId = nil
-        rollbackSnapshot = nil
+        // **사이클 V276-2 (Wave 4.1.3)**: metadata clear → controller 위임 (단일 책임).
+        experimentCtl.clearAllMetadata()
         // v1.11.14.6: controller 도 cancel — onCleared callback 이 다시 호출되지만
         // activeExperimentId 이미 nil 이라 idempotent. controller.current=nil 보장으로
         // 사용자가 새 실험 시도 가능.
