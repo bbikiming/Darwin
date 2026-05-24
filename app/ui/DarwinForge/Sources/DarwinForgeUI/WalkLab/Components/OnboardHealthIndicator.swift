@@ -15,9 +15,15 @@ public struct OnboardHealthIndicator: View {
     @Environment(\.dfTheme) private var theme: DFTheme
     @AppStorage("df.walklab.autoOnboardFallback") private var autoFallback: Bool = false
 
+    // V276-3: ViewInspector Phase B async inspection hook.
+    // Test target 이 `extension Inspection: InspectionEmissary {}` 선언 후
+    // `sut.inspection.inspect { }` + `ViewHosting.host(view:)` 패턴으로 사용.
+    internal let inspection = Inspection<Self>()
+
     public init() {}
 
     public var body: some View {
+        Group {
         // .robotisOnboard 모드일 때만 표시 — 다른 모드면 invisible.
         if session.walkingEngine == .robotisOnboard {
             // **v1.14.8 (2026-05-21) perf cleanup**: TimelineView(.periodic, by: 1.0) 유지.
@@ -50,6 +56,8 @@ public struct OnboardHealthIndicator: View {
                 .accessibilityLabel("ROBOTIS Onboard 상태: \(statusText)")
             }
         }
+        } // Group 닫기
+        .onReceive(inspection.notice) { self.inspection.visit(self, $0) }
     }
 
     /// 사이클 168 (cycle 164 wire-up): 옛 daemon (v1 patch, sscanf 7 필드) 는 balance
