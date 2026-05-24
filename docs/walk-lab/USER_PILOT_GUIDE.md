@@ -1411,4 +1411,48 @@ delegate 유지로 god object 더 커짐. 다음 사이클 (265+) 에서 course 
 - `docs/architecture/adr-002-wave-4-decomposition.md` (Wave 4 분할 계획).
 - `docs/architecture/timing-baseline.md` (V265-1, ADR-002 timing gate
   인프라).
+
+## AI 모션 빌더 (사이클 280-D)
+
+### 비유
+
+레시피북에서 재료를 끌어다 한 그릇에 담은 뒤 맛을 보고 손님 상에 내가는
+주방장 흐름. 라이브러리 = 재료, 캔버스 = 그릇, 인스펙터 = 시식·간 맞춤.
+
+### 결론 한 줄
+
+Motion Studio 좌측 사이드바 상단 "AI 모션 빌더 (고급)" 버튼으로 진입 →
+3-pane 합성기에서 동작을 만들고 → "Motion 스튜디오 로 보내기" 로 결과를
+현재 동작 doc 에 추가한다.
+
+### 두 가지 진입점
+
+- **간단 (Heuristic)**: 사이드바 상단 텍스트 입력 — 예: "손 흔들고 박수"
+  → 즉시 1 페이지 추가 (Claude CLI 불필요).
+- **고급 (Synth Palette)**: 위 텍스트 입력 아래 "AI 모션 빌더 (고급)"
+  버튼 → sheet 으로 3-pane 합성기 열림.
+
+### 고급 합성기 사용 순서
+
+1. 좌측 **Library** — 카탈로그에서 기본 동작 페이지 선택.
+2. 중앙 **Canvas** — 선택한 페이지를 시간순으로 배치·연결.
+3. 우측 **Inspector** — 합성 연산자 (concat / blend / repeat 등) 파라미터
+   조정 → "Synthesize" 클릭으로 결과 JSON 생성.
+4. Validator overlay 가 안전성 / 듀레이션 / 키프레임 무결성 검사.
+5. 통과 후 **"Motion 스튜디오 로 보내기"** 클릭 → notification 흐름으로
+   현재 동작 doc 에 페이지 추가 + 자동 sheet 닫기.
+
+### 트러블슈팅
+
+- "빈 합성 결과" — Library 에서 페이지 1개 이상 Canvas 로 끌어넣었는지 확인.
+- "키프레임 overflow" — 연산자 파라미터 (repeat 횟수 등) 축소 후 재시도.
+- "사이드바에 버튼 안 보임" — Motion Studio 의 사이드바 폭이 좁아 숨겨진
+  상태. 윈도우 가로 1080px 이상으로 확장.
+
+### 디스커버리 (V280-D)
+
+이전엔 Synth 모듈이 `Sources/DarwinForgeUI/Synth/` 에 production code 로
+존재했지만 RootView / 사이드바 진입점이 없어 사용자가 기능 존재 자체를
+모르는 orphan 상태였음 (V278-3 audit P0). V280-D 에서 명시적 버튼 + 본
+가이드 섹션으로 recall → recognition 전환 (Nielsen H6).
 - `docs/guides/DEPLOYMENT.md` (.app bundle 빌드).

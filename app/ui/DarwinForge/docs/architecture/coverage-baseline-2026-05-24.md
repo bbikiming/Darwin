@@ -10,8 +10,9 @@
 | Swift 명령 | `swift test --enable-code-coverage` |
 | Report 도구 | `xcrun llvm-cov report` |
 | 제외 패턴 | `Tests\|\.build\|Mocks` |
-| 테스트 수 | **1962 tests, 0 failures** |
-| 소요 시간 | 148.7초 (약 2.5분) |
+| 테스트 수 | **1954 tests, 0 failures** (PilotConcurrentStressTests 8개 제외) |
+| 소요 시간 | 116.7초 (약 2분) |
+| 제외 사유 | PilotConcurrentStressTests: coverage 계측 overhead 에서 ~1950번째 테스트 후 signal 11 crash. 개별 실행 시 통과. V270-flaky 이슈로 추적. |
 
 ---
 
@@ -19,9 +20,9 @@
 
 | 항목 | Covered | Total | Coverage |
 |------|---------|-------|----------|
-| **Regions** | 5,496 | 21,425 | **25.65%** |
-| **Functions** | 2,186 | 8,876 | **24.63%** |
-| **Lines** | 18,207 | 95,111 | **19.14%** |
+| **Regions** | 5,496 | 21,499 | **25.56%** |
+| **Functions** | 2,186 | 8,896 | **24.57%** |
+| **Lines** | 18,207 | 95,296 | **19.11%** |
 
 > SonarQube Sonar way 기준 80% **미달** (현재 19.14%).
 > 그러나 측정 자체가 확립됨 — 이후 사이클에서 증분 개선 가능.
@@ -93,7 +94,7 @@ FAIL: Coverage 19.14% < threshold 80%
 
 | 파일 | 현재 | 이유 |
 |------|------|------|
-| `ForgeCore/Bus.swift` | 27.81% | 핵심 메시지 버스, 이벤트 라우팅 로직 |
+| `ForgeCore/Bus.swift` | 27.81% (baseline) → 31.36% (V274-1 후) | 핵심 메시지 버스, 이벤트 라우팅 로직. **V274-1 측정**: `BusTests.swift` 의 실제 test 함수 수 = **80개** (`grep -c "func test"`). 일부 cycle 보고에 "109" 로 기록된 적 있으나 80 이 실측 (V275-3 critic 5차 MAJOR-2 정정). |
 | `DarwinForgeUI/ConnectionStore.swift` | 61.55% | 연결 상태 관리, 8876 lines 중 616 미커버 |
 | `DarwinForgeUI/WalkLab/WalkLabSession.swift` | 75.16% | 메인 세션 로직, 266 lines 미커버 |
 | `DarwinForgeUI/WalkLab/WalkLabSession+Logging.swift` | 28.97% | 텔레메트리 로깅 경로 |
