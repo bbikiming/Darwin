@@ -4,12 +4,18 @@
 > 자동화 가능한 부분은 script 가 처리하고, 본 checklist 는 사용자가 직접 robot
 > 옆에서 확인해야 하는 항목만 추렸다. 자동화 script 실행과 병행해서 사용.
 >
+> **처음 사용자는 먼저** → [SMOKE_USER_GUIDE.md](SMOKE_USER_GUIDE.md) (사전 준비
+> + 4 phase 실행 절차 + 트러블슈팅 10건). 본 체크리스트는 그 가이드의 §3 (수동
+> 검증) 에 대응.
+>
 > **연관 docs**:
+> - [SMOKE_USER_GUIDE.md](SMOKE_USER_GUIDE.md) — 사용자 협업 가이드 (사이클 281)
 > - [USER_PILOT_GUIDE.md](USER_PILOT_GUIDE.md) — 5 입력 source 사용법
 > - [../harness/real-robot-verification.md](../harness/real-robot-verification.md) — 텔레메트리 검증 절차
 > - [../harness/walklab-gyro-smoke-test-2026-05-23.md](../harness/walklab-gyro-smoke-test-2026-05-23.md) — 자이로 보정 시나리오
 >
 > **사이클 275 (V275-4)**: 자동 script + 수동 checklist 분리.
+> **사이클 281 (V281-4)**: dry-run 검증 + SMOKE_USER_GUIDE.md cross-reference 추가.
 
 ---
 
