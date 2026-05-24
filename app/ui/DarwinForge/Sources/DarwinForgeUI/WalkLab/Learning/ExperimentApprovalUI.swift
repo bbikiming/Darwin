@@ -4,15 +4,63 @@ import SwiftUI
 ///
 /// 진단 문서 §4 critic-controller 분리 + Agent 5 architect 설계.
 ///
-/// sheet UI:
-/// - critic 의 nextExperiment 표시
-/// - axis 변경 미리보기 (현재 → 제안)
-/// - safetyVerdict 명시
-/// - safety 안내 (cradle/tether)
-/// - success metric + rollback condition
-/// - "실험 시작" 버튼 (ExperimentLoop.startExperiment)
-/// - "취소" 버튼
+/// # V280-B (2026-05-24) — 3-step Wizard 패턴 도입
+///
+/// 비유: 11 section sheet = "한 페이지 11 단락 계약서". 사용자가 어디부터 봐야 할지 막막.
+/// Wizard 패턴 = "계약서 11 단락을 3 페이지로 분권". 한 페이지에 3-4 단락만 보임.
+///
+/// 사용자 mental model (Norman 1988):
+/// 1. "이게 뭔가?" → preview step (header / experimentPreview / confidenceFooter)
+/// 2. "위험한가?" → safety step (safetyNotice / safetyVerdictPreview / risk / validation / walkingNotIdle)
+/// 3. "승인하나?" → approve step (metricsRow / advancedAutoEnable / buttonRow)
+///
+/// Hick's Law: 11 → 3 step 분할로 각 step 의 인지 부하 ↓ (49pt/section → 120pt/section, breathing).
+///
+/// Material 3 Stepper + Polaris Wizard: linear progression + 진행 인디케이터 + 이전/다음 navigation.
+///
+/// sheet UI (step 별):
+/// - Step 1 (1/3 · 미리보기): critic 의 nextExperiment + axis 변경 + confidence
+/// - Step 2 (2/3 · 안전 확인): safetyVerdict + cradle/tether + risk + validation
+/// - Step 3 (3/3 · 승인): success metric + rollback + advanced 자동 활성 + 실험 시작 버튼
 public struct ExperimentApprovalUI: View {
+
+    // MARK: - Wizard step (V280-B)
+
+    /// Wizard step enum — 사용자 mental model 순서 (preview → safety → approve).
+    public enum WizardStep: Int, CaseIterable, Hashable {
+        case preview = 1, safety = 2, approve = 3
+
+        /// 상단 인디케이터에 표시할 step 라벨 ("1/3 · 미리보기").
+        var label: String {
+            switch self {
+            case .preview: return "미리보기"
+            case .safety:  return "안전 확인"
+            case .approve: return "승인"
+            }
+        }
+
+        /// 다음 step (.approve 면 nil).
+        var next: WizardStep? {
+            switch self {
+            case .preview: return .safety
+            case .safety:  return .approve
+            case .approve: return nil
+            }
+        }
+
+        /// 이전 step (.preview 면 nil).
+        var previous: WizardStep? {
+            switch self {
+            case .preview: return nil
+            case .safety:  return .preview
+            case .approve: return .safety
+            }
+        }
+    }
+
+    /// 현재 step (default = .preview, mental model 첫 질문).
+    @State private var currentStep: WizardStep = .preview
+
     public let response: ClaudeCriticResponse
     public let baselineSessionId: String
     /// **v1.11.14.3 (2026-05-19) — 진단 cold #F fix**: closure 로 변경.
@@ -62,50 +110,121 @@ public struct ExperimentApprovalUI: View {
         let _ = session.hipPitchOffsetTrimDeg
         return VStack(alignment: .leading, spacing: DFSpace.sm) {
             header
+            stepperIndicator
             Divider()
-            if let exp = response.nextExperiment {
-                experimentPreview(exp)
-                Divider()
-                safetyNotice(exp)
-                Divider()
-                metricsRow(exp)
-                if let risk = exp.riskNote {
-                    riskBanner(risk)
-                }
-            } else {
-                Text("Critic 응답에 nextExperiment 없음 — Quality verdict = \(response.dataQuality.verdict.rawValue) 으로 실험 권고 안 됨")
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.warning)
-            }
-            Divider()
-            // v1.11.13: safety verdict 미리보기 — deterministic gate 결과.
-            safetyVerdictPreview
-            // v1.11.14.1: validate(currentConfig:) issues 사전 표시.
-            if let vr = validationResult, !vr.passed {
-                Divider()
-                validationIssuesBanner(vr)
-            }
-            // **v1.11.14.6 (2026-05-19)** — tuning slider axis 권고 + advanced=false 면
-            // 자동 활성 안내. 사용자 명시 동의 없이 UI 상태 변경되는 silent UX 차단.
-            if isTuningSliderAxis(response.nextExperiment?.axis), !session.advanced {
-                Divider()
-                advancedAutoEnableBanner
-            }
-            // **v1.11.14.6** — walkingEngine axis 권고 + 보행 중이면 reject 예상 안내.
-            if response.nextExperiment?.axis == .walkingEngine, session.current != .idle {
-                Divider()
-                walkingNotIdleBanner
-            }
-            Divider()
-            confidenceFooter
+            currentStepContent
             Spacer()
-            buttonRow
+            wizardButtonRow
         }
         .padding(DFSpace.md)
         .frame(minWidth: 520, minHeight: 540, idealHeight: 620)
         // v1.11.14.6: 테마 통합 — flat 시 #FFFFFF, 그 외 default light/dark.
         .background(DFColor.adaptiveCanvas(theme))
     }
+
+    // MARK: - Wizard step content dispatcher (V280-B)
+
+    /// 현재 step 에 해당하는 sub-view 만 노출. 한 화면에 3-4 section 보장 (Hick's Law).
+    @ViewBuilder
+    private var currentStepContent: some View {
+        switch currentStep {
+        case .preview: previewStep
+        case .safety:  safetyStep
+        case .approve: approveStep
+        }
+    }
+
+    /// Step 1 — "이게 뭔가?" (header 는 공통, 본문 = experimentPreview + confidenceFooter).
+    @ViewBuilder
+    private var previewStep: some View {
+        if let exp = response.nextExperiment {
+            experimentPreview(exp)
+            Divider()
+            confidenceFooter
+        } else {
+            Text("Critic 응답에 nextExperiment 없음 — Quality verdict = \(response.dataQuality.verdict.rawValue) 으로 실험 권고 안 됨")
+                .font(DFFont.label)
+                .foregroundStyle(DFColor.warning)
+        }
+    }
+
+    /// Step 2 — "위험한가?" (safetyNotice + safetyVerdictPreview + risk + validation + walkingNotIdle).
+    @ViewBuilder
+    private var safetyStep: some View {
+        if let exp = response.nextExperiment {
+            safetyNotice(exp)
+            Divider()
+        }
+        safetyVerdictPreview
+        if let risk = response.nextExperiment?.riskNote {
+            Divider()
+            riskBanner(risk)
+        }
+        if let vr = validationResult, !vr.passed {
+            Divider()
+            validationIssuesBanner(vr)
+        }
+        if response.nextExperiment?.axis == .walkingEngine, session.current != .idle {
+            Divider()
+            walkingNotIdleBanner
+        }
+    }
+
+    /// Step 3 — "승인하나?" (metricsRow + advancedAutoEnable banner).
+    /// buttonRow 는 wizardButtonRow 에서 step-aware 처리.
+    @ViewBuilder
+    private var approveStep: some View {
+        if let exp = response.nextExperiment {
+            metricsRow(exp)
+        }
+        if isTuningSliderAxis(response.nextExperiment?.axis), !session.advanced {
+            Divider()
+            advancedAutoEnableBanner
+        }
+    }
+
+    // MARK: - Stepper indicator (V280-B, Material 3 패턴)
+
+    /// "1/3 · 미리보기 → 안전 확인 → 승인" 진행 인디케이터.
+    /// 비유: 지하철 노선도 — 현재역 highlight, 지난역 dimmed, 다음역 outline.
+    private var stepperIndicator: some View {
+        HStack(spacing: DFSpace.xs) {
+            ForEach(WizardStep.allCases, id: \.rawValue) { step in
+                stepperPill(step)
+                if step != .approve {
+                    Image(systemName: "chevron.right")
+                        .font(DFFont.micro)
+                        .foregroundStyle(DFColor.textSecondary.opacity(0.5))
+                }
+            }
+            Spacer()
+            Text("\(currentStep.rawValue)/3")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+        }
+    }
+
+    /// 단일 step pill — current/past/future 별 색상 차등 (Material 3 Stepper 패턴).
+    @ViewBuilder
+    private func stepperPill(_ step: WizardStep) -> some View {
+        let isCurrent = step == currentStep
+        let isPast = step.rawValue < currentStep.rawValue
+        let bg: Color = isCurrent ? DFColor.info : (isPast ? DFColor.success.opacity(0.15) : DFColor.textSecondary.opacity(0.08))
+        let fg: Color = isCurrent ? .white : (isPast ? DFColor.success : DFColor.textSecondary)
+        HStack(spacing: 4) {
+            if isPast {
+                Image(systemName: "checkmark.circle.fill").font(DFFont.micro)
+            } else {
+                Text("\(step.rawValue)").font(DFFont.micro.bold())
+            }
+            Text(step.label).font(DFFont.micro)
+        }
+        .foregroundStyle(fg)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(bg)
+        .clipShape(Capsule())
+    }
+
 
     @ViewBuilder
     private var safetyVerdictPreview: some View {
@@ -208,24 +327,15 @@ public struct ExperimentApprovalUI: View {
         }
     }
 
+    /// **V280-E (2026-05-24)**: hardcoded HStack/background → DFBanner (.warning).
+    /// 종전 shield 아이콘 → DFNotification 표준 triangle 아이콘 (Carbon consistency).
     @ViewBuilder
     private func safetyNotice(_ exp: NextExperiment) -> some View {
-        HStack(alignment: .top, spacing: DFSpace.xs) {
-            Image(systemName: "shield.lefthalf.filled")
-                .foregroundStyle(DFColor.warning)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("안전 절차")
-                    .font(DFFont.sectionLabel)
-                Text(exp.safety)
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-        }
-        .padding(DFSpace.xs)
-        .background(DFColor.warning.opacity(DFOpacity.o10))
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        DFBanner(
+            title: "안전 절차",
+            message: exp.safety,
+            severity: .warning
+        )
     }
 
     @ViewBuilder
@@ -254,19 +364,10 @@ public struct ExperimentApprovalUI: View {
         }
     }
 
+    /// **V280-E (2026-05-24)**: hardcoded HStack/background → DFBanner (.warning).
     @ViewBuilder
     private func riskBanner(_ note: String) -> some View {
-        HStack(spacing: DFSpace.xs) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(DFColor.warning)
-            Text(note)
-                .font(DFFont.label)
-                .foregroundStyle(DFColor.warning)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(DFSpace.xs)
-        .background(DFColor.warning.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        DFBanner(title: note, severity: .warning)
     }
 
     private var confidenceFooter: some View {
@@ -286,42 +387,92 @@ public struct ExperimentApprovalUI: View {
         }
     }
 
-    private var buttonRow: some View {
+    // MARK: - Step-aware button row (V280-B)
+
+    /// Wizard 의 단계별 버튼 row.
+    /// - step 1/2: [취소] [이전 (step1=hidden)] [다음 (검증 통과 시만 enabled)]
+    /// - step 3 (final): [취소] [이전] [실험 시작 (safety/validation 통과 시만 enabled)]
+    private var wizardButtonRow: some View {
         HStack(spacing: DFSpace.sm) {
-            Button("취소", role: .cancel) {
-                harness.record(
-                    .walklabExperimentRejected, level: .info, actor: .user,
-                    data: [
-                        "axis": AnyCodable(response.nextExperiment?.axis.rawValue ?? "none"),
-                        "baseline_session_id": AnyCodable(Harness.shortHash(baselineSessionId)),
-                    ]
-                )
-                onCancel()
-            }
+            cancelButton
             Spacer()
-            Button {
-                harness.record(
-                    .walklabExperimentApproved, level: .info, actor: .user,
-                    data: [
-                        "axis": AnyCodable(response.nextExperiment?.axis.rawValue ?? "none"),
-                        "confidence_pct": AnyCodable(response.confidence.map { Int($0 * 100) }),
-                        "safety_verdict": AnyCodable(safetyVerdictKey(proposedConfig.safetyVerdict)),
-                        "baseline_session_id": AnyCodable(Harness.shortHash(baselineSessionId)),
-                    ]
-                )
-                onApprove()
-            } label: {
-                Label("실험 시작 (사용자 명시 승인)", systemImage: "play.fill")
+            if currentStep.previous != nil {
+                Button("이전") {
+                    if let prev = currentStep.previous { currentStep = prev }
+                }
             }
-            .buttonStyle(.borderedProminent)
-            // safetyVerdict.blocked 또는 validation 실패 → 승인 불가.
-            // v1.11.14.1: validate(currentConfig:) issue 도 disable 트리거.
-            .disabled(response.nextExperiment == nil || {
-                if case .blocked = proposedConfig.safetyVerdict { return true }
-                if let vr = validationResult, !vr.passed { return true }
-                return false
-            }())
+            if currentStep == .approve {
+                approveButton
+            } else {
+                nextButton
+            }
         }
+    }
+
+    /// 취소 버튼 — 모든 step 에서 동일 (telemetry 포함).
+    private var cancelButton: some View {
+        Button("취소", role: .cancel) {
+            harness.record(
+                .walklabExperimentRejected, level: .info, actor: .user,
+                data: [
+                    "axis": AnyCodable(response.nextExperiment?.axis.rawValue ?? "none"),
+                    "baseline_session_id": AnyCodable(Harness.shortHash(baselineSessionId)),
+                    "rejected_at_step": AnyCodable(currentStep.label),
+                ]
+            )
+            onCancel()
+        }
+    }
+
+    /// "다음" 버튼 — step 1/2. nextExperiment 없거나 step 2 에서 blocked/validation 실패 시 disabled.
+    private var nextButton: some View {
+        Button {
+            if let next = currentStep.next { currentStep = next }
+        } label: {
+            Label("다음", systemImage: "chevron.right")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(isNextDisabled)
+    }
+
+    /// "다음" 버튼 disable 조건 — step 별 분기.
+    private var isNextDisabled: Bool {
+        // nextExperiment 없으면 어느 step 에서도 진행 불가.
+        if response.nextExperiment == nil { return true }
+        // safety step 통과 → approve 진행 시 safety/validation 통과 필수
+        // (사용자가 위험 모르고 final step 까지 가는 것 차단).
+        if currentStep == .safety {
+            if case .blocked = proposedConfig.safetyVerdict { return true }
+            if let vr = validationResult, !vr.passed { return true }
+        }
+        return false
+    }
+
+    /// 최종 "실험 시작" 버튼 — step 3 (approve) 전용.
+    /// 기존 disabled / telemetry logic 보존 (behavior 무변경).
+    private var approveButton: some View {
+        Button {
+            harness.record(
+                .walklabExperimentApproved, level: .info, actor: .user,
+                data: [
+                    "axis": AnyCodable(response.nextExperiment?.axis.rawValue ?? "none"),
+                    "confidence_pct": AnyCodable(response.confidence.map { Int($0 * 100) }),
+                    "safety_verdict": AnyCodable(safetyVerdictKey(proposedConfig.safetyVerdict)),
+                    "baseline_session_id": AnyCodable(Harness.shortHash(baselineSessionId)),
+                ]
+            )
+            onApprove()
+        } label: {
+            Label("실험 시작 (사용자 명시 승인)", systemImage: "play.fill")
+        }
+        .buttonStyle(.borderedProminent)
+        // safetyVerdict.blocked 또는 validation 실패 → 승인 불가.
+        // v1.11.14.1: validate(currentConfig:) issue 도 disable 트리거.
+        .disabled(response.nextExperiment == nil || {
+            if case .blocked = proposedConfig.safetyVerdict { return true }
+            if let vr = validationResult, !vr.passed { return true }
+            return false
+        }())
     }
 
     /// **v1.11.14.6**: tuning slider axis 인지 검사.
