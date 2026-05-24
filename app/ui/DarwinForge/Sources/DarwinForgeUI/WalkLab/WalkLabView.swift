@@ -51,6 +51,26 @@ public struct WalkLabView: View {
     /// destructive 액션 (안전 플래그 해제) 의 의도 확인 단계 추가.
     @State private var showDismissBalanceLossConfirm: Bool = false
 
+    /// **V280-A (2026-05-24) Progressive Disclosure**: 사이드 패널 "운용 (Run)" 그룹.
+    /// FootTrailCanvas / IMU 출처 라벨 / balanceStateCard — 보행 중 항상 참조하는 핵심.
+    /// 기본 OPEN (사용자가 한 번 닫으면 다음 세션까지 유지).
+    /// Apple HIG "Progressive Disclosure" — 빈도 높은 정보는 default visible.
+    @AppStorage("df.walklab.expandedRunGroup") private var expandedRunGroup: Bool = true
+
+    /// **V280-A (2026-05-24)**: 사이드 패널 "진단 (Diagnostics)" 그룹.
+    /// FallPredictionCard / balanceCorrectionCard / IMU Roll·Pitch — 분석 시 필요.
+    /// 기본 CLOSED — IBM Carbon information architecture: secondary 정보는 on demand.
+    @AppStorage("df.walklab.expandedDiagGroup") private var expandedDiagGroup: Bool = false
+
+    /// **V280-A (2026-05-24)**: 3D Scene overlay 4 종 (Speedometer / GyroMini / WalkGraph /
+    /// 차단 사유 banner) 표시 토글. 기본 OFF — Nielsen #8 "minimalist".
+    /// scene 내부의 sceneInfoOverlay (좌상단 phase/preset) 는 항상 표시 (minimal HUD).
+    @AppStorage("df.walklab.showSceneOverlays") private var showSceneOverlays: Bool = false
+
+    /// **V280-A (2026-05-24)**: 보조 정보 (LiveGyroPanel + simOnlyNotice + footTargetsCard).
+    /// 기본 CLOSED — Hick's Law: 핵심 의사결정 화면에서 부수 정보 분리.
+    @AppStorage("df.walklab.expandedAuxInfo") private var expandedAuxInfo: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -224,6 +244,7 @@ public struct WalkLabView: View {
             }
             .buttonStyle(.borderless)
             .help("키보드 / Tello 조종 panel 표시 (WASD/QE/Space)")
+            .accessibilityLabel(showingPilotOverlay ? "파일럿 조종 패널 숨기기" : "파일럿 조종 패널 표시")
             // **v1.15.0 (2026-05-21) Phase 1**: trial library 진입점.
             // 저장된 모든 walk trial 검색/탐색/라벨링 sheet 표시.
             Button(action: { showingTrialLibrary = true }) {
@@ -232,6 +253,7 @@ public struct WalkLabView: View {
             }
             .buttonStyle(.borderless)
             .help("저장된 보행 기록 보기 (Trial Library)")
+            .accessibilityLabel("저장된 보행 기록 보기")
         }
         .padding(.horizontal, DFSpace.md)
         .padding(.vertical, DFSpace.sm3)
@@ -260,6 +282,7 @@ public struct WalkLabView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("닫기")
+                .accessibilityLabel("파일럿 오버레이 닫기")
             }
             if let bridge = session.pilotBridge {
                 // **사이클 78**: Pilot HQ 통합 status row — 5 panel 위에 한 줄 요약.
@@ -497,131 +520,248 @@ public struct WalkLabView: View {
         .transition(.move(edge: .leading).combined(with: .opacity))
     }
 
+    /// **V280-A (2026-05-24) — Progressive Disclosure 재설계**.
+    ///
+    /// 종전 (v1.11.17 ~ V278): 한 화면에 15 항목 (LiveGyroPanel + simOnlyNotice + 3 banner
+    /// + RobotScene3D + 4 overlay + FootTrailCanvas + balanceStateCard + FallPredictionCard
+    /// + balanceCorrectionCard + IMU×2 + footTargetsCard + actionBar) → 5±2 (Miller's Law)
+    /// 3배 초과, 신규 사용자 첫 30초 압도감 유발 (V278-2 audit P0).
+    ///
+    /// 신규 분류 (Apple HIG "Progressive Disclosure" + IBM Carbon IA):
+    /// - **Primary** (항상): Hero scene + sceneInfoOverlay (최소 HUD) + actionBar + 최우선 banner 1개
+    /// - **Secondary**: 사이드 카드 2 그룹 (`runGroup` 기본 OPEN / `diagGroup` 기본 CLOSED)
+    /// - **Tertiary** (advanced 토글): 4 scene overlay + 보조 정보 group (LiveGyroPanel +
+    ///   simOnlyNotice + footTargetsCard)
+    ///
+    /// 결과: default 노출 항목 15 → 5 (heroRow + side group×2 + actionBar + banner). 5±2 적합.
     private var mainDetailContent: some View {
         ScrollView {
             VStack(spacing: DFSpace.sm3) {
-                // **v1.11.17 (2026-05-19)**: 워크랩 진입 즉시 자이로 실시간 패널.
-                // 사용자가 보행 시작 전 (preset 선택 전) 부터 IMU 상태 확인 가능.
-                // 보행 중 panel 우측의 FallPreventionMonitor 와 별개 — 항상 표시.
-                LiveGyroPanel()
+                // 1. Primary banner — priority based, 한 번에 1개만 (Nielsen #8 minimalist).
+                primaryBanner
 
-                simOnlyNotice
+                // 2. Primary hero: 3D scene + sceneInfoOverlay + 사이드 카드 2 그룹.
+                heroRow
 
-                if session.balanceLost {
-                    banner(systemImage: "exclamationmark.triangle.fill",
-                           message: "균형 잃음 감지 — 자동 정지됨",
-                           tint: DFColor.danger)
-                }
-                if session.thermalAlarm {
-                    banner(systemImage: "thermometer.sun.fill",
-                           message: "모터 60°C 도달 — 자동 정지됨. 배터리를 분리해 주세요",
-                           tint: DFColor.danger)
-                }
-                if session.advanced && session.stabilityScore.category == .critical {
-                    // 2026-05-17 UX audit: 이중부정 "해제를 끄세요" → "다시 잠그세요" 직관화.
-                    // 토스트 길이 단축 (96자 → 핵심만).
-                    banner(systemImage: "xmark.octagon.fill",
-                           message: "위험도 \(Int(session.stabilityScore.score))/100 — 시작 차단됨. 슬라이더를 줄이거나 '안전 한도 해제'를 다시 잠그세요.",
-                           tint: DFColor.danger)
-                }
+                // 3. Tertiary: 보조 정보 disclosure — LiveGyroPanel / simOnlyNotice / footTargetsCard.
+                //    기본 CLOSED. 사용자 명시 열기 시만 표시.
+                auxInfoDisclosure
 
-                // 2026-05-16: 가로 monitoringToggleBar 제거 — 좌측 세로 stripe 로 통합.
-                // 토글은 `collapsedMonitoringStripe` 또는 `monitoringSidebar` 헤더의
-                // chevron 버튼에서 수행.
-
-                // **v1.11 (2026-05-17 사용자 요청) — 반응형 hero row**:
-                // 3D scene 카메라가 frame width 적응으로 zoom in (InteractiveSceneView
-                // .setFrameSize), 사이드 패널 240→280 으로 확장. scene 좌상단에 walking
-                // phase/elapsed 오버레이로 빈 영역 정보화.
-                HStack(spacing: DFSpace.sm3) {
-                    // Hero: 3D 모델 — **Phase G11 (2026-05-15)**: pose 가 보행 cycle 마다 갱신.
-                    // 실 로봇 송출 중: `runContinuousWalk` 의 onPose 가 매 step 마다 visualPose publish.
-                    // sim mode: 50ms tick 이 phase 따라 합성 pose publish.
-                    // footTrace 는 좌측 발 자취 (2D 캔버스와 동일 source).
-                    RobotScene3D(
-                        pose: session.visualPose,
-                        // **v1.14.8.1 (2026-05-21) perf**: session.footTrailLefts 캐시 직접 read.
-                        // 종전 .map { $0.left } 가 body 마다 200-element 배열 alloc.
-                        footTrace: session.footTrailLefts,
-                        imuRollDeg: session.displayImuRollDeg,
-                        imuPitchDeg: session.displayImuPitchDeg
-                    )
-                    .frame(minHeight: 360, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DFRadius.card)
-                            .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
-                    )
-                    .overlay(alignment: .topLeading) {
-                        // v1.11: 빈 영역 시각 채움 — walking phase / elapsed / 보정 Δ.
-                        sceneInfoOverlay
-                            .padding(DFSpace.sm)
-                    }
-                    // v1.11.20 사용자 요청 (2026-05-20): 우상단 racing-style speedometer HUD.
-                    .overlay(alignment: .topTrailing) {
-                        SceneSpeedometerOverlay()
-                            .padding(DFSpace.sm)
-                    }
-                    // v1.11.18 사용자 요청: 좌하단 자이로 mini + 우하단 walking 그래프.
-                    .overlay(alignment: .bottomLeading) {
-                        SceneGyroMiniOverlay()
-                            .padding(DFSpace.sm)
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        SceneWalkGraphOverlay()
-                            .padding(DFSpace.sm)
-                    }
-                    // **v1.14.6 (2026-05-21) — 사용자 요청**: preset 차단 사유 안내 banner.
-                    // 3D 뷰 하단 중앙에 — 사용자가 어떤 preset 이 왜 disabled 인지 즉시 인지.
-                    .overlay(alignment: .bottom) {
-                        walkGuidanceBanner
-                            .padding(.bottom, DFSpace.sm2)
-                            .padding(.horizontal, DFSpace.sm)
-                    }
-
-                    // 사이드 패널: 2D 발자취 (top-down) + IMU 게이지 2개.
-                    VStack(spacing: DFSpace.sm2) {
-                        FootTrailCanvas(trail: session.footTrail,
-                                        leftFoot: session.leftFoot,
-                                        rightFoot: session.rightFoot)
-                            .frame(height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: DFRadius.button)
-                                    .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
-                            )
-                        // **Stage 1 (v1.1 fall prevention)**: 실 IMU 출처 라벨 표시.
-                        HStack(spacing: DFSpace.xs) {
-                            Circle()
-                                .fill(imuSourceColor)
-                                .frame(width: DFSize.indicatorXxs,
-                                       height: DFSize.indicatorXxs)
-                            Text("IMU 출처: \(session.imuSource.label)")
-                                .font(DFFont.monoLabel)
-                                .foregroundStyle(DFColor.textSecondary)
-                            Spacer()
-                        }
-                        // **Stage 2 (v1.1 fall prevention)**: 안전 상태 + 자동 보정 토글.
-                        balanceStateCard
-                        // **Stage 5 (v1.1 fall prevention)**: 예측 score + ETA.
-                        FallPredictionCard(prediction: session.fallPrediction,
-                                           imuSource: session.imuSource)
-                        // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
-                        balanceCorrectionCard
-                        IMUGauge(axis: "Roll", degrees: session.displayImuRollDeg, dangerThreshold: 50)
-                        IMUGauge(axis: "Pitch", degrees: session.displayImuPitchDeg, dangerThreshold: 50)
-                    }
-                    // v1.11 재작업: 고정 280 → 가변 (좁은 화면 260, 와이드 모니터 340 까지).
-                    // SwiftUI 가 hero scene 과 사이드 패널 사이 공간 분배 시 자연스러운 호흡.
-                    .frame(minWidth: 260, idealWidth: 280, maxWidth: 340)
-                }
-                .frame(minHeight: 360)
-
-                footTargetsCard
-
+                // 4. Primary: actionBar — start/stop/emergency. 항상 표시.
                 actionBar
             }
             .padding(DFSpace.md)
+        }
+    }
+
+    /// **V280-A**: Primary banner 영역 — 활성 안전 신호 최우선 1개만 표시.
+    /// 우선순위: thermalAlarm > balanceLost > advanced critical.
+    /// 동시 다발 banner 가 화면을 점유하는 종전 패턴 차단 (Hick's Law).
+    @ViewBuilder
+    private var primaryBanner: some View {
+        if session.thermalAlarm {
+            banner(systemImage: "thermometer.sun.fill",
+                   message: "모터 60°C 도달 — 자동 정지됨. 배터리를 분리해 주세요",
+                   tint: DFColor.danger)
+        } else if session.balanceLost {
+            banner(systemImage: "exclamationmark.triangle.fill",
+                   message: "균형 잃음 감지 — 자동 정지됨",
+                   tint: DFColor.danger)
+        } else if session.advanced && session.stabilityScore.category == .critical {
+            // 2026-05-17 UX audit: 이중부정 "해제를 끄세요" → "다시 잠그세요" 직관화.
+            banner(systemImage: "xmark.octagon.fill",
+                   message: "위험도 \(Int(session.stabilityScore.score))/100 — 시작 차단됨. 슬라이더를 줄이거나 '안전 한도 해제'를 다시 잠그세요.",
+                   tint: DFColor.danger)
+        }
+    }
+
+    /// **V280-A**: Hero row — 3D scene (Primary) + 사이드 카드 그룹 2개 (Secondary).
+    private var heroRow: some View {
+        HStack(spacing: DFSpace.sm3) {
+            heroScene
+            heroSidePanel
+                // v1.11 재작업: 고정 280 → 가변 (좁은 화면 260, 와이드 모니터 340 까지).
+                .frame(minWidth: 260, idealWidth: 280, maxWidth: 340)
+        }
+        .frame(minHeight: 360)
+    }
+
+    /// **V280-A**: Hero 3D scene — minimal HUD (sceneInfoOverlay) 만 항상 표시.
+    /// 4 추가 overlay (Speedometer / GyroMini / WalkGraph / 차단 사유) 는 `showSceneOverlays`
+    /// toggle 또는 `session.advanced` 활성 시만 표시 (Tertiary).
+    private var heroScene: some View {
+        // **v1.11 (2026-05-17 사용자 요청) — 반응형 hero row**:
+        // 3D scene 카메라가 frame width 적응으로 zoom in (InteractiveSceneView
+        // .setFrameSize), 사이드 패널 240→280 으로 확장.
+        RobotScene3D(
+            pose: session.visualPose,
+            // **v1.14.8.1 (2026-05-21) perf**: session.footTrailLefts 캐시 직접 read.
+            footTrace: session.footTrailLefts,
+            imuRollDeg: session.displayImuRollDeg,
+            imuPitchDeg: session.displayImuPitchDeg
+        )
+        .frame(minHeight: 360, maxHeight: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.card)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
+        )
+        .overlay(alignment: .topLeading) {
+            // 항상 표시 — minimal HUD (preset/phase/Δ). Primary.
+            sceneInfoOverlay
+                .padding(DFSpace.sm)
+        }
+        // Tertiary — 사용자 명시 토글 또는 advanced 모드 시만 노출.
+        .overlay(alignment: .topTrailing) { sceneOverlayToggleChip }
+        .overlay(alignment: .topTrailing) {
+            if showSceneOverlays || session.advanced {
+                SceneSpeedometerOverlay()
+                    .padding(DFSpace.sm)
+                    // chip 가 표시될 때만 stack 회피 padding. advanced 모드 시 chip hidden — 종전 정렬 유지.
+                    .padding(.top, session.advanced ? 0 : DFSpace.lg)
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if showSceneOverlays || session.advanced {
+                SceneGyroMiniOverlay().padding(DFSpace.sm)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if showSceneOverlays || session.advanced {
+                SceneWalkGraphOverlay().padding(DFSpace.sm)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if showSceneOverlays || session.advanced {
+                walkGuidanceBanner
+                    .padding(.bottom, DFSpace.sm2)
+                    .padding(.horizontal, DFSpace.sm)
+            }
+        }
+    }
+
+    /// **V280-A**: scene 우상단 small toggle — overlay 4종 일괄 표시/숨김.
+    /// advanced 모드일 땐 강제 ON (UI에서 hidden), 명시 토글만 노출.
+    @ViewBuilder
+    private var sceneOverlayToggleChip: some View {
+        if !session.advanced {
+            Button {
+                withAnimation(DFAnimation.fast) { showSceneOverlays.toggle() }
+            } label: {
+                Image(systemName: showSceneOverlays ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle")
+                    .font(DFFont.label)
+                    .padding(DFSpace.xs)
+                    .background(.regularMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(DFSpace.sm)
+            .help(showSceneOverlays
+                  ? "Scene 오버레이 4종 숨기기 (Speedometer / Gyro / Graph / 안내)"
+                  : "Scene 오버레이 4종 표시")
+            .accessibilityLabel(showSceneOverlays ? "scene 오버레이 숨기기" : "scene 오버레이 표시")
+        }
+    }
+
+    /// **V280-A**: 사이드 패널 — 2 DisclosureGroup 그룹화 (Secondary).
+    /// - "운용 (Run)" 그룹: FootTrailCanvas + IMU 출처 + balanceStateCard — 기본 OPEN.
+    /// - "진단 (Diagnostics)" 그룹: FallPredictionCard + balanceCorrectionCard + IMU×2 — 기본 CLOSED.
+    private var heroSidePanel: some View {
+        VStack(spacing: DFSpace.sm) {
+            DisclosureGroup(isExpanded: $expandedRunGroup) {
+                runGroupBody
+                    .padding(.top, DFSpace.xs)
+            } label: {
+                disclosureHeader(icon: "play.circle.fill",
+                                 title: "운용",
+                                 subtitle: "보행 중 핵심")
+            }
+            DisclosureGroup(isExpanded: $expandedDiagGroup) {
+                diagGroupBody
+                    .padding(.top, DFSpace.xs)
+            } label: {
+                disclosureHeader(icon: "waveform.path.ecg",
+                                 title: "진단",
+                                 subtitle: "예측·보정·IMU 게이지")
+            }
+        }
+    }
+
+    /// **V280-A**: "운용" 그룹 본문 — 보행 중 항상 참조하는 정보.
+    private var runGroupBody: some View {
+        VStack(spacing: DFSpace.sm2) {
+            FootTrailCanvas(trail: session.footTrail,
+                            leftFoot: session.leftFoot,
+                            rightFoot: session.rightFoot)
+                .frame(height: 200)
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DFRadius.button)
+                        .stroke(DFColor.textSecondary.opacity(DFOpacity.o20),
+                                lineWidth: DFSize.borderHairline)
+                )
+            // **Stage 1 (v1.1 fall prevention)**: 실 IMU 출처 라벨 표시.
+            HStack(spacing: DFSpace.xs) {
+                Circle()
+                    .fill(imuSourceColor)
+                    .frame(width: DFSize.indicatorXxs,
+                           height: DFSize.indicatorXxs)
+                Text("IMU 출처: \(session.imuSource.label)")
+                    .font(DFFont.monoLabel)
+                    .foregroundStyle(DFColor.textSecondary)
+                Spacer()
+            }
+            // **Stage 2 (v1.1 fall prevention)**: 안전 상태 + 자동 보정 토글.
+            balanceStateCard
+        }
+    }
+
+    /// **V280-A**: "진단" 그룹 본문 — 분석/실험 시 펼침. 기본 CLOSED.
+    private var diagGroupBody: some View {
+        VStack(spacing: DFSpace.sm2) {
+            // **Stage 5 (v1.1 fall prevention)**: 예측 score + ETA.
+            FallPredictionCard(prediction: session.fallPrediction,
+                               imuSource: session.imuSource)
+            // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
+            balanceCorrectionCard
+            IMUGauge(axis: "Roll", degrees: session.displayImuRollDeg, dangerThreshold: 50)
+            IMUGauge(axis: "Pitch", degrees: session.displayImuPitchDeg, dangerThreshold: 50)
+        }
+    }
+
+    /// **V280-A**: Tertiary disclosure — LiveGyroPanel + simOnlyNotice + footTargetsCard.
+    /// 기본 CLOSED. 신규 사용자 첫 30초 시야 정리 (Nielsen #8 minimalist).
+    private var auxInfoDisclosure: some View {
+        DisclosureGroup(isExpanded: $expandedAuxInfo) {
+            VStack(spacing: DFSpace.sm) {
+                // **v1.11.17 (2026-05-19)**: 워크랩 진입 즉시 자이로 실시간 패널.
+                LiveGyroPanel()
+                simOnlyNotice
+                footTargetsCard
+            }
+            .padding(.top, DFSpace.xs)
+        } label: {
+            disclosureHeader(icon: "info.circle",
+                             title: "보조 정보",
+                             subtitle: "자이로 · 모드 안내 · 발 좌표")
+        }
+    }
+
+    /// **V280-A**: 통일된 DisclosureGroup 헤더 — icon + title + subtitle.
+    /// IBM Carbon style hierarchy (primary title + secondary descriptor).
+    private func disclosureHeader(icon: String, title: String, subtitle: String) -> some View {
+        HStack(spacing: DFSpace.xs2) {
+            Image(systemName: icon)
+                .font(DFFont.bodySmall)
+                .foregroundStyle(DFColor.accent)
+                .frame(width: DFSpace.md, alignment: .center)
+            VStack(alignment: .leading, spacing: DFSpace.micro) {
+                Text(title)
+                    .font(DFFont.bodySmallEmph)
+                    .foregroundStyle(DFColor.textPrimary)
+                Text(subtitle)
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
         }
     }
 
@@ -799,7 +939,7 @@ public struct WalkLabView: View {
                periodMs > 0 {
                 HStack(spacing: 6) {
                     Text(String(format: "%.0f/%.0fms", elapsedMs, periodMs))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(DFFont.monoLabel)
                         .foregroundStyle(DFColor.textSecondary)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
@@ -813,7 +953,7 @@ public struct WalkLabView: View {
                 }
             } else if !isWalking {
                 Text("프리셋을 시작하면 cycle phase 표시")
-                    .font(.system(size: 10))
+                    .font(DFFont.label)
                     .foregroundStyle(DFColor.textSecondary)
             }
             // 3행: 보정 status — 항상 표시 (config mode 인지)
@@ -835,17 +975,17 @@ public struct WalkLabView: View {
                     }
                 }()
                 Image(systemName: modeIcon)
-                    .font(.system(size: 10))
+                    .font(DFIcon.label)
                     .foregroundStyle(modeColor)
                 if let delta = session.lastCorrections?.maxAbs, delta > 0.01 {
                     Text(String(format: "Δ%.1f° %@",
                                 delta,
                                 session.lastCorrectionApplied ? "적용" : "관찰"))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(DFFont.monoLabel)
                         .foregroundStyle(DFColor.textSecondary)
                 } else {
                     Text(session.balanceExperimentConfig.algorithmMode.label)
-                        .font(.system(size: 10))
+                        .font(DFFont.label)
                         .foregroundStyle(DFColor.textSecondary)
                 }
                 // 사이클 167 (cycle 160 wire-up): IMU stale 신호 — 사용자가 보정 silent
@@ -883,9 +1023,9 @@ public struct WalkLabView: View {
         }()
         HStack(spacing: 2) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(DFFont.labelStrong)
             Text(state.koreanLabel)
-                .font(.system(size: 9, weight: .medium))
+                .font(DFFont.micro)
         }
         .foregroundStyle(color)
         .padding(.horizontal, 4)
@@ -1198,36 +1338,19 @@ public struct WalkLabView: View {
     /// **v1.14.6 (2026-05-21) — 사용자 요청**: 3D 뷰 하단의 차단 사유 안내 banner.
     /// 모든 non-idle preset 의 unique 차단 사유를 1줄 요약. 없으면 hidden.
     /// 시뮬 모드에선 cradle 자동 통과 — 다른 사유 (caution + 보정 OFF / 위험 동의 등) 표시.
+    ///
+    /// **V280-E (2026-05-24)**: hardcoded HStack/overlay → DFBanner (.warning).
+    /// 가로 폭 520pt cap 유지 — narrow detail pane 에서 wrap 회피.
     @ViewBuilder
     private var walkGuidanceBanner: some View {
         let reasons = uniqueBlockingReasons()
         if reasons.isEmpty {
             EmptyView()
         } else {
-            HStack(spacing: DFSpace.xs2) {
-                Image(systemName: "info.circle.fill")
-                    .foregroundStyle(DFColor.warning)
-                    .font(DFFont.label)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("일부 보행 모션 비활성")
-                        .font(DFFont.bodySmallEmph)
-                        .foregroundStyle(DFColor.warning)
-                    Text(reasons.joined(separator: " · "))
-                        .font(DFFont.bodySmall)
-                        .foregroundStyle(DFColor.textPrimary)
-                        .lineLimit(2)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, DFSpace.sm2)
-            .padding(.vertical, DFSpace.xs2)
-            .background(
-                RoundedRectangle(cornerRadius: DFRadius.button)
-                    .fill(DFColor.card.opacity(0.9))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DFRadius.button)
-                    .stroke(DFColor.warning.opacity(DFOpacity.o40), lineWidth: 1)
+            DFBanner(
+                title: "일부 보행 모션 비활성",
+                message: reasons.joined(separator: " · "),
+                severity: .warning
             )
             .frame(maxWidth: 520)
         }
