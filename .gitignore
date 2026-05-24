@@ -104,3 +104,8 @@ DARwIn-OP_ROBOTIS_v1.6.0/
 
 # v1.11.2 (2026-05-18): Claude Code local auto-run harness — runtime logs only.
 .harness/
+
+# V280-G (2026-05-24): Swift code coverage 측정 시 생성되는 raw profile.
+# `swift test --enable-code-coverage` 또는 Xcode coverage run 시 working dir 에 생성.
+*.profraw
+default.profraw
