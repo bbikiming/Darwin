@@ -219,26 +219,11 @@ public struct PilotDiagnosticsPanel: View {
 
     // MARK: - Safety / recovery
 
+    /// **V280-E (2026-05-24)**: hardcoded HStack/overlay → DFBanner (.warning).
+    /// 종전 shield 아이콘 → DFNotification 표준 triangle (Carbon consistency).
     private func safetyEventRow(_ msg: String) -> some View {
-        HStack(alignment: .top, spacing: DFSpace.sm) {
-            Image(systemName: "shield.lefthalf.filled")
-                .font(.system(size: DFFontSize.s14, weight: .semibold))
-                .foregroundStyle(DFColor.warning)
-                .frame(width: 18)
-            Text(msg)
-                .font(DFFont.caption)
-                .foregroundStyle(DFColor.warning)
-                .lineLimit(3)
-        }
-        .padding(.horizontal, DFSpace.sm)
-        .padding(.vertical, DFSpace.xs2)
-        .background(DFColor.warning.opacity(DFOpacity.o10))
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.sm)
-                .stroke(DFColor.warning.opacity(DFOpacity.o25), lineWidth: DFSize.borderHairline)
-        )
-        .accessibilityIdentifier("pilot.safety")
+        DFBanner(title: msg, severity: .warning)
+            .accessibilityIdentifier("pilot.safety")
     }
 
     private func recoveryRow(_ msg: String) -> some View {

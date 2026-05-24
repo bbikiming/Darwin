@@ -171,19 +171,15 @@ public struct AdvancedSlidersPanel: View {
             }
 
             // 메시지
+            // **V280-E (2026-05-24)**: hardcoded inline notice → DFInlineNotice.
+            // critical 점수 = .error severity, 그 외 = .warning.
             if !stability.messages.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(stability.messages, id: \.self) { msg in
-                        HStack(alignment: .top, spacing: DFSpace.xs) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: DFFontSize.s9))
-                                .foregroundStyle(stability.category == .critical
-                                                  ? DFColor.danger : DFColor.warning)
-                            Text(msg)
-                                .font(.system(size: DFFontSize.s10))
-                                .foregroundStyle(DFColor.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        DFInlineNotice(
+                            title: msg,
+                            severity: stability.category == .critical ? .error : .warning
+                        )
                     }
                 }
                 .padding(.top, DFSpace.xs2)

@@ -132,10 +132,19 @@ public struct AutoTunerCard: View {
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer()
+                // V279-2 (P1 discoverability fix): help/accessibilityLabel — 토글 의미가
+                // 단지 "자동 적용" 만으로는 모호 (어떤 적용? 무엇이 자동?). 사용자에게
+                // 동작 + 안전 조건 명시.
                 Toggle("자동 적용", isOn: $tuner.autoApplyEnabled)
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .labelsHidden()
+                    .help("AI 권고 강도를 다음 보행 cycle 에 자동 적용합니다. " +
+                          "실 robot 적용 모드에선 데이터 검증 후 수동 적용 권장 — 자동 변경 차단. " +
+                          "수동 강도 변경 시 일시 중단됩니다.")
+                    .accessibilityLabel(tuner.autoApplyEnabled
+                        ? "AI 권고 강도 자동 적용 켜짐 — 끄려면 클릭"
+                        : "AI 권고 강도 자동 적용 꺼짐 — 켜려면 클릭")
                 Text(tuner.autoApplyEnabled ? "ON" : "OFF")
                     .font(DFFont.label)
                     .foregroundStyle(tuner.autoApplyEnabled ? DFColor.success : DFColor.textSecondary)
@@ -145,21 +154,13 @@ public struct AutoTunerCard: View {
             // **v1.11.1 (2026-05-18 사용자 review HIGH-2) — 실 robot 자동 적용 차단 안내**.
             // 데이터 품질 검증 (duplicate ratio / stale ratio / 독립 sample count) 이
             // v2 quality analyzer 수준 미달이므로 실 robot 적용 모드에선 자동 변경 차단.
+            // **V280-E (2026-05-24)**: hardcoded HStack/background → DFBanner (.warning).
             if tuner.autoApplyEnabled && session.correctionApplyMode == "robotApplied" {
-                HStack(alignment: .top, spacing: DFSpace.xs2) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(DFColor.warning)
-                    Text("실 robot 적용 모드 — 자동 변경 차단됨 (수동 강도 유지). 데이터 검증 후 수동 적용 권장.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(DFColor.warning)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 4)
-                .padding(.vertical, 3)
-                .background(DFColor.warning.opacity(DFOpacity.o10))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                DFBanner(
+                    title: "실 robot 적용 모드 — 자동 변경 차단됨",
+                    message: "수동 강도 유지. 데이터 검증 후 수동 적용 권장.",
+                    severity: .warning
+                )
             }
             if let rec = tuner.pendingRecommendation {
                 Text(rec.reason)
