@@ -105,7 +105,9 @@ struct JointDetailView: View {
                 }
                 Spacer()
                 Button {
-                    runJointAction("e_stop") { try store.bus?.emergencyStop() }
+                    // V282-2 CRITICAL-2 fix: bus?.emergencyStop() 직접 호출 → store.emergencyStop() chain
+                    // (bus torque OFF + WalkLabSession + telemetry 전체 chain 보장)
+                    runJointAction("e_stop") { store.emergencyStop() }
                 } label: {
                     Label("E-Stop ALL", systemImage: "exclamationmark.octagon.fill")
                 }
