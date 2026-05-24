@@ -218,7 +218,7 @@ public struct KeyboardPilotPanel: View {
             Text("\(digit)")
                 .font(.caption2.monospaced().weight(.bold))
             Text(preset?.label.prefix(3).uppercased() ?? "—")
-                .font(.system(size: 8))
+                .font(DFFont.pill)
                 .foregroundStyle(DFColor.textSecondary)
         }
         .frame(width: 32, height: 30)

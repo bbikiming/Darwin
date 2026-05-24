@@ -68,7 +68,7 @@ public struct PilotLatencyPanel: View {
         let color = Self.tint(forMillis: medianMillis)
         return HStack(spacing: 3) {
             Image(systemName: Self.statusIcon(forMillis: medianMillis))
-                .font(.system(size: 10, weight: .semibold))
+                .font(DFFont.labelStrong)
                 .foregroundStyle(color)
             Text(Self.statusLabel(forMillis: medianMillis))
                 .font(.caption2.weight(.medium))

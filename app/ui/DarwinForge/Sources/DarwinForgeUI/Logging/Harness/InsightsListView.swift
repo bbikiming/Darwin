@@ -63,7 +63,7 @@ private struct InsightCard: View {
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 9)).foregroundStyle(.tertiary)
+                        .font(DFIcon.micro).foregroundStyle(.tertiary)
                     Text(insight.recommendation)
                         .font(.caption2).foregroundStyle(.primary.opacity(0.8))
                         .multilineTextAlignment(.leading)
@@ -196,7 +196,7 @@ private struct MetricRow: View {
             Text(format(metric.baseline)).font(.system(.caption2, design: .monospaced))
                 .frame(width: 60, alignment: .trailing)
                 .foregroundStyle(.tertiary)
-            Image(systemName: "arrow.right").font(.system(size: 8)).foregroundStyle(.tertiary)
+            Image(systemName: "arrow.right").font(DFFont.pill).foregroundStyle(.tertiary)
             Text(format(metric.current)).font(.system(.caption2, design: .monospaced))
                 .frame(width: 60, alignment: .leading)
             if let pct = metric.deltaPercent {
@@ -223,7 +223,7 @@ private struct CountRow: View {
                 .frame(width: 100, alignment: .leading)
             Text("\(count.baseline)").font(.system(.caption2, design: .monospaced))
                 .frame(width: 60, alignment: .trailing).foregroundStyle(.tertiary)
-            Image(systemName: "arrow.right").font(.system(size: 8)).foregroundStyle(.tertiary)
+            Image(systemName: "arrow.right").font(DFFont.pill).foregroundStyle(.tertiary)
             Text("\(count.current)").font(.system(.caption2, design: .monospaced))
                 .frame(width: 60, alignment: .leading)
             Text(deltaLabelInt(delta: count.delta, lowerIsBetter: count.lowerIsBetter))

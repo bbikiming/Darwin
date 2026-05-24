@@ -94,15 +94,15 @@ public struct SceneSpeedometerOverlay: View {
     private var titleBar: some View {
         HStack(spacing: 4) {
             Image(systemName: "bolt.fill")
-                .font(.system(size: 10, weight: .bold))
+                .font(DFFont.hudTitleBold)
                 .foregroundStyle(DFColor.forge)
             Text("FLT HUD")
-                .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                .font(DFFont.hudTitleHeavy)
                 .foregroundStyle(DFColor.forge)
                 .tracking(1.5)
             Spacer()
             Text(formatElapsed(ms: Int(session.elapsedMs)))
-                .font(.system(size: 10, weight: .semibold, design: .monospaced).monospacedDigit())
+                .font(DFFont.hudElapsedDigit)
                 .foregroundStyle(DFColor.textPrimary.opacity(0.85))
         }
         .padding(.horizontal, 10)
@@ -179,7 +179,7 @@ public struct SceneSpeedometerOverlay: View {
                 .font(.system(size: 28, weight: .heavy, design: .rounded).monospacedDigit())
                 .foregroundStyle(stabilityColor)
             Text("STAB")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(DFFont.hudAxis)
                 .foregroundStyle(DFColor.textSecondary)
                 .tracking(2.0)
         }
@@ -189,7 +189,7 @@ public struct SceneSpeedometerOverlay: View {
         let currentPhase = phaseIndex
         return HStack(spacing: 2) {
             Text("PH")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(DFFont.hudAxis)
                 .foregroundStyle(DFColor.textSecondary)
                 .tracking(1.0)
             HStack(spacing: 2) {
@@ -202,7 +202,7 @@ public struct SceneSpeedometerOverlay: View {
                 }
             }
             Text("\(currentPhase + 1)/6")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced).monospacedDigit())
+                .font(DFFont.hudReadoutDigit)
                 .foregroundStyle(DFColor.textPrimary)
                 .frame(width: 26, alignment: .trailing)
         }
@@ -234,7 +234,7 @@ public struct SceneSpeedometerOverlay: View {
     private func attitudeReadout(label: String, value: Double, color: Color) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(DFFont.hudAxis)
                 .foregroundStyle(DFColor.textSecondary)
                 .tracking(0.8)
             Text(String(format: "%+.1f°", value))
@@ -252,7 +252,7 @@ public struct SceneSpeedometerOverlay: View {
         let color = comColor(pct: pct)
         return HStack(spacing: 5) {
             Text(label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(DFFont.hudAxis)
                 .foregroundStyle(DFColor.textSecondary)
                 .tracking(0.8)
                 .frame(width: 22, alignment: .leading)
@@ -279,7 +279,7 @@ public struct SceneSpeedometerOverlay: View {
             }
             .frame(height: 9)
             Text(String(format: "%+.0fmm", offsetMm))
-                .font(.system(size: 10, weight: .heavy, design: .monospaced).monospacedDigit())
+                .font(DFFont.hudValueDigit)
                 .foregroundStyle(color)
                 .frame(width: 52, alignment: .trailing)
         }
@@ -312,7 +312,7 @@ public struct SceneSpeedometerOverlay: View {
         let activeSegments = Int((frac * 5.0).rounded(.toNearestOrAwayFromZero))
         return HStack(spacing: 5) {
             Text(label)
-                .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                .font(DFFont.hudLabelHeavy)
                 .foregroundStyle(DFColor.textSecondary)
                 .frame(width: 12, alignment: .leading)
             HStack(spacing: 1) {
@@ -326,11 +326,11 @@ public struct SceneSpeedometerOverlay: View {
                 }
             }
             Text(String(format: "%+.1f°", residual))
-                .font(.system(size: 10, weight: .heavy, design: .monospaced).monospacedDigit())
+                .font(DFFont.hudValueDigit)
                 .foregroundStyle(color)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             Text(absR < 1 ? "LVL" : (absR < 3 ? "OK" : (absR < 6 ? "DEV" : "TILT")))
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .font(DFFont.hudSection)
                 .foregroundStyle(color)
                 .frame(width: 28, alignment: .leading)
         }
@@ -344,7 +344,7 @@ public struct SceneSpeedometerOverlay: View {
         return HStack(spacing: 5) {
             // Δmax 값
             Text("Δ")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .font(DFFont.hudLabelBold)
                 .foregroundStyle(DFColor.textSecondary)
             Text(String(format: "%.1f°", delta))
                 .font(.system(size: 11, weight: .heavy, design: .monospaced).monospacedDigit())
@@ -364,7 +364,7 @@ public struct SceneSpeedometerOverlay: View {
             }
             // state chip
             Text(isOn ? "BAL ON" : "OFF")
-                .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                .font(DFFont.hudPillHeavy)
                 .foregroundStyle(isOn ? DFColor.success : DFColor.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -413,24 +413,24 @@ public struct SceneSpeedometerOverlay: View {
                 .fill(dotColor)
                 .frame(width: 6, height: 6)
             Text(label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(DFFont.hudAxis)
                 .foregroundStyle(DFColor.textSecondary)
                 .tracking(0.8)
                 .frame(width: 26, alignment: .leading)
             // lag (있을 때만)
             if let lag = lagMs {
                 Text(formatLag(lag))
-                    .font(.system(size: 9, weight: .heavy, design: .monospaced).monospacedDigit())
+                    .font(DFFont.hudLagDigit)
                     .foregroundStyle(lagColor(lag))
                     .frame(width: 48, alignment: .leading)
             } else {
                 Text("—")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(DFFont.hudReadout)
                     .foregroundStyle(DFColor.textSecondary)
                     .frame(width: 48, alignment: .leading)
             }
             Text(extra)
-                .font(.system(size: 9, weight: .semibold, design: .monospaced).monospacedDigit())
+                .font(DFFont.hudReadoutDigit)
                 .foregroundStyle(DFColor.textPrimary.opacity(0.85))
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -479,7 +479,7 @@ public struct SceneSpeedometerOverlay: View {
                 }
             }
             Text(label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(DFFont.hudAxis)
                 .foregroundStyle(DFColor.textSecondary)
                 .tracking(1.0)
                 .frame(width: 22, alignment: .leading)
@@ -488,7 +488,7 @@ public struct SceneSpeedometerOverlay: View {
                 .foregroundStyle(color)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             Text(unit)
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .font(DFFont.hudUnit)
                 .foregroundStyle(DFColor.textSecondary)
                 .frame(width: 26, alignment: .leading)
         }
@@ -510,9 +510,9 @@ public struct SceneSpeedometerOverlay: View {
     private func statusPill(icon: String, label: String, color: Color) -> some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 8, weight: .bold))
+                .font(DFFont.hudPillBold)
             Text(label)
-                .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                .font(DFFont.hudPillHeavy)
                 .tracking(0.5)
         }
         .foregroundStyle(color)
@@ -540,12 +540,12 @@ public struct SceneSpeedometerOverlay: View {
                                 badgeColor: Color = DFColor.textSecondary) -> some View {
         HStack(spacing: 4) {
             Text(text)
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .font(DFFont.hudSection)
                 .foregroundStyle(DFColor.forge.opacity(0.75))
                 .tracking(1.2)
             if let b = badge {
                 Text(b)
-                    .font(.system(size: 7, weight: .heavy, design: .monospaced))
+                    .font(DFFont.hudBadge)
                     .foregroundStyle(badgeColor)
                     .tracking(0.5)
                     .padding(.horizontal, 3)
