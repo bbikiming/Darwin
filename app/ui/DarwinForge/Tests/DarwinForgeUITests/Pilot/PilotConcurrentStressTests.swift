@@ -31,11 +31,15 @@ final class PilotConcurrentStressTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        // 2026-05-24 (V270-flaky fix) — explicit cleanup. 종전: setUp 에서 `session.start(.march)`
-        // 호출 → simTimer 가 RunLoop 에 install. nil 만으로는 simTimer 가 (수정 전 outer-strong
-        // capture 버그 때) session 을 영구 retain → 1962-test 풀런 coverage 환경에서 누적
-        // 시 SIGSEGV. outer [weak self] fix 이후에도 명시적 stop 호출이 가장 안전.
+        // 2026-05-24 (V270-flaky fix) — explicit cleanup.
+        // (1) `session.stop()` — simTimer invalidate + walkCycleTask cancel (start(.march)
+        //     이 setUp 에서 launch 한 RunLoop-bound 리소스 정리).
+        // (2) `await Task.yield()` × 여러 번 — `handleEmergency` 가 `Task { [tello] in
+        //     await tello.emergency() }` 5번 spawn → 이 detached task 들이 mock 의
+        //     `sentCommands.append` 를 race. tearDown 전에 yield 로 drain → mock = nil
+        //     후 race 차단. coverage 풀런 1962 tests 환경에서 누적 race 차단.
         session?.stop()
+        for _ in 0..<8 { await Task.yield() }
         bridge = nil
         session = nil
         mock = nil
