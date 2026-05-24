@@ -36,15 +36,6 @@ public struct WalkLabView: View {
     /// 기본 off — 사용자가 명시 활성화 시 좌하단 overlay 노출.
     @State private var showingPilotOverlay: Bool = false
 
-    /// **v1.11 (2026-05-17 사용자 요청)**: Fall Prevention 패널 너비 — 사용자 drag
-    /// 으로 조절 + 다음 실행 시 복원. UserDefaults key `df.walklab.fallPanelWidth`.
-    /// 기본 380pt, range 280..720.
-    @AppStorage("df.walklab.fallPanelWidth") private var fallPanelWidth: Double = 380
-    /// Drag 시작 시점의 너비 — translation 누적 계산용.
-    @State private var fallPanelDragStartWidth: Double? = nil
-    /// Drag handle hover 상태 — 시각 highlight 용.
-    @State private var fallPanelHandleHovering: Bool = false
-
     /// **V272-1 (2026-05-24) UI/UX P0 fix**: 안전 정지 배너 dismiss 확인 dialog.
     /// 종전: "닫기" 버튼이 balanceLost/thermalAlarm 을 즉시 false 로 클리어 — 사용자
     /// 실수 클릭 한 번에 안전 가드 해제. HIG `confirmationDialog` 패턴 적용으로
@@ -361,163 +352,13 @@ public struct WalkLabView: View {
         // - 접힘: 세로 stripe (36pt) 만 — 좌측 edge 에서 클릭 시 펼침
         // - 세로 toggle 만 사용 (가로 monitoringToggleBar 제거) — macOS Mail sidebar
         //   collapse 패턴 정합
-        // **v1.11 (2026-05-17 사용자 요청)**: 명시 drag handle — `fallPanelDragHandle`
-        // 으로 사용자가 좌우 마우스 drag 으로 너비 조절. AppStorage 자동 복원.
+        // **V281-1 (2026-05-24)**: 좌측 모니터링 column 3 view (expandedSidebar,
+        // dragHandle, collapsedStripe) 와 패널 너비 state (@AppStorage + 2 @State)
+        // 를 `WalkLabMonitoringColumn` sub-file 로 추출 (Fowler "Extract Class").
         HStack(alignment: .top, spacing: DFSpace.none) {
-            if session.monitoringExpanded {
-                monitoringSidebar
-                fallPanelDragHandle
-            } else {
-                collapsedMonitoringStripe
-            }
+            WalkLabMonitoringColumn()
             mainDetailContent
         }
-    }
-
-    /// **v1.11 (2026-05-17 사용자 요청) — Fall Prevention 패널 drag handle**.
-    ///
-    /// 6pt 너비 hit area + 1pt visible line (hover 시 3pt + accent). 좌우 drag 으로
-    /// `fallPanelWidth` 업데이트 (clamp 280..720). `NSCursor.resizeLeftRight` 자동.
-    /// 사용자 마지막 너비는 `@AppStorage` 가 다음 실행 때 자동 복원.
-    private var fallPanelDragHandle: some View {
-        let isActive = fallPanelHandleHovering || fallPanelDragStartWidth != nil
-        return ZStack {
-            // Hit area (cursor + drag) — 투명 6pt.
-            Color.clear
-                .contentShape(Rectangle())
-            // Visible line — 1pt 또는 3pt (hover/drag 시).
-            Rectangle()
-                .fill(isActive ? DFColor.accent : DFColor.textSecondary.opacity(DFOpacity.o20))
-                .frame(width: isActive ? 3 : 1)
-                .animation(DFAnimation.fast, value: isActive)
-        }
-        .frame(width: 6)
-        .frame(maxHeight: .infinity)
-        .onHover { hovering in
-            fallPanelHandleHovering = hovering
-            if hovering {
-                NSCursor.resizeLeftRight.push()
-            } else if fallPanelDragStartWidth == nil {
-                NSCursor.pop()
-            }
-        }
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    if fallPanelDragStartWidth == nil {
-                        fallPanelDragStartWidth = fallPanelWidth
-                    }
-                    let newWidth = (fallPanelDragStartWidth ?? fallPanelWidth)
-                                 + Double(value.translation.width)
-                    fallPanelWidth = max(280, min(720, newWidth))
-                }
-                .onEnded { _ in
-                    fallPanelDragStartWidth = nil
-                    if !fallPanelHandleHovering {
-                        NSCursor.pop()
-                    }
-                }
-        )
-        .help("좌우 drag — Fall Prevention 패널 너비 조절")
-        .accessibilityLabel("패널 너비 조절")
-        .accessibilityHint("좌우 드래그하여 너비를 조절합니다")
-    }
-
-    /// 좌측 세로 모니터링 dashboard column — `monitoringExpanded` 시만 표시.
-    /// 헤더에 닫기 버튼 (chevron.left) + 본문 `FallPreventionMonitor` ScrollView.
-    /// **v1.11 (2026-05-17 사용자 요청)**: 명시 drag handle (`fallPanelDragHandle`)
-    /// 로 너비 조절. 기본 380pt, range 280..720pt. `@AppStorage` 가 사용자 마지막
-    /// 너비를 다음 실행 시 자동 복원.
-    private var monitoringSidebar: some View {
-        VStack(spacing: 0) {
-            // **macOS-native header** — Inspector style. material background.
-            HStack(spacing: DFSpace.sm) {
-                Image(systemName: "waveform.path.ecg.rectangle.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(DFColor.accent.gradient)
-                Text("Fall Prevention")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DFColor.textPrimary)
-                Spacer()
-                Button {
-                    withAnimation(DFAnimation.fast) {
-                        session.monitoringExpanded = false
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(DFColor.textSecondary)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("모니터링 패널 접기 (⌘⇧M)")
-                .accessibilityLabel("모니터링 패널 접기")
-            }
-            .padding(.horizontal, DFSpace.sm2)
-            .padding(.vertical, DFSpace.sm)
-            .background(.thinMaterial)
-
-            Divider()
-
-            ScrollView {
-                FallPreventionMonitor(session: session)
-                    .padding(DFSpace.sm)
-            }
-            .scrollIndicators(.automatic)
-        }
-        // **v1.11 (2026-05-17)**: AppStorage 가 관리하는 사용자 drag 너비 적용.
-        // `fallPanelDragHandle` 이 옆에서 lifecycle 관리.
-        .frame(width: CGFloat(fallPanelWidth))
-        .background(.regularMaterial)
-        .transition(.move(edge: .leading).combined(with: .opacity))
-    }
-
-    /// **v1.11 모니터링 패널 너비 한계** (사용자 drag resize).
-    /// 실제 적용은 `fallPanelWidth` (@AppStorage) + drag handle 이 clamp.
-    private var monitorMinWidth: CGFloat { 280 }
-    private var monitorIdealWidth: CGFloat { 380 }
-    private var monitorMaxWidth: CGFloat { 720 }
-
-    /// 접힘 상태의 좌측 edge 세로 stripe — 펼치기 버튼 + 라벨.
-    /// macOS Mail / Notes 의 sidebar collapse 패턴 정합.
-    private var collapsedMonitoringStripe: some View {
-        VStack(spacing: DFSpace.sm) {
-            Button {
-                withAnimation(DFAnimation.fast) {
-                    session.monitoringExpanded = true
-                }
-            } label: {
-                VStack(spacing: DFSpace.xs2) {
-                    Image(systemName: "chevron.right")
-                        .font(DFFont.sectionBody)
-                    Image(systemName: "waveform.path.ecg.rectangle")
-                        .font(DFFont.sectionBody)
-                    Text("모니터링")
-                        .font(DFFont.micro)
-                        .rotationEffect(.degrees(-90))
-                        .fixedSize()
-                        .frame(width: 12, height: 60)
-                }
-                .foregroundStyle(DFColor.accent)
-                .padding(.vertical, DFSpace.md)
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-            .help("Fall Prevention 모니터링 펼치기 (⌘⇧M)")
-            .accessibilityLabel("Fall Prevention 모니터링 펼치기")
-            .keyboardShortcut("m", modifiers: [.command, .shift])
-            Spacer()
-        }
-        .frame(width: 36)
-        .frame(maxHeight: .infinity)
-        .background(DFColor.elev2)
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(DFColor.textSecondary.opacity(DFOpacity.subtle))
-                .frame(width: DFSize.borderHairline)
-        }
-        .transition(.move(edge: .leading).combined(with: .opacity))
     }
 
     /// **V280-A (2026-05-24) — Progressive Disclosure 재설계**.
@@ -576,242 +417,37 @@ public struct WalkLabView: View {
     }
 
     /// **V280-A**: Hero row — 3D scene (Primary) + 사이드 카드 그룹 2개 (Secondary).
+    ///
+    /// **V281-1 (2026-05-24)**: 1427 LOC god view 분리. 종전 inline heroScene +
+    /// heroSidePanel 을 sub-file (`WalkLabSceneSection` / `WalkLabSidePanelSection`)
+    /// 로 추출. behavior 0 변경 (Fowler "Extract Class").
     private var heroRow: some View {
         HStack(spacing: DFSpace.sm3) {
-            heroScene
-            heroSidePanel
+            WalkLabSceneSection(
+                showSceneOverlays: $showSceneOverlays,
+                blockingReasons: uniqueBlockingReasons()
+            )
+            WalkLabSidePanelSection(
+                expandedRunGroup: $expandedRunGroup,
+                expandedDiagGroup: $expandedDiagGroup
+            )
                 // v1.11 재작업: 고정 280 → 가변 (좁은 화면 260, 와이드 모니터 340 까지).
                 .frame(minWidth: 260, idealWidth: 280, maxWidth: 340)
         }
         .frame(minHeight: 360)
     }
 
-    /// **V280-A**: Hero 3D scene — minimal HUD (sceneInfoOverlay) 만 항상 표시.
-    /// 4 추가 overlay (Speedometer / GyroMini / WalkGraph / 차단 사유) 는 `showSceneOverlays`
-    /// toggle 또는 `session.advanced` 활성 시만 표시 (Tertiary).
-    private var heroScene: some View {
-        // **v1.11 (2026-05-17 사용자 요청) — 반응형 hero row**:
-        // 3D scene 카메라가 frame width 적응으로 zoom in (InteractiveSceneView
-        // .setFrameSize), 사이드 패널 240→280 으로 확장.
-        RobotScene3D(
-            pose: session.visualPose,
-            // **v1.14.8.1 (2026-05-21) perf**: session.footTrailLefts 캐시 직접 read.
-            footTrace: session.footTrailLefts,
-            imuRollDeg: session.displayImuRollDeg,
-            imuPitchDeg: session.displayImuPitchDeg
-        )
-        .frame(minHeight: 360, maxHeight: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.card)
-                .stroke(DFColor.textSecondary.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
-        )
-        .overlay(alignment: .topLeading) {
-            // 항상 표시 — minimal HUD (preset/phase/Δ). Primary.
-            sceneInfoOverlay
-                .padding(DFSpace.sm)
-        }
-        // Tertiary — 사용자 명시 토글 또는 advanced 모드 시만 노출.
-        .overlay(alignment: .topTrailing) { sceneOverlayToggleChip }
-        .overlay(alignment: .topTrailing) {
-            if showSceneOverlays || session.advanced {
-                SceneSpeedometerOverlay()
-                    .padding(DFSpace.sm)
-                    // chip 가 표시될 때만 stack 회피 padding. advanced 모드 시 chip hidden — 종전 정렬 유지.
-                    .padding(.top, session.advanced ? 0 : DFSpace.lg)
-            }
-        }
-        .overlay(alignment: .bottomLeading) {
-            if showSceneOverlays || session.advanced {
-                SceneGyroMiniOverlay().padding(DFSpace.sm)
-            }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if showSceneOverlays || session.advanced {
-                SceneWalkGraphOverlay().padding(DFSpace.sm)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if showSceneOverlays || session.advanced {
-                walkGuidanceBanner
-                    .padding(.bottom, DFSpace.sm2)
-                    .padding(.horizontal, DFSpace.sm)
-            }
-        }
-    }
-
-    /// **V280-A**: scene 우상단 small toggle — overlay 4종 일괄 표시/숨김.
-    /// advanced 모드일 땐 강제 ON (UI에서 hidden), 명시 토글만 노출.
-    @ViewBuilder
-    private var sceneOverlayToggleChip: some View {
-        if !session.advanced {
-            Button {
-                withAnimation(DFAnimation.fast) { showSceneOverlays.toggle() }
-            } label: {
-                Image(systemName: showSceneOverlays ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle")
-                    .font(DFFont.label)
-                    .padding(DFSpace.xs)
-                    .background(.regularMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(DFSpace.sm)
-            .help(showSceneOverlays
-                  ? "Scene 오버레이 4종 숨기기 (Speedometer / Gyro / Graph / 안내)"
-                  : "Scene 오버레이 4종 표시")
-            .accessibilityLabel(showSceneOverlays ? "scene 오버레이 숨기기" : "scene 오버레이 표시")
-        }
-    }
-
-    /// **V280-A**: 사이드 패널 — 2 DisclosureGroup 그룹화 (Secondary).
-    /// - "운용 (Run)" 그룹: FootTrailCanvas + IMU 출처 + balanceStateCard — 기본 OPEN.
-    /// - "진단 (Diagnostics)" 그룹: FallPredictionCard + balanceCorrectionCard + IMU×2 — 기본 CLOSED.
-    private var heroSidePanel: some View {
-        VStack(spacing: DFSpace.sm) {
-            DisclosureGroup(isExpanded: $expandedRunGroup) {
-                runGroupBody
-                    .padding(.top, DFSpace.xs)
-            } label: {
-                disclosureHeader(icon: "play.circle.fill",
-                                 title: "운용",
-                                 subtitle: "보행 중 핵심")
-            }
-            DisclosureGroup(isExpanded: $expandedDiagGroup) {
-                diagGroupBody
-                    .padding(.top, DFSpace.xs)
-            } label: {
-                disclosureHeader(icon: "waveform.path.ecg",
-                                 title: "진단",
-                                 subtitle: "예측·보정·IMU 게이지")
-            }
-        }
-    }
-
-    /// **V280-A**: "운용" 그룹 본문 — 보행 중 항상 참조하는 정보.
-    private var runGroupBody: some View {
-        VStack(spacing: DFSpace.sm2) {
-            FootTrailCanvas(trail: session.footTrail,
-                            leftFoot: session.leftFoot,
-                            rightFoot: session.rightFoot)
-                .frame(height: 200)
-                .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DFRadius.button)
-                        .stroke(DFColor.textSecondary.opacity(DFOpacity.o20),
-                                lineWidth: DFSize.borderHairline)
-                )
-            // **Stage 1 (v1.1 fall prevention)**: 실 IMU 출처 라벨 표시.
-            HStack(spacing: DFSpace.xs) {
-                Circle()
-                    .fill(imuSourceColor)
-                    .frame(width: DFSize.indicatorXxs,
-                           height: DFSize.indicatorXxs)
-                Text("IMU 출처: \(session.imuSource.label)")
-                    .font(DFFont.monoLabel)
-                    .foregroundStyle(DFColor.textSecondary)
-                Spacer()
-            }
-            // **Stage 2 (v1.1 fall prevention)**: 안전 상태 + 자동 보정 토글.
-            balanceStateCard
-        }
-    }
-
-    /// **V280-A**: "진단" 그룹 본문 — 분석/실험 시 펼침. 기본 CLOSED.
-    private var diagGroupBody: some View {
-        VStack(spacing: DFSpace.sm2) {
-            // **Stage 5 (v1.1 fall prevention)**: 예측 score + ETA.
-            FallPredictionCard(prediction: session.fallPrediction,
-                               imuSource: session.imuSource)
-            // **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
-            balanceCorrectionCard
-            IMUGauge(axis: "Roll", degrees: session.displayImuRollDeg, dangerThreshold: 50)
-            IMUGauge(axis: "Pitch", degrees: session.displayImuPitchDeg, dangerThreshold: 50)
-        }
-    }
-
     /// **V280-A**: Tertiary disclosure — LiveGyroPanel + simOnlyNotice + footTargetsCard.
     /// 기본 CLOSED. 신규 사용자 첫 30초 시야 정리 (Nielsen #8 minimalist).
+    ///
+    /// **V281-1 (2026-05-24)**: 본문은 `WalkLabAuxSection` sub-file 로 분리.
     private var auxInfoDisclosure: some View {
-        DisclosureGroup(isExpanded: $expandedAuxInfo) {
-            VStack(spacing: DFSpace.sm) {
-                // **v1.11.17 (2026-05-19)**: 워크랩 진입 즉시 자이로 실시간 패널.
-                LiveGyroPanel()
-                simOnlyNotice
-                footTargetsCard
-            }
-            .padding(.top, DFSpace.xs)
-        } label: {
-            disclosureHeader(icon: "info.circle",
-                             title: "보조 정보",
-                             subtitle: "자이로 · 모드 안내 · 발 좌표")
-        }
-    }
-
-    /// **V280-A**: 통일된 DisclosureGroup 헤더 — icon + title + subtitle.
-    /// IBM Carbon style hierarchy (primary title + secondary descriptor).
-    private func disclosureHeader(icon: String, title: String, subtitle: String) -> some View {
-        HStack(spacing: DFSpace.xs2) {
-            Image(systemName: icon)
-                .font(DFFont.bodySmall)
-                .foregroundStyle(DFColor.accent)
-                .frame(width: DFSpace.md, alignment: .center)
-            VStack(alignment: .leading, spacing: DFSpace.micro) {
-                Text(title)
-                    .font(DFFont.bodySmallEmph)
-                    .foregroundStyle(DFColor.textPrimary)
-                Text(subtitle)
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.textSecondary)
-            }
-        }
+        WalkLabAuxSection(expandedAuxInfo: $expandedAuxInfo)
     }
 
     // 2026-05-16: 가로 `monitoringToggleBar` private var (~75 line) 제거 — 좌측
     // 세로 `collapsedMonitoringStripe` / `monitoringSidebar` 헤더 toggle 로 통합.
     // dead code (호출처 0).
-
-    private var monitorBadgeColor: Color {
-        switch session.balanceState {
-        case .normal:    return DFColor.success
-        case .caution:   return DFColor.warning
-        case .warning:   return DFColor.severe
-        case .danger, .emergency: return DFColor.danger
-        }
-    }
-
-    /// 시뮬 vs 실 송출 경계 안내. 프리셋/고급 슬라이더 모두 실 송출 page 합성에 반영.
-    private var simOnlyNotice: some View {
-        let walking = session.isRobotWalking
-        let connected = store.bus != nil
-        let title: String = {
-            if walking { return "🤖 보행 cycle 송출 중 — 실 로봇 동작" }
-            if connected && session.cradleConfirmed {
-                return "프리셋 보행 = 실 송출 활성 · 슬라이더 = 실시간 반영"
-            }
-            return "프리셋 보행 = 실 송출 (연결 + cradle 후) · 슬라이더 = page 재합성"
-        }()
-        let detail = "프리셋(제자리·천천히·보통·빠르게·공 접근 킥·좌/우회전)은 ROBOTIS walking 기반 step 시퀀스를 모터에 직접 송출합니다. 고급 슬라이더(보폭/측면/회전/주기/발 들기/균형)는 진행 중인 실 보행 page를 debounce 후 재합성합니다."
-        let tint: Color = walking ? DFColor.success : DFColor.info
-        return HStack(spacing: DFSpace.sm) {
-            Image(systemName: walking ? "figure.walk.motion" : "info.circle.fill")
-                .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: DFSpace.micro) {
-                Text(title)
-                    .font(DFFont.sectionBody)
-                Text(detail)
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.textSecondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, DFSpace.sm2)
-        .padding(.vertical, DFSpace.xs2)
-        .background(tint.opacity(DFOpacity.o10))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.button)
-                .stroke(tint.opacity(DFOpacity.o30), lineWidth: DFSize.borderStrong)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
-    }
 
     private func banner(systemImage: String, message: String, tint: Color) -> some View {
         HStack(spacing: DFSpace.sm) {
@@ -849,335 +485,12 @@ public struct WalkLabView: View {
         }
     }
 
-    /// **2026-05-16 검증**: 좁은 detail 폭 (480pt) 에서 HStack 컬럼 5개 + Spacer +
-    /// 다이버 2개 = ~540pt content > 460pt available → 잠재 overflow.
-    /// 해결: 컬럼 자체 `.lineLimit(1)` + monospace text 가 자동 truncate.
-    /// 추가 보호: `.fixedSize(horizontal: false, vertical: true)` 명시 — wrap
-    /// 회피 + Spacer 우측 정렬 보장.
-    private var footTargetsCard: some View {
-        HStack(spacing: DFSpace.md - 2) {
-            VStack(alignment: .leading, spacing: DFSpace.micro2) {
-                Text("Phase").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
-                Text(session.phaseLabel)
-                    .font(DFFont.monoBody)
-                    .lineLimit(1)
-            }
-            Divider().frame(height: DFSpace.xl)
-            VStack(alignment: .leading, spacing: DFSpace.micro2) {
-                Text("L (x,y,z)").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
-                Text(fmt3(session.leftFoot))
-                    .font(DFFont.mono)
-                    .lineLimit(1)
-            }
-            VStack(alignment: .leading, spacing: DFSpace.micro2) {
-                Text("R (x,y,z)").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
-                Text(fmt3(session.rightFoot))
-                    .font(DFFont.mono)
-                    .lineLimit(1)
-            }
-            Divider().frame(height: DFSpace.xl)
-            VStack(alignment: .leading, spacing: DFSpace.micro2) {
-                Text("Temp").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
-                Text(String(format: "%.1f°C", session.maxMotorTemp))
-                    .font(DFFont.mono)
-                    .foregroundStyle(tempColor)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: DFSpace.xs)
-            VStack(alignment: .trailing, spacing: DFSpace.micro2) {
-                Text("Elapsed").font(DFFont.caption).foregroundStyle(DFColor.textSecondary)
-                Text("\(session.elapsedMs) ms")
-                    .font(DFFont.mono)
-                    .lineLimit(1)
-            }
-        }
-        .padding(DFSpace.sm2)
-        .background(DFColor.elev2)
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card))
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// 모터 온도 색상 — DFLoadColor 5단계 매핑 (45/50/60°C 임계값).
-    private var tempColor: Color {
-        let t = session.maxMotorTemp
-        if t >= 60 { return DFColor.danger }
-        if t >= 50 { return DFLoadColor.high }
-        if t >= 45 { return DFColor.warning }
-        return DFColor.textSecondary
-    }
-
-    /// **Stage 1 (v1.1 fall prevention)**: IMU 출처별 색.
-    /// sim = 회색 (참고용), real = 녹색 (정상), stale = 주황 (경고).
-    private var imuSourceColor: Color {
-        switch session.imuSource {
-        case .sim:   return DFColor.textSecondary
-        case .real:  return DFColor.success
-        case .stale: return DFColor.warning
-        }
-    }
-
-    /// **v1.11 (2026-05-17 사용자 요청) — 3D scene 좌상단 floating chip**:
-    /// 빈 영역 시각 채움 + 정보 가치 추가. **항상 표시** (idle 도 안내):
-    /// - idle 시: 보행 대기 안내 + walk_ready 자세 표기
-    /// - walking 시: preset / cycle phase progress / 보정 Δ
-    private var sceneInfoOverlay: some View {
-        let isWalking = session.current != .idle
-        return VStack(alignment: .leading, spacing: 4) {
-            // 1행: preset 또는 idle 안내
-            HStack(spacing: 6) {
-                Image(systemName: isWalking ? "figure.walk.motion" : "figure.stand")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isWalking ? DFColor.accent : DFColor.textSecondary)
-                Text(isWalking ? session.current.label : "보행 대기 · walk_ready")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DFColor.textPrimary)
-            }
-            // 2행: walking 시 cycle phase, idle 시 안내 부제
-            if isWalking,
-               let elapsedMs = session.lastWalkCycleElapsedMs,
-               let periodMs = session.lastWalkPeriodMs,
-               periodMs > 0 {
-                HStack(spacing: 6) {
-                    Text(String(format: "%.0f/%.0fms", elapsedMs, periodMs))
-                        .font(DFFont.monoLabel)
-                        .foregroundStyle(DFColor.textSecondary)
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(DFColor.textSecondary.opacity(DFOpacity.o20))
-                            Capsule().fill(DFColor.accent)
-                                .frame(width: geo.size.width
-                                       * CGFloat(min(1, elapsedMs / periodMs)))
-                        }
-                    }
-                    .frame(width: 60, height: 3)
-                }
-            } else if !isWalking {
-                Text("프리셋을 시작하면 cycle phase 표시")
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.textSecondary)
-            }
-            // 3행: 보정 status — 항상 표시 (config mode 인지)
-            HStack(spacing: 6) {
-                let modeIcon: String = {
-                    switch session.balanceExperimentConfig.algorithmMode {
-                    case .off:             return "power.circle"
-                    case .robotisPControl: return "shield.fill"
-                    case .hybridBA:        return "brain"
-                    case .observeOnly:     return "eye.fill"
-                    }
-                }()
-                let modeColor: Color = {
-                    switch session.balanceExperimentConfig.algorithmMode {
-                    case .off:             return DFColor.textSecondary
-                    case .robotisPControl: return DFColor.success
-                    case .hybridBA:        return DFColor.warning
-                    case .observeOnly:     return DFColor.info
-                    }
-                }()
-                Image(systemName: modeIcon)
-                    .font(DFIcon.label)
-                    .foregroundStyle(modeColor)
-                if let delta = session.lastCorrections?.maxAbs, delta > 0.01 {
-                    Text(String(format: "Δ%.1f° %@",
-                                delta,
-                                session.lastCorrectionApplied ? "적용" : "관찰"))
-                        .font(DFFont.monoLabel)
-                        .foregroundStyle(DFColor.textSecondary)
-                } else {
-                    Text(session.balanceExperimentConfig.algorithmMode.label)
-                        .font(DFFont.label)
-                        .foregroundStyle(DFColor.textSecondary)
-                }
-                // 사이클 167 (cycle 160 wire-up): IMU stale 신호 — 사용자가 보정 silent
-                // 차단 인지. .normal 은 노출 X (이미 algorithm 라벨 표시).
-                if session.balanceCorrectionFreshness != .normal {
-                    freshnessBadge
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(DFColor.textSecondary.opacity(DFOpacity.o15),
-                        lineWidth: DFSize.borderHairline)
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(isWalking ? "보행 \(session.current.label) 진행 중" : "보행 대기")
-    }
-
-    /// 사이클 167 (cycle 160 HUD wire-up): IMU freshness 신호 inline badge.
-    /// 사용자가 보정 ON 인데 robot 측 stale IMU 로 차단/감쇠 된 상태를 즉시 인지.
-    /// .normal 은 별도 표시 안 함 (algorithm mode 라벨이 이미 있음).
-    @ViewBuilder
-    private var freshnessBadge: some View {
-        let state = session.balanceCorrectionFreshness
-        let (icon, color): (String, Color) = {
-            switch state {
-            case .normal:   return ("checkmark.circle", DFColor.success)
-            case .degraded: return ("clock.badge.exclamationmark", DFColor.warning)
-            case .blocked:  return ("xmark.octagon.fill", DFColor.danger)
-            }
-        }()
-        HStack(spacing: 2) {
-            Image(systemName: icon)
-                .font(DFFont.labelStrong)
-            Text(state.koreanLabel)
-                .font(DFFont.micro)
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 1)
-        .background(
-            RoundedRectangle(cornerRadius: 3)
-                .fill(color.opacity(0.12))
-        )
-        .help("자이로 보정 상태: \(state.koreanLabel)")
-        .accessibilityLabel("자이로 보정 \(state.koreanLabel)")
-    }
-
-    /// **Stage 2 (v1.1 fall prevention)**: 안전 상태 카드 + 자동 보정 토글.
-    /// 2026-05-16: design system 토큰화 완료 (raw 4/6/8/0.10/0.4/0.5 → DFSpace/DFOpacity/DFSize).
-    private var balanceStateCard: some View {
-        // **v1.14.9 (2026-05-21) Fix #7**: @Observable session — local @Bindable.
-        @Bindable var session = session
-        return VStack(alignment: .leading, spacing: DFSpace.xs) {
-            HStack(spacing: DFSpace.xs2) {
-                Image(systemName: balanceStateIcon)
-                    .font(DFFont.bodySmall)
-                    .foregroundStyle(balanceStateColor)
-                Text("안전 상태: \(session.balanceState.label)")
-                    .font(DFFont.captionEmph)
-                    .foregroundStyle(balanceStateColor)
-                    .lineLimit(1)
-                Spacer()
-            }
-            if session.balanceState >= .warning {
-                Text(balanceStateMessage)
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.textSecondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Toggle("자동 균형 보정", isOn: $session.autoFallPrevention)
-                .toggleStyle(.checkbox)
-                .font(DFFont.label)
-                .help("기울기 임계 도달 시 자동 감속/동결 — OFF 시 50° emergency 만 작동")
-        }
-        .padding(DFSpace.sm)
-        .background(balanceStateColor.opacity(DFOpacity.o10))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.button)
-                .stroke(balanceStateColor.opacity(DFOpacity.o40),
-                        lineWidth: DFSize.borderHairline)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("안전 상태 카드 — \(session.balanceState.label)")
-    }
-
-    private var balanceStateIcon: String {
-        switch session.balanceState {
-        case .normal:    return "checkmark.circle.fill"
-        case .caution:   return "exclamationmark.circle"
-        case .warning:   return "exclamationmark.triangle.fill"
-        case .danger:    return "exclamationmark.octagon.fill"
-        case .emergency: return "xmark.octagon.fill"
-        }
-    }
-
-    private var balanceStateColor: Color {
-        switch session.balanceState {
-        case .normal:    return DFColor.success
-        case .caution:   return DFColor.warning
-        case .warning:   return DFColor.severe
-        case .danger:    return DFColor.danger
-        case .emergency: return DFColor.danger
-        }
-    }
-
-    private var balanceStateMessage: String {
-        switch session.balanceState {
-        case .warning:   return "기울기 35°+ — 보행 속도 70% 자동 감속"
-        case .danger:    return "기울기 45°+ — 자세 동결 (보행 일시 정지)"
-        case .emergency: return "기울기 50°+ — 토크 OFF + walkReady 복귀"
-        default:         return ""
-        }
-    }
-
-    /// **Stage 4 (v1.1 fall prevention)**: balance correction 토글 + delta 미리보기.
-    /// 2026-05-16: design system 토큰화 완료.
-    private var balanceCorrectionCard: some View {
-        // **v1.14.9 (2026-05-21) Fix #7**: @Observable session — local @Bindable.
-        @Bindable var session = session
-        return VStack(alignment: .leading, spacing: DFSpace.xs) {
-            // **v1.15.5 (2026-05-21) Phase 1.5**: enableBalanceCorrection 의 apply scope.
-            // Onboard 모드에선 .macSparseOnly — 펌웨어 자체 보정 알고리즘 사용 (Mac 토글 무의미).
-            HStack {
-                Spacer()
-                WalkLabApplyScopeBadge(
-                    scope: WalkLabApplyScopeResolver.scope(
-                        for: .enableBalanceCorrection, engine: session.walkingEngine
-                    ),
-                    style: .compact
-                )
-            }
-            HStack(spacing: DFSpace.xs2) {
-                Image(systemName: "figure.balanced")
-                    .font(DFFont.bodySmall)
-                    .foregroundStyle(session.enableBalanceCorrection
-                                     ? DFColor.success
-                                     : DFColor.textSecondary)
-                Toggle("자세 보정 (실험)", isOn: $session.enableBalanceCorrection)
-                    .toggleStyle(.checkbox)
-                    .font(DFFont.label)
-                    .help(session.enableBalanceCorrection
-                          ? "현재 ON — Walking.cpp sensoryFeedback 패턴 적용 중. 1초 ramp."
-                          : "ROBOTIS Walking.cpp 패턴 corrector — 실 robot 검증 후 활성 권장")
-                Spacer()
-            }
-            if session.enableBalanceCorrection {
-                if let c = session.lastCorrections {
-                    HStack(spacing: DFSpace.xs) {
-                        Text(String(format: "hipRoll %+.1f°", c.rHipRoll))
-                            .font(DFFont.monoLabel)
-                        Text(String(format: "knee %+.1f°", c.rKnee))
-                            .font(DFFont.monoLabel)
-                    }
-                    .foregroundStyle(DFColor.textSecondary)
-                    HStack(spacing: DFSpace.xs) {
-                        Text(String(format: "ankP %+.1f°", c.rAnklePitch))
-                            .font(DFFont.monoLabel)
-                        Text(String(format: "ankR %+.1f°", c.rAnkleRoll))
-                            .font(DFFont.monoLabel)
-                    }
-                    .foregroundStyle(DFColor.textSecondary)
-                } else {
-                    Text("ROBOTIS Walking.cpp::sensoryFeedback 패턴 (gain 0.5/0.3/1.0/0.9)")
-                        .font(DFFont.label)
-                        .foregroundStyle(DFColor.textSecondary)
-                }
-            } else {
-                Text("기본 OFF — 실 robot 검증 + Codex audit 후 활성화 권장")
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.textSecondary)
-            }
-        }
-        .padding(DFSpace.sm)
-        .background(DFColor.textSecondary.opacity(DFOpacity.ghost))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.button)
-                .stroke(DFColor.textSecondary.opacity(DFOpacity.o25),
-                        lineWidth: DFSize.borderHairline)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.button))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(session.enableBalanceCorrection
-            ? "자세 보정 ON — 최대 보정 \(String(format: "%.1f", session.lastCorrections?.maxAbs ?? 0))°"
-            : "자세 보정 OFF")
-    }
+    // **V281-1 (2026-05-24)**: 다음 사항이 sub-file 로 추출 (Fowler "Extract Class"):
+    // - `footTargetsCard`, `tempColor`, `fmt3` → `WalkLabAuxSection.swift`
+    // - `imuSourceColor`, `balanceStateCard`, `balanceState{Icon,Color,Message}`,
+    //   `balanceCorrectionCard` → `WalkLabSidePanelSection.swift`
+    // - `sceneInfoOverlay`, `freshnessBadge`, `walkGuidanceBanner` → `WalkLabSceneSection.swift`
+    // 본 view 는 banner / actionBar / lifecycle / sidebar 만 책임.
 
     private var actionBar: some View {
         VStack(spacing: DFSpace.xs2) {
@@ -1335,26 +648,10 @@ public struct WalkLabView: View {
     ///
     /// 이 사전 평가는 `WalkLabSession.quickPreflight` 의 subset 이지만 UI 만 표시 — 실 차단은
     /// session 의 preflight 가 마지막에 한 번 더 검증.
-    /// **v1.14.6 (2026-05-21) — 사용자 요청**: 3D 뷰 하단의 차단 사유 안내 banner.
-    /// 모든 non-idle preset 의 unique 차단 사유를 1줄 요약. 없으면 hidden.
-    /// 시뮬 모드에선 cradle 자동 통과 — 다른 사유 (caution + 보정 OFF / 위험 동의 등) 표시.
     ///
-    /// **V280-E (2026-05-24)**: hardcoded HStack/overlay → DFBanner (.warning).
-    /// 가로 폭 520pt cap 유지 — narrow detail pane 에서 wrap 회피.
-    @ViewBuilder
-    private var walkGuidanceBanner: some View {
-        let reasons = uniqueBlockingReasons()
-        if reasons.isEmpty {
-            EmptyView()
-        } else {
-            DFBanner(
-                title: "일부 보행 모션 비활성",
-                message: reasons.joined(separator: " · "),
-                severity: .warning
-            )
-            .frame(maxWidth: 520)
-        }
-    }
+    /// **V281-1 (2026-05-24)**: `walkGuidanceBanner` 본체는 `WalkLabSceneSection` 으로 이전.
+    /// 본 함수의 결과 (`uniqueBlockingReasons`) 를 `heroRow` 가 sub-view 에 주입.
+    /// 본 함수는 sidebar `PresetButton.blockingReason` 도 사용 (계산 책임 유지).
 
     /// preset 별 차단 사유 모아서 unique 리스트 반환.
     private func uniqueBlockingReasons() -> [String] {
@@ -1396,10 +693,6 @@ public struct WalkLabView: View {
             return ("위험 동의 필요 — 클릭 후 확인", nil)
         }
         return (nil, nil)
-    }
-
-    private func fmt3(_ v: SIMD3<Double>) -> String {
-        String(format: "%+.3f %+.3f %+.3f", v.x, v.y, v.z)
     }
 
     /// v1.11.25 audit log-B — operatorNote 1줄 TextField.
