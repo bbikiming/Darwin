@@ -234,11 +234,18 @@ extension WalkLabSession {
     /// tickDtSec 주기 (100ms) 마다 `tick()` 호출.
     ///
     /// **v1.11.2 (2026-05-18)**: CI Swift 5.9 호환 — Task closure 에 `[weak self]` 재캡쳐.
+    ///
+    /// **2026-05-24 (V270-flaky fix)** — outer Timer closure 도 `[weak self]` 로 캡쳐.
+    /// 종전: inner Task 만 weak — outer closure 가 self 를 strong 캡쳐하므로
+    /// RunLoop → simTimer → outer closure → self 체인이 유지. 호출자가 `stop()` 없이
+    /// session 참조 해제하면 deinit 발생 안 함 → simTimer 영원히 fire + session 영구 누수.
+    /// 1962-test 풀스위트 + coverage instrumentation 환경에서 SIGSEGV 트리거 (사이클 누적).
+    /// 신규: outer 도 weak — session 해제 즉시 deinit → simTimer invalidate → 누수 차단.
     internal func startScheduleTickLoop() {
         startTime = Date()
         simTimer?.invalidate()
-        simTimer = Timer.scheduledTimer(withTimeInterval: tickDtSec, repeats: true) { _ in
-            Task { @MainActor [weak self] in
+        simTimer = Timer.scheduledTimer(withTimeInterval: tickDtSec, repeats: true) { [weak self] _ in
+            Task { @MainActor in
                 self?.tick()
             }
         }

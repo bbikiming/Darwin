@@ -11,10 +11,11 @@ cd "${PROJECT_DIR}"
 THRESHOLD="${COVERAGE_THRESHOLD:-80}"
 
 echo "==> 1. Running tests with coverage..."
-# Note: PilotConcurrentStressTests is excluded because it causes a signal 11 crash
-# when run after ~1900 other tests under coverage instrumentation overhead.
-# The suite passes individually (verified 2026-05-24). Track fix in: V270-flaky.
-swift test --enable-code-coverage --skip "PilotConcurrentStressTests" 2>&1 | tail -5
+# 2026-05-24 (V270-flaky fix): --skip "PilotConcurrentStressTests" 제거. 종전 SIGSEGV 의
+# 근본 원인은 WalkLabSession+Start.swift:240 / MotionPlayer.swift:90 의 outer Timer
+# closure 가 self 를 strong 캡쳐 → session = nil 후에도 simTimer 영구 fire → 1962-test
+# 풀런 누적 누수. outer [weak self] + tearDown 의 session?.stop() 으로 차단.
+swift test --enable-code-coverage 2>&1 | tail -5
 
 echo ""
 echo "==> 2. Generating coverage report..."

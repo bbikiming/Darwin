@@ -362,13 +362,17 @@ extension GyroSparklineChart: AXChartDescriptorRepresentable {
         // pinned reference = 가장 오래된 sample (보통 -5.0s) ~ 0.
         let rollPts = WalkLabChartA11y.timeOffsetPoints(rollHistory)
         let pitchPts = WalkLabChartA11y.timeOffsetPoints(pitchHistory)
-        let allOffsets = rollPts.map(\.x) + pitchPts.map(\.x)
-        let xMin = allOffsets.min() ?? -5.0
-        let xMax = allOffsets.max() ?? 0.0
+        // **V275-3 build-fix (2026-05-24)** — `\.x` keypath 가 tuple labeled element
+        // 추론 실패 → closure form 으로 root 명시. 동시에 `gridlinePositions` 의
+        // `(xMin + xMax) / 2` 가 Int 로 추론되던 cascade 도 `2.0` literal 로 해결.
+        let allOffsets: [Double] = rollPts.map { $0.x } + pitchPts.map { $0.x }
+        let xMin: Double = allOffsets.min() ?? -5.0
+        let xMax: Double = allOffsets.max() ?? 0.0
+        let xMid: Double = (xMin + xMax) / 2.0
         let xAxis = AXNumericDataAxisDescriptor(
             title: "시간 (초)",
             range: xMin...xMax,
-            gridlinePositions: [xMin, (xMin + xMax) / 2, xMax]
+            gridlinePositions: [xMin, xMid, xMax]
         ) { value in
             String(format: "%.1f초 전", -value)
         }

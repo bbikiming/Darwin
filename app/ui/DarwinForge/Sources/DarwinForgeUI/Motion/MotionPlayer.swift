@@ -87,8 +87,12 @@ public final class MotionPlayer: ObservableObject {
                    "duration_ms": AnyCodable(p.totalDurationMs)]
         )
         // v1.11.2 (2026-05-18): CI Swift 5.9 호환 — inner Task closure 에 weak self 재캡쳐.
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
-            Task { @MainActor [weak self] in self?.tick() }
+        // 2026-05-24 (V270-flaky fix): outer Timer closure 도 [weak self] —
+        // 종전 inner 만 weak → RunLoop strong holds outer → outer strong holds self →
+        // play() 후 player 해제 안 하면 timer 영원 fire + player 누수. WalkLabSession 과
+        // 동일 패턴. 1962-test coverage 풀런 SIGSEGV 회귀 방지.
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
         }
     }
 

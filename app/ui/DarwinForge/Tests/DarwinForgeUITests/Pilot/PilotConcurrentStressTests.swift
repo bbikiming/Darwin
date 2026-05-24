@@ -31,6 +31,11 @@ final class PilotConcurrentStressTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        // 2026-05-24 (V270-flaky fix) — explicit cleanup. 종전: setUp 에서 `session.start(.march)`
+        // 호출 → simTimer 가 RunLoop 에 install. nil 만으로는 simTimer 가 (수정 전 outer-strong
+        // capture 버그 때) session 을 영구 retain → 1962-test 풀런 coverage 환경에서 누적
+        // 시 SIGSEGV. outer [weak self] fix 이후에도 명시적 stop 호출이 가장 안전.
+        session?.stop()
         bridge = nil
         session = nil
         mock = nil
