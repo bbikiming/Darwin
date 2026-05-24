@@ -2147,6 +2147,22 @@ public final class WalkLabSession {
     /// **v1.22.X 사이클 100 (Phase 5)**: `private(set)` → `internal(set)` — extension write 허용.
     public internal(set) var hybridBalanceState = HybridBalanceState()
 
+    // MARK: - 사이클 V281-3 (Wave 4.1.4) — WalkLabRecorder 추출
+    //
+    // session-logger / sample buffer / sparse-cadence trackers 5개 stored
+    // property → `WalkLabRecorder` 로 이동. ADR-002 Wave 4.1.4 god object 분할.
+    // 책임 분리: 본체는 robot control + balance correction, recorder 는 logging
+    // state 단독.
+    //
+    // backward-compat: 5개 computed delegate get+set 으로 외부 caller
+    // (tests 의 `session.sessionLogger = logger` 등) signature 0 변경.
+
+    /// **사이클 V281-3 (Wave 4.1.4)**: session-logger / sample buffer 책임
+    /// 보유. WalkLabSession 의 logging-only state 분리.
+    /// extension 들이 직접 접근 (internal 노출 + 5개 delegate computed
+    /// property 도 있음).
+    public let recorder: WalkLabRecorder = WalkLabRecorder()
+
     /// **v1.11 (2026-05-17 phase fix)**: walking cycle 시작 시각. session 전체 시각
     /// (`sessionStartedAt`) 과 별개 — Hybrid phase-locked correction 의 정확한 phase
     /// 계산을 위함. `runContinuousWalk` 진입 시 갱신, 한 cycle 종료 시 갱신 안 함
@@ -2154,18 +2170,34 @@ public final class WalkLabSession {
     /// **v1.22.X 사이클 100 (Phase 5)**: `public private(set)` → `public internal(set)` —
     /// `+BalanceCorrection.swift` 의 hybrid 경로가 read; `+Logging.swift` 등은 read 만,
     /// 본체 `runContinuousWalk` 만 write. extension read 가능하도록 internal 격상.
-    public internal(set) var cycleStartedAt: Date?
+    /// **사이클 V281-3 (Wave 4.1.4)**: stored → computed delegate
+    /// (`recorder.cycleStartedAt`). signature 보존 (public internal(set)).
+    public internal(set) var cycleStartedAt: Date? {
+        get { recorder.cycleStartedAt }
+        set { recorder.cycleStartedAt = newValue }
+    }
 
     // MARK: - v1.9 Learning system (사용자 요청: 데이터 저장 + 자동 튜닝)
 
     /// 활성 session 의 logger. nil = 보행 중 아님 또는 logging OFF.
     /// **v1.15.0 (2026-05-21) Phase 1**: private → internal — `WalkLabSession+Trials.swift`
     /// extension 이 finalize 시 sessionId / filePath / sampleCount 추출 위해 read 필요.
-    var sessionLogger: WalkSessionLogger?
+    /// **사이클 V281-3 (Wave 4.1.4)**: stored → computed delegate
+    /// (`recorder.sessionLogger`). 외부 caller (tests) signature 보존.
+    var sessionLogger: WalkSessionLogger? {
+        get { recorder.sessionLogger }
+        set { recorder.sessionLogger = newValue }
+    }
+
     /// session 시작 시각 — sample timestamp 계산.
     /// **v1.22.5 사이클 94 (Phase 6)**: private → internal — `+Logging.swift` extension 의
     /// `appendSessionSampleIfLogging` / `finalizeSessionLog` 가 read+write.
-    var sessionStartedAt: Date?
+    /// **사이클 V281-3 (Wave 4.1.4)**: stored → computed delegate
+    /// (`recorder.sessionStartedAt`).
+    var sessionStartedAt: Date? {
+        get { recorder.sessionStartedAt }
+        set { recorder.sessionStartedAt = newValue }
+    }
 
     // MARK: - v1.11.25 (2026-05-20) robot data sparse-cadence trackers
     //
@@ -2174,13 +2206,23 @@ public final class WalkLabSession {
     //
     // **v1.22.5 사이클 94 (Phase 6)**: 3 trackers private → internal — `+Logging.swift`
     // extension 의 append/finalize 가 read+write 필요.
+    // **사이클 V281-3 (Wave 4.1.4)**: 3 trackers stored → computed delegate.
 
     /// 마지막 jointStates dump 시점의 lastTelemetry.timestamp — 같은 telemetry 면 nil.
-    var lastLoggedTelemetryAt: Date?
+    var lastLoggedTelemetryAt: Date? {
+        get { recorder.lastLoggedTelemetryAt }
+        set { recorder.lastLoggedTelemetryAt = newValue }
+    }
     /// 마지막 dump 시점의 imuSequenceCount — 같은 IMU read 면 raw 6축 nil 로 처리.
-    var lastLoggedImuSequence: UInt32?
+    var lastLoggedImuSequence: UInt32? {
+        get { recorder.lastLoggedImuSequence }
+        set { recorder.lastLoggedImuSequence = newValue }
+    }
     /// 이전 tick 의 per-joint failure counter — 변화한 joint 만 sparse dump.
-    var lastLoggedJointFailures: [JointID: Int] = [:]
+    var lastLoggedJointFailures: [JointID: Int] {
+        get { recorder.lastLoggedJointFailures }
+        set { recorder.lastLoggedJointFailures = newValue }
+    }
 
     /// **자동 튜닝 시스템** — 매 session 종료 시 분석 + 권고 산출 + (옵션) 자동 적용.
     /// UI 에서 토글 가능.

@@ -286,12 +286,10 @@ extension WalkLabSession {
             onboardAckStatus: onboardAckStatus,
             endReason: endReason
         )
-        sessionLogger = nil
-        sessionStartedAt = nil
-        // v1.11.25 audit robot-A/B/C — sparse-cadence tracker reset.
-        lastLoggedTelemetryAt = nil
-        lastLoggedImuSequence = nil
-        lastLoggedJointFailures = [:]
+        // **사이클 V281-3 (Wave 4.1.4)**: 5줄 cleanup → recorder helper 한 줄.
+        // logger nil 화 + sessionStartedAt nil 화 + sparse trackers reset 묶음.
+        // cycleStartedAt 은 위 defer 에서 별도 처리 (logger 존재 여부 무관 — v1.11 Codex 3rd review fix).
+        recorder.clearSessionState()
         // v1.11.25 audit log-Q — retention 항상 호출 (autoTuner 우회 path).
         // 종전: cleanupOldSessions 는 autoTuner.record 안에 cleanupEvery 카운트 기반만
         //       호출 → autoTuner 비활성/우회 시 cleanup 영원히 미실행. 본 호출이 모든
