@@ -3,6 +3,17 @@ import Foundation
 import ForgeCore
 import os.signpost
 
+/// 사이클 V283-4 (V282-2 CRITICAL-3 fix) — dxlPower gate Swift-level 에러.
+///
+/// # 비유
+///
+/// 자동차 시동이 꺼진 상태에서 악셀을 밟는 행위 — 엔진(FFI)이 아닌 Swift
+/// gate 자체가 차단한다. `ForgeError` (FFI 코드) 와 별도 존재.
+public enum DxlGateError: Error, Equatable, Sendable {
+    /// dxlPower 가 OFF 인 상태에서 setPosition 호출 — 즉시 차단 + emergency trigger.
+    case dxlPowerOff
+}
+
 /// 앱 전체에 공유되는 연결 상태. 한 번에 하나의 Bus만 활성.
 @MainActor
 public final class ConnectionStore: ObservableObject {
@@ -221,6 +232,24 @@ public final class ConnectionStore: ObservableObject {
     @Published public private(set) var jointConsecutiveFailures: [JointID: Int] = [:]
     /// 개별 모터 "응답 없음" 표시 임계 — 5회 연속 실패 시 UI 에 명시.
     private static let jointFailureDisplayThreshold = 5
+
+    // MARK: - dxlPower 상태 추적 (V283-4 / V282-2 CRITICAL-3)
+
+    /// 사이클 V283-4 (V282-2 CRITICAL-3 fix) — dxlPower ON/OFF 상태.
+    ///
+    /// # 비유
+    ///
+    /// 자동차 ignition key — engine OFF(dxlPower OFF) 상태에서 accelerator(setPosition)를
+    /// 밟아도 차가 움직이지 않듯, dxlPower OFF 시 setPosition 호출을 게이트에서 차단.
+    ///
+    /// 종전: dxlPower OFF 상태에서 setPosition 호출 → motor 응답 0, per-joint timeout
+    /// counter 만 증가 (silent fail). 보행 중 OFF 되어도 자동 정지 X.
+    ///
+    /// 신규: `writeJointPosition(_:raw:)` 에서 gate 검사 — OFF 시 throw + emergencyStop.
+    @Published public private(set) var isDxlPowerOn: Bool = false
+
+    /// V283-4 — 동일 모듈 내 caller (WalkLabSession, TeleopChannel 등)의 gate 상태 갱신.
+    internal func _setDxlPowerState(_ on: Bool) { isDxlPowerOn = on }
 
     // MARK: - IMU plausibility 자동 진단 (2026-05-17 v1.7 정정)
 
@@ -1236,6 +1265,8 @@ public final class ConnectionStore: ObservableObject {
     /// 응급 e-stop — 모든 관절 토크 OFF.
     public func emergencyStop() {
         guard let bus else { return }
+        // V283-4: e-stop 발동 시 dxlPower 상태를 OFF 로 리셋 — gate 일관성 유지.
+        isDxlPowerOn = false
         // v1.12.0 telemetry — e-stop 발동 (사용자 액션).
         harness.record(
             .busEStop, level: .error, actor: .user,
@@ -1255,6 +1286,32 @@ public final class ConnectionStore: ObservableObject {
                 context: harnessContext()
             )
         }
+    }
+
+    /// 사이클 V283-4 (V282-2 CRITICAL-3 fix) — dxlPower gate 가 있는 setPosition wrapper.
+    ///
+    /// # 비유
+    ///
+    /// 엔진 시동(dxlPower) 이 꺼진 차에서 악셀(setPosition)을 밟으면 게이트가
+    /// 즉시 차단하고 경보(emergencyStop)를 울린다.
+    ///
+    /// - dxlPower ON: `bus.setPosition` 을 그대로 위임.
+    /// - dxlPower OFF: throw + `emergencyStop()` 즉시 발동 (silent fail 방지).
+    ///
+    /// - Throws: `DxlGateError.dxlPowerOff` (dxlPower OFF 또는 bus nil 시).
+    @discardableResult
+    public func writeJointPosition(_ joint: JointID, raw: UInt16) throws -> UInt16 {
+        guard isDxlPowerOn, let bus else {
+            harness.record(
+                .busWriteFail, level: .error, actor: .system,
+                data: ["reason": AnyCodable("dxlPower OFF — setPosition 차단"),
+                       "joint": AnyCodable(joint.name)],
+                context: harnessContext()
+            )
+            emergencyStop()
+            throw DxlGateError.dxlPowerOff
+        }
+        return try bus.setPosition(joint, raw: raw)
     }
 
     // MARK: - 로봇 복구 (E-stop 이후 액추에이터 재활성)
@@ -1406,6 +1463,7 @@ public final class ConnectionStore: ObservableObject {
         for attempt in 0..<3 {
             do {
                 try ctx.bus.setDxlPower(true)
+                isDxlPowerOn = true  // V283-4: gate 상태 동기화
                 dxlErr = nil
                 break
             } catch {

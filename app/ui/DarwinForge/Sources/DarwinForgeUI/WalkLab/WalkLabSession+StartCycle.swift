@@ -175,6 +175,8 @@ extension WalkLabSession {
             )
             return true
         }
+        // V283-4: preflight 성공 = dxlPower ON 확정 → gate 상태 동기화.
+        store._setDxlPowerState(true)
 
         // **v1.11.22.1 (Codex HIGH-2 fix)** — 실 robot 보행 시작 전 IMU live + plausible:
         //   - bus 있는데 IMU 한 번도 안 옴 → 차단 (gate L3/corrector 모두 무력화 위험)

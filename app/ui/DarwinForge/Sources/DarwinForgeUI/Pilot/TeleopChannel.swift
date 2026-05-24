@@ -133,6 +133,7 @@ public final class TeleopChannel: ObservableObject {
         // [1] CM dxl_power ON.
         do {
             try bus.setDxlPower(true)
+            store?._setDxlPowerState(true)  // V283-4: gate 상태 동기화
         } catch {
             lastError = "Dynamixel 전원 ON 실패: \(error.localizedDescription)"
             return
