@@ -41,7 +41,9 @@ public struct WalkingEnginePicker: View {
                 Image(systemName: "cpu.fill")
                     .font(DFFont.label)
                     .foregroundStyle(engineTint)
-                Text("보행 엔진 (v1.11.5)")
+                // V279-1 (2026-05-24) cognitive load P0 — UI label internal version
+                // strip. 사용자 의미 없는 "(v1.11.5)" 제거. docstring 보존.
+                Text("보행 엔진")
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textPrimary)
                 Spacer()

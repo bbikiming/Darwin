@@ -72,8 +72,12 @@ struct FallPreventionMonitor: View {
                 .dfSectionCard(title: "6-Layer 안전 시스템", icon: "shield.lefthalf.filled")
             timeSeriesRow
                 .dfSectionCard(title: "최근 10초 시계열", icon: "waveform.path")
-            correctorPanel
-                .dfSectionCard(title: "관절 보정 (8 joint)", icon: "figure.walk.motion")
+            // V279-1 (2026-05-24) — 8-관절 카드는 Advanced 토글 ON 시에만 노출.
+            // Default 사용자에게는 정보 과잉. 사이드바 balanceCorrectionCard 가 이미 요약.
+            if session.advanced {
+                correctorPanel
+                    .dfSectionCard(title: "관절 보정 (8 joint)", icon: "figure.walk.motion")
+            }
             eventLogPanel
                 .dfSectionCard(title: "안전 이벤트", icon: "bell.badge")
         }
@@ -115,8 +119,16 @@ struct FallPreventionMonitor: View {
     /// **v1.11 (2026-05-17 사용자 재요청)**: maxWidth=360 캡 제거 — HSplitView drag
     /// resize 가 콘텐츠까지 도달하도록. minWidth 280 로 GyroMeter 직경 (160) +
     /// padding 보장.
+    ///
+    /// **V279-1 (2026-05-24) cognitive load P0 cleanup** — 정보 다이어트:
+    /// default 상태 (Advanced OFF) 에서는 핵심 2개 카드만 표시 (CircularGyroMeter +
+    /// CorrectorIntensityCard). WalkingEnginePicker / BalanceExperimentControls /
+    /// StaticTiltCalibrationPanel / AutoTunerCard 는 expert 영역으로 advanced 토글
+    /// 뒤로 이동. Apple HIG "Progressive disclosure" + Polaris "Show only what's
+    /// necessary" 패턴. 사이드바의 "고급 — 슬라이더 조정" 토글로 전체 노출/은닉.
     private var gyroMeterBlock: some View {
         return VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            // 항상 표시 (안전 critical + 핵심 제어) — 6 패널 → 2 패널로 다이어트.
             CircularGyroMeter(
                 rollDeg: session.displayImuRollDeg,
                 pitchDeg: session.displayImuPitchDeg,
@@ -127,35 +139,39 @@ struct FallPreventionMonitor: View {
             )
             .frame(maxWidth: .infinity, alignment: .center)
             CorrectorIntensityCard(session: session)
-            // **v1.11.5.1 (2026-05-18)** — 보행 엔진 선택 (Mac sparse vs ROBOTIS onboard).
-            // 시작/종료 버튼이 RemoteShell.send 로 SSH 명령 송출. 종전 v1.11.5 는
-            // callback 미전달로 disabled — 이번 fix.
-            WalkingEnginePicker(
-                session: session,
-                onStartOnboard: { [remoteShell] in
-                    Task { @MainActor in
-                        await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
+
+            // V279-1 — Advanced 토글 (사이드바) 안에 expert / 실험 패널.
+            if session.advanced {
+                // **v1.11.5.1 (2026-05-18)** — 보행 엔진 선택 (Mac sparse vs ROBOTIS onboard).
+                // 시작/종료 버튼이 RemoteShell.send 로 SSH 명령 송출. 종전 v1.11.5 는
+                // callback 미전달로 disabled — 이번 fix.
+                WalkingEnginePicker(
+                    session: session,
+                    onStartOnboard: { [remoteShell] in
+                        Task { @MainActor in
+                            await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
+                        }
+                    },
+                    onStopOnboard: { [remoteShell] in
+                        Task { @MainActor in
+                            await remoteShell.send(RobotSetupCommand.walkLabRobotisStop)
+                        }
+                    },
+                    onSendCommand: { [remoteShell] cmd in
+                        Task { @MainActor in
+                            let line = cmd.serializedLine
+                            await remoteShell.send(
+                                RobotSetupCommand.walkLabRobotisSendCommand(line: line)
+                            )
+                        }
                     }
-                },
-                onStopOnboard: { [remoteShell] in
-                    Task { @MainActor in
-                        await remoteShell.send(RobotSetupCommand.walkLabRobotisStop)
-                    }
-                },
-                onSendCommand: { [remoteShell] cmd in
-                    Task { @MainActor in
-                        let line = cmd.serializedLine
-                        await remoteShell.send(
-                            RobotSetupCommand.walkLabRobotisSendCommand(line: line)
-                        )
-                    }
-                }
-            )
-            BalanceExperimentControls(session: session)   // v1.11: 4축 분리 패널
-            // **v1.11.4 (2026-05-18)** — 정적 IMU 캘리브레이션 (5축 손 캡처 + 부호 진단).
-            // 부호 컨벤션 검증 후 BalanceExperimentControls 의 pitchInputConvention 토글로 적용.
-            StaticTiltCalibrationPanel(session: session)
-            AutoTunerCard(tuner: session.autoTuner, session: session)
+                )
+                BalanceExperimentControls(session: session)   // v1.11: 4축 분리 패널
+                // **v1.11.4 (2026-05-18)** — 정적 IMU 캘리브레이션 (5축 손 캡처 + 부호 진단).
+                // 부호 컨벤션 검증 후 BalanceExperimentControls 의 pitchInputConvention 토글로 적용.
+                StaticTiltCalibrationPanel(session: session)
+                AutoTunerCard(tuner: session.autoTuner, session: session)
+            }
         }
         .padding(.horizontal, DFSpace.xs2)
         .frame(minWidth: 280, maxWidth: .infinity, alignment: .leading)
@@ -631,58 +647,67 @@ struct FallPreventionMonitor: View {
 
     /// **NN/g + medical monitor 패턴**: 8 관절 horizontal bar (center=0, deflect=delta).
     /// 부호 색 분리: + = 파랑 (info), - = 주황 (forge) — WCAG color-blind safe.
+    ///
+    /// **V279-1 (2026-05-24) cognitive load P0 cleanup** — 8-관절 raw delta 는 expert
+    /// 진단 정보. default 사용자에게는 정보 과잉 (사이드바 balanceCorrectionCard 가
+    /// 이미 hipRoll/knee/ankP/ankR 4축 요약 표시). Advanced 토글 안으로 이동.
+    /// Polaris "Show only what's necessary" 패턴 + Apple HIG progressive disclosure.
+    @ViewBuilder
     private var correctorPanel: some View {
         // v1.9 (2026-05-17): 보정 강도 slider + 자동 튜닝 패널은 gyroMeterBlock 으로
         // 이동. 여기는 8 관절 delta + ramp progress 만 남김.
-        VStack(alignment: .leading, spacing: DFSpace.xs) {
-            HStack(spacing: DFSpace.xs2) {
-                Text("자세 보정 delta (8 관절)")
-                    .font(DFFont.sectionLabel)
-                    .foregroundStyle(DFColor.textSecondary)
-                Spacer()
-                if let progress = session.rampProgress {
-                    Text(String(format: "보정 진행 %.0f%%", progress * 100))
-                        .font(DFFont.monoLabel)
-                        .foregroundStyle(progress >= 1 ? DFColor.success : DFColor.accent)
-                } else if session.enableBalanceCorrection {
-                    Text("보정 대기")
-                        .font(DFFont.label)
+        // V279-1: Advanced OFF 시 전체 숨김 — section card 자체가 안 나타남.
+        if session.advanced {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
+                HStack(spacing: DFSpace.xs2) {
+                    Text("자세 보정 delta (8 관절)")
+                        .font(DFFont.sectionLabel)
                         .foregroundStyle(DFColor.textSecondary)
-                } else {
-                    Text("자세 보정 꺼짐")
-                        .font(DFFont.label)
-                        .foregroundStyle(DFColor.textSecondary)
-                }
-            }
-            if let progress = session.rampProgress {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Rectangle()
-                            .fill(DFColor.textSecondary.opacity(DFOpacity.o15))
-                            .frame(height: DFSize.barTrackH)
-                        Rectangle()
-                            .fill(progress >= 1 ? DFColor.success : DFColor.accent)
-                            .frame(width: max(0, geo.size.width) * CGFloat(progress),
-                                   height: DFSize.barTrackH)
+                    Spacer()
+                    if let progress = session.rampProgress {
+                        Text(String(format: "보정 진행 %.0f%%", progress * 100))
+                            .font(DFFont.monoLabel)
+                            .foregroundStyle(progress >= 1 ? DFColor.success : DFColor.accent)
+                    } else if session.enableBalanceCorrection {
+                        Text("보정 대기")
+                            .font(DFFont.label)
+                            .foregroundStyle(DFColor.textSecondary)
+                    } else {
+                        Text("자세 보정 꺼짐")
+                            .font(DFFont.label)
+                            .foregroundStyle(DFColor.textSecondary)
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: DFRadius.tiny))
                 }
-                .frame(height: DFSize.barTrackH)
-                .accessibilityLabel("Ramp 진행 \(Int(progress * 100))%")
+                if let progress = session.rampProgress {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Rectangle()
+                                .fill(DFColor.textSecondary.opacity(DFOpacity.o15))
+                                .frame(height: DFSize.barTrackH)
+                            Rectangle()
+                                .fill(progress >= 1 ? DFColor.success : DFColor.accent)
+                                .frame(width: max(0, geo.size.width) * CGFloat(progress),
+                                       height: DFSize.barTrackH)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: DFRadius.tiny))
+                    }
+                    .frame(height: DFSize.barTrackH)
+                    .accessibilityLabel("Ramp 진행 \(Int(progress * 100))%")
+                }
+                let corrections = session.lastCorrections
+                VStack(spacing: DFSpace.micro2) {
+                    jointDeltaRow("R hipRoll", corrections?.rHipRoll)
+                    jointDeltaRow("L hipRoll", corrections?.lHipRoll)
+                    jointDeltaRow("R knee", corrections?.rKnee)
+                    jointDeltaRow("L knee", corrections?.lKnee)
+                    jointDeltaRow("R ankPitch", corrections?.rAnklePitch)
+                    jointDeltaRow("L ankPitch", corrections?.lAnklePitch)
+                    jointDeltaRow("R ankRoll", corrections?.rAnkleRoll)
+                    jointDeltaRow("L ankRoll", corrections?.lAnkleRoll)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("8 관절 자세 보정 delta")
             }
-            let corrections = session.lastCorrections
-            VStack(spacing: DFSpace.micro2) {
-                jointDeltaRow("R hipRoll", corrections?.rHipRoll)
-                jointDeltaRow("L hipRoll", corrections?.lHipRoll)
-                jointDeltaRow("R knee", corrections?.rKnee)
-                jointDeltaRow("L knee", corrections?.lKnee)
-                jointDeltaRow("R ankPitch", corrections?.rAnklePitch)
-                jointDeltaRow("L ankPitch", corrections?.lAnklePitch)
-                jointDeltaRow("R ankRoll", corrections?.rAnkleRoll)
-                jointDeltaRow("L ankRoll", corrections?.lAnkleRoll)
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("8 관절 자세 보정 delta")
         }
     }
 
@@ -701,6 +726,8 @@ struct FallPreventionMonitor: View {
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer()
+                // V279-2 (P1 discoverability fix): help/accessibilityLabel — 토글 의미가
+                // 단지 "자동 적용" 만으로는 모호. 동작 + 안전 조건 명시.
                 Toggle("자동 적용", isOn: Binding(
                     get: { tuner.autoApplyEnabled },
                     set: { tuner.autoApplyEnabled = $0 }
@@ -708,6 +735,12 @@ struct FallPreventionMonitor: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .labelsHidden()
+                .help("AI 권고 강도를 다음 보행 cycle 에 자동 적용합니다. " +
+                      "실 robot 적용 모드에선 데이터 검증 후 수동 적용 권장 — 자동 변경 차단. " +
+                      "수동 강도 변경 시 일시 중단됩니다.")
+                .accessibilityLabel(tuner.autoApplyEnabled
+                    ? "AI 권고 강도 자동 적용 켜짐 — 끄려면 클릭"
+                    : "AI 권고 강도 자동 적용 꺼짐 — 켜려면 클릭")
                 Text(tuner.autoApplyEnabled ? "ON" : "OFF")
                     .font(DFFont.label)
                     .foregroundStyle(tuner.autoApplyEnabled ? DFColor.success : DFColor.textSecondary)

@@ -151,7 +151,9 @@ public struct WalkLabIntegrationCards: View {
                                 value: ankleResidualText(residual: ankleResidualRight),
                                 color: ankleColor(absResidual: abs(ankleResidualRight)))
                 Divider().padding(.vertical, 2)
-                Text("산출 (v1.11.22 정정): CoM ≈ h × sin(angle), h=220mm "
+                // V279-1 (2026-05-24) cognitive load P0 — UI label internal version
+                // strip. "(v1.11.22 정정)" 사용자 의미 없음 제거.
+                Text("산출: CoM ≈ h × sin(angle), h=220mm "
                      + "(ROBOTIS-OP2 height 454.5mm × 0.5 humanoid CoM ratio). "
                      + "발 지지 폴리곤 반경=30mm (발 width 60mm / 2, single-foot lateral). "
                      + "Ankle = sign(body) × max(0, |body|-|corrector Δ|) (magnitude 기반, "

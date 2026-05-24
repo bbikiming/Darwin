@@ -33,7 +33,9 @@ struct StaticTiltCalibrationPanel: View {
                 Image(systemName: "ruler.fill")
                     .font(DFFont.label)
                     .foregroundStyle(DFColor.info)
-                Text("정적 IMU 캘리브레이션 (P1.0)")
+                // V279-1 (2026-05-24) cognitive load P0 — UI label internal version
+                // strip. 사용자 의미 없는 "(P1.0)" 제거. docstring / 주석은 보존.
+                Text("정적 IMU 캘리브레이션")
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textPrimary)
                 Spacer()
