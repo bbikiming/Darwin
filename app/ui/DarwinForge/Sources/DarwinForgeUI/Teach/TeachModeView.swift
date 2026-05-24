@@ -245,6 +245,7 @@ public struct TeachModeView: View {
                         }
                         .buttonStyle(.plain)
                         .help("모두 삭제")
+                        .accessibilityLabel("스냅샷 모두 삭제")
                     }
                 }) {
             VStack(spacing: DFSpace.sm) {
@@ -384,6 +385,7 @@ public struct TeachModeView: View {
             }
             .buttonStyle(.plain)
             .help("사용자 라이브러리에 영구 저장 — 다른 메뉴에서 활용")
+            .accessibilityLabel("사용자 라이브러리에 저장")
 
             Button {
                 NotificationCenter.default.post(
@@ -399,8 +401,12 @@ public struct TeachModeView: View {
             }
             .buttonStyle(.plain)
             .help("Studio 에서 세부 편집 — 자동으로 스튜디오로 이동")
+            .accessibilityLabel("Studio 에서 편집")
 
             // 사이클 193 (P0 #2): Teach → Motion Studio 자세 전달.
+            // V279-2 (P1 discoverability fix): "→ Motion" label 노출 — 아이콘만으로는
+            // 자세 snapshot 다음 단계 (Motion Studio 페이지 만들기) 가 안 보임. 사용자
+            // mental model: snapshot 찍은 후 "이제 뭐?" 에 대한 명시 진입점.
             Button {
                 NotificationCenter.default.post(
                     name: .dfTransferPoseToMotion, object: s.pose
@@ -409,12 +415,18 @@ public struct TeachModeView: View {
                     name: .dfSwitchSection, object: "motion"
                 )
             } label: {
-                Image(systemName: "film.stack")
-                    .font(.system(size: DFFontSize.s10))
-                    .foregroundStyle(DFColor.forge)
+                HStack(spacing: 2) {
+                    Image(systemName: "film.stack")
+                        .font(.system(size: DFFontSize.s10))
+                    Text("→ Motion")
+                        .font(DFFont.micro)
+                }
+                .foregroundStyle(DFColor.forge)
             }
             .buttonStyle(.plain)
-            .help("Motion Studio 에 페이지로 추가 — 자동으로 이동")
+            .help("이 자세를 Motion Studio 의 새 페이지로 추가하고 자동 이동 — " +
+                  "여러 자세를 시퀀스로 묶어 동작 동영상처럼 재생할 수 있어요.")
+            .accessibilityLabel("Motion Studio 에 페이지로 보내기")
 
             Button {
                 capture.applySnapshot(s, store: store)
@@ -425,6 +437,7 @@ public struct TeachModeView: View {
             }
             .buttonStyle(.plain)
             .help("로봇에 적용 — 토크 ON 필요")
+            .accessibilityLabel("로봇에 적용")
 
             Button {
                 capture.deleteSnapshot(s)
@@ -435,6 +448,7 @@ public struct TeachModeView: View {
             }
             .buttonStyle(.plain)
             .help("삭제")
+            .accessibilityLabel("스냅샷 삭제")
         }
         .padding(6)
         .background(DFColor.card)

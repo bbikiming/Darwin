@@ -881,10 +881,16 @@ public struct RootView: View {
             section = .expert
             expertTab = tab
         } label: {
-            HStack {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: tab.icon).frame(width: 22)
                 Text(tab.label)
                     .font(DFFont.body)
+                // V279-2 (P1 discoverability fix): harness 탭은 라벨이 "실시간 센서
+                // 데이터" 로 변경되었어도 사용자가 어떤 데이터를 보는지 모름. info
+                // icon 으로 hover 안내 (전체 ExpertTab 에 표시 — 일관성).
+                Image(systemName: "info.circle")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
                 Spacer()
             }
             .padding(.vertical, 4)
@@ -901,6 +907,8 @@ public struct RootView: View {
             .padding(.horizontal, DFSpace.sm)
         }
         .buttonStyle(.plain)
+        .help(tab.helpText)
+        .accessibilityHint(tab.helpText)
     }
 
     // MARK: - Detail
@@ -1156,7 +1164,23 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .walk:     return "보행 진단"
         case .walkData: return "보행 데이터"
         case .strategy: return "전략 FSM"
-        case .harness:  return "텔레메트리"
+        // V279-2 (P1 discoverability fix): "텔레메트리" 는 일반 사용자에게 모호.
+        // → "실시간 센서 데이터" 로 변경 (한국어 + 직관적 의미).
+        case .harness:  return "실시간 센서 데이터"
+        }
+    }
+
+    /// V279-2 (P1 discoverability fix): 탭별 hover help — "텔레메트리" 등 전문 용어
+    /// 에 대해 사용자가 무엇을 볼 수 있는지 1줄 안내.
+    var helpText: String {
+        switch self {
+        case .board:    return "보드 연결 상태 + 펌웨어 버전 + 통신 진단"
+        case .joints:   return "관절 별 토크 / 위치 / 속도 실시간 제어"
+        case .motion:   return "저장된 동작 페이지 라이브러리 — 재생 / 편집"
+        case .walk:     return "보행 진단 — gait 안정성 + 자이로 보정"
+        case .walkData: return "저장된 보행 trial 기록 + 분석 차트"
+        case .strategy: return "전략 FSM — 자율 보행 / 환경 인식 / 결정 트리"
+        case .harness:  return "로봇 관성(IMU) · 압력 · 온도 · 보행 cycle 등의 실시간 데이터를 차트로 볼 수 있어요."
         }
     }
     var icon: String {
