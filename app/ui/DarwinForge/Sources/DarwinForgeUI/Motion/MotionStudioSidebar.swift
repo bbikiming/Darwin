@@ -26,6 +26,19 @@ struct MotionStudioSidebar: View {
     @State private var aiBuilderText: String = ""
     @State private var aiBuilderToast: String?
 
+    /// V280-D — Synth Palette (3-pane 고급 AI 합성기) sheet 표시 토글.
+    /// 기존 heuristic AI 빌더 (자연어 한 줄 → 페이지) 외에, 카탈로그 페이지를
+    /// 합성·검증·내보내기 까지 제공하는 `SynthPaletteView` 의 명시적 진입점.
+    ///
+    /// **Discoverability (Nielsen H6 "Recognition rather than recall")**:
+    /// V278-3 audit P0 — Synth 모듈이 orphan 상태였음 (사용자가 존재를 모름).
+    /// 본 sheet 진입 button 으로 recall → recognition 전환.
+    ///
+    /// Sheet 내부의 `SynthInspectorPanel` 의 "Motion 스튜디오 로 보내기" 가
+    /// `dfImportSynthPagesToMotionStudio` notification 으로 결과를 owner 에 전달.
+    /// 따라서 본 사이드바는 view-state 만 보유 (additive only — Synth 모듈 0 변경).
+    @State private var showSynthPalette: Bool = false
+
     // MARK: - Action callbacks (owner 위임)
 
     let onAddPage: () -> Void
@@ -55,6 +68,7 @@ struct MotionStudioSidebar: View {
                 }
                 .buttonStyle(.plain)
                 .help("빈 동작 새로 만들기")
+                .accessibilityLabel("빈 동작 새로 만들기")
 
                 Button {
                     onImportMotionPanel()
@@ -63,6 +77,7 @@ struct MotionStudioSidebar: View {
                 }
                 .buttonStyle(.plain)
                 .help("로보플러스 .mtn 동작 파일 가져오기")
+                .accessibilityLabel("로보플러스 .mtn 동작 파일 가져오기")
             }
             .padding(.horizontal, DFSpace.md)
 
@@ -131,6 +146,36 @@ struct MotionStudioSidebar: View {
                 Text("이 동작을 삭제합니다.")
             }
         }
+        // V280-D — Synth Palette sheet.
+        // SynthPaletteView 자체는 standalone — 결과는 notification 으로
+        // owner (MotionStudioView) 가 수신 → importSynthPages 처리.
+        // 본 sidebar 는 sheet host 역할만 (additive only).
+        .sheet(isPresented: $showSynthPalette) {
+            synthPaletteSheet
+        }
+    }
+
+    /// V280-D — Synth Palette sheet wrapper.
+    /// 한국어 close button + frame 강제 (macOS sheet 기본 크기 너무 작음).
+    private var synthPaletteSheet: some View {
+        VStack(spacing: DFSpace.none) {
+            HStack {
+                Text("AI 모션 빌더 (고급)")
+                    .font(DFFont.title)
+                Spacer()
+                Button("닫기") { showSynthPalette = false }
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .accessibilityLabel("AI 모션 빌더 닫기")
+            }
+            .padding(.horizontal, DFSpace.lg)
+            .padding(.vertical, DFSpace.sm)
+            .background(DFColor.elev2)
+
+            Divider()
+
+            SynthPaletteView()
+        }
+        .frame(minWidth: 1180, minHeight: 680)
     }
 
     // MARK: - Delete callback (owner 위임)
@@ -186,7 +231,35 @@ struct MotionStudioSidebar: View {
                         .lineLimit(1)
                 }
             }
+
+            // V280-D — 고급 AI 모션 합성기 진입점 (orphan 해소).
+            // 위쪽 한 줄 heuristic 빌더 외에, 카탈로그 합성·검증 UI 노출.
+            advancedSynthEntryButton
         }
+    }
+
+    /// V280-D — "AI 모션 빌더 (고급)" 진입점.
+    /// IBM Carbon IA: 핵심 도구는 prominent navigation 위치에 노출.
+    /// Don Norman "Discoverability": 가능 action 을 visible 하게 만든다.
+    ///
+    /// 라벨 한국어 microcopy 는 V279-3 Voice & Tone (Info 톤) 준수:
+    /// - "고급" 으로 위쪽 빌더와 차별화 (정보 hierarchy 명시).
+    /// - help / accessibility 텍스트 로 기능 요약 제공.
+    private var advancedSynthEntryButton: some View {
+        Button {
+            showSynthPalette = true
+        } label: {
+            Label("AI 모션 빌더 (고급)", systemImage: "sparkles")
+                .font(.system(size: DFFontSize.s11, weight: .semibold))
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .tint(DFColor.forge)
+        .help("카탈로그 페이지를 합성·검증 후 Motion 페이지로 내보냅니다")
+        .accessibilityLabel("AI 모션 빌더 고급 열기")
+        .accessibilityHint("3-pane 합성기 — 라이브러리·캔버스·인스펙터")
+        .padding(.top, DFSpace.xs)
     }
 
     private func runAIBuilder() {
