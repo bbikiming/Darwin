@@ -463,6 +463,40 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: session_count.
     public static let walklabDataAnalysisStarted: TelemetryKind = "walklab.data_analysis_started"
 
+    // Mobile Pilot Relay (V291-5)
+    /// iPhone 페어링 성공 — hello 수락 + welcome 전송 완료.
+    /// data: { deviceName, sessionId }
+    public static let mobilePilotPairingSuccess: TelemetryKind = "mobile_pilot.pairing_success"
+    /// iPhone 페어링 거부 — 코드 불일치 또는 잠금 상태.
+    /// data: { attemptsRemaining, reason }
+    public static let mobilePilotPairingRejected: TelemetryKind = "mobile_pilot.pairing_rejected"
+    /// 페어링 잠금 트리거 — 3회 실패 후 5분 잠금 활성.
+    /// data: { lockedUntil, reason }
+    public static let mobilePilotLockoutTriggered: TelemetryKind = "mobile_pilot.lockout_triggered"
+    /// 페어링 코드 회전 — 명시적 사용자 요청 또는 잠금 자동 회전.
+    /// data: { source: "manual"|"lockout" }
+    public static let mobilePilotCodeRotated: TelemetryKind = "mobile_pilot.code_rotated"
+    /// iPhone 명령 수락 — arm/disarm/motion/walk/stop ACK 완료.
+    /// data: { commandType, commandId, latencyMs }
+    public static let mobilePilotCommandAccepted: TelemetryKind = "mobile_pilot.command_accepted"
+    /// iPhone 명령 거부 — notArmed/latencyGate/riskNotConfirmed 등.
+    /// data: { commandType, commandId, reason }
+    public static let mobilePilotCommandRejected: TelemetryKind = "mobile_pilot.command_rejected"
+    /// iPhone 연결 해제 — transport close (정상 goodbye 또는 비정상).
+    /// data: { reason, sessionDurationSec }
+    public static let mobilePilotDisconnected: TelemetryKind = "mobile_pilot.disconnected"
+    /// Watchdog 강제 정지 — heartbeat timeout → stop 전송.
+    /// data: { lastHeartbeatAgeMs, activeCommandId }
+    public static let mobilePilotWatchdogStop: TelemetryKind = "mobile_pilot.watchdog_stop"
+
+    // Safety E-Stop verification (V291-12)
+    /// E-Stop 후 모든 관절 속도 = 0 확인 — torque 실제 OFF 검증 성공.
+    /// data: { delay_ms, joint_count }
+    public static let safetyEStopVerified: TelemetryKind = "safety.estop_verified"
+    /// E-Stop 후 일부 관절이 여전히 움직임 또는 bus read 불가 — 검증 실패.
+    /// data: { reason ("failed"|"unreachable"), unstopped_joints (배열 또는 오류 설명) }
+    public static let safetyEStopVerificationFailed: TelemetryKind = "safety.estop_verification_failed"
+
     // System
     public static let heartbeat: TelemetryKind = "heartbeat.tick"
     public static let harnessDropped: TelemetryKind = "harness.dropped"

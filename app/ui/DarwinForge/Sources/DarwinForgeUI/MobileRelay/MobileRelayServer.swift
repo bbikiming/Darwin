@@ -81,6 +81,9 @@ public actor MobileRelayServer {
     private let batteryVoltage: @Sendable () async -> Double?
     private var session: Session?
     private var watchdogTask: Task<Void, Never>?
+    /// **V291-11** — transport disconnect grace period timer.
+    /// 1.5s 안에 새 hello 들어오면 cancel. 만료 시 stop + disarm + close.
+    private var disconnectGraceTask: Task<Void, Never>?
     private var eventIdCounter: UInt64 = 0
     private var commandIdsSeen: Set<String> = []
 
@@ -176,17 +179,59 @@ public actor MobileRelayServer {
         }
     }
 
+    /// **V291-11** — Transport disconnect 처리.
+    ///
+    /// 비유: Wi-Fi 깜빡일 때는 잠시 기다리고, 진짜 끊겼으면 안전 종료. 비행기 자동
+    /// 조종 끊김 → 1.5초 대기 후 manual 전환과 동일 원리.
+    ///
+    /// 정책:
+    /// - **active command 진행 중** (walk/motion): 즉시 stop — watchdog 500ms 보다
+    ///   빨리 도착할 수 있는 transport 신호이므로 grace 없음.
+    /// - **idle/armed**: 1.5초 grace 후 새 hello 오지 않으면 stop + disarm + ARM reset.
     public func handleClientDisconnected(_ channel: RelayClientChannel,
                                          reason: String) async {
         guard let session, session.channel.clientId == channel.clientId else { return }
+        let hasActiveCommand = session.activeCommandId != nil
+
+        if hasActiveCommand {
+            // active 시 즉시 stop (watchdog 과 동일 정책)
+            await performDisconnectStop(channel: channel, reason: reason,
+                                        gracePeriodApplied: false)
+        } else {
+            // idle/armed 시 1.5s grace
+            cancelDisconnectGraceTask()
+            disconnectGraceTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                await self.performDisconnectStop(channel: channel, reason: reason,
+                                                 gracePeriodApplied: true)
+            }
+        }
+    }
+
+    /// **V291-11** — disconnect grace timeout 후 실제 stop + disarm.
+    /// active command 시 즉시 호출. idle 시 1.5s 후 호출.
+    private func performDisconnectStop(channel: RelayClientChannel,
+                                       reason: String,
+                                       gracePeriodApplied: Bool) async {
+        guard let session, session.channel.clientId == channel.clientId else { return }
         let durationSec = Int(clock().timeIntervalSince(session.connectedAt))
-        // Optimistic safety: send stop immediately.
         _ = try? await port.sendStop(reason: "transportDisconnect")
+        // **V291-11** — ARM 자동 reset. iPhone 재연결 시 mismatch 회피.
+        _ = try? await port.disarm(reason: "transportTimeout")
         await emitWatchdogStop(reason: "transportDisconnect", lastHeartbeatAgeMs: nil)
         await emitTelemetry(.mobilePilotDisconnected, level: .info, actor: .system,
                             data: ["reason": AnyCodable(reason),
-                                   "sessionDurationSec": AnyCodable(durationSec)])
+                                   "sessionDurationSec": AnyCodable(durationSec),
+                                   "gracePeriodApplied": AnyCodable(gracePeriodApplied)])
         await closeSession(reason: reason)
+    }
+
+    /// **V291-11** — grace timer cancel. 재연결 또는 explicit close 시 호출.
+    private func cancelDisconnectGraceTask() {
+        disconnectGraceTask?.cancel()
+        disconnectGraceTask = nil
     }
 
     // MARK: - Periodic emission
@@ -203,6 +248,9 @@ public actor MobileRelayServer {
 
     private func acceptHello(channel: RelayClientChannel,
                              hello: RelayEnvelope<HelloPayload>) async throws {
+        // **V291-11** — 재연결 grace timer cancel. WiFi 깜빡임 후 정상 복귀 시
+        // pending disconnect stop 을 회피.
+        cancelDisconnectGraceTask()
         // single-authority check
         if let existing = session {
             if existing.channel.clientId == channel.clientId {

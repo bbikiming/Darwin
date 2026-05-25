@@ -169,6 +169,10 @@ public struct CommandPalette: View {
         onRun(entry)
     }
 
+    // CI fix (PR #42, 2026-05-25): `Harness` 가 `@MainActor` isolated 이므로
+    // record 호출도 main actor 컨텍스트여야 한다. SwiftUI View 의 nested
+    // method 는 자동 main actor 가 아니므로 명시 필요.
+    @MainActor
     private func recordCommandRun(_ entry: CommandEntry) {
         let level: TelemetryLevel = entry.dangerous ? .warn : .info
         harness.record(.uiPaletteCommand, level: level, actor: .user,
