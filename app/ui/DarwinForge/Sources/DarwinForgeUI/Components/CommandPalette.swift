@@ -169,15 +169,22 @@ public struct CommandPalette: View {
         onRun(entry)
     }
 
-    // CI fix (PR #42, 2026-05-25): `Harness` 가 `@MainActor` isolated 이므로
-    // record 호출도 main actor 컨텍스트여야 한다. SwiftUI View 의 nested
-    // method 는 자동 main actor 가 아니므로 명시 필요.
-    @MainActor
+    // CI fix (PR #42, 2026-05-25): SwiftUI View 의 closure callsite 는
+    // nonisolated 인데 `Harness.record` 는 `@MainActor` isolated. 함수
+    // 자체를 `@MainActor` 로 marking 하면 callsite (line 92, 167) 에서
+    // 거꾸로 isolation 위반이 발생한다.
+    //
+    // 해결: 함수는 nonisolated 로 유지하고, record 호출만
+    // `MainActor.assumeIsolated` 로 감싸 main actor 컨텍스트로 진입.
+    // SwiftUI gesture/onTap closure 는 사실상 main thread 에서 호출되므로
+    // assumeIsolated 가 안전.
     private func recordCommandRun(_ entry: CommandEntry) {
         let level: TelemetryLevel = entry.dangerous ? .warn : .info
-        harness.record(.uiPaletteCommand, level: level, actor: .user,
-                              data: ["command_id": AnyCodable(entry.id),
-                                     "dangerous": AnyCodable(entry.dangerous)])
+        MainActor.assumeIsolated {
+            harness.record(.uiPaletteCommand, level: level, actor: .user,
+                                  data: ["command_id": AnyCodable(entry.id),
+                                         "dangerous": AnyCodable(entry.dangerous)])
+        }
     }
 }
 
