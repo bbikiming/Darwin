@@ -136,8 +136,14 @@ public struct MobileRelayBootstrap: View {
         controller.swapPort(livePort)
         // V291-10: Mac-side battery voltage 재검증 클로저 주입.
         // ConnectionStore.lastTelemetry 는 @MainActor 격리이므로 MainActor.run 으로 hop.
-        controller.swapBatteryVoltage { [weak store] in
-            await MainActor.run { store?.lastTelemetry?.board?.voltageVolts }
+        //
+        // CI fix (PR #42, 2026-05-25): `store` 는 SwiftUI View struct property
+        // 이라 closure capture 시 var capture race 로 잡힌다 (Swift 5.x strict).
+        // local const ref 로 명시 capture 해 'reference to captured var'
+        // 에러를 회피한다.
+        let storeRef = store
+        controller.swapBatteryVoltage { [weak storeRef] in
+            await MainActor.run { storeRef?.lastTelemetry?.board?.voltageVolts }
         }
     }
 }
