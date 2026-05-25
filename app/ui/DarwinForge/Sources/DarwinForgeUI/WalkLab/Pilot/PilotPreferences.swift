@@ -116,8 +116,12 @@ public final class UserDefaultsPilotPreferencesStore: PilotPreferencesStore, @un
 // 가 자식 view 에 instance 를 명시 전파하는 통로.
 
 /// 환경 기본값 — in-memory store. 실 propagate 안 된 view 에선 영속 안 됨 (안전 fallback).
-private struct PilotPreferencesStoreEnvKey: @preconcurrency EnvironmentKey {
-    @MainActor static let defaultValue: PilotPreferencesStore = InMemoryPilotPreferencesStore()
+///
+/// CI fix (2026-05-25, PR #42): `@preconcurrency EnvironmentKey` syntax 는
+/// Xcode 16+ / Swift 6 에서만 받아들임. CI macos-14 default Xcode 는 거부 →
+/// 해당 attribute 를 제거하고 일반 declaration 으로 변경.
+private struct PilotPreferencesStoreEnvKey: EnvironmentKey {
+    static let defaultValue: PilotPreferencesStore = InMemoryPilotPreferencesStore()
 }
 
 public extension EnvironmentValues {
