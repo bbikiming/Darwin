@@ -774,6 +774,23 @@ public final class ConnectionStore: ObservableObject {
         lastSafetyEvent = nil
     }
 
+    // MARK: - E-Stop verification alert (V291-12)
+
+    /// E-Stop 검증 실패 시 노출하는 긴급 안전 알림.
+    ///
+    /// # 비유
+    ///
+    /// 차에서 "정지" 신호를 보냈는데 실제로 멈췄는지 확인이 안 될 때 운전자에게 경보.
+    /// `EStopVerifier.verifyTorqueOff` 결과가 `.failed` 또는 `.unreachable` 이면 설정.
+    /// `.verified` 시 nil 로 초기화 (이전 경보 해제).
+    @Published public private(set) var lastSafetyAlert: String?
+
+    /// `lastSafetyAlert` 를 설정한다. MainActor 보호 — IntentDispatcher.Task.detached 에서
+    /// `await MainActor.run` 경유 호출.
+    public func publishSafetyAlert(_ message: String?) {
+        lastSafetyAlert = message
+    }
+
     /// 자세 적용의 결과 — 호출자가 성공/실패를 명확히 구분할 수 있게.
     ///
     /// Codex 권고 (2026-05-13 1·2차):

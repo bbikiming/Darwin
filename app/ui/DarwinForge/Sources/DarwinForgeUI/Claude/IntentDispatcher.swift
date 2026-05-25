@@ -1,5 +1,6 @@
 import Foundation
 import ForgeCore
+import os.log
 
 /// 사용자 발화로부터 도출된 `CommandPlan`을 안전 검증·실행한다.
 ///
@@ -65,6 +66,10 @@ public final class IntentDispatcher: ObservableObject {
 
     /// `ConnectionStore`가 보유한 Bus를 받아서 사용 — DI.
     public weak var connectionStore: ConnectionStore?
+
+    /// **V288-3 idempotent guard** — `fireEmergencyStop()` 첫 호출만 chain 실행.
+    /// 두 번째 이상 호출은 no-op + log. MainActor 보호로 별도 lock 불필요.
+    private var _emergencyStopFired: Bool = false
 
     // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
     private let harness: any HarnessFacade
@@ -222,18 +227,106 @@ public final class IntentDispatcher: ObservableObject {
         )
     }
 
-    /// L5 — Hardware E-Stop. LLM 경로 우회로 호출 가능.
-    /// 실패해도 항상 한국어 응답.
-    public func emergencyStop() async -> ExecutionResult {
-        do {
-            return try await runEmergencyStop()
-        } catch {
-            // Bus 없어도 비상정지는 성공으로 간주 (이미 안전 상태).
-            return ExecutionResult(
-                speak: "현재 로봇과 연결되지 않아 보내지 못했지만, 시뮬에서는 모든 힘을 풀었어요.",
-                detail: error.localizedDescription
-            )
+    // MARK: - E-Stop SSoT (V288-3)
+
+    /// **L5 단일 진입점 — E-Stop 6단계 chain (V287-3 RobotPort.emergencyStop 정의).**
+    ///
+    /// # 비유
+    ///
+    /// 비행기 비상 슬라이드 — 한번 작동하면 6단계가 한 transaction 으로 실행.
+    /// 중간에 멈추거나 순서가 바뀌면 승객(로봇)이 위험하다.
+    ///
+    /// # 6단계 chain
+    ///
+    ///   1. walkSession.cancel()         — 현재 보행 즉시 중단 (store.emergencyStop 내부)
+    ///   2. bus.torqueOff(.all)          — 모든 joint torque OFF (store.emergencyStop 내부)
+    ///   3. dxlPower = false             — power state 갱신 (store.emergencyStop 내부)
+    ///   4. connectionStatus ← .emergencyStopped — UI 통보 (MockRobotAdapter / DXLAdapter)
+    ///   5. telemetry.record(busEStop)   — 감사 로그 (harness.record)
+    ///   6. os_log("E-STOP fired")       — system log (Console.app 가시)
+    ///
+    /// # Idempotent
+    ///
+    /// 두 번 호출해도 안전 — 이미 e-stop 이면 no-op + log.
+    /// (비유: 비상구는 한 번 열리면 다시 열 필요 없다.)
+    ///
+    /// - Returns: 항상 `ExecutionResult` (throw 없음). Bus 없으면 시뮬 응답.
+    public func fireEmergencyStop() async -> ExecutionResult {
+        // Idempotent guard: 이미 e-stop 발화됐으면 no-op.
+        if _emergencyStopFired {
+            os_log("E-STOP already fired — no-op",
+                   log: OSLog(subsystem: "com.robotis.darwinforge", category: "safety"),
+                   type: .info)
+            return ExecutionResult(speak: KoreanUX.Safety.estopTriggered)
         }
+        _emergencyStopFired = true
+
+        // Step 1–3: walk cancel + torque OFF + dxlPower=false (ConnectionStore chain).
+        connectionStore?.emergencyStop()
+
+        // Step 5: 감사 로그 telemetry.
+        harness.record(
+            .busEStop, level: .error, actor: .user,
+            data: ["source": AnyCodable("IntentDispatcher.fireEmergencyStop")],
+            context: nil
+        )
+
+        // Step 6: system log (Console.app 에서 safety 카테고리로 검색 가능).
+        os_log("E-STOP fired — 6-step chain executed",
+               log: OSLog(subsystem: "com.robotis.darwinforge", category: "safety"),
+               type: .fault)
+
+        // Step 7 (V291-12): 비동기 torque 검증 — E-Stop ACK 는 즉시 반환, 검증은 후속 실행.
+        // 비유: 비상구 슬라이드를 편 뒤, 안전요원이 '승객이 실제로 탈출했는지' 별도로 확인.
+        // Task.detached → non-blocking, E-Stop ACK 지연 없음.
+        let capturedBus = connectionStore?.bus
+        let capturedStore = connectionStore
+        let capturedHarness = harness
+        Task.detached { [capturedBus, capturedStore, capturedHarness] in
+            let result = await EStopVerifier.verifyTorqueOff(bus: capturedBus)
+            await MainActor.run {
+                switch result {
+                case .verified:
+                    capturedStore?.publishSafetyAlert(nil)
+                    capturedHarness.record(
+                        .safetyEStopVerified, level: .info, actor: .system,
+                        data: ["joint_count": AnyCodable(JointID.allCases.count)],
+                        context: nil
+                    )
+                case .failed(let joints):
+                    let jointIds = joints.map { Int($0.rawValue) }
+                    let msg = "⚠️ 일부 모터 정지 미확인 — 즉시 물리 차단 또는 수동 점검 필요 (관절: \(jointIds))"
+                    capturedStore?.publishSafetyAlert(msg)
+                    capturedHarness.record(
+                        .safetyEStopVerificationFailed, level: .error, actor: .system,
+                        data: [
+                            "reason": AnyCodable("failed"),
+                            "unstopped_joints": AnyCodable(jointIds)
+                        ],
+                        context: nil
+                    )
+                case .unreachable(let errorDescription):
+                    let msg = "⚠️ 모터 상태 확인 불가 — bus 연결 점검 (\(errorDescription))"
+                    capturedStore?.publishSafetyAlert(msg)
+                    capturedHarness.record(
+                        .safetyEStopVerificationFailed, level: .error, actor: .system,
+                        data: [
+                            "reason": AnyCodable("unreachable"),
+                            "unstopped_joints": AnyCodable(errorDescription)
+                        ],
+                        context: nil
+                    )
+                }
+            }
+        }
+
+        return ExecutionResult(speak: KoreanUX.Safety.estopTriggered)
+    }
+
+    /// **하위 호환 wrapper** — LLM 경로 및 `EStopButton` 이 호출하는 기존 API.
+    /// V288-3 이후 모든 신규 코드는 `fireEmergencyStop()` 을 직접 호출.
+    public func emergencyStop() async -> ExecutionResult {
+        await fireEmergencyStop()
     }
 
     // MARK: - 정보 조회
@@ -410,11 +503,11 @@ public final class IntentDispatcher: ObservableObject {
     }
 
     private func runSleep() async throws -> ExecutionResult {
-        guard let bus = connectionStore?.bus else {
+        guard connectionStore?.bus != nil else {
             return ExecutionResult(speak: "[시뮬] " + KoreanUX.Motion.sleepStart)
         }
-        // E-stop과 같은 효과 — 모든 관절 토크 OFF.
-        try bus.emergencyStop()
+        // V288-3: fireEmergencyStop SSoT 경유 (walk cancel + torque OFF + dxlPower=false chain).
+        _ = await fireEmergencyStop()
         return ExecutionResult(speak: KoreanUX.Motion.sleepDone)
     }
 
@@ -423,6 +516,7 @@ public final class IntentDispatcher: ObservableObject {
     private func setTorqueAll(bus: any BusInterface, enable: Bool) throws {
         if !enable {
             // 모든 토크 OFF는 emergency_stop이 단일 SYNC_WRITE로 처리.
+            // V288-3: 단일 SYNC_WRITE 경로는 bus 직접 호출 — 이미 fireEmergencyStop 을 통해 진입.
             try bus.emergencyStop()
             return
         }
@@ -432,11 +526,8 @@ public final class IntentDispatcher: ObservableObject {
     }
 
     private func runEmergencyStop() async throws -> ExecutionResult {
-        // L5 — 항상 시도. Bus 없어도 시뮬 응답.
-        if let bus = connectionStore?.bus {
-            try? bus.emergencyStop()
-        }
-        return ExecutionResult(speak: KoreanUX.Safety.estopTriggered)
+        // L5 — fireEmergencyStop SSoT 경유. Bus 없어도 시뮬 응답.
+        return await fireEmergencyStop()
     }
 
     // MARK: - 헬퍼

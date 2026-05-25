@@ -44,6 +44,10 @@ public struct RootView: View {
     // **v1.11.15 (2026-05-19)** — 테마 매니저. DarwinForgeApp 이 environmentObject 로 주입.
     @EnvironmentObject private var themeManager: DFThemeManager
     private let commander: ClaudeCommander
+    /// **V291-1** — Mobile Pilot Relay controller. RootView 가 소유하여 toolbar chip 과
+    /// floating panel (MobileRelayBootstrap) 이 같은 인스턴스를 공유한다.
+    /// placeholder port 로 init → onAppear 에서 live port 로 교체 (Bootstrap 의 .task 처리).
+    @StateObject private var mobileRelayController: MobileRelayController
     /// **v1.20.1 사이클 7-fix HIGH 1** — Tello UDP 송신 채널.
     /// `start()` 호출 전까지 socket 안 열림 → 사용자가 Tello 연결 시까지 idle.
     private let telloLink: TelloLink
@@ -57,6 +61,9 @@ public struct RootView: View {
     @State private var wizardAutoShown: Bool = false
     @State private var dashboardOpen: Bool = false
     @State private var showRecoveryConfirm: Bool = false
+    /// **V291-1** — 첫 실행 onboarding popover 표시 여부.
+    /// `mobilePilot.firstRunSeen` UserDefaults key 가 false 일 때 앱 시작 3초 후 표시.
+    @State private var mobileRelayFirstRunPopover: Bool = false
 
     public init() {
         let d = IntentDispatcher()
@@ -65,6 +72,24 @@ public struct RootView: View {
         // **v1.20.1 사이클 7-fix HIGH 1** — Tello UDP 채널 생성 (no-op until start()).
         // init 은 socket 미생성 → cost 없음. 사용자가 Tello 연결 시 start() 발화.
         self.telloLink = TelloLink()
+        // **V291-1** — MobileRelayController 를 placeholder port 로 초기화.
+        // Bootstrap.task 에서 live port 로 swapPort() 호출.
+        let placeholder = ConnectionStoreSafetyPort(hooks: .init(
+            armAsync:          { false },
+            disarmSync:        { },
+            emergencyStopSync: { },
+            sendMotion:        { _, _ in false },
+            sendWalk:          { _ in false },
+            sendStop:          { _ in true },
+            snapshot:          {
+                MobileRelayTelemetryFactory.make(
+                    macConnected: true, robotConnected: false, armed: false,
+                    dxlPower: false, busBusy: false, endpoint: nil,
+                    batteryV: nil, maxTempC: nil, latencyMs: 0,
+                    lastAckAgeMs: nil, estopActive: false)
+            }))
+        _mobileRelayController = StateObject(
+            wrappedValue: MobileRelayController(port: placeholder))
     }
 
     /// Status bar 높이 — sidebar 끝에 보정용 빈 공간을 둘 때 사용.
@@ -99,6 +124,27 @@ public struct RootView: View {
                         dashboardOverlay
                     }
                     recoveryToastOverlay
+                    safetyAlertBannerOverlay
+                    // **Mobile Pilot Relay** — iOS companion app pairing surface.
+                    // Self-contained controller; user toggles via the floating
+                    // panel in the bottom-trailing corner. Pre-wire-up the
+                    // panel just shows the toggle/QR; the live ConnectionStore
+                    // is plumbed through MobileRelayBootstrap.
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            // P0-1 fix (truth-gap report, 2026-05-25): walkLabSession
+                            // 주입 — 없으면 sendWalk hook 이 walkSessionUnavailable 로
+                            // reject 되어 실 robot 제어 경로가 끊긴다.
+                            MobileRelayBootstrap(store: store,
+                                                 controller: mobileRelayController,
+                                                 walkSession: walkLabSession)
+                                .frame(maxWidth: 320)
+                                .padding(DFSpace.sm)
+                        }
+                    }
+                    .allowsHitTesting(true)
                 }
             }
             // `.balanced` — 좁은 윈도우에서도 사이드바 자동 collapse 안 함.
@@ -156,6 +202,14 @@ public struct RootView: View {
             }
             // 첫 실행 자동 연결/자동 마법사는 제거됨 — 사용자가 직접
             // 우측 상단 "Auto Connect" 버튼 또는 마법사를 눌러서 연결.
+            // **V291-1** — Mobile Pilot 첫 실행 onboarding: 3초 후 chip popover 표시.
+            // `mobilePilot.firstRunSeen` 이 아직 기록되지 않은 경우에만 실행 (1회성).
+            if !UserDefaults.standard.bool(forKey: "mobilePilot.firstRunSeen") {
+                Task {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    mobileRelayFirstRunPopover = true
+                }
+            }
         }
         .onReceive(store.$bus) { bus in
             dispatcher.mode = bus != nil ? .hardware : .simulation
@@ -251,6 +305,14 @@ public struct RootView: View {
                 .padding(.horizontal, DFSpace.sm)
             }
         }
+        // **V291-1** — Mobile Pilot Relay 상태 chip. 모든 탭/섹션에서 항상 표시.
+        // .status 배치: macOS unified toolbar 의 trailing 영역 (status bar zone).
+        ToolbarItem(placement: .status) {
+            MobileRelayStatusChip(controller: mobileRelayController)
+                .popover(isPresented: $mobileRelayFirstRunPopover, arrowEdge: .bottom) {
+                    mobileRelayFirstRunPopoverContent
+                }
+        }
         // 우측 액션 그룹 — 단일 ToolbarItem 으로 묶어 macOS 자동 배치(타이트) 회피.
         ToolbarItem(placement: .primaryAction) {
             HStack(spacing: DFSpace.sm2) {
@@ -278,6 +340,45 @@ public struct RootView: View {
         }
         .buttonStyle(.plain)
         .help("명령 팔레트 (⌘K)")
+    }
+
+    // MARK: - Mobile Relay first-run onboarding popover
+
+    /// **V291-1** — 첫 실행 onboarding popover 내용.
+    /// `mobilePilot.firstRunSeen` = false 시 앱 시작 3초 뒤 자동 표시.
+    /// "다시 안 보기" → UserDefaults 기록 후 dismiss.
+    private var mobileRelayFirstRunPopoverContent: some View {
+        VStack(alignment: .leading, spacing: DFSpace.md) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "iphone.gen2.radiowaves.left.and.right")
+                    .font(.system(size: DFFontSize.s16, weight: .semibold))
+                    .foregroundStyle(DFColor.accent)
+                Text("모바일에서 로봇을 조종하세요")
+                    .font(.system(size: DFFontSize.s14, weight: .semibold))
+            }
+            Text("iPhone 에서 Darwin Pilot 앱을 열고\n여기를 켜면 바로 연결할 수 있어요.")
+                .font(.system(size: DFFontSize.s12))
+                .foregroundStyle(DFColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: DFSpace.sm) {
+                Button("지금 시작") {
+                    mobileRelayFirstRunPopover = false
+                    UserDefaults.standard.set(true, forKey: "mobilePilot.firstRunSeen")
+                    Task { await mobileRelayController.start() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(DFColor.accent)
+                Spacer()
+                Button("다시 안 보기") {
+                    mobileRelayFirstRunPopover = false
+                    UserDefaults.standard.set(true, forKey: "mobilePilot.firstRunSeen")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(DFColor.textSecondary)
+            }
+        }
+        .padding(DFSpace.md)
+        .frame(minWidth: 260, maxWidth: 320)
     }
 
     /// **사이클 137 (audit #8, codex MAJOR sweep)**: quickConnectHost/Port 는
@@ -760,6 +861,52 @@ public struct RootView: View {
         }
     }
 
+    /// E-Stop 검증 실패 배너 (V291-12) — 상단 상시 노출. 사용자가 탭하면 dismiss.
+    ///
+    /// # 비유
+    ///
+    /// 자동차 경고등: 멈춤 버튼을 눌렀는데 차가 실제로 멈췄는지 확인이 안 되면
+    /// 대시보드에 붉은 경고등이 켜져 운전자가 즉시 인지.
+    @ViewBuilder
+    private var safetyAlertBannerOverlay: some View {
+        if let alert = store.lastSafetyAlert {
+            VStack {
+                HStack(spacing: DFSpace.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DFColor.danger)
+                    Text(alert)
+                        .font(DFFont.bodyEmph)
+                        .foregroundStyle(DFColor.textPrimary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button {
+                        store.publishSafetyAlert(nil)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(DFColor.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(DFColor.danger.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DFRadius.md)
+                        .stroke(DFColor.danger.opacity(0.45), lineWidth: 0.8)
+                )
+                .shadow(color: Color.black.opacity(DFOpacity.o15), radius: 8, y: 2)
+                .padding(.horizontal, DFSpace.md)
+                .padding(.top, 8)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: alert)
+        }
+    }
+
     /// 복구 결과 토스트 — 4 초 후 자동 dismiss. 상단 중앙.
     @ViewBuilder
     private var recoveryToastOverlay: some View {
@@ -1024,7 +1171,8 @@ public struct RootView: View {
                 for j in JointID.allCases { try? bus.setTorque(j, enable: true) }
             }
         case .sleep:
-            try? store.bus?.emergencyStop()
+            // V288-3: store.emergencyStop() chain 경유 (torque OFF + dxlPower=false + walk cancel).
+            store.emergencyStop()
         case .emergencyStop:
             store.emergencyStop()
         case .switchSection(let id):

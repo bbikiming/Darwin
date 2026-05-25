@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Template Info.plist for the Xcode-wrapped iOS app target.
+
+  Copy this into your Xcode project's `DarwinForgeMobile` target as
+  `Info.plist`. SwiftPM does not consume this file directly — it is here as
+  the source of truth so that the iOS target carries the correct privacy
+  copy and Bonjour service registration.
+
+  Required keys per `docs/release/ios-mobile-pilot-testflight.md` §2.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>ko</string>
+    <key>CFBundleDisplayName</key>
+    <string>DarwinForge Mobile Pilot</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+    </dict>
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>arm64</string>
+    </array>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+    <key>UIBackgroundModes</key>
+    <array>
+        <!-- Intentionally empty: walking commands MUST stop in background -->
+    </array>
+
+    <!-- Local network discovery (PRD §10.1, TestFlight §2) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Mac DarwinForge Relay와 같은 Wi-Fi에서 로봇 조종 명령을 주고받기 위해 로컬 네트워크 접근이 필요합니다.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_darwinforge._tcp</string>
+    </array>
+
+    <!-- Camera is not required for MVP; QR is paste-only in this build. -->
+</dict>
+</plist>
