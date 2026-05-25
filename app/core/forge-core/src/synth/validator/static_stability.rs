@@ -77,7 +77,8 @@ impl Validator for StaticStabilityValidator {
             return Ok(ValidatorReport::Warn(
                 self.stage(),
                 "단발 지지 모션 (single_foot_ok=true) — proxy 검사 skip. \
-                 실 CoM 검증 안 됨, 낙상 위험 사용자 동의 필요.".to_string()
+                 실 CoM 검증 안 됨, 낙상 위험 사용자 동의 필요."
+                    .to_string(),
             ));
         }
 
@@ -106,7 +107,8 @@ impl Validator for StaticStabilityValidator {
             Ok(ValidatorReport::Warn(
                 self.stage(),
                 "정적 안정성 proxy 검사 통과 (hip_pitch 좌우 대칭). \
-                 실 CoM 검증 아님 — 본격 검증은 미구현.".to_string()
+                 실 CoM 검증 아님 — 본격 검증은 미구현."
+                    .to_string(),
             ))
         } else {
             Ok(ValidatorReport::Fail(self.stage(), violations.join("; ")))
@@ -174,8 +176,10 @@ mod tests {
         let v = StaticStabilityValidator::default();
         let p = page_with_hip_pitch(2000, 2100);
         let report = v.validate(&p).unwrap();
-        assert!(matches!(report, ValidatorReport::Warn(_, _)),
-                "proxy 통과는 Warn 반환 — Pass 면 호출자가 실 CoM 검증으로 오해");
+        assert!(
+            matches!(report, ValidatorReport::Warn(_, _)),
+            "proxy 통과는 Warn 반환 — Pass 면 호출자가 실 CoM 검증으로 오해"
+        );
         if let ValidatorReport::Warn(_, msg) = report {
             assert!(msg.contains("proxy"), "Warn 메시지에 'proxy' 포함");
         }
@@ -200,11 +204,15 @@ mod tests {
         let v = StaticStabilityValidator::with_metadata(meta);
         let p = page_with_hip_pitch(200, 3900);
         let report = v.validate(&p).unwrap();
-        assert!(matches!(report, ValidatorReport::Warn(_, _)),
-                "single_foot_ok skip 은 Warn 반환 (사용자 위험 인지)");
+        assert!(
+            matches!(report, ValidatorReport::Warn(_, _)),
+            "single_foot_ok skip 은 Warn 반환 (사용자 위험 인지)"
+        );
         if let ValidatorReport::Warn(_, msg) = report {
-            assert!(msg.contains("single_foot") || msg.contains("단발"),
-                    "Warn 메시지에 단발 지지 명시");
+            assert!(
+                msg.contains("single_foot") || msg.contains("단발"),
+                "Warn 메시지에 단발 지지 명시"
+            );
         }
     }
 
@@ -215,7 +223,9 @@ mod tests {
         let v = StaticStabilityValidator::default();
         let p = page_with_hip_pitch(SKIP_MARKER, 3900);
         let report = v.validate(&p).unwrap();
-        assert!(matches!(report, ValidatorReport::Warn(_, _)),
-                "proxy 통과 → Warn (Pass 면 호출자가 실 검증으로 오해)");
+        assert!(
+            matches!(report, ValidatorReport::Warn(_, _)),
+            "proxy 통과 → Warn (Pass 면 호출자가 실 검증으로 오해)"
+        );
     }
 }

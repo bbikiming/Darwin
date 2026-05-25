@@ -542,16 +542,24 @@ impl From<forge_core::joint::fsr::FsrReading> for FfiFsrReading {
 
 /// 좌측 발 FSR (ID 112) read. board 미장착 시 timeout 으로 `FC_ERR_TIMEOUT`.
 #[no_mangle]
-pub unsafe extern "C" fn fc_bus_read_fsr_left(handle: *mut FcBus, out: *mut FfiFsrReading) -> c_int {
+pub unsafe extern "C" fn fc_bus_read_fsr_left(
+    handle: *mut FcBus,
+    out: *mut FfiFsrReading,
+) -> c_int {
     if handle.is_null() || out.is_null() {
         return FC_ERR_INVALID;
     }
     safe_call(|| {
         let bus = &mut *handle;
-        fn run<P: forge_core::serial::SerialPort>(b: &mut Bus<P>, out: *mut FfiFsrReading) -> c_int {
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            out: *mut FfiFsrReading,
+        ) -> c_int {
             match b.read_fsr_left() {
                 Ok(s) => {
-                    unsafe { *out = s.into(); }
+                    unsafe {
+                        *out = s.into();
+                    }
                     FC_OK
                 }
                 Err(e) => err_code(&e),
@@ -567,16 +575,24 @@ pub unsafe extern "C" fn fc_bus_read_fsr_left(handle: *mut FcBus, out: *mut FfiF
 
 /// 우측 발 FSR (ID 111) read.
 #[no_mangle]
-pub unsafe extern "C" fn fc_bus_read_fsr_right(handle: *mut FcBus, out: *mut FfiFsrReading) -> c_int {
+pub unsafe extern "C" fn fc_bus_read_fsr_right(
+    handle: *mut FcBus,
+    out: *mut FfiFsrReading,
+) -> c_int {
     if handle.is_null() || out.is_null() {
         return FC_ERR_INVALID;
     }
     safe_call(|| {
         let bus = &mut *handle;
-        fn run<P: forge_core::serial::SerialPort>(b: &mut Bus<P>, out: *mut FfiFsrReading) -> c_int {
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            out: *mut FfiFsrReading,
+        ) -> c_int {
             match b.read_fsr_right() {
                 Ok(s) => {
-                    unsafe { *out = s.into(); }
+                    unsafe {
+                        *out = s.into();
+                    }
                     FC_OK
                 }
                 Err(e) => err_code(&e),

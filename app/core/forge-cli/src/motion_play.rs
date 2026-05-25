@@ -318,10 +318,8 @@ pub fn handle(args: PlayArgs) -> anyhow::Result<()> {
                 // 매 step 진입 직전 polling — 종전 placeholder 였던 setup_ctrlc_handler 가
                 // 이제 SHOULD_EXIT 를 set → 본 분기 진입 → torque OFF + clean exit.
                 if SHOULD_EXIT.load(Ordering::SeqCst) {
-                    let joints: Vec<JointId> = step_to_targets(step)
-                        .into_iter()
-                        .map(|(j, _)| j)
-                        .collect();
+                    let joints: Vec<JointId> =
+                        step_to_targets(step).into_iter().map(|(j, _)| j).collect();
                     // 토크 OFF 실패해도 종료 진행 — 사용자 안내 우선.
                     let _ = jc.set_torque_many(&joints, false);
                     report_emergency_exit();
