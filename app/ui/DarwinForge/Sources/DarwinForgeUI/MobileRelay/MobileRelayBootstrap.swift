@@ -137,13 +137,13 @@ public struct MobileRelayBootstrap: View {
         // V291-10: Mac-side battery voltage 재검증 클로저 주입.
         // ConnectionStore.lastTelemetry 는 @MainActor 격리이므로 MainActor.run 으로 hop.
         //
-        // CI fix (PR #42, 2026-05-25): `store` 는 SwiftUI View struct property
-        // 이라 closure capture 시 var capture race 로 잡힌다 (Swift 5.x strict).
-        // local const ref 로 명시 capture 해 'reference to captured var'
-        // 에러를 회피한다.
-        let storeRef = store
-        controller.swapBatteryVoltage { [weak storeRef] in
-            await MainActor.run { storeRef?.lastTelemetry?.board?.voltageVolts }
+        // CI fix (PR #42, 2026-05-25): `ConnectionStore` 는 `@MainActor`
+        // isolated class — `@Sendable` 클로저 capture 시 Sendable race 로
+        // reject. `nonisolated(unsafe)` 로 capture 한정자를 풀어 회피한다.
+        // 안전 근거: 실제 접근은 항상 `await MainActor.run` 내부에서만 발생.
+        nonisolated(unsafe) let storeRef = store
+        controller.swapBatteryVoltage {
+            await MainActor.run { storeRef.lastTelemetry?.board?.voltageVolts }
         }
     }
 }
