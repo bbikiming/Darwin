@@ -3,10 +3,14 @@ import MobilePilotKit
 
 public struct StatusRailView: View {
     let model: StatusRailModel
+    let isMockMode: Bool
     let onEStop: () -> Void
 
-    public init(model: StatusRailModel, onEStop: @escaping () -> Void) {
+    public init(model: StatusRailModel,
+                isMockMode: Bool = false,
+                onEStop: @escaping () -> Void) {
         self.model = model
+        self.isMockMode = isMockMode
         self.onEStop = onEStop
     }
 
@@ -14,6 +18,14 @@ public struct StatusRailView: View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
+                    // iOS-I3 fix (truth-gap report, 2026-05-25): mockReview 모드면
+                    // status rail 첫 자리에 명시 chip — 사용자가 실 robot 으로 제어
+                    // 가능한 줄로 오해하지 않게.
+                    if isMockMode {
+                        StatusChip(label: "Mock 모드",
+                                   variant: .warning,
+                                   accessibilityID: "pilot.status.mock")
+                    }
                     StatusChip(label: model.macLabel,
                                variant: macVariant,
                                accessibilityID: "pilot.status.mac")

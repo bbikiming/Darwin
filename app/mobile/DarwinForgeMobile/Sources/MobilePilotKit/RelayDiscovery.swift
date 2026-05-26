@@ -20,27 +20,52 @@ public struct RelayDiscoveryResult: Equatable, Sendable, Identifiable {
     }
 }
 
+/// 브라우저가 유한 탐색을 완료했음을 알리는 이벤트 열거형.
+/// 공항 탑승구 안내판처럼 일정 시간 안에 모든 항공편을 보여준 뒤 "탐색 완료" 표지판을 세운다.
+public enum DiscoveryTimeout: Sendable {
+    /// `elapsed` 초 경과 후 타임아웃 발생. 빈 결과 포함.
+    case timedOut(elapsed: TimeInterval)
+}
+
 public protocol RelayBrowser: AnyObject, Sendable {
     var resultsStream: AsyncStream<[RelayDiscoveryResult]> { get }
+    /// 탐색이 타임아웃됐을 때 단발 이벤트를 방출하는 스트림.
+    var timeoutStream: AsyncStream<DiscoveryTimeout> { get }
     func start()
     func stop()
 }
 
 #if canImport(Network)
 /// Real Bonjour browser. Uses `NWBrowser` and resolves endpoints to host:port.
+///
+/// 공항 출발 안내판 비유: Bonjour가 Wi-Fi에서 Mac을 스캔해 카드로 보여주다가,
+/// `timeoutInterval`(기본 30초) 안에 찾지 못하면 "탐색 완료" 신호를 보낸다.
+/// UI 는 이 신호를 받아 "안 보여요?" 확장 패널을 자동으로 열면 된다.
 public final class BonjourRelayBrowser: RelayBrowser, @unchecked Sendable {
 
+    /// Bonjour 탐색 타임아웃 (초). 기본값 30s — Apple HIG: 대기 가이드라인.
+    public let timeoutInterval: TimeInterval
+
     public let resultsStream: AsyncStream<[RelayDiscoveryResult]>
+    public let timeoutStream: AsyncStream<DiscoveryTimeout>
+
     private let continuation: AsyncStream<[RelayDiscoveryResult]>.Continuation
+    private let timeoutContinuation: AsyncStream<DiscoveryTimeout>.Continuation
     private var browser: NWBrowser?
     private let queue = DispatchQueue(label: "darwinforge.mobile.bonjour")
     private let lock = NSLock()
     private var resolvedById: [String: RelayDiscoveryResult] = [:]
+    private var timeoutWorkItem: DispatchWorkItem?
 
-    public init() {
+    public init(timeoutInterval: TimeInterval = 30) {
+        self.timeoutInterval = timeoutInterval
         var cont: AsyncStream<[RelayDiscoveryResult]>.Continuation!
         self.resultsStream = AsyncStream { cont = $0 }
         self.continuation = cont
+
+        var toCont: AsyncStream<DiscoveryTimeout>.Continuation!
+        self.timeoutStream = AsyncStream { toCont = $0 }
+        self.timeoutContinuation = toCont
     }
 
     public func start() {
@@ -54,9 +79,19 @@ public final class BonjourRelayBrowser: RelayBrowser, @unchecked Sendable {
         }
         b.start(queue: queue)
         browser = b
+
+        // 30초 후 타임아웃 신호 발송 — DispatchWorkItem 으로 취소 가능
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.timeoutContinuation.yield(.timedOut(elapsed: self.timeoutInterval))
+        }
+        timeoutWorkItem = item
+        queue.asyncAfter(deadline: .now() + timeoutInterval, execute: item)
     }
 
     public func stop() {
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
         browser?.cancel()
         browser = nil
     }
@@ -125,7 +160,9 @@ public final class BonjourRelayBrowser: RelayBrowser, @unchecked Sendable {
 /// In-memory browser used by tests and previews.
 public final class FixedRelayBrowser: RelayBrowser, @unchecked Sendable {
     public let resultsStream: AsyncStream<[RelayDiscoveryResult]>
+    public let timeoutStream: AsyncStream<DiscoveryTimeout>
     private let continuation: AsyncStream<[RelayDiscoveryResult]>.Continuation
+    private let timeoutContinuation: AsyncStream<DiscoveryTimeout>.Continuation
     private let results: [RelayDiscoveryResult]
 
     public init(results: [RelayDiscoveryResult]) {
@@ -133,6 +170,10 @@ public final class FixedRelayBrowser: RelayBrowser, @unchecked Sendable {
         var cont: AsyncStream<[RelayDiscoveryResult]>.Continuation!
         self.resultsStream = AsyncStream { cont = $0 }
         self.continuation = cont
+
+        var toCont: AsyncStream<DiscoveryTimeout>.Continuation!
+        self.timeoutStream = AsyncStream { toCont = $0 }
+        self.timeoutContinuation = toCont
     }
 
     public func start() {

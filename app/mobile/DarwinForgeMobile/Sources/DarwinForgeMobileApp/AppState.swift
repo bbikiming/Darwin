@@ -101,6 +101,12 @@ public final class AppState: ObservableObject {
     private var eventTask: Task<Void, Never>?
     private var transportTask: Task<Void, Never>?
     private var browserTask: Task<Void, Never>?
+    private var browserTimeoutTask: Task<Void, Never>?
+    /// V292-3: Bonjour 30초 탐색 타임아웃. true 이면 "안 보여요?" 패널 자동 펼침.
+    @Published public private(set) var discoveryTimedOut: Bool = false
+    /// V292-B: 페어링 성공 후 ARM 게이트 상태.
+    /// none → brief → preflight → drill(첫 페어링 only) → ready.
+    @Published public private(set) var safetyGateState: SafetyGateState = .none
     private var heartbeat: HeartbeatController?
     private let deviceId: String
 
@@ -130,7 +136,12 @@ public final class AppState: ObservableObject {
                 UserDefaults.standard.set(id, forKey: "darwinforge.deviceId")
                 return id
             }()
-        self.relayClient = MockRelayClient(ackLatencyMs: 40)
+        switch initialMode {
+        case .mockReview:
+            self.relayClient = MockRelayClient(ackLatencyMs: 40)
+        case .realRelay:
+            self.relayClient = WebSocketRelayClient()
+        }
     }
 
     // MARK: - Lifecycle
@@ -156,17 +167,15 @@ public final class AppState: ObservableObject {
 
     public func startDiscovery() {
         browserTask?.cancel()
+        browserTimeoutTask?.cancel()
         browser?.stop()
+        discoveryTimedOut = false
         let b: RelayBrowser
         #if canImport(Network)
         if connectionMode == .realRelay {
             b = BonjourRelayBrowser()
         } else {
-            b = FixedRelayBrowser(results: [
-                .init(id: "mock-relay",
-                      displayName: "Mock Relay (Review)",
-                      host: "mock", port: 0, lastSeen: Date())
-            ])
+            b = FixedRelayBrowser(results: [])
         }
         #else
         b = FixedRelayBrowser(results: [])
@@ -177,7 +186,47 @@ public final class AppState: ObservableObject {
                 await MainActor.run { self?.discovered = results }
             }
         }
+        // V292-3: 30초 타임아웃 스트림 구독
+        browserTimeoutTask = Task { [weak self] in
+            for await _ in b.timeoutStream {
+                await MainActor.run { self?.discoveryTimedOut = true }
+            }
+        }
         b.start()
+    }
+
+    // MARK: - Safety Gate (V292-B)
+
+    /// 페어링 성공 직후 호출 — Safety Brief 게이트 시작.
+    public func beginSafetyGate() {
+        safetyGateState = .brief
+    }
+
+    /// Safety Brief 3개 체크 완료 시 호출 → Preflight 로 진행.
+    public func completeSafetyBrief() {
+        guard safetyGateState == .brief else { return }
+        safetyGateState = .preflight
+    }
+
+    /// Preflight Checklist 완료 시 호출 → E-Stop Drill 또는 ready 로 진행.
+    public func completePreflightChecklist() {
+        guard safetyGateState == .preflight else { return }
+        let drillDone = UserDefaults.standard.bool(forKey: SafetyGateKeys.eStopDrillCompleted)
+        safetyGateState = drillDone ? .ready : .drill
+    }
+
+    /// E-Stop Drill 완료 시 호출 → ready 상태로 전환 + UserDefaults 저장.
+    public func completeEStopDrill() {
+        guard safetyGateState == .drill else { return }
+        UserDefaults.standard.set(true, forKey: SafetyGateKeys.eStopDrillCompleted)
+        safetyGateState = .ready
+        appendLog(level: .info, category: .safety,
+                  message: "E-Stop Drill 완료 — ARM 가능 상태")
+    }
+
+    /// 페어링 해제 또는 연결 끊김 시 게이트 리셋.
+    public func resetSafetyGate() {
+        safetyGateState = .none
     }
 
     public func stopDiscovery() {
@@ -185,11 +234,26 @@ public final class AppState: ObservableObject {
         browser = nil
         browserTask?.cancel()
         browserTask = nil
+        browserTimeoutTask?.cancel()
+        browserTimeoutTask = nil
+        discoveryTimedOut = false
     }
 
     // MARK: - Pairing / connection
 
+    static func desiredConnectionMode(for endpoint: RelayEndpoint) -> ConnectionMode {
+        isMockEndpoint(endpoint) ? .mockReview : .realRelay
+    }
+
+    private static func isMockEndpoint(_ endpoint: RelayEndpoint) -> Bool {
+        endpoint.host == "mock" && endpoint.port == 0
+    }
+
     public func connect(to endpoint: RelayEndpoint) async {
+        let desiredMode = Self.desiredConnectionMode(for: endpoint)
+        if desiredMode != connectionMode {
+            await setConnectionMode(desiredMode)
+        }
         await disconnect(reason: "reconnect")
         telemetryHistory.removeAll()
         let hello = HelloPayload(appVersion: appVersion,
@@ -199,21 +263,21 @@ public final class AppState: ObservableObject {
         let request = RelayConnectRequest(endpoint: endpoint, hello: hello)
         stateMachine.apply(.pairingStarted)
         pilotState = stateMachine.state
+        // iOS-I1 timeline: helloSent (실제 송신은 client 내부지만 user 관점에선 connect 시도 직후).
+        appendLog(level: .debug, category: .connection,
+                  message: "→ hello 전송 (host=\(endpoint.host):\(endpoint.port))")
         do {
             try await relayClient.connect(request)
             pairedEndpoint = endpoint
             stateMachine.apply(.pairingSucceeded)
             pilotState = stateMachine.state
-            // The transport stream updates `transport` asynchronously via a
-            // bound Task. For determinism (and for tests that immediately
-            // check `isMacReady`), flip the state synchronously here too —
-            // a redundant identical update from the stream is harmless.
-            if case .connected = transport { /* already set */ }
-            else {
-                transport = .connected(sessionId: "ses_pending")
-            }
+            // iOS-C1 fix (truth-gap report, 2026-05-25): `transport = .connected(sessionId: "ses_pending")`
+            // 직접 set 제거. `WebSocketRelayClient` (또는 Mock) 가 transport stream 에서
+            // 실 `WelcomePayload.sessionId` 로 `.connected` yield 하는 것만 truth source.
+            // 그 사이 짧은 idle/handshaking 상태는 `isMacHandshaking` 으로 노출 → UI 가
+            // "Mac 확인 중" 표시.
             appendLog(level: .info, category: .connection,
-                      message: "Mac에 연결됨 \(endpoint.host):\(endpoint.port)")
+                      message: "← welcome 수신 (Mac=\(endpoint.host):\(endpoint.port))")
         } catch {
             stateMachine.apply(.pairingFailed)
             pilotState = stateMachine.state
@@ -238,6 +302,7 @@ public final class AppState: ObservableObject {
             stateMachine.apply(.transportClosed)
         }
         pilotState = stateMachine.state
+        safetyGateState = .none
     }
 
     // MARK: - Commands
@@ -269,6 +334,14 @@ public final class AppState: ObservableObject {
     }
 
     public func performArm() async {
+        // **V292-C critic CRITICAL fix** — 3-gate 데이터 레이어 강제.
+        // UI flow 우회 (tab 전환 등) 로 safetyGateState 미통과 시 ARM 차단.
+        // V292-B 의 Brief/Preflight/Drill 이 모두 통과 (.ready) 해야만 진행.
+        guard safetyGateState == .ready else {
+            appendLog(level: .warning, category: .safety,
+                      message: "안전 점검 미완료 — Connect 탭에서 Brief / Preflight / E-Stop 확인을 완료하세요 (현재: \(safetyGateState))")
+            return
+        }
         guard armChecklistPassed else {
             appendLog(level: .warning, category: .safety,
                       message: "잠금 해제 전 확인 미완료: 크래들=\(cradleConfirmed), 물리 정지 버튼=\(physicalEStopConfirmed), 시야=\(lineOfSightConfirmed)")
@@ -586,7 +659,38 @@ public final class AppState: ObservableObject {
         }
         transportTask = Task { [weak self] in
             for await state in client.transportStream {
-                await MainActor.run { self?.transport = state }
+                await MainActor.run { self?.handleTransport(state) }
+            }
+        }
+    }
+
+    /// iOS-I1 timeline: transport state 전이마다 timeline 이벤트 로그.
+    /// `bindClient` 가 stream 으로부터 모든 transitions 를 받아 처리한다.
+    private func handleTransport(_ state: TransportState) {
+        let previous = transport
+        transport = state
+        switch state {
+        case .idle:
+            break
+        case .connecting:
+            appendLog(level: .debug, category: .connection,
+                      message: "🔌 socket open 시도")
+        case .handshaking:
+            appendLog(level: .debug, category: .connection,
+                      message: "🤝 handshake 진행")
+        case .connected(let sessionId):
+            // welcome 자체는 connect() 에서 한 번 더 로그. 여기는 sessionId 확정 시각.
+            let suffix = String(sessionId.suffix(8))
+            appendLog(level: .info, category: .connection,
+                      message: "✅ 세션 확정 — id=...\(suffix)")
+        case .disconnected(let reason):
+            // 직전이 connected 였다면 사용자에겐 끊김으로 명시.
+            if case .connected = previous {
+                appendLog(level: .warning, category: .connection,
+                          message: "⛔️ 연결 끊김 — \(reason)")
+            } else {
+                appendLog(level: .debug, category: .connection,
+                          message: "transport closed (\(reason))")
             }
         }
     }
@@ -600,10 +704,16 @@ public final class AppState: ObservableObject {
             appendLog(level: .error, category: .connection,
                       message: "거부됨: \(env.payload.reason.rawValue)")
         case .telemetryState(let env):
+            // iOS-I1 timeline: 첫 telemetry 도착은 별도 이벤트.
+            let isFirst = (telemetry == nil)
             telemetry = env.payload
             recordTelemetry(env.payload, sentAt: env.sentAt)
             stateMachine.apply(.telemetry(env.payload))
             pilotState = stateMachine.state
+            if isFirst {
+                appendLog(level: .info, category: .connection,
+                          message: "📡 첫 telemetry 수신 (Mac 확정 연결)")
+            }
         case .armingProgress(let env):
             armProgressStage = env.payload.stage
             stateMachine.apply(.armingProgress(env.payload.stage))
@@ -645,10 +755,38 @@ public final class AppState: ObservableObject {
 
     // MARK: - Computed
 
+    /// V292-handshake-fix (2026-05-25): transport `.connected` 만으로는 부족하다.
+    /// Mac 측 `MobileRelayBootstrap` wiring 이 되지 않은 build (placeholder port)
+    /// 또는 Mac 앱 강제 종료 직후엔 WebSocket handshake 만 통과하고 telemetry 가
+    /// 한 프레임도 오지 않을 수 있다. 그 상태에서 "Mac 연결됨" 표시는 거짓.
+    /// 첫 telemetry 가 도착해야 진짜 ready.
     public var isMacReady: Bool {
-        if case .connected = transport { return true }
+        if case .connected = transport, telemetry != nil { return true }
         return false
     }
+
+    /// transport 가 .connected 인데 telemetry 가 아직이면 "확인 중" 으로 표시.
+    /// MacChip 라벨 결정에 사용.
+    public var isMacHandshaking: Bool {
+        if case .connected = transport, telemetry == nil { return true }
+        return false
+    }
+
+    /// iOS-C2 (truth-gap report, 2026-05-25): 현재 transport 의 실 sessionId.
+    /// `WebSocketRelayClient` 또는 `MockRelayClient` 가 yield 한 값 그대로.
+    /// `nil` = 아직 확정 안 됨 (handshaking 중이거나 disconnected).
+    public var currentSessionId: String? {
+        if case .connected(let id) = transport { return id }
+        return nil
+    }
+
+    /// 마지막 telemetry 수신 후 경과 ms. nil = 아직 한 번도 수신 안 함.
+    public var lastTelemetryAgeMs: Int? {
+        guard let last = telemetryHistory.last else { return nil }
+        return Int(Date().timeIntervalSince(last.timestamp) * 1000)
+    }
+
+    public var isMockMode: Bool { connectionMode == .mockReview }
 
     public var statusRail: StatusRailModel {
         StatusRailModel(transport: transport, telemetry: telemetry, pilotState: pilotState)
@@ -708,7 +846,11 @@ public struct StatusRailModel: Equatable, Sendable {
 
     public var macLabel: String {
         switch transport {
-        case .connected: return "Mac 연결됨"
+        case .connected:
+            // V292-handshake-fix: telemetry 한 프레임이라도 도착해야 진짜 "연결됨".
+            // handshake 만 통과한 상태는 "확인 중" — Mac 측 wiring 미완 또는
+            // 강제 종료 직후 false positive 방지.
+            return telemetry == nil ? "Mac 확인 중" : "Mac 연결됨"
         case .connecting, .handshaking: return "Mac 찾는 중"
         case .disconnected: return "Mac 끊김"
         case .idle: return "Mac 대기"

@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>1.1.0</string>
     <key>CFBundleVersion</key>
-    <string>5</string>
+    <string>10</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>UIApplicationSceneManifest</key>
@@ -55,6 +55,8 @@
     <array>
         <string>_darwinforge._tcp</string>
     </array>
+    <key>NSCameraUsageDescription</key>
+    <string>Mac DarwinForge Relay 화면에 표시된 QR 코드를 스캔하여 빠르게 페어링하기 위해 카메라가 필요합니다.</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
 </dict>

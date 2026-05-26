@@ -27,6 +27,7 @@ public struct PilotScreen: View {
         NavigationStack {
             VStack(spacing: 16) {
                 StatusRailView(model: state.statusRail,
+                               isMockMode: state.isMockMode,
                                onEStop: { Task { await state.performEStop() } })
                     .padding(.horizontal)
 
