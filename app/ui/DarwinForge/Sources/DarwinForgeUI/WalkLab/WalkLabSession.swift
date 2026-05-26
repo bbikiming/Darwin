@@ -1834,6 +1834,9 @@ public final class WalkLabSession {
     public internal(set) var thermalCoolDownRequired: Bool = false
     /// cool-down 종료 임계 (°C). 60°C 알람 후 50°C 미만까지 보행 차단.
     public static let thermalCooldownExitTemp: Double = 50.0
+    /// **V288-4 (2026-05-24) — OC8 STPA**: LiPo 3S 보행 시작 최저 전압.
+    /// 셀당 3.5V × 3셀 = 10.5V. 이 값 이하 (≤) 면 보행 시작 하드 차단.
+    public static let lowBatteryThreshold: Double = 10.5
 
     /// v1.11.24 audit P0-4 — 고급 모드에서 preset 클릭 시 슬라이더를 preset 기본값으로 로드.
     ///

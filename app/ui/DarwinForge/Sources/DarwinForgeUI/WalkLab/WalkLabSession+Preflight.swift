@@ -104,6 +104,29 @@ extension WalkLabSession {
             ))
         }
 
+        // 8. **V288-4 (2026-05-24) — OC8 STPA**: LiPo 3S 배터리 최저 전압 L1 차단.
+        //
+        // 비유: 자동차 연료 0 = 시동 자체 불가. 10.5V 이하에서 보행 시작은 주행 중
+        // 전원 차단 → 낙상 위험. override 불가 (안전 하드 게이트).
+        //
+        // - 실 로봇 연결 확인: `store.bus != nil` 또는 `_testOverrideBusConnected=true` (test hook).
+        // - voltage source: `voltageForGate` — store telemetry 우선, test override 지원.
+        // - nil voltage → 차단 안 함 (fail-safe: telemetry 미수신 중 보행 허용).
+        // - 10.5V 이하 (≤) → 하드 차단 (경계값 포함).
+        let busConnected: Bool = {
+            if store?.bus != nil { return true }
+            #if DEBUG
+            if _testOverrideBusConnected == true { return true }
+            #endif
+            return false
+        }()
+        if busConnected, let v = voltageForGate, v <= Self.lowBatteryThreshold {
+            return WalkPreflightFailure(cause: .lowBatteryStartBlocked(
+                voltage: v,
+                threshold: Self.lowBatteryThreshold
+            ))
+        }
+
         return nil
     }
 }

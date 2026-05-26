@@ -309,6 +309,18 @@ extension WalkLabSession {
             /// 등) 가 emergency 유발했는지 알 수 없음. payload 가 mental model + telemetry
             /// 정확도 모두 회복.
             case emergencyActive(trigger: EmergencyTrigger)
+            /// **V288-4 (2026-05-24) — OC8 STPA 이행**: LiPo 3S 안전 한계 (셀당 3.5V × 3 = 10.5V)
+            /// 이하에서 보행 시작 하드 차단.
+            ///
+            /// # 비유
+            ///
+            /// 자동차 연료 게이지가 바닥을 가리키면 시동 자체를 걸 수 없는 것과 같다.
+            /// 도중에 서는 것보다 출발 전 차단이 안전하다. voltage 정보가 없으면 차단하지
+            /// 않음 (fail-safe: 텔레메트리 미수신 중에도 보행 허용).
+            ///
+            /// - `voltage`: 현재 측정된 배터리 전압 (V).
+            /// - `threshold`: 차단 기준 전압 (`WalkLabSession.lowBatteryThreshold` = 10.5V).
+            case lowBatteryStartBlocked(voltage: Double, threshold: Double)
         }
         public let cause: Cause
         public var userMessage: String {
@@ -350,6 +362,9 @@ extension WalkLabSession {
             case .emergencyActive(let trigger):
                 // **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: trigger 출처 명시 노출.
                 return "🛑 긴급 정지 상태 (\(trigger.koreanLabel)) — recovery (R 키 또는 Recover 버튼) 후 재시작"
+            case .lowBatteryStartBlocked(let voltage, let threshold):
+                return String(format: "🔋 배터리 %.1fV (한계 %.1fV) — 충전 후 재시작. LiPo 3S 안전 한계 미달",
+                              voltage, threshold)
             }
         }
 
@@ -374,6 +389,7 @@ extension WalkLabSession {
             case .motorTempCoolDownRequired:                    return "motorTempCoolDownRequired"
             // **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: trigger 별 telemetry 추적.
             case .emergencyActive(let trigger):                 return "emergencyActive_\(trigger.rawValue)"
+            case .lowBatteryStartBlocked:                       return "lowBatteryStartBlocked"
             }
         }
     }
