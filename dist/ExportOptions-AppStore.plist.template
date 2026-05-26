@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- V297-10 — Mac App Store 제출용 ExportOptions.plist 템플릿.
+     xcodebuild -exportArchive 또는 productbuild 파이프라인에서 사용.
+     사용 전 {TEAM_ID} 를 실제 Apple Developer Team ID 로 치환.
+     생성: scripts/upload-app.sh 가 이 템플릿을 실시간 인스턴스화. -->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store-connect</string>
+
+    <key>teamID</key>
+    <string>{TEAM_ID}</string>
+
+    <key>destination</key>
+    <string>upload</string>
+
+    <!-- App Store Connect 업로드는 자동 sign 사용 — Apple Distribution cert + provisioning. -->
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <!-- Mac App Store 는 .pkg 가 필요. xcodebuild 가 productbuild 위임. -->
+    <key>installerSigningCertificate</key>
+    <string>Mac Installer Distribution</string>
+
+    <key>signingCertificate</key>
+    <string>Apple Distribution</string>
+
+    <!-- App Store Connect 가 dSYM 업로드 + symbol indexing 자동. -->
+    <key>uploadSymbols</key>
+    <true/>
+
+    <!-- 빌드 후 Apple notarization 자동 통과 (App Store 는 Mac Store review 가 별도). -->
+    <key>manageAppVersionAndBuildNumber</key>
+    <false/>
+</dict>
+</plist>

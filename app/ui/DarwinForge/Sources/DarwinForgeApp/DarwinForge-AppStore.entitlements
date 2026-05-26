@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ===== V297-10 — Mac App Store 제출용 entitlements =====
+         sandbox 활성 강제. Mac App Store 는 hardened runtime + sandbox 가 필수.
+         (Developer ID notarized 와는 별도 — DarwinForge-DevID.entitlements 사용.)
+
+         포함 entitlement 마다 App Store Review §2.4.5 / §5.4 / §2.5.4 검토 사유:
+           - com.apple.security.app-sandbox: 필수 (모든 App Store 앱)
+           - com.apple.security.network.client/server: Mobile Pilot Relay WebSocket
+             + Tello UDP. App Store 표준 — 자동 승인.
+           - com.apple.security.device.audio-input: 음성 명령 (NSMicrophone 권한 + 사용자 prompt).
+           - com.apple.security.device.usb: **App Store §2.4.5 review 사유 발생**. ROBOTIS-OP2
+             외부 하드웨어 의존성. App Review 가 device 없이 검토 불가능 → review note 에
+             하드웨어 무관 시뮬레이션 모드 (Mock/Review) 명시 필수.
+           - com.apple.security.files.user-selected.read-write: 모션 페이지 import/export.
+             App Store 표준 — 자동 승인.
+         -->
+
+    <!-- V297-10 TestFlight fix (warning 90886) — provisioning profile 의 application-identifier
+         와 일치하는 키가 codesign entitlements 에도 반드시 있어야 TestFlight 분배 가능.
+         Team ID + Bundle ID 조합으로 명시 (JM4LJMU49Q.com.robotis.darwinforge). -->
+    <key>com.apple.application-identifier</key>
+    <string>JM4LJMU49Q.com.robotis.darwinforge</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>JM4LJMU49Q</string>
+
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Mobile Pilot Relay (Bonjour _darwinforge._tcp WebSocket :17370) + Tello UDP. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- Voice command (SFSpeechRecognizer + audio input). -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- USB serial (ROBOTIS-OP2). App Store review 시 외부 하드웨어 justification 필요. -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
+
+    <!-- Motion page / robot pose import/export. -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- ===== Hardened Runtime (Mac App Store + notarization 공통 요구) =====
+         JIT/unsigned-memory 모두 차단 — DarwinForge 는 표준 Swift/AppKit 사용. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <false/>
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <false/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <false/>
+</dict>
+</plist>

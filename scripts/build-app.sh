@@ -137,17 +137,25 @@ cp "$INFO_PLIST_SRC" "$APP_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$APP_BUNDLE/Contents/Info.plist"
 
-# 빌드 메타데이터 stamp — CFBundleVersion 을 git SHA 로 갱신 (traceability).
+# V297-10: CFBundleVersion 은 git commit count (정수) 사용.
+# App Store Connect 가 정수 또는 마침표-분리 정수만 수락 (hex SHA 거부, -19239 에러).
+# SHA 는 별도 plist 키 (BuildSHA) 로 보관해 traceability 유지.
+GIT_COUNT="$(git -C "$REPO_ROOT" rev-list --count HEAD 2>/dev/null || echo "1")"
 GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "dev")"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GIT_SHA" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GIT_COUNT" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :BuildSHA string $GIT_SHA" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Set :BuildSHA $GIT_SHA" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null || true
 
 # Resource bundles (SwiftPM 가 .build/release/ 에 생성한 module bundles).
-# Bundle.module 의존 자산 (AppIcon.png, branding SVG, STL meshes 등) 로드에 필수.
+# SwiftPM executable의 Bundle.module accessor는 Bundle.main.bundleURL 바로 아래의
+# DarwinForge_*.bundle을 먼저 찾는다. 일반 macOS 관례인 Contents/Resources에도
+# 복사하되, 실제 런타임 크래시를 막기 위해 app root에도 반드시 둔다.
 for bundle in "DarwinForge_DarwinForgeUI.bundle" "DarwinForge_DarwinForgeApp.bundle"; do
     src="$BUILD_DIR/$bundle"
     if [ -d "$src" ]; then
+        cp -R "$src" "$APP_BUNDLE/"
         cp -R "$src" "$APP_BUNDLE/Contents/Resources/"
-        echo "  ✓ resource bundle: $bundle"
+        echo "  ✓ resource bundle: $bundle (app root + Contents/Resources)"
     else
         echo "  ⚠️ resource bundle 누락: $bundle (Bundle.module 자산 fallback 가능)" >&2
     fi
@@ -200,9 +208,19 @@ case "$SIGN_MODE" in
         ;;
     adhoc)
         # ad-hoc 사인: 로컬 실행 가능, 배포 시 Gatekeeper 차단 (사용자가 우클릭 → 열기).
-        # entitlements 파일을 사용해도 ad-hoc 사인에서는 sandbox 비활성 (개발 편의).
-        codesign --force --deep --sign - "$APP_BUNDLE"
-        echo "  ✓ ad-hoc 사인 완료 (로컬 실행용)"
+        # 로컬 테스트에서도 com.apple.security.network.client/server entitlement 를
+        # 포함해 iOS↔Mac Relay 동작 조건이 배포 빌드와 달라지지 않게 유지한다.
+        if [ -f "$ENTITLEMENTS_SRC" ]; then
+            codesign --force --deep \
+                --sign - \
+                --entitlements "$ENTITLEMENTS_SRC" \
+                --no-strict \
+                "$APP_BUNDLE"
+            echo "  ✓ ad-hoc 사인 완료 + entitlements 포함 (로컬 실행용)"
+        else
+            codesign --force --deep --sign - --no-strict "$APP_BUNDLE"
+            echo "  ✓ ad-hoc 사인 완료 (entitlements 파일 없음)"
+        fi
         ;;
     identity)
         if [ ! -f "$ENTITLEMENTS_SRC" ]; then
@@ -213,6 +231,7 @@ case "$SIGN_MODE" in
             --sign "$SIGN_IDENTITY" \
             --entitlements "$ENTITLEMENTS_SRC" \
             --options runtime \
+            --no-strict \
             "$APP_BUNDLE"
         echo "  ✓ Developer ID 사인 완료 — '$SIGN_IDENTITY'"
         ;;
@@ -221,7 +240,7 @@ esac
 # ===== Step 6: 검증 =====
 echo "▶ Step 6: 검증"
 if [ "$SIGN_MODE" != "none" ]; then
-    codesign --verify --verbose "$APP_BUNDLE" 2>&1 | sed 's/^/  /'
+    codesign --verify --verbose --no-strict "$APP_BUNDLE" 2>&1 | sed 's/^/  /'
 fi
 
 # bundle 구조 sanity check.
