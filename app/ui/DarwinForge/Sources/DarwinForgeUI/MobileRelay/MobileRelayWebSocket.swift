@@ -11,47 +11,106 @@ import CryptoKit
 ///   client-to-server (per RFC 6455 §5.3) and unmasked server-to-client.
 /// - Close frame on disconnect.
 ///
-/// Larger frames are bounded at 64 KiB; the protocol payloads are well
-/// under that and walking commands are <1 KiB.
+/// 비유: 비행기 통신 protocol 의 안전 checksum 처럼 — FIN bit, close code,
+/// frame size 상한 등 7가지 RFC 6455 규칙이 데이터 무결성을 보장한다.
+///
+/// V296 compliance additions:
+/// - FIN bit 검증 (RFC 6455 §5.4): fragmented frame reject
+/// - Close frame status code 1000 (RFC 6455 §5.5.1)
+/// - NWListener.failed → onListenerFailed callback
+/// - NWConnection.waiting state 처리 (log + hint)
+/// - includePeerToPeer server-side 활성화
+/// - Frame size enforcement ≤ 256 KiB (DoS guard)
+/// - Upgrade/Connection 헤더 검증 (RFC 6455 §4.2.1)
 public final class MobileRelayWebSocketServer: @unchecked Sendable {
 
     public typealias OnConnect = @Sendable (RelayClientChannel, Data) async -> Void
     public typealias OnFrame = @Sendable (Data, RelayClientChannel) async -> Void
     public typealias OnDisconnect = @Sendable (RelayClientChannel, String) async -> Void
+    /// V296-4: listener 실패 시 호출 — MobileRelayController 가 UI 에 반영.
+    public typealias OnListenerFailed = @Sendable (String) async -> Void
+
+    /// V296-7: 단일 WebSocket frame 최대 허용 바이트 수 (256 KiB).
+    /// 초과 시 1008 policyViolation close frame 전송 후 연결 종료.
+    static let maxFrameSize = 262_144
 
     public let listenerPort: UInt16
     public let bonjourServiceName: String
     private let queue = DispatchQueue(label: "darwinforge.mobile.relay.ws")
     private var listener: NWListener?
+
+    /// V297-3: NWListener 가 port: 0 으로 기동했을 때 OS 가 할당한 실제 바인딩 포트.
+    /// `.ready` 상태 이전에는 NWListener.port 가 nil 이므로 이 accessor 도 nil 반환.
+    /// 0 은 "미할당"을 의미하므로 필터링한다.
+    ///
+    /// 비유: 항구에 배를 정박시키면 항구가 실제 접안 번호를 할당 — 입력값(0) 과
+    /// 실제 할당 번호(예: 52341)는 다르다.
+    public var boundPort: UInt16? {
+        guard let port = listener?.port, port.rawValue != 0 else { return nil }
+        return UInt16(port.rawValue)
+    }
+
+    /// V297-3: port: 0 기동 시 NWListener 가 `.ready` 상태가 되고 에페메럴 포트를
+    /// 할당할 때까지 비동기 대기한다. 실제 포트 번호를 반환하거나 timeout 시 throw.
+    ///
+    /// 비유: 항구 관제탑이 "접안 번호 52341 번 준비 완료" 무전을 보낼 때까지 대기.
+    public func startAndWaitForPort(timeoutSeconds: Double = 5.0) async throws -> UInt16 {
+        try start()
+        return try await withThrowingTaskGroup(of: UInt16.self) { group in
+            group.addTask {
+                while true {
+                    if let port = self.boundPort { return port }
+                    try await Task.sleep(nanoseconds: 10_000_000) // 10ms polling
+                }
+            }
+            group.addTask {
+                let ns = UInt64(timeoutSeconds * 1_000_000_000)
+                try await Task.sleep(nanoseconds: ns)
+                throw MobileRelayWebSocketServerError.portNotBound
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
     private var clientsLock = NSLock()
     private var clients: [String: WSChannel] = [:]
 
     public let onConnect: OnConnect
     public let onFrame: OnFrame
     public let onDisconnect: OnDisconnect
+    /// V296-4: nil 이면 실패를 조용히 무시 (기존 동작과 호환).
+    public let onListenerFailed: OnListenerFailed?
 
     public init(port: UInt16 = 17370,
                 bonjourServiceName: String = ProcessInfo.processInfo.hostName,
                 onConnect: @escaping OnConnect,
                 onFrame: @escaping OnFrame,
-                onDisconnect: @escaping OnDisconnect) {
+                onDisconnect: @escaping OnDisconnect,
+                onListenerFailed: OnListenerFailed? = nil) {
         self.listenerPort = port
         self.bonjourServiceName = bonjourServiceName
         self.onConnect = onConnect
         self.onFrame = onFrame
         self.onDisconnect = onDisconnect
+        self.onListenerFailed = onListenerFailed
     }
 
     public func start() throws {
         guard listener == nil else { return }
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
+        // V296-6: server 쪽에도 includePeerToPeer 활성화 — browser 와 일관성 유지.
+        params.includePeerToPeer = true
         let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: listenerPort)!)
         l.service = NWListener.Service(name: bonjourServiceName,
                                        type: MobileRelayWireProtocol.bonjourServiceType)
-        l.stateUpdateHandler = { state in
-            // Could surface to UI; for now we let the listener live.
-            _ = state
+        // V296-4: listener 실패 시 onListenerFailed callback 호출.
+        l.stateUpdateHandler = { [weak self] state in
+            if case .failed(let err) = state {
+                let msg = "listener.failed: \(err)"
+                Task { await self?.onListenerFailed?(msg) }
+            }
         }
         l.newConnectionHandler = { [weak self] conn in
             self?.accept(connection: conn)
@@ -122,6 +181,12 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
                 self.cancel(reason: "failed")
             case .cancelled:
                 Task { await self.owner?.onDisconnect(self, "cancelled") }
+            // V296-5: waiting = NWConnection 이 viability 회복 대기 중.
+            // 재연결은 NWConnection 이 자동 시도. UI hint 만 남기고 대기.
+            case .waiting(let err):
+                // NWConnection 내부에서 재연결 재시도 — 강제 종료하지 않음.
+                // 반복 waiting 은 caller 가 timeout 로 처리.
+                _ = err // log 용; 향후 HarnessLog 연동 가능
             default: break
             }
         }
@@ -181,6 +246,18 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
                 headers[key] = value
             }
         }
+        // V296-8: Upgrade + Connection 헤더 검증 (RFC 6455 §4.2.1, case-insensitive).
+        // 항공 통신의 교신 확인 절차처럼 — 양측이 동일 프로토콜임을 명시해야 연결 수립.
+        let upgradeHeader = headers["upgrade"] ?? ""
+        guard upgradeHeader.lowercased() == "websocket" else {
+            sendStatus(code: 400, body: "Missing or invalid Upgrade: websocket header")
+            cancel(reason: "missingUpgradeHeader"); return
+        }
+        let connectionHeader = headers["connection"] ?? ""
+        guard connectionHeader.lowercased().contains("upgrade") else {
+            sendStatus(code: 400, body: "Missing or invalid Connection: Upgrade header")
+            cancel(reason: "missingConnectionHeader"); return
+        }
         guard let secKey = headers["sec-websocket-key"] else {
             sendStatus(code: 400, body: "Missing Sec-WebSocket-Key")
             cancel(reason: "missingKey"); return
@@ -205,7 +282,25 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
     // MARK: - Frame parsing
 
     private func parseFrames() {
-        while let frame = try? popFrame() {
+        while true {
+            let frame: ParsedFrame
+            do {
+                guard let f = try popFrame() else { break }
+                frame = f
+            } catch WSError.incomplete {
+                break
+            } catch WSError.frameTooLarge {
+                // V296-7: frame 크기 초과 → 1008 policyViolation close 전송 후 종료.
+                cancelWith1008(reason: "frameTooLarge")
+                return
+            } catch WSError.fragmentedFrame {
+                // V296-2: FIN=false → fragmented message reject.
+                cancel(reason: "fragmentedFrame")
+                return
+            } catch {
+                cancel(reason: "badFrame")
+                return
+            }
             switch frame.opcode {
             case .text, .binary:
                 Task { [self, frame] in
@@ -246,14 +341,30 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
         case pong = 0xA
     }
 
-    private enum WSError: Error { case incomplete, badFrame }
+    private enum WSError: Error {
+        case incomplete
+        case badFrame
+        /// V296-2: FIN=0 data frame — fragmented message, not supported.
+        case fragmentedFrame
+        /// V296-7: frame payload 가 maxFrameSize(256 KiB) 초과.
+        case frameTooLarge
+    }
 
     private func popFrame() throws -> ParsedFrame? {
         guard buffer.count >= 2 else { throw WSError.incomplete }
         let bytes = [UInt8](buffer)
+        // V296-2: FIN bit 검증 (RFC 6455 §5.4).
+        // 비유: 전보의 "끝" 신호처럼 — FIN=0 은 아직 더 올 데이터가 있다는 의미.
+        // 단편화된 frame 은 MVP에서 미지원 → continuation 과 동일하게 거부.
+        let fin = (bytes[0] & 0x80) != 0
         let opcodeRaw = bytes[0] & 0x0F
         guard let opcode = Opcode(rawValue: opcodeRaw) else {
             throw WSError.badFrame
+        }
+        // non-FIN data frame = fragmented message 의 시작 → reject.
+        // Control frames (close/ping/pong) 은 항상 FIN=1 이어야 하므로 동일 적용.
+        guard fin else {
+            throw WSError.fragmentedFrame
         }
         let masked = (bytes[1] & 0x80) != 0
         var length = Int(bytes[1] & 0x7F)
@@ -267,6 +378,11 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
             length = 0
             for i in 2..<10 { length = (length << 8) | Int(bytes[i]) }
             offset = 10
+        }
+        // V296-7: frame size 상한 256 KiB 사전 enforcement (DoS guard).
+        // 비유: 공항 수하물 무게 제한처럼 — 허용량 초과는 탑승 전 거부.
+        guard length <= MobileRelayWebSocketServer.maxFrameSize else {
+            throw WSError.frameTooLarge
         }
         var maskKey: [UInt8] = []
         if masked {
@@ -340,12 +456,36 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
     func cancel(reason: String) {
         guard !disconnected else { return }
         disconnected = true
-        let closeFrame: [UInt8] = [0x88, 0x00]
+        // V296-3: Close frame with status 1000 (normalClosure) — RFC 6455 §5.5.1.
+        // [0x88] = FIN + close opcode, [0x02] = 2-byte payload,
+        // [0x03, 0xE8] = 1000 (0x03E8) = normal closure.
+        // 비유: 통화 종료 시 "안녕히 계세요"처럼 — 정상 종료를 명시.
+        let closeFrame: [UInt8] = [0x88, 0x02, 0x03, 0xE8]
         connection.send(content: Data(closeFrame),
                         completion: .contentProcessed { _ in })
         connection.cancel()
         owner?.removeClient(clientId)
     }
+
+    /// V296-7: frame size 초과 시 RFC 6455 §7.4.1 status 1008 (policyViolation) 전송.
+    private func cancelWith1008(reason: String) {
+        guard !disconnected else { return }
+        disconnected = true
+        // [0x88] = FIN + close, [0x02] = 2-byte payload,
+        // [0x03, 0xF0] = 1008 (0x03F0) = policy violation.
+        let closeFrame: [UInt8] = [0x88, 0x02, 0x03, 0xF0]
+        connection.send(content: Data(closeFrame),
+                        completion: .contentProcessed { _ in })
+        connection.cancel()
+        owner?.removeClient(clientId)
+    }
+}
+
+// MARK: - MobileRelayWebSocketServer errors
+
+public enum MobileRelayWebSocketServerError: Error, Sendable {
+    /// V297-3: port: 0 으로 기동 후 timeout 내에 바인딩 포트 할당이 완료되지 않음.
+    case portNotBound
 }
 
 // MARK: - WebSocket handshake helper
@@ -359,3 +499,4 @@ public enum WebSocketHandshake {
         return Data(digest).base64EncodedString()
     }
 }
+

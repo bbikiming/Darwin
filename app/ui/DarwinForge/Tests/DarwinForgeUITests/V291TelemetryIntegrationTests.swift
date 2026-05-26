@@ -43,7 +43,8 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let pairing = MobileRelayPairing(initialCode: "123456")
         let server = MobileRelayServer(pairing: pairing,
                                        port: InMemorySafetyPort(),
-                                       harness: harness)
+                                       harness: harness,
+                                       batteryVoltage: { 11.7 })
         let channel = InMemoryChannelV291()
 
         await server.handleClientConnected(channel,
@@ -63,7 +64,8 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let pairing = MobileRelayPairing(initialCode: "999999")
         let server = MobileRelayServer(pairing: pairing,
                                        port: InMemorySafetyPort(),
-                                       harness: harness)
+                                       harness: harness,
+                                       batteryVoltage: { 11.7 })
         let channel = InMemoryChannelV291()
 
         await server.handleClientConnected(channel,
@@ -82,7 +84,8 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let pairing = MobileRelayPairing(initialCode: "777777")
         let server = MobileRelayServer(pairing: pairing,
                                        port: InMemorySafetyPort(),
-                                       harness: harness)
+                                       harness: harness,
+                                       batteryVoltage: { 11.7 })
 
         for i in 0..<3 {
             let ch = InMemoryChannelV291()
@@ -102,7 +105,7 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let harness = RecordingHarness()
         let pairing = MobileRelayPairing(initialCode: "111111")
         let port = InMemorySafetyPort()
-        let server = MobileRelayServer(pairing: pairing, port: port, harness: harness)
+        let server = MobileRelayServer(pairing: pairing, port: port, harness: harness, batteryVoltage: { 11.7 })
         let channel = InMemoryChannelV291()
 
         await server.handleClientConnected(channel, handshake: helloFrame(code: "111111"))
@@ -128,7 +131,8 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let pairing = MobileRelayPairing(initialCode: "222222")
         let server = MobileRelayServer(pairing: pairing,
                                        port: InMemorySafetyPort(),
-                                       harness: harness)
+                                       harness: harness,
+                                       batteryVoltage: { 11.7 })
         let channel = InMemoryChannelV291()
 
         await server.handleClientConnected(channel, handshake: helloFrame(code: "222222"))
@@ -151,7 +155,8 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let pairing = MobileRelayPairing(initialCode: "333333")
         let server = MobileRelayServer(pairing: pairing,
                                        port: InMemorySafetyPort(),
-                                       harness: harness)
+                                       harness: harness,
+                                       batteryVoltage: { 11.7 })
         let channel = InMemoryChannelV291()
 
         await server.handleClientConnected(channel, handshake: helloFrame(code: "333333"))
@@ -172,7 +177,8 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let port = InMemorySafetyPort()
         let server = MobileRelayServer(
             configuration: .init(heartbeatIntervalMs: 20, watchdogTimeoutMs: 40),
-            pairing: pairing, port: port, harness: harness)
+            pairing: pairing, port: port, harness: harness,
+            batteryVoltage: { 11.7 })
         let channel = InMemoryChannelV291()
 
         await server.handleClientConnected(channel, handshake: helloFrame(code: "444444"))
@@ -210,7 +216,8 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let pairing = MobileRelayPairing(initialCode: "555555")
         let server = MobileRelayServer(pairing: pairing,
                                        port: InMemorySafetyPort(),
-                                       harness: harness)
+                                       harness: harness,
+                                       batteryVoltage: { 11.7 })
         let channel = InMemoryChannelV291()
 
         await server.handleClientConnected(channel,
@@ -231,7 +238,7 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         let harness = RecordingHarness()
         let pairing = MobileRelayPairing(initialCode: "666666")
         let port = InMemorySafetyPort()
-        let server = MobileRelayServer(pairing: pairing, port: port, harness: harness)
+        let server = MobileRelayServer(pairing: pairing, port: port, harness: harness, batteryVoltage: { 11.7 })
         let channel = InMemoryChannelV291()
 
         await server.handleClientConnected(channel, handshake: helloFrame(code: "666666"))
@@ -257,13 +264,22 @@ final class V291TelemetryIntegrationTests: XCTestCase {
     }
 
     private func makeFrame(type: String, id: String, payload: [String: Any]) -> Data {
+        // CI fix (PR #42, 2026-05-26): sentAt 은 현재 시각 — server 의 latency
+        // gate (walk: 150ms) 와 clockSkew(>10s) 가드를 통과시키려면 fixture 가
+        // server clock 근처여야 한다.
         let envelope: [String: Any] = [
             "v": 1, "id": id, "type": type,
-            "sentAt": "2026-05-25T12:00:00.000Z",
+            "sentAt": Self.isoFormatter.string(from: Date()),
             "payload": payload
         ]
         return try! JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
     }
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 }
 
 // MARK: - InMemoryChannelV291

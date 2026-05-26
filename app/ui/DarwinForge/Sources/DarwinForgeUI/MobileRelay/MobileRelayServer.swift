@@ -79,8 +79,21 @@ public actor MobileRelayServer {
     /// Mac-side 최신 배터리 전압을 반환하는 클로저.
     /// nil → 전압 측정 불가 (보수 정책: ARM reject).
     private let batteryVoltage: @Sendable () async -> Double?
+    /// **V292-D fix (사용자 보고)** — 페어링 즉시 controller 에 push 통보.
+    /// 1Hz polling 만 의존하면 sandbox 환경 / Task scheduling delay 로
+    /// Mac UI 가 무한 "대기" 표시. callback 으로 즉시 main actor 동기화.
+    /// nil = test/production fallback (polling 만 동작).
+    private let onPaired: (@Sendable (String, String) async -> Void)?
+    private let onUnpaired: (@Sendable () async -> Void)?
+    /// **V295-2** — connection lifecycle events → controller timeline push.
+    /// label: 한글 라벨, detail: 추가 메타(optional).
+    private let onLifecycleEvent: (@Sendable (String, String?) async -> Void)?
     private var session: Session?
     private var watchdogTask: Task<Void, Never>?
+    /// V296-1: consecutive send-failure counter. Reset on success; triggers
+    /// closeSession when it reaches maxConsecutiveSendFailures.
+    private var consecutiveSendFailures: Int = 0
+    private static let maxConsecutiveSendFailures: Int = 3
     /// **V291-11** — transport disconnect grace period timer.
     /// 1.5s 안에 새 hello 들어오면 cancel. 만료 시 stop + disarm + close.
     private var disconnectGraceTask: Task<Void, Never>?
@@ -92,7 +105,10 @@ public actor MobileRelayServer {
                 port: RobotSafetyPort,
                 clock: @escaping () -> Date = Date.init,
                 harness: (any HarnessFacade)? = nil,
-                batteryVoltage: @escaping @Sendable () async -> Double? = { nil }) {
+                batteryVoltage: @escaping @Sendable () async -> Double? = { nil },
+                onPaired: (@Sendable (String, String) async -> Void)? = nil,
+                onUnpaired: (@Sendable () async -> Void)? = nil,
+                onLifecycleEvent: (@Sendable (String, String?) async -> Void)? = nil) {
         self.configuration = configuration
         self.pairing = pairing
         self.port = port
@@ -101,6 +117,9 @@ public actor MobileRelayServer {
         // 명시 주입하므로 실제로 nil 상태로 사용되지 않음. 테스트는 항상 주입.
         self.harness = harness
         self.batteryVoltage = batteryVoltage
+        self.onPaired = onPaired
+        self.onUnpaired = onUnpaired
+        self.onLifecycleEvent = onLifecycleEvent
     }
 
     public func currentSessionId() -> String? { session?.sessionId }
@@ -109,6 +128,10 @@ public actor MobileRelayServer {
     /// device name so the Mac toolbar chip can render `연결됨 — <iPhone>`
     /// while a session is owned. Returns nil when no session is active.
     public func currentDeviceName() -> String? { session?.deviceName }
+    /// V295-4: 세션 연결 시각 — popover 진단 섹션의 "연결 시작" 표시용.
+    public func currentConnectedAt() -> Date? { session?.connectedAt }
+    /// V295-4: 마지막 heartbeat 수신 시각 — popover 진단 섹션의 "마지막 신호" 표시용.
+    public func currentLastHeartbeatAt() -> Date? { session?.lastHeartbeatAt }
 
     // MARK: - Transport callbacks
 
@@ -116,6 +139,12 @@ public actor MobileRelayServer {
     /// Returns after the welcome / rejection envelope has been delivered.
     public func handleClientConnected(_ channel: RelayClientChannel,
                                       handshake firstFrame: Data) async {
+        // V295-2: TCP 수락 즉시 기록 — handshake 시작 전 첫 타임라인 이벤트.
+        await emitTelemetry(.mobilePilotSocketOpened, level: .info, actor: .system,
+                            data: ["channelId": AnyCodable(channel.clientId)])
+        if let onLifecycleEvent {
+            await onLifecycleEvent("WebSocket 연결됨", channel.clientId)
+        }
         do {
             let head = try RelayCodec.decoder.decode(RelayEnvelopeHead.self, from: firstFrame)
             guard head.type == InboundCommandType.sessionHello.rawValue else {
@@ -248,6 +277,14 @@ public actor MobileRelayServer {
 
     private func acceptHello(channel: RelayClientChannel,
                              hello: RelayEnvelope<HelloPayload>) async throws {
+        // V295-2: hello payload 파싱 성공 — 코드 검증 직전.
+        let codeHint = String(hello.payload.pairingCode.prefix(2)) + "****"
+        await emitTelemetry(.mobilePilotHelloReceived, level: .info, actor: .system,
+                            data: ["deviceName": AnyCodable(hello.payload.deviceName),
+                                   "codePrefixHint": AnyCodable(codeHint)])
+        if let onLifecycleEvent {
+            await onLifecycleEvent("Hello 수신", hello.payload.deviceName)
+        }
         // **V291-11** — 재연결 grace timer cancel. WiFi 깜빡임 후 정상 복귀 시
         // pending disconnect stop 을 회피.
         cancelDisconnectGraceTask()
@@ -326,11 +363,24 @@ public actor MobileRelayServer {
         await send(envelope: makeEnvelope(type: OutboundEventType.sessionWelcome.rawValue,
                                           payload: welcome),
                    to: channel)
+        // V295-2: welcome 송신 완료 — 페어링 확정 직전.
+        await emitTelemetry(.mobilePilotWelcomeSent, level: .info, actor: .system,
+                            data: ["sessionId": AnyCodable(sessionId),
+                                   "deviceName": AnyCodable(hello.payload.deviceName)])
+        if let onLifecycleEvent {
+            await onLifecycleEvent("Welcome 송신", sessionId)
+        }
         await emitLog(level: "info", category: "connection",
                       message: "Paired: \(hello.payload.deviceName)")
         await emitTelemetry(.mobilePilotPairingSuccess, level: .info, actor: .user,
                             data: ["deviceName": AnyCodable(hello.payload.deviceName),
                                    "sessionId": AnyCodable(sessionId)])
+        // **V293 fix** — controller 에 즉시 push 통보. 1Hz polling 의존성 제거.
+        // 사용자 보고: 폰 연결됨 / Mac 대기 mismatch — sandbox 환경에서
+        // telemetryPump 의 polling 이 지연되거나 race 시 발생.
+        if let onPaired {
+            await onPaired(hello.payload.deviceName, sessionId)
+        }
         await broadcastTelemetry()
         startWatchdog()
     }
@@ -741,8 +791,18 @@ public actor MobileRelayServer {
         do {
             let data = try RelayCodec.encoder.encode(envelope)
             try await channel.deliver(data)
+            consecutiveSendFailures = 0
         } catch {
-            // Drop session if delivery fails repeatedly. For now log it.
+            consecutiveSendFailures += 1
+            let errorKind = String(describing: type(of: error))
+            await emitTelemetry(.mobilePilotSendFailed, level: .warn, actor: .system,
+                                data: ["errorKind": AnyCodable(errorKind),
+                                       "consecutive": AnyCodable(consecutiveSendFailures)])
+            if consecutiveSendFailures >= Self.maxConsecutiveSendFailures {
+                // Close session first (sets session = nil) so any downstream send
+                // attempts (e.g. from emitLog) are no-ops rather than recursive calls.
+                await closeSession(reason: "deliveryFailed")
+            }
         }
     }
 
@@ -790,7 +850,12 @@ public actor MobileRelayServer {
         guard let s = session else { return }
         await s.channel.disconnect(reason: reason)
         self.session = nil
+        consecutiveSendFailures = 0
         stopWatchdog()
+        // **V293 fix** — controller 에 즉시 unpaired 통보.
+        if let onUnpaired {
+            await onUnpaired()
+        }
     }
 
     // MARK: - ID utilities

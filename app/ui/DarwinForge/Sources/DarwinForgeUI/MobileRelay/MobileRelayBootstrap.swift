@@ -52,6 +52,12 @@ public struct MobileRelayBootstrap: View {
                 relayChannel.attach(store: store, gate: relayGate)
                 rebindHooks()
                 hooksWired = true
+                // iOS 조종기 연결은 Mac Relay가 먼저 대기 중이어야 한다.
+                // 앱 실행 후 사용자가 별도 토글을 찾지 않아도 iPhone의 Bonjour/QR 연결이
+                // 바로 성공하도록, live hooks wiring이 끝난 뒤 자동으로 listen을 시작한다.
+                if !controller.isRunning {
+                    await controller.start()
+                }
             }
     }
 
