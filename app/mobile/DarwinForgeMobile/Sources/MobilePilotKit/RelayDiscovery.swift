@@ -27,10 +27,25 @@ public enum DiscoveryTimeout: Sendable {
     case timedOut(elapsed: TimeInterval)
 }
 
+/// P2-1 (검수 2026-05-26): NWBrowser `.waiting(NWError)` / `.failed(NWError)`
+/// 상태에서 권한 거부 / 네트워크 미가용 / firewall block 등을 사용자에게 명시.
+///
+/// 종전: NWBrowser 가 silent fail 하면 사용자에겐 "Mac을 찾는 중" 만 무한 표시.
+/// 신규: stateUpdateHandler 가 .waiting/.failed 시 이 stream 으로 알림 →
+/// ConnectScreen 이 permissionDeniedCard 또는 troubleshoot 안내 표시.
+public enum DiscoveryFailure: Sendable, Equatable {
+    /// Local Network 권한 거부 — Settings 안내 필요.
+    case permissionDenied
+    /// 일반 네트워크 실패 (firewall / no route / interface 비활성 등).
+    case networkUnavailable(reason: String)
+}
+
 public protocol RelayBrowser: AnyObject, Sendable {
     var resultsStream: AsyncStream<[RelayDiscoveryResult]> { get }
     /// 탐색이 타임아웃됐을 때 단발 이벤트를 방출하는 스트림.
     var timeoutStream: AsyncStream<DiscoveryTimeout> { get }
+    /// P2-1: NWBrowser stateUpdateHandler 가 .waiting/.failed 진입 시 yield.
+    var failureStream: AsyncStream<DiscoveryFailure> { get }
     func start()
     func stop()
 }
@@ -48,9 +63,11 @@ public final class BonjourRelayBrowser: RelayBrowser, @unchecked Sendable {
 
     public let resultsStream: AsyncStream<[RelayDiscoveryResult]>
     public let timeoutStream: AsyncStream<DiscoveryTimeout>
+    public let failureStream: AsyncStream<DiscoveryFailure>
 
     private let continuation: AsyncStream<[RelayDiscoveryResult]>.Continuation
     private let timeoutContinuation: AsyncStream<DiscoveryTimeout>.Continuation
+    private let failureContinuation: AsyncStream<DiscoveryFailure>.Continuation
     private var browser: NWBrowser?
     private let queue = DispatchQueue(label: "darwinforge.mobile.bonjour")
     private let lock = NSLock()
@@ -66,6 +83,10 @@ public final class BonjourRelayBrowser: RelayBrowser, @unchecked Sendable {
         var toCont: AsyncStream<DiscoveryTimeout>.Continuation!
         self.timeoutStream = AsyncStream { toCont = $0 }
         self.timeoutContinuation = toCont
+
+        var fCont: AsyncStream<DiscoveryFailure>.Continuation!
+        self.failureStream = AsyncStream { fCont = $0 }
+        self.failureContinuation = fCont
     }
 
     public func start() {
@@ -76,6 +97,22 @@ public final class BonjourRelayBrowser: RelayBrowser, @unchecked Sendable {
         let b = NWBrowser(for: descriptor, using: params)
         b.browseResultsChangedHandler = { [weak self] results, _ in
             self?.handle(results: results)
+        }
+        // P2-1 (검수 2026-05-26): stateUpdateHandler 로 권한 거부 감지.
+        // Apple TN3179: local network 권한 거부 시 NWBrowser 는 .waiting(NWError)
+        // 상태로 진입하고 결과를 0건 그대로 둔다. .failed 는 firewall/interface
+        // 같은 다른 실패.
+        b.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .waiting(let err):
+                self.failureContinuation.yield(.permissionDenied)
+                _ = err
+            case .failed(let err):
+                self.failureContinuation.yield(.networkUnavailable(reason: "\(err)"))
+            default:
+                break
+            }
         }
         b.start(queue: queue)
         browser = b
@@ -161,8 +198,10 @@ public final class BonjourRelayBrowser: RelayBrowser, @unchecked Sendable {
 public final class FixedRelayBrowser: RelayBrowser, @unchecked Sendable {
     public let resultsStream: AsyncStream<[RelayDiscoveryResult]>
     public let timeoutStream: AsyncStream<DiscoveryTimeout>
+    public let failureStream: AsyncStream<DiscoveryFailure>
     private let continuation: AsyncStream<[RelayDiscoveryResult]>.Continuation
     private let timeoutContinuation: AsyncStream<DiscoveryTimeout>.Continuation
+    private let failureContinuation: AsyncStream<DiscoveryFailure>.Continuation
     private let results: [RelayDiscoveryResult]
 
     public init(results: [RelayDiscoveryResult]) {
@@ -174,6 +213,10 @@ public final class FixedRelayBrowser: RelayBrowser, @unchecked Sendable {
         var toCont: AsyncStream<DiscoveryTimeout>.Continuation!
         self.timeoutStream = AsyncStream { toCont = $0 }
         self.timeoutContinuation = toCont
+
+        var fCont: AsyncStream<DiscoveryFailure>.Continuation!
+        self.failureStream = AsyncStream { fCont = $0 }
+        self.failureContinuation = fCont
     }
 
     public func start() {

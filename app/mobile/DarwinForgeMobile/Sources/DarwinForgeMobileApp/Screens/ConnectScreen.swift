@@ -44,6 +44,9 @@ public struct ConnectScreen: View {
     // MARK: Camera QR scanner state (V292-cam)
     @State private var showCameraScanner: Bool = false
     @State private var cameraPermissionDenied: Bool = false
+    /// P2-3 (검수 2026-05-26): QR 카메라 raw 결과의 JSON 파싱 실패 시 manual
+    /// sheet 의 paste 영역에 그대로 prefill.
+    @State private var qrPrefillRaw: String? = nil
 
     // MARK: Dev menu tap counter (hidden 10-tap unlock)
     @State private var devTapCount: Int = 0
@@ -104,11 +107,17 @@ public struct ConnectScreen: View {
             .onChange(of: state.discoveryTimedOut) { _, timedOut in
                 if timedOut { showTroubleshoot = true }
             }
-            .sheet(isPresented: $showManualSheet) {
+            // P2-1 (검수 2026-05-26): AppState 의 bonjourPermissionDenied 를
+            // ConnectScreen 의 permissionDenied 로 bridge → permissionDeniedCard 표시.
+            .onChange(of: state.bonjourPermissionDenied) { _, denied in
+                if denied { permissionDenied = true }
+            }
+            .sheet(isPresented: $showManualSheet, onDismiss: { qrPrefillRaw = nil }) {
                 ManualEntrySheet(onConnect: { endpoint in
                     showManualSheet = false
                     Task { await state.connect(to: endpoint) }
-                })
+                },
+                                 prefillJSON: qrPrefillRaw)
             }
             // V292-cam: 카메라 QR 스캐너 sheet
             #if canImport(AVFoundation) && canImport(UIKit)
@@ -587,7 +596,10 @@ public struct ConnectScreen: View {
                                                      pairingCode: payload.pairingCode))
             }
         } catch {
-            // QR 페이로드가 JSON 형식이 아니면 manual sheet 에 텍스트 채워 fallback.
+            // P2-3 fix (검수 2026-05-26): JSON 파싱 실패 시 raw 텍스트를 manual
+            // sheet 의 paste 영역에 그대로 prefill — 종전에는 raw 가 버려져
+            // 사용자가 다시 카메라 스캔 해야 했음.
+            qrPrefillRaw = raw
             showManualSheet = true
         }
     }

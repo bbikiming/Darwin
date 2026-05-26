@@ -104,6 +104,12 @@ public final class AppState: ObservableObject {
     private var browserTimeoutTask: Task<Void, Never>?
     /// V292-3: Bonjour 30초 탐색 타임아웃. true 이면 "안 보여요?" 패널 자동 펼침.
     @Published public private(set) var discoveryTimedOut: Bool = false
+    /// P2-1 (검수 2026-05-26): Bonjour 가 권한 거부로 .waiting 상태 진입.
+    /// ConnectScreen 이 이 값으로 permissionDeniedCard 표시.
+    @Published public private(set) var bonjourPermissionDenied: Bool = false
+    /// 일반 네트워크 실패 (firewall, no route 등) — 사용자 안내용.
+    @Published public private(set) var bonjourFailureReason: String?
+    private var browserFailureTask: Task<Void, Never>?
     /// V292-B: 페어링 성공 후 ARM 게이트 상태.
     /// none → brief → preflight → drill(첫 페어링 only) → ready.
     @Published public private(set) var safetyGateState: SafetyGateState = .none
@@ -168,8 +174,11 @@ public final class AppState: ObservableObject {
     public func startDiscovery() {
         browserTask?.cancel()
         browserTimeoutTask?.cancel()
+        browserFailureTask?.cancel()
         browser?.stop()
         discoveryTimedOut = false
+        bonjourPermissionDenied = false
+        bonjourFailureReason = nil
         let b: RelayBrowser
         #if canImport(Network)
         if connectionMode == .realRelay {
@@ -190,6 +199,23 @@ public final class AppState: ObservableObject {
         browserTimeoutTask = Task { [weak self] in
             for await _ in b.timeoutStream {
                 await MainActor.run { self?.discoveryTimedOut = true }
+            }
+        }
+        // P2-1 (검수 2026-05-26): 권한 거부 / 네트워크 실패 stream 구독.
+        browserFailureTask = Task { [weak self] in
+            for await failure in b.failureStream {
+                await MainActor.run {
+                    switch failure {
+                    case .permissionDenied:
+                        self?.bonjourPermissionDenied = true
+                        self?.appendLog(level: .warning, category: .connection,
+                                        message: "로컬 네트워크 권한 거부 — 설정에서 허용 필요")
+                    case .networkUnavailable(let reason):
+                        self?.bonjourFailureReason = reason
+                        self?.appendLog(level: .warning, category: .connection,
+                                        message: "Bonjour 실패: \(reason)")
+                    }
+                }
             }
         }
         b.start()
@@ -236,7 +262,11 @@ public final class AppState: ObservableObject {
         browserTask = nil
         browserTimeoutTask?.cancel()
         browserTimeoutTask = nil
+        browserFailureTask?.cancel()
+        browserFailureTask = nil
         discoveryTimedOut = false
+        bonjourPermissionDenied = false
+        bonjourFailureReason = nil
     }
 
     // MARK: - Pairing / connection
@@ -256,6 +286,7 @@ public final class AppState: ObservableObject {
         }
         await disconnect(reason: "reconnect")
         telemetryHistory.removeAll()
+        serverCapabilities = nil
         let hello = HelloPayload(appVersion: appVersion,
                                  deviceName: deviceName,
                                  deviceId: deviceId,
@@ -298,6 +329,7 @@ public final class AppState: ObservableObject {
         pairedEndpoint = nil
         telemetry = nil
         telemetryHistory.removeAll()
+        serverCapabilities = nil
         if case .commandActive = pilotState {
             stateMachine.apply(.transportClosed)
         }
@@ -316,11 +348,19 @@ public final class AppState: ObservableObject {
         return cradleConfirmed
     }
 
+    /// P2-2 fix (검수 2026-05-26): 서버가 welcome 에 보낸 capabilities 를 저장.
+    /// real relay 의 head/freeform UI 노출 정책의 source of truth.
+    @Published public private(set) var serverCapabilities: WelcomeCapabilities?
+
     /// Head pan/tilt is a UI preview in the first build. The current macOS
     /// relay has no verified production adapter for head servos, so real
     /// relay mode must not send `pilot.head` and then present a fake ACK.
+    ///
+    /// P2-2: real relay 에서는 서버 capabilities.head 가 true 인 경우에만 허용.
+    /// Mock 모드는 항상 시뮬레이션으로 허용.
     public var headControlSupported: Bool {
-        connectionMode == .mockReview
+        if connectionMode == .mockReview { return true }
+        return serverCapabilities?.head == true
     }
 
     public var armStartDisabledReason: DisabledReason? {
@@ -350,6 +390,14 @@ public final class AppState: ObservableObject {
         guard isMacReady else {
             appendLog(level: .warning, category: .safety,
                       message: "Mac이 연결되지 않았어요.")
+            return
+        }
+        // P1-2 fix (검수 2026-05-26): UI disable 만 의존하지 않고 데이터 레이어에서도
+        // CommandPermission 게이트 통과. robot == .sim / .disconnected / .busBusy /
+        // .stale 같은 telemetry-driven 조건이 race 로 통과되는 것을 막는다.
+        if let reason = CommandPermission.reason(forArm: pilotState, telemetry: telemetry) {
+            appendLog(level: .warning, category: .safety,
+                      message: "잠금 해제 차단: \(reason.koreanCopy)")
             return
         }
         let env = commandBuilder.arm(ArmPayload(cradleConfirmed: true,
@@ -418,6 +466,13 @@ public final class AppState: ObservableObject {
         guard SafeMotionCatalog.mvpEnabledLabels.contains(label) else {
             appendLog(level: .warning, category: .safety,
                       message: "\(entry.koreanName)는 MVP에서 비활성화돼 있어요.")
+            return
+        }
+        // P1-2 fix (검수 2026-05-26): UI disable race 회피 — notArmed / busBusy /
+        // stale / robotDisconnected / latencyGate 모두 데이터 레이어에서 재검사.
+        if let reason = CommandPermission.reason(forSafeAction: pilotState, telemetry: telemetry) {
+            appendLog(level: .warning, category: .safety,
+                      message: "\(entry.koreanName) 차단: \(reason.koreanCopy)")
             return
         }
         let env = commandBuilder.motion(MotionPayload(slot: entry.slot, label: entry.label,
@@ -527,10 +582,13 @@ public final class AppState: ObservableObject {
     /// session. The first build only supports it in Mock/Review mode; on the
     /// real Mac relay the server rejects `freeform` (highRiskNotAllowed) so
     /// the iOS side refuses to send and surfaces a clear reason.
+    ///
+    /// P2-2 fix (검수 2026-05-26): real relay 는 서버 capabilities.walkFreeform
+    /// 이 true 여야 허용. 현재 ConnectionStoreSafetyPort 가 false 반환하므로
+    /// 실제로는 mock 모드에서만 활성.
     public var freeformWalkSupported: Bool {
-        // Mock mode → freeform OK (UI simulation only). Real relay → blocked
-        // until WalkLab gains continuous-input support + HIL evidence.
-        connectionMode == .mockReview
+        if connectionMode == .mockReview { return true }
+        return serverCapabilities?.walkFreeform == true
     }
 
     /// Stream a single analog walk frame. Throttled in the joystick view at
@@ -692,7 +750,39 @@ public final class AppState: ObservableObject {
                 appendLog(level: .debug, category: .connection,
                           message: "transport closed (\(reason))")
             }
+            // P1-1 fix (검수 2026-05-26): 명시적 disconnect() 가 정리하던 상태들을
+            // 외부 disconnect (Mac 종료/네트워크 끊김) 에서도 동일하게 정리. truth
+            // gap 방지 — Mac 은 끊김인데 iOS 는 이전 telemetry/walk/ARM 그대로 표시.
+            if case .connected = previous {
+                Task { await self.handleExternalDisconnect(reason: reason) }
+            }
         }
+    }
+
+    /// External transport closure cleanup — Mac 앱 종료/네트워크 끊김/socket close
+    /// 모두 같은 경로. 명시적 `disconnect()` 와 의도적으로 분리: 후자는 사용자가
+    /// 직접 트리거하므로 reconnect/modeSwitch 와 race 가능, 전자는 stream side
+    /// effect 이므로 idempotent 정리만.
+    private func handleExternalDisconnect(reason: String) async {
+        await heartbeat?.stop(sendStop: false, reason: .user)
+        heartbeat = nil
+        pairedEndpoint = nil
+        telemetry = nil
+        telemetryHistory.removeAll()
+        serverCapabilities = nil
+        activeWalkPreset = nil
+        pendingCommandLabel = nil
+        // 상태 머신에 외부 transport 닫힘 통지 — active command 면 latencyGate
+        // 사이드 이펙트 (stop active command) 발화.
+        stateMachine.apply(.transportClosed)
+        pilotState = stateMachine.state
+        safetyGateState = .none
+        // 사용자가 ARM 해두었던 체크리스트는 재연결 시 다시 확인할 수 있게 reset.
+        cradleConfirmed = false
+        physicalEStopConfirmed = false
+        lineOfSightConfirmed = false
+        recoveryBanner = RecoveryBanner(kind: .transport,
+                                        message: "Mac 앱과 연결이 끊겼어요. 다시 연결하세요. (\(reason))")
     }
 
     private func handle(_ message: InboundMessage) {
@@ -700,6 +790,13 @@ public final class AppState: ObservableObject {
         case .sessionWelcome(let env):
             appendLog(level: .info, category: .connection,
                       message: "Welcome from \(env.payload.macName) (\(env.payload.macVersion))")
+            // P2-2 (검수 2026-05-26): 서버 capabilities 저장 → headControlSupported /
+            // freeformWalkSupported 가 real relay 모드에서 이 값을 truth source 로.
+            serverCapabilities = env.payload.capabilities
+            if let cap = env.payload.capabilities {
+                appendLog(level: .debug, category: .connection,
+                          message: "Server caps — head=\(cap.head) freeform=\(cap.walkFreeform) speedScale=\(cap.speedScale)")
+            }
         case .sessionRejected(let env):
             appendLog(level: .error, category: .connection,
                       message: "거부됨: \(env.payload.reason.rawValue)")
