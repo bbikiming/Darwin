@@ -23,13 +23,16 @@ public enum STLLoader {
         }
     }
 
-    /// Bundle.module의 Resources/Meshes/<name>.stl 로드.
+    /// Resources/Meshes/<name>.stl 로드.
+    ///
+    /// V297-11 CRASH FIX: Bundle.module 직접 호출 폐기. SafeResourceBundle 가
+    /// 배포 .app + dev 환경 모두 안전하게 찾음.
     public static func loadGeometry(named name: String,
                                      scale: Float = 1.0,
                                      diffuse: NSColor) throws -> SCNGeometry {
-        guard let url = Bundle.module.url(forResource: name,
-                                           withExtension: "stl",
-                                           subdirectory: "Meshes") else {
+        guard let url = SafeResourceBundle.url(forResource: name,
+                                                withExtension: "stl",
+                                                subdirectory: "Meshes") else {
             throw Error.fileNotFound(name)
         }
         let data = try Data(contentsOf: url)

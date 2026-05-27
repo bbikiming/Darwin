@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import DarwinForgeUI
 import Foundation
 
 /// DarwinForge 앱 아이콘 — 2-tier:
@@ -24,7 +25,9 @@ public enum AppIcon {
     /// **2026-05-16 (재복구)**: 사용자 명시 — `option/ChatGPT Image ... 10_57_32 (1).png`
     /// 영구 적용. 사용자 추가 요청 전까지 변경 금지.
     public static func loadBundledPNG() -> NSImage? {
-        guard let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+        // V297-11 CRASH FIX: Bundle.module 직접 호출 폐기. SafeResourceBundle 가
+        // .app/Contents/Resources/ 표준 위치 + dev 환경 후보 모두 순회.
+        guard let url = SafeResourceBundle.url(forResource: "AppIcon", withExtension: "png"),
               let image = NSImage(contentsOf: url) else {
             return nil
         }

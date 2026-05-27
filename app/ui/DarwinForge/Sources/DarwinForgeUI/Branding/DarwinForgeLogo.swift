@@ -92,12 +92,17 @@ public struct DarwinForgeLogo: View {
     }
 
     /// asset bundle 에서 colorScheme 별 SVG load.
+    ///
+    /// V297-11 CRASH FIX: Bundle.module 직접 호출 폐기. 배포 .app 에서 SwiftPM 가
+    /// resource bundle 못 찾으면 fatalError 로 앱 강제 종료 (첫 화면 사이드바 로고가
+    /// 가장 먼저 호출되어 사용자가 어떤 화면도 못 봄). SafeResourceBundle 가 후보
+    /// 경로 순회 후 못 찾으면 nil → fallbackTextWordmark 가 정상 표시.
     private var wordmarkImage: NSImage? {
         #if canImport(AppKit)
         let assetName = colorScheme == .dark
             ? "logo-darwinforge-dark"
             : "logo-darwinforge-light"
-        return Bundle.module.image(forResource: NSImage.Name(assetName))
+        return SafeResourceBundle.image(named: assetName)
         #else
         return nil
         #endif

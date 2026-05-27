@@ -282,6 +282,35 @@ cat > "$ARCHIVE_INFO" <<EOF
 EOF
 
 echo ""
+echo "▶ Step 4: 스모크 테스트 — archive 의 .app 을 분리 위치에서 직접 launch"
+# V297-11 CRASH FIX 회귀 차단. archive 의 .app 을 .build / dist 외 분리 위치에서
+# 실행해 첫 화면 렌더링 후 fatalError 없이 정상 launch 되는지 확인. Bundle.module
+# 의 resource bundle lookup 이 모든 environment 에서 동작하는지 검증.
+SMOKE_DIR="/tmp/DarwinForge-smoke-$$"
+mkdir -p "$SMOKE_DIR"
+cp -R "$ARCHIVE_PATH/Products/Applications/DarwinForge.app" "$SMOKE_DIR/"
+SMOKE_APP="$SMOKE_DIR/DarwinForge.app"
+
+# launch — 별도 instance + background.
+open -n -j -g "$SMOKE_APP" 2>/dev/null || true
+sleep 5
+
+# living 인지 확인 — fatalError 시 즉시 종료됐을 것.
+PROC_COUNT=$(pgrep -f "$SMOKE_APP/Contents/MacOS/DarwinForgeApp" 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$PROC_COUNT" -gt 0 ]]; then
+    echo "  ✓ 스모크 테스트 통과 — 5초 launch 후 살아있음 (PID 개수=$PROC_COUNT)"
+    pkill -TERM -f "$SMOKE_APP/Contents/MacOS/DarwinForgeApp" 2>/dev/null || true
+    sleep 1
+    pkill -KILL -f "$SMOKE_APP/Contents/MacOS/DarwinForgeApp" 2>/dev/null || true
+else
+    echo "  ✗ 스모크 테스트 실패 — 5초 내 종료. fatalError 또는 crash 의심."
+    echo "    Crash log: ~/Library/Logs/DiagnosticReports/DarwinForge* 확인"
+    rm -rf "$SMOKE_DIR"
+    exit 2
+fi
+rm -rf "$SMOKE_DIR"
+
+echo ""
 echo "✅ Archive 어셈블 완료"
 echo "   경로     : $ARCHIVE_PATH"
 echo "   크기     : $(du -sh "$ARCHIVE_PATH" | cut -f1)"
