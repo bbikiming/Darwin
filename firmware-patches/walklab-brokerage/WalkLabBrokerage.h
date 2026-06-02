@@ -14,6 +14,9 @@
 namespace Robot { class Walking; }
 namespace Robot { class CM730; }
 namespace Robot { class Head; }
+// 볼 트래킹 (2026-06-02) — 헤더 include 없이 forward 선언 (impl 에서만 사용).
+namespace Robot { class ColorFinder; }
+namespace Robot { class BallTracker; }
 
 namespace Robotis {
 
@@ -109,6 +112,26 @@ private:
 
     /// **v1.13** — 연속 낙상 poll 카운터 (debounce). STANDUP 복귀 시 0 으로 reset.
     int m_fall_count;
+
+    // ===== 볼 트래킹 (2026-06-02) — 로봇 온보드 자동 헤드 추적 (기본 데모와 동일) =====
+    /// Mac serializedLine 13번째 필드(ball_track)로 토글. true 면 매 poll
+    /// ProcessBallTracking() 이 카메라+ColorFinder+BallTracker 로 헤드를 움직인다.
+    bool m_balltrack_enabled;
+
+    /// vision 객체 lazy-init 여부. 첫 enable 시 ColorFinder/BallTracker 생성
+    /// (카메라 싱글톤은 main.cpp 가 이미 Initialize). Run() 무한루프라 해제 불필요.
+    bool m_vision_ready;
+
+    /// 주황 공 색 finder (ROBOTIS 표준 데모 기본값). lazy-init.
+    Robot::ColorFinder* m_ball_finder;
+
+    /// 볼 위치 → Head::MoveTracking PD 추적기. lazy-init.
+    Robot::BallTracker* m_tracker;
+
+    /// **볼 트래킹** — 매 poll 호출 (enabled 시). 카메라 프레임 캡처 → 볼 위치 검출 →
+    /// BallTracker::Process 가 Head::MoveTracking(offset) 또는 검색 scan 을 수행한다.
+    /// 보행 여부와 무관 (헤드 전용). 카메라/Head 는 진입 시 이미 초기화돼 있음.
+    void ProcessBallTracking();
 };
 
 }  // namespace Robotis

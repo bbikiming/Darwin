@@ -181,6 +181,13 @@ public struct MobileRelayBootstrap: View {
                 }
                 return true
             },
+            setBallTracking: { [weak walkSession] enabled in
+                // 볼 트래킹 (2026-06-02): session flag set → OnboardBridge onChange 가
+                // serializedLine 13번째 필드로 robot 에 전달 → 브로커리지 자체 헤드 추적.
+                guard let session = walkSession else { return false }
+                session.ballTrackingEnabled = enabled
+                return true
+            },
             snapshot: { [weak store, weak relayChannel] in
                 let armed = relayChannel?.armStage == .ready
                     || relayChannel?.armStage == .readyDegraded

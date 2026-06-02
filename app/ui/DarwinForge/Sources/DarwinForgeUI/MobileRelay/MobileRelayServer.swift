@@ -82,7 +82,8 @@ public actor MobileRelayServer {
     /// speedScaleAccepted=true: **V297-8 부터 실 적용** — WalkLabSession.start(speedScale:)
     /// 가 amplitude(cmd.x/y/a) 에 0.5~1.5 clamp 후 곱. period 보존.
     private let serverCapabilities = WelcomeCapabilities(
-        head: false, walkFreeform: true, speedScaleAccepted: true)
+        head: false, walkFreeform: true, speedScaleAccepted: true,
+        ballTracking: true)
 
     private let configuration: Configuration
     private let pairing: MobileRelayPairing
@@ -252,6 +253,8 @@ public actor MobileRelayServer {
             await handleStop(data: data)
         case InboundCommandType.pilotHead.rawValue:
             await handleHead(data: data)
+        case InboundCommandType.pilotBallTrack.rawValue:
+            await handleBallTrack(data: data)
         case InboundCommandType.pilotRecover.rawValue:
             await handleRecover(data: data)
         case InboundCommandType.sessionGoodbye.rawValue:
@@ -928,6 +931,31 @@ public actor MobileRelayServer {
             let latency = try await port.setHead(payload: env.payload)
             recordRobotRtt(latency)
             await sendCommandAck(commandId: env.id, latencyMs: latency)
+        } catch let RelayServerError.rejected(reason) {
+            await sendCommandRejected(commandId: env.id, reason: reason, message: reason)
+        } catch {
+            await sendCommandFailed(commandId: env.id, reason: "internalError",
+                                    message: String(describing: error))
+        }
+    }
+
+    /// **볼 트래킹 (2026-06-02)** — 로봇 온보드 자동 헤드 추적 on/off.
+    /// port.setBallTracking → session.ballTrackingEnabled set → OnboardBridge 전달.
+    /// head 와 달리 robot 측 처리라 MVP 지원 (capabilities.ballTracking=true).
+    private func handleBallTrack(data: Data) async {
+        guard let session,
+              let env = try? RelayCodec.decoder.decode(
+                  RelayEnvelope<BallTrackPayload>.self, from: data) else { return }
+        _ = session
+        await sendCommandAccepted(commandId: env.id)
+        do {
+            let latency = try await port.setBallTracking(payload: env.payload)
+            recordRobotRtt(latency)
+            await sendCommandAck(commandId: env.id, latencyMs: latency)
+            await emitTelemetry(.mobilePilotCommandAccepted, level: .info, actor: .user,
+                                data: ["commandType": "ballTrack",
+                                       "commandId": AnyCodable(env.id),
+                                       "enabled": AnyCodable(env.payload.enabled)])
         } catch let RelayServerError.rejected(reason) {
             await sendCommandRejected(commandId: env.id, reason: reason, message: reason)
         } catch {

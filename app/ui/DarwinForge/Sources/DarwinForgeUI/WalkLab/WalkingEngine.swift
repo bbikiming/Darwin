@@ -114,6 +114,13 @@ public struct WalkingEngineCommand: Equatable, Sendable {
     /// **SSH parity (W4)**: 머리 tilt (°). + = 위. [-45, 45] clamp. default 0 (정면).
     public let headTiltDeg: Double
 
+    /// **볼 트래킹 (2026-06-02)**: 로봇 온보드 자동 헤드 추적 on/off (0/1).
+    /// true 면 robot-side 브로커리지가 `LinuxCamera`+`ColorFinder`+`BallTracker`로
+    /// 자체 헤드를 움직인다(기본 데모와 동일). 이때 Mac 의 headPan/headTilt 는 무시되어야
+    /// 하므로 직렬화 시 head 를 0 으로 고정한다. default false (backward compat — 옛
+    /// daemon 은 trailing 필드 무시). [[robot-no-mic-input]] 와 같은 온보드 처리 계열.
+    public let ballTrackingEnabled: Bool
+
     public init(enabled: Bool, xMm: Double, yMm: Double, aDeg: Double,
                 periodMs: Double, footHeightMm: Double,
                 hipPitchOffsetDeg: Double = 13.0,
@@ -121,7 +128,8 @@ public struct WalkingEngineCommand: Equatable, Sendable {
                 balanceEnable: Bool = false,
                 correctorIntensityLevel: Int = 2,
                 headPanDeg: Double = 0,
-                headTiltDeg: Double = 0) {
+                headTiltDeg: Double = 0,
+                ballTrackingEnabled: Bool = false) {
         self.enabled = enabled
         self.xMm = xMm
         self.yMm = yMm
@@ -132,29 +140,34 @@ public struct WalkingEngineCommand: Equatable, Sendable {
         self.balanceGain = balanceGain
         self.balanceEnable = balanceEnable
         self.correctorIntensityLevel = max(0, min(4, correctorIntensityLevel))
-        self.headPanDeg = max(-90, min(90, headPanDeg))
-        self.headTiltDeg = max(-45, min(45, headTiltDeg))
+        // 볼 트래킹 ON 이면 로봇이 헤드를 제어하므로 Mac head 명령을 0 으로 무력화.
+        self.ballTrackingEnabled = ballTrackingEnabled
+        self.headPanDeg = ballTrackingEnabled ? 0 : max(-90, min(90, headPanDeg))
+        self.headTiltDeg = ballTrackingEnabled ? 0 : max(-45, min(45, headTiltDeg))
     }
 
     /// file 로 write 할 직렬화 — 한 줄, robot-side parser 가 sscanf 로 read.
     /// **SSH parity (W4)**: 12 필드 — 사이클 162 의 10 필드 뒤에 head pan/tilt 2 필드 APPEND.
     /// 옛 daemon (7 또는 10 필드 sscanf) 는 trailing head 필드 무시 (backward compat).
     public var serializedLine: String {
-        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg balance_gain balance_enable corrector_level head_pan head_tilt`.
+        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg balance_gain balance_enable corrector_level head_pan head_tilt ball_track`.
         // 옛 daemon sscanf: `sscanf(line, "%d %f %f %f %f %f %f", ...)` → 7 필드 read, trailing 무시.
         // 사이클 162 daemon: `sscanf(line, "%d %f %f %f %f %f %f %f %d %d", ...)` → 10 필드.
-        // 새 daemon (SSH parity): 13 필드 read (cmd_id 포함 14) → head pan/tilt 적용.
-        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f %.2f %d %d %.2f %.2f",
+        // SSH parity daemon: 12 필드 (head pan/tilt 까지).
+        // 볼 트래킹 daemon (2026-06-02): 13 필드 read (cmd_id 포함 14) → ball_track 적용.
+        // 모든 옛 daemon 은 13번째 필드를 trailing 으로 무시 (backward compat).
+        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f %.2f %d %d %.2f %.2f %d",
                enabled ? 1 : 0, xMm, yMm, aDeg, periodMs, footHeightMm, hipPitchOffsetDeg,
                balanceGain, balanceEnable ? 1 : 0, correctorIntensityLevel,
-               headPanDeg, headTiltDeg)
+               headPanDeg, headTiltDeg, ballTrackingEnabled ? 1 : 0)
     }
 
     /// 정지 명령 — enabled=0, 나머지 0, hipPitchOffsetDeg=13 (기본 유지),
-    /// balance default (1.0 / false / 2), head 0,0 (정면 — SSH parity W4).
+    /// balance default (1.0 / false / 2), head 0,0 (정면 — SSH parity W4),
+    /// ballTracking off (정지 시 추적 해제).
     public static let stop = WalkingEngineCommand(
         enabled: false, xMm: 0, yMm: 0, aDeg: 0, periodMs: 0, footHeightMm: 0,
-        headPanDeg: 0, headTiltDeg: 0
+        headPanDeg: 0, headTiltDeg: 0, ballTrackingEnabled: false
     )
 
     /// 사이클 164 (codex MAJOR fix, cycle 162 review): 옛 daemon backward compat 경고.

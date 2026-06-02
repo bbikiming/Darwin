@@ -152,6 +152,11 @@ public final class ExternalControllerAdapter: ObservableObject {
             Task { @MainActor [weak bridge] in await bridge?.releaseWalk() }
             lastActionLabel = "stop motion"
         }
+        // 볼 트래킹 (2026-06-02): X 버튼 엣지 → 로봇 온보드 헤드 추적 on/off 토글.
+        if buttons.ballTrackToggle && !previousButtons.ballTrackToggle {
+            Task { @MainActor [weak bridge] in await bridge?.toggleBallTracking() }
+            lastActionLabel = "ball track toggle"
+        }
         return false
     }
 }

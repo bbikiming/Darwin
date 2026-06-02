@@ -94,17 +94,22 @@ public struct ExternalControllerStickState: Equatable, Sendable {
 ///   Used to clear an active e-stop and re-arm.
 /// - `stopMotion`: A button / Cross (PlayStation) / Pause on DJI RC.
 ///   Stops walking (deadman release equivalent for the controller path).
+/// - `ballTrackToggle`: X button / Square (PlayStation). 볼 트래킹(로봇 온보드 자동
+///   헤드 추적) on/off 토글 — 누를 때마다 상태가 뒤집힌다 (2026-06-02).
 public struct ExternalControllerButtonState: Equatable, Sendable {
     public var emergencyStop: Bool = false
     public var recover: Bool = false
     public var stopMotion: Bool = false
+    public var ballTrackToggle: Bool = false
 
     public init(emergencyStop: Bool = false,
                 recover: Bool = false,
-                stopMotion: Bool = false) {
+                stopMotion: Bool = false,
+                ballTrackToggle: Bool = false) {
         self.emergencyStop = emergencyStop
         self.recover = recover
         self.stopMotion = stopMotion
+        self.ballTrackToggle = ballTrackToggle
     }
 }
 

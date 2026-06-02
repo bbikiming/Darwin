@@ -41,14 +41,14 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
             enabled: true, xMm: 28.0, yMm: 0.0, aDeg: 0.0,
             periodMs: 600, footHeightMm: 40, hipPitchOffsetDeg: 13.0
         )
-        XCTAssertEqual(cmd.serializedLine, "1 28.00 0.00 0.00 600 40 13.00 1.00 0 2 0.00 0.00",
-            "12 필드 — 기존 10 + head pan/tilt(0,0) default trailing")
+        XCTAssertEqual(cmd.serializedLine, "1 28.00 0.00 0.00 600 40 13.00 1.00 0 2 0.00 0.00 0",
+            "13 필드 — 기존 12 + ball_track(0) default trailing")
     }
 
-    /// 정지 명령 — enabled=0, hipPitch default 13, balance default, head 0,0.
+    /// 정지 명령 — enabled=0, hipPitch default 13, balance default, head 0,0, ballTrack 0.
     func testCommandStopFormat() {
         XCTAssertEqual(WalkingEngineCommand.stop.serializedLine,
-                       "0 0.00 0.00 0.00 0 0 13.00 1.00 0 2 0.00 0.00")
+                       "0 0.00 0.00 0.00 0 0 13.00 1.00 0 2 0.00 0.00 0")
     }
 
     /// 음수 turn / side 처리.
@@ -57,7 +57,53 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
             enabled: true, xMm: 18.0, yMm: -5.0, aDeg: -25.0,
             periodMs: 700, footHeightMm: 40, hipPitchOffsetDeg: 5.0
         )
-        XCTAssertEqual(cmd.serializedLine, "1 18.00 -5.00 -25.00 700 40 5.00 1.00 0 2 0.00 0.00")
+        XCTAssertEqual(cmd.serializedLine, "1 18.00 -5.00 -25.00 700 40 5.00 1.00 0 2 0.00 0.00 0")
+    }
+
+    // MARK: - 볼 트래킹 (2026-06-02)
+
+    /// ballTrackingEnabled 가 13번째 필드로 직렬화 (0/1).
+    func testBallTrackingSerializesAsField13() {
+        let on = WalkingEngineCommand(
+            enabled: true, xMm: 0, yMm: 0, aDeg: 0,
+            periodMs: 600, footHeightMm: 40, ballTrackingEnabled: true)
+        let fields = on.serializedLine.split(separator: " ")
+        XCTAssertEqual(fields.count, 13, "13 필드: \(on.serializedLine)")
+        XCTAssertEqual(String(fields[12]), "1", "13번째 = ball_track ON")
+
+        let off = WalkingEngineCommand(
+            enabled: true, xMm: 0, yMm: 0, aDeg: 0,
+            periodMs: 600, footHeightMm: 40, ballTrackingEnabled: false)
+        XCTAssertEqual(String(off.serializedLine.split(separator: " ")[12]), "0",
+                       "13번째 = ball_track OFF")
+    }
+
+    /// 볼 트래킹 ON 이면 Mac head pan/tilt 를 0 으로 무력화 (로봇이 헤드 제어 — 충돌 방지).
+    func testBallTrackingZerosMacHeadCommand() {
+        let cmd = WalkingEngineCommand(
+            enabled: true, xMm: 0, yMm: 0, aDeg: 0,
+            periodMs: 600, footHeightMm: 40,
+            headPanDeg: 40.0, headTiltDeg: -20.0,
+            ballTrackingEnabled: true)
+        XCTAssertEqual(cmd.headPanDeg, 0, accuracy: 0.01,
+                       "볼 트래킹 ON → head pan 0 (로봇 제어)")
+        XCTAssertEqual(cmd.headTiltDeg, 0, accuracy: 0.01,
+                       "볼 트래킹 ON → head tilt 0 (로봇 제어)")
+        let fields = cmd.serializedLine.split(separator: " ")
+        XCTAssertEqual(String(fields[10]), "0.00", "head pan 직렬화도 0")
+        XCTAssertEqual(String(fields[11]), "0.00", "head tilt 직렬화도 0")
+        XCTAssertEqual(String(fields[12]), "1", "ball_track ON")
+    }
+
+    /// 볼 트래킹 OFF 이면 head 명령은 정상 통과 (기존 동작 보존).
+    func testBallTrackingOffPreservesHeadCommand() {
+        let cmd = WalkingEngineCommand(
+            enabled: true, xMm: 0, yMm: 0, aDeg: 0,
+            periodMs: 600, footHeightMm: 40,
+            headPanDeg: 40.0, headTiltDeg: -20.0,
+            ballTrackingEnabled: false)
+        XCTAssertEqual(cmd.headPanDeg, 40.0, accuracy: 0.01)
+        XCTAssertEqual(cmd.headTiltDeg, -20.0, accuracy: 0.01)
     }
 
     /// **SSH parity (W4)**: head pan/tilt 가 11-12번째 필드로 직렬화 + clamp 검증.
@@ -70,7 +116,7 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
         XCTAssertEqual(cmd.headPanDeg, 30.0, accuracy: 0.01)
         XCTAssertEqual(cmd.headTiltDeg, -15.0, accuracy: 0.01)
         let fields = cmd.serializedLine.split(separator: " ")
-        XCTAssertEqual(fields.count, 12, "12 필드: \(cmd.serializedLine)")
+        XCTAssertEqual(fields.count, 13, "13 필드: \(cmd.serializedLine)")
         XCTAssertEqual(String(fields[10]), "30.00", "11번째 = head pan")
         XCTAssertEqual(String(fields[11]), "-15.00", "12번째 = head tilt")
     }
@@ -99,7 +145,7 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
             "hipPitchOffsetTrimDeg → cmd.hipPitchOffsetDeg chain 통과")
         // 사이클 162: 7번째 필드 (hipPitchOffsetDeg) 가 5.00 인지 — split + 위치 검증.
         let fields = cmd.serializedLine.split(separator: " ")
-        XCTAssertEqual(fields.count, 12, "12 필드 (SSH parity: 10 + head 2)")
+        XCTAssertEqual(fields.count, 13, "13 필드 (SSH parity 12 + ball_track)")
         XCTAssertEqual(String(fields[6]), "5.00",
             "7번째 필드가 trim 값: \(cmd.serializedLine)")
     }

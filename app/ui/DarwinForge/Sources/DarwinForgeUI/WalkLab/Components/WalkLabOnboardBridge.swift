@@ -35,10 +35,10 @@ struct WalkLabOnboardBridge: View {
     /// 스트리밍 송신 마지막 시각 — 연속 입력(머리/스틱) 추종 + walking keepalive 용.
     @State private var lastStreamSentAt: Date? = nil
 
-    var body: some View {
+    /// IMMEDIATE 관찰 그룹 (critical user action). body 체인 분할용 (타입체커 부담↓).
+    private var immediateObservers: some View {
         Color.clear
             .frame(width: 0, height: 0)
-            // IMMEDIATE: critical user action.
             // v1.11.24 audit iter2-I — activeRobotPreset 도 같이 관찰 (P1-1 split 이후
             // 실 motor task 가 cycle 종료 / 자동 정지로 nil 이 되는 시점도 trigger).
             .onChange(of: session.current)                  { _, _ in scheduleImmediateSend() }
@@ -67,6 +67,13 @@ struct WalkLabOnboardBridge: View {
                 syncOnboardLifecycle()
                 scheduleImmediateSend()
             }
+    }
+
+    var body: some View {
+        // **타입체커 분할 (2026-06-02)**: onChange 체인이 길어 단일 `some View` 표현식이
+        // 컴파일 시간 한계를 넘겼다. IMMEDIATE 그룹을 `immediateObservers` 로 떼어내
+        // 체인을 두 개의 짧은 `some View` 경계로 나눈다 (동작 동일).
+        immediateObservers
             // DEBOUNCED: slider drag.
             .onChange(of: session.strideMm)                 { _, _ in scheduleDebouncedSend() }
             .onChange(of: session.sideMm)                   { _, _ in scheduleDebouncedSend() }
@@ -81,6 +88,9 @@ struct WalkLabOnboardBridge: View {
             // 종전: head 변경이 onboard 모드에서 re-send 를 trigger 안 함 → 머리 갱신 지연.
             .onChange(of: session.onboardHeadPanDeg)        { _, _ in scheduleDebouncedSend() }
             .onChange(of: session.onboardHeadTiltDeg)       { _, _ in scheduleDebouncedSend() }
+            // 볼 트래킹 (2026-06-02): on/off 토글은 즉시 전송 (slider 아님 → debounce 불필요).
+            // serializedLine 13번째 필드로 자동 직렬화 → 로봇 브로커리지가 추적 모드 전환.
+            .onChange(of: session.ballTrackingEnabled) { _, _ in handleBallTrackingToggle() }
             .onAppear { syncOnboardLifecycle() }
             .onDisappear { store.stopOnboardTelemetry() }
             .task { await streamLoop() }
@@ -138,6 +148,13 @@ struct WalkLabOnboardBridge: View {
         Task { @MainActor in
             await performSend(line: line, isImmediate: true)
         }
+    }
+
+    /// 볼 트래킹 토글 → 즉시 robot 전송. dedup 캐시를 비워 같은 walk 파라미터라도
+    /// ball_track 비트 변경이 반드시 송출되게 한다 (보행 중 아니어도 추적 가능).
+    private func handleBallTrackingToggle() {
+        lastAckedLine = nil
+        scheduleImmediateSend()
     }
 
     /// 150ms debounce — 마지막 변경 후 가만히 있으면 send. drag 중에는 매번 cancel.

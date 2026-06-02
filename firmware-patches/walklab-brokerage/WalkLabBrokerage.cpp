@@ -43,6 +43,11 @@
 #include "MotionStatus.h"   // Robot::MotionStatus (IMU fallback + FALLEN)
 #include "MotionManager.h"
 #include "Action.h"         // **v1.13** Robot::Action (getup 모션 player)
+// 볼 트래킹 (2026-06-02) — 온보드 자동 헤드 추적 (기본 데모와 동일 vision 파이프라인).
+#include "LinuxCamera.h"    // Robot::LinuxCamera::GetInstance() — main.cpp 가 이미 Initialize
+#include "ColorFinder.h"    // Robot::ColorFinder — HSV 볼 검출
+#include "BallTracker.h"    // Robot::BallTracker — 볼 위치 → Head::MoveTracking
+#include "Point.h"          // Robot::Point2D
 
 namespace Robotis {
 
@@ -194,9 +199,40 @@ namespace Robotis {
         return true;   // 보행은 정지 유지 — 다음 Mac 명령까지 대기.
     }
 
+    // ===== 볼 트래킹 (2026-06-02) — 온보드 자동 헤드 추적 =====================
+    // 공식 ROBOTIS soccer demo (Linux/project/demo/main.cpp) 의 ball-tracking 루프를
+    // 그대로 옮겼다: LinuxCamera::CaptureFrame → ColorFinder::GetPosition(HSV) →
+    // BallTracker::Process. 볼이 보이면 Head::MoveTracking(offset) 로 따라가고, 안 보이면
+    // NoBall scan(Head::MoveTracking())/InitTracking 으로 검색한다 — 전부 Head 싱글톤이
+    // 처리하므로 추가 모터 bus write 없이 MotionManager 8ms tick 이 헤드를 구동한다.
+    //
+    // 카메라/Head/ColorFinder 전제: walklab 진입(RobotSetupCommand injection) 이 이미
+    // (1) LinuxCamera::Initialize(0) (demo main.cpp L63, 주입 anchor 이전) 과
+    // (2) Head::SetEnableHeadOnly(true,true) 를 수행했다. ColorFinder/BallTracker 만
+    // 본 모듈이 lazy-init (첫 enable 시). Run() 무한루프라 delete 불필요.
+    void WalkLabBrokerage::ProcessBallTracking() {
+        if (!m_vision_ready) {
+            // 기본 생성자 = 주황 공 (ROBOTIS 표준 데모 ball). config.ini 튜닝 없이도 동작.
+            m_ball_finder = new Robot::ColorFinder();
+            m_tracker = new Robot::BallTracker();
+            m_vision_ready = true;
+            printf("[WalkLabBrokerage] ball-tracking vision init (orange ball default)\n");
+        }
+        Robot::LinuxCamera::GetInstance()->CaptureFrame();
+        Robot::Point2D pos = m_ball_finder->GetPosition(
+            Robot::LinuxCamera::GetInstance()->fbuffer->m_HSVFrame);
+        // 볼 보이면 Head::MoveTracking(offset), 안 보이면 scan/InitTracking (데모와 동일).
+        m_tracker->Process(pos);
+    }
+
     void WalkLabBrokerage::Run(Robot::CM730* cm730) {
         m_head_commanded = false;
         m_fall_count = 0;   // **v1.13** auto-getup debounce 카운터 초기화.
+        // 볼 트래킹 (2026-06-02) — vision 상태 초기화 (lazy-init 은 첫 enable 시).
+        m_balltrack_enabled = false;
+        m_vision_ready = false;
+        m_ball_finder = 0;
+        m_tracker = 0;
         InstallSignalHandlers();
 
         Robot::Walking* walking = Robot::Walking::GetInstance();
@@ -299,6 +335,14 @@ namespace Robotis {
                     walking->Stop();
                     walking_active = false;
                 }
+                // 볼 트래킹 (2026-06-02): Mac 끊김 → 자동 추적 해제 (헤드 scan 무한지속 방지).
+                m_balltrack_enabled = false;
+            }
+
+            // 볼 트래킹 (2026-06-02): enabled 면 매 poll 카메라+BallTracker 로 헤드를 움직인다.
+            // 보행 여부와 무관 (헤드 전용). e-stop/getup 은 위에서 continue 하므로 여기 미도달.
+            if (m_balltrack_enabled) {
+                ProcessBallTracking();
             }
 
             // **v1.12 (§A)** — telemetry uplink. ~200ms(5Hz) 로 gate.
@@ -338,16 +382,18 @@ namespace Robotis {
         // **v1.12** — balance 필드(현재 미적용, 토큰 위치 정렬용으로 consume)와 head 필드.
         float bgain = 1.0f; int benable = 0, blevel = 2;
         float head_pan = 0.0f, head_tilt = 0.0f;  // default 0 (keep-last 는 위험).
+        // 볼 트래킹 (2026-06-02) — 13번째 필드. 0=off, 1=on. 옛 Mac(12필드)은 미전송 → 0 유지.
+        float balltrack = 0.0f;
         // 첫 token 이 숫자가 아니면 cmd_id 로 간주.
-        // 시도 1: cmd_id 포함 형식 (최대 13 token).
-        int n = sscanf(line, "%31s %d %f %f %f %f %f %f %f %d %d %f %f",
+        // 시도 1: cmd_id 포함 형식 (최대 14 token — head 2 + ball_track 1).
+        int n = sscanf(line, "%31s %d %f %f %f %f %f %f %f %d %d %f %f %f",
                        cmd_id, &enabled, &x, &y, &a, &period, &foot, &hip,
-                       &bgain, &benable, &blevel, &head_pan, &head_tilt);
+                       &bgain, &benable, &blevel, &head_pan, &head_tilt, &balltrack);
         if (n < 7) {
-            // 시도 2: cmd_id 없는 형식 (최대 12 token).
-            n = sscanf(line, "%d %f %f %f %f %f %f %f %d %d %f %f",
+            // 시도 2: cmd_id 없는 형식 (최대 13 token).
+            n = sscanf(line, "%d %f %f %f %f %f %f %f %d %d %f %f %f",
                        &enabled, &x, &y, &a, &period, &foot, &hip,
-                       &bgain, &benable, &blevel, &head_pan, &head_tilt);
+                       &bgain, &benable, &blevel, &head_pan, &head_tilt, &balltrack);
             if (n < 6) {
                 // 잘못된 line 무시 — 이전 명령 유지 (safety).
                 return false;
@@ -379,13 +425,19 @@ namespace Robotis {
         walking->PERIOD_TIME = (double)period;
         walking->HIP_PITCH_OFFSET = (double)hip;
 
+        // 볼 트래킹 (2026-06-02) — 모드 토글. ON 이면 로봇이 자체 카메라로 헤드를 제어하므로
+        // 아래 Mac head MoveByAngle 을 skip (singleton Head 의 last-write-wins 충돌 방지).
+        m_balltrack_enabled = (balltrack > 0.5f);
+
         // **v1.12 (§C)** — head pan/tilt 적용. walklab injection 이 이미
         // Head::GetInstance()->m_Joint.SetEnableHeadOnly(true,true) 호출함.
         // 한 번도 non-zero head 명령을 받은 적이 없고 둘 다 0 이면, 프레임워크
         // default head pose 보존을 위해 MoveByAngle skip. 그 외엔 항상 적용.
+        // **볼 트래킹 ON 이면 Mac head 무시** — ProcessBallTracking 이 Head::MoveTracking 으로
+        // 제어한다 (Mac 도 ballTracking 시 head 0 을 보내지만 방어적으로 여기서도 gate).
         bool head_nonzero = (head_pan != 0.0f) || (head_tilt != 0.0f);
         if (head_nonzero) m_head_commanded = true;
-        if (m_head_commanded) {
+        if (m_head_commanded && !m_balltrack_enabled) {
             Robot::Head* head = Robot::Head::GetInstance();
             if (head) head->MoveByAngle((double)head_pan, (double)head_tilt);
         }

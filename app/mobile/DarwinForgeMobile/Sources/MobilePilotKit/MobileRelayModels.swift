@@ -47,6 +47,8 @@ public enum CommandType: String, Codable, Sendable, CaseIterable {
     case pilotHead = "pilot.head"
     /// V297-9 CRITICAL-1: 복구 전용 명령 — pilot.arm 재사용 race 해결.
     case pilotRecover = "pilot.recover"
+    /// 볼 트래킹 (2026-06-02): 로봇 온보드 자동 헤드 추적 on/off.
+    case pilotBallTrack = "pilot.ballTrack"
 }
 
 public enum DisarmReason: String, Codable, Sendable {
@@ -335,6 +337,12 @@ public struct StopPayload: Codable, Sendable, Equatable {
     public init(reason: StopReason = .user) { self.reason = reason }
 }
 
+/// 볼 트래킹 (2026-06-02) — 로봇 온보드 자동 헤드 추적 on/off. `pilot.ballTrack` payload.
+public struct BallTrackPayload: Codable, Sendable, Equatable {
+    public let enabled: Bool
+    public init(enabled: Bool) { self.enabled = enabled }
+}
+
 // MARK: - Response payloads (Mac → iOS)
 
 public enum ResponseType: String, Codable, Sendable {
@@ -489,11 +497,27 @@ public struct WelcomeCapabilities: Codable, Sendable, Equatable {
     public let head: Bool
     public let walkFreeform: Bool
     public let speedScaleAccepted: Bool
+    /// 볼 트래킹 (2026-06-02): Mac 이 pilot.ballTrack 을 처리하는지. nil/false 면 버튼 숨김.
+    public let ballTracking: Bool
 
-    public init(head: Bool = false, walkFreeform: Bool = false, speedScaleAccepted: Bool = false) {
+    public init(head: Bool = false, walkFreeform: Bool = false,
+                speedScaleAccepted: Bool = false, ballTracking: Bool = false) {
         self.head = head
         self.walkFreeform = walkFreeform
         self.speedScaleAccepted = speedScaleAccepted
+        self.ballTracking = ballTracking
+    }
+
+    /// 누락 키 = false 로 관용 디코딩 (capabilities 는 버전마다 필드가 늘어나므로
+    /// 구버전 Mac 이 보낸 일부 키 없는 JSON 도 깨지지 않아야 한다 — forward/backward compat).
+    /// 종전 비-optional 필드들은 키 누락 시 throw 했으나, ballTracking 추가(2026-06-02)를
+    /// 계기로 전 필드를 decodeIfPresent 로 통일.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.head = try c.decodeIfPresent(Bool.self, forKey: .head) ?? false
+        self.walkFreeform = try c.decodeIfPresent(Bool.self, forKey: .walkFreeform) ?? false
+        self.speedScaleAccepted = try c.decodeIfPresent(Bool.self, forKey: .speedScaleAccepted) ?? false
+        self.ballTracking = try c.decodeIfPresent(Bool.self, forKey: .ballTracking) ?? false
     }
 }
 

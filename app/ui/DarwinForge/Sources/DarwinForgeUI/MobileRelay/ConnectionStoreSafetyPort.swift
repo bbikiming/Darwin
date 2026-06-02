@@ -48,6 +48,9 @@ public final class ConnectionStoreSafetyPort: RobotSafetyPort {
         public var sendWalk: @MainActor (WalkPayload) async throws -> Bool
         /// `(String) async -> Bool` — stop active walking (X/Y/A move amplitude = 0).
         public var sendStop: @MainActor (String) async -> Bool
+        /// **볼 트래킹 (2026-06-02)**: `(Bool) async -> Bool` — 로봇 온보드 헤드 추적 on/off.
+        /// `WalkLabSession.ballTrackingEnabled` 를 set (true 반환 = 적용됨).
+        public var setBallTracking: @MainActor (Bool) async -> Bool
         /// `() async -> TelemetryStatePayload` — build a telemetry snapshot from live state.
         public var snapshot: @MainActor () async -> TelemetryStatePayload
 
@@ -58,6 +61,7 @@ public final class ConnectionStoreSafetyPort: RobotSafetyPort {
                     sendMotion: @escaping @MainActor (UInt8, Bool) async -> Bool,
                     sendWalk: @escaping @MainActor (WalkPayload) async throws -> Bool,
                     sendStop: @escaping @MainActor (String) async -> Bool,
+                    setBallTracking: @escaping @MainActor (Bool) async -> Bool = { _ in true },
                     snapshot: @escaping @MainActor () async -> TelemetryStatePayload) {
             self.armAsync = armAsync
             self.currentArmStageName = currentArmStageName
@@ -66,6 +70,7 @@ public final class ConnectionStoreSafetyPort: RobotSafetyPort {
             self.sendMotion = sendMotion
             self.sendWalk = sendWalk
             self.sendStop = sendStop
+            self.setBallTracking = setBallTracking
             self.snapshot = snapshot
         }
     }
@@ -197,6 +202,16 @@ public final class ConnectionStoreSafetyPort: RobotSafetyPort {
 
     public nonisolated func setHead(payload: HeadPayload) async throws -> Int {
         throw RelayServerError.rejected("headUnsupportedInMVP")
+    }
+
+    /// **볼 트래킹 (2026-06-02)** — 로봇 온보드 자동 헤드 추적 on/off. head 와 달리 robot
+    /// 측에서 처리하므로 MVP 지원. hook 이 session.ballTrackingEnabled 를 set.
+    public nonisolated func setBallTracking(payload: BallTrackPayload) async throws -> Int {
+        let start = Date()
+        let ok = await hooks.setBallTracking(payload.enabled)
+        let elapsed = Int(Date().timeIntervalSince(start) * 1000)
+        if !ok { throw RelayServerError.failed("ballTrackFailed") }
+        return elapsed
     }
 }
 

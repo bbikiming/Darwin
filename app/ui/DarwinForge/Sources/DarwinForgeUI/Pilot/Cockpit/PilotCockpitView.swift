@@ -697,6 +697,26 @@ public struct PilotCockpitView: View {
             .frame(width: 160)
             .accessibilityIdentifier("cockpit.autoGetUp.toggle")
             Divider().background(CockpitColors.live.opacity(0.2))
+            // 볼 트래킹 토글 (2026-06-02) — 로봇 온보드 자동 헤드 추적.
+            // ON 시 robot-side 브로커리지가 카메라+BallTracker 로 머리를 공에 맞춰
+            // 움직인다(기본 데모와 동일). serializedLine 13번째 필드로 전달.
+            Toggle(isOn: $bindableSession.ballTrackingEnabled) {
+                HStack(spacing: 4) {
+                    Text("볼 트래킹")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(session.ballTrackingEnabled
+                                         ? CockpitColors.live : .white.opacity(0.65))
+                    Image(systemName: session.ballTrackingEnabled ? "eye.fill" : "eye")
+                        .font(.system(size: 9))
+                        .foregroundStyle(session.ballTrackingEnabled
+                                         ? CockpitColors.live : .white.opacity(0.4))
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .frame(width: 160)
+            .accessibilityIdentifier("cockpit.ballTrack.toggle")
+            Divider().background(CockpitColors.live.opacity(0.2))
             // 시뮬 모드 토글 — robot 위치/방향만 시뮬.
             Toggle(isOn: $cockpit.simulationEnabled) {
                 Text("시뮬 이동")

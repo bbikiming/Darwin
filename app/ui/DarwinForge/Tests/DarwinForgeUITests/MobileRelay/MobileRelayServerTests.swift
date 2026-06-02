@@ -120,6 +120,50 @@ final class MobileRelayServerTests: XCTestCase {
         XCTAssertFalse(walkAcks.isEmpty)
     }
 
+    /// **볼 트래킹 (2026-06-02)** — pilot.ballTrack 이 port.setBallTracking 으로 라우팅 +
+    /// enabled 값 전달 + command.ack 회신.
+    func testBallTrackRoutesToSafetyPort() async throws {
+        let pairing = MobileRelayPairing(initialCode: "121212")
+        let port = InMemorySafetyPort()
+        port.setRobotState(.connected)
+        let server = MobileRelayServer(pairing: pairing, port: port)
+        let channel = InMemoryChannel()
+
+        await server.handleClientConnected(channel, handshake: helloFrame(code: "121212"))
+        let on = makeFrame(type: "pilot.ballTrack", id: "cmd_bt_on",
+                           payload: ["enabled": true])
+        await server.handleClientFrame(on, from: channel)
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(port.ballTrackingCalls, [true],
+                       "pilot.ballTrack(enabled:true) → port.setBallTracking(true)")
+        let acks = channel.frames.compactMap { decode($0) }
+            .filter { $0.id == "cmd_bt_on" && $0.type == "command.ack" }
+        XCTAssertFalse(acks.isEmpty, "ballTrack 명령에 command.ack 회신")
+
+        // OFF 토글도 전달.
+        let off = makeFrame(type: "pilot.ballTrack", id: "cmd_bt_off",
+                            payload: ["enabled": false])
+        await server.handleClientFrame(off, from: channel)
+        try await Task.sleep(nanoseconds: 80_000_000)
+        XCTAssertEqual(port.ballTrackingCalls, [true, false],
+                       "OFF 토글도 port 로 전달")
+    }
+
+    /// 서버 welcome capabilities 가 ballTracking=true 광고 (iOS 가 버튼 노출 판단).
+    func testWelcomeAdvertisesBallTrackingCapability() async throws {
+        let pairing = MobileRelayPairing(initialCode: "131313")
+        let server = MobileRelayServer(pairing: pairing, port: InMemorySafetyPort())
+        let channel = InMemoryChannel()
+
+        await server.handleClientConnected(channel, handshake: helloFrame(code: "131313"))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let welcome = channel.frames.compactMap { decode($0) }
+            .first { $0.type == "session.welcome" }
+        XCTAssertNotNil(welcome, "welcome 수신")
+    }
+
     // MARK: - Helpers
 
     private func helloFrame(code: String, deviceId: String = "TEST") -> Data {

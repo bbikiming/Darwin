@@ -38,10 +38,12 @@ public final class MockExternalController: ExternalControllerInputSource {
 
     public func setButtons(emergencyStop: Bool = false,
                            recover: Bool = false,
-                           stopMotion: Bool = false) {
+                           stopMotion: Bool = false,
+                           ballTrackToggle: Bool = false) {
         buttons = ExternalControllerButtonState(emergencyStop: emergencyStop,
                                                 recover: recover,
-                                                stopMotion: stopMotion)
+                                                stopMotion: stopMotion,
+                                                ballTrackToggle: ballTrackToggle)
     }
 
     public func reset() {

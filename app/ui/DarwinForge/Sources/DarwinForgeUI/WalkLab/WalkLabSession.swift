@@ -472,6 +472,29 @@ public final class WalkLabSession {
     /// v1.11.24 audit iter3-E — enableBalanceCorrection rollback 중인지 표시.
     /// true 일 때 didSet 의 inner re-entry 는 silent.
     private var isRefusingBalanceOff: Bool = false
+
+    /// **볼 트래킹 (2026-06-02)** — 로봇 온보드 자동 헤드 추적 on/off.
+    /// true 면 currentWalkingEngineCommand 가 ballTrackingEnabled=1 을 직렬화 →
+    /// robot-side 브로커리지가 `LinuxCamera`+`ColorFinder`+`BallTracker` 로 자체
+    /// 헤드를 움직인다(기본 데모와 동일). 이때 Mac 의 head pan/tilt 는 무시된다.
+    /// OnboardBridge 가 onChange 로 즉시 전송. 조종기 버튼/콕핏 토글이 set.
+    public var ballTrackingEnabled: Bool = false {
+        didSet {
+            guard ballTrackingEnabled != oldValue else { return }
+            lastRobotEvent = ballTrackingEnabled
+                ? "👁️ 볼 트래킹 ON — 로봇이 공을 따라 머리 이동"
+                : "👁️ 볼 트래킹 OFF — 머리 수동 제어 복귀"
+            logSafetyEvent(
+                kind: ballTrackingEnabled ? .correctorOn : .correctorOff,
+                message: "볼 트래킹 \(ballTrackingEnabled ? "ON (온보드 자동 추적)" : "OFF")"
+            )
+            harness.record(
+                .walkLabConfigChange, level: .info, actor: .user,
+                data: ["field": AnyCodable("ballTrackingEnabled"),
+                       "value": AnyCodable(ballTrackingEnabled)]
+            )
+        }
+    }
     /// 보정 활성 시 0~1초 ramp 시작 시점. nil 이면 ramp 미시작.
     /// **v1.22.X 사이클 100 (Phase 5)**: private → internal — `+BalanceCorrection.swift`
     /// extension 의 `applyBalanceCorrectionIfEnabled` 가 ramp 시작 시각 mutate.
@@ -2024,7 +2047,8 @@ public final class WalkLabSession {
                 balanceGain: balanceGain,
                 balanceEnable: enableBalanceCorrection,
                 correctorIntensityLevel: correctorIntensityLevel,
-                headPanDeg: onboardHeadPanDeg, headTiltDeg: onboardHeadTiltDeg)
+                headPanDeg: onboardHeadPanDeg, headTiltDeg: onboardHeadTiltDeg,
+                ballTrackingEnabled: ballTrackingEnabled)
         }
         let tuning = currentWalkTuning() ?? WalkMotionLibrary.defaultTuning(for: current)
         let cmd = WalkingEngineCommand(
@@ -2044,7 +2068,9 @@ public final class WalkLabSession {
             // SSH parity (W4): head pan/tilt — cockpit joystick (§D.7 seam) → onboard.
             // 옛 daemon (sscanf 10 필드) 는 trailing head 2 필드 무시 → backward compat.
             headPanDeg: onboardHeadPanDeg,
-            headTiltDeg: onboardHeadTiltDeg
+            headTiltDeg: onboardHeadTiltDeg,
+            // 볼 트래킹 (2026-06-02): preset 보행 중에도 온보드 헤드 추적 가능.
+            ballTrackingEnabled: ballTrackingEnabled
         )
         // 사이클 164 (codex MAJOR fix, cycle 162 review): silent failure 차단 — Onboard
         // mode 에서 balance ON 인데 daemon version 확인 안 됐으면 사용자 명시 경고.

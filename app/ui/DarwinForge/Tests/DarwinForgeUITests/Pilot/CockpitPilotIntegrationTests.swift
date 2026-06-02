@@ -235,8 +235,11 @@ final class CockpitPilotIntegrationTests: XCTestCase {
                        "freeform tuning → strideMm 전파 (게이트 전 write)")
         XCTAssertEqual(session.sideMm, 5, accuracy: 0.001)
         XCTAssertEqual(session.turnDeg, 3, accuracy: 0.001)
-        XCTAssertEqual(session.customPeriodMs, 650, accuracy: 0.001,
-                       "freeform 이 period 도 전파")
+        // **회전 가속 (2026-06-02)**: mobileFreeformClamp 가 |turnDeg| 에 비례해 주기를
+        // 단축한다. turnDeg=3 (데드밴드 2 초과) → base 650 에서 약간 가속.
+        // t=(3-2)/(12-2)=0.1 → 650 + (450-650)*0.1 = 630. 직진(turn=0)이면 650 유지.
+        XCTAssertEqual(session.customPeriodMs, 630, accuracy: 0.001,
+                       "freeform 이 period 전파 + 회전량(3°)만큼 주기 단축(가속)")
         XCTAssertTrue(session.advanced,
                       "freeform tuning 이 advanced=true 활성 (customPeriodMs effective)")
     }
@@ -247,9 +250,13 @@ final class CockpitPilotIntegrationTests: XCTestCase {
                  periodMs: 100)
         XCTAssertLessThanOrEqual(session.strideMm, 38, "stride freeform clamp 38")
         XCTAssertLessThanOrEqual(session.sideMm, 22, "side freeform clamp 22")
-        XCTAssertLessThanOrEqual(session.turnDeg, 18, "turn freeform clamp 18")
-        XCTAssertGreaterThanOrEqual(session.customPeriodMs, 600,
-                                    "period freeform clamp floor 600")
+        XCTAssertLessThanOrEqual(session.turnDeg, 12, "turn freeform clamp 12 (충돌 방지)")
+        // **회전 가속 (2026-06-02)**: 풀 회전(turnDeg 999→12) 시 주기 floor 가 600→450 으로
+        // 단축된다(각도 불변, 속도만 ↑). 직진만이면 floor 600 유지.
+        XCTAssertGreaterThanOrEqual(session.customPeriodMs, 450,
+                                    "회전 가속 floor 450 (풀 회전 시)")
+        XCTAssertLessThanOrEqual(session.customPeriodMs, 850,
+                                 "period 상한 850")
     }
 
     func test_K16_freeform_continuous_update_no_restart() {

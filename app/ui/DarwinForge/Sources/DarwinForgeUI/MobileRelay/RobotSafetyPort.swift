@@ -42,11 +42,18 @@ public protocol RobotSafetyPort: AnyObject, Sendable {
     /// Implementations may safely no-op if the robot has no head servos
     /// (return latency=0).
     func setHead(payload: HeadPayload) async throws -> Int
+
+    /// **볼 트래킹 (2026-06-02)** — 로봇 온보드 자동 헤드 추적 on/off.
+    /// Production wiring 은 `WalkLabSession.ballTrackingEnabled` 를 set → OnboardBridge 가
+    /// serializedLine 13번째 필드로 전달. Returns ack latency (no-op 시 0).
+    func setBallTracking(payload: BallTrackPayload) async throws -> Int
 }
 
 public extension RobotSafetyPort {
     // Default no-op so existing tests/adapters without head support compile.
     func setHead(payload: HeadPayload) async throws -> Int { return 0 }
+    // Default no-op so existing adapters without ball-tracking support compile.
+    func setBallTracking(payload: BallTrackPayload) async throws -> Int { return 0 }
 }
 
 // MARK: - In-memory mock for tests
@@ -132,6 +139,13 @@ public final class InMemorySafetyPort: RobotSafetyPort, @unchecked Sendable {
     }
 
     public func sendStop(reason: String) async throws -> Int {
+        return latencyMs
+    }
+
+    /// **볼 트래킹 (2026-06-02)** — 테스트가 enabled 인자 도달을 검증할 수 있게 기록.
+    public private(set) var ballTrackingCalls: [Bool] = []
+    public func setBallTracking(payload: BallTrackPayload) async throws -> Int {
+        lock.lock(); ballTrackingCalls.append(payload.enabled); lock.unlock()
         return latencyMs
     }
 }

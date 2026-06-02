@@ -17,6 +17,7 @@ final class ExternalControllerAdapterTests: XCTestCase {
         var releaseCalls: Int = 0
         var eStopCalls: Int = 0
         var recoverCalls: Int = 0
+        var ballTrackCalls: Int = 0
 
         func streamWalk(_ input: WalkFreeformInput) async {
             streamCalls.append(input)
@@ -24,6 +25,7 @@ final class ExternalControllerAdapterTests: XCTestCase {
         func releaseWalk() async { releaseCalls += 1 }
         func performEStop() async { eStopCalls += 1 }
         func performRecover() async { recoverCalls += 1 }
+        func toggleBallTracking() async { ballTrackCalls += 1 }
     }
 
     private func waitForBridgeTasks() async {
@@ -111,6 +113,28 @@ final class ExternalControllerAdapterTests: XCTestCase {
         adapter.pollOnce()
         await waitForBridgeTasks()
         XCTAssertEqual(bridge.recoverCalls, 1)
+    }
+
+    /// 볼 트래킹 (2026-06-02): X 버튼 엣지 → toggleBallTracking 1회 (홀드 spam 금지).
+    func test_ballTrack_button_toggles_once_per_press() async {
+        let bridge = SpyBridge()
+        let source = MockExternalController()
+        let adapter = ExternalControllerAdapter(bridge: bridge, source: source)
+
+        source.setButtons(ballTrackToggle: true)
+        adapter.pollOnce()
+        await waitForBridgeTasks()
+        adapter.pollOnce() // still held — must not re-fire
+        await waitForBridgeTasks()
+        XCTAssertEqual(bridge.ballTrackCalls, 1, "홀드는 1회만")
+
+        source.setButtons(ballTrackToggle: false)
+        adapter.pollOnce()
+        await waitForBridgeTasks()
+        source.setButtons(ballTrackToggle: true)
+        adapter.pollOnce()
+        await waitForBridgeTasks()
+        XCTAssertEqual(bridge.ballTrackCalls, 2, "새 누름은 다시 토글")
     }
 
     func test_emergency_stop_skips_stick_processing_on_same_frame() async {

@@ -20,4 +20,7 @@ public protocol RemoteControlBridge: AnyObject {
 
     /// User pressed the recover / re-arm button on the controller.
     func performRecover() async
+
+    /// 볼 트래킹 (2026-06-02): 조종기 버튼(X)으로 로봇 온보드 헤드 추적 on/off 토글.
+    func toggleBallTracking() async
 }

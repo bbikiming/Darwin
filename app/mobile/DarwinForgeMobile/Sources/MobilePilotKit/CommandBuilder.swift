@@ -169,6 +169,11 @@ public struct CommandBuilder: Sendable {
         envelope(type: CommandType.pilotStop, payload: payload)
     }
 
+    /// 볼 트래킹 (2026-06-02): 로봇 온보드 자동 헤드 추적 on/off. 조종기 버튼/화면 토글이 사용.
+    public func ballTrack(enabled: Bool) -> RelayEnvelope<BallTrackPayload> {
+        envelope(type: CommandType.pilotBallTrack, payload: BallTrackPayload(enabled: enabled))
+    }
+
     private func envelope<P: Codable & Sendable>(type: CommandType, payload: P) -> RelayEnvelope<P> {
         RelayEnvelope(id: ids.next(), type: type.rawValue, sentAt: clock.now(), payload: payload)
     }

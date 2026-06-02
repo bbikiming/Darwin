@@ -71,6 +71,7 @@ public struct RemotePilotScreen: View {
                     rotationSection
                     motionQuickSection
                     headSection
+                    ballTrackSection
                     feedbackSection
                 }
                 .padding(DS.Space.l)
@@ -378,6 +379,37 @@ public struct RemotePilotScreen: View {
                         .font(DS.Font.caption)
                         .foregroundStyle(DS.Color.secondaryText)
                 }
+            }
+        }
+    }
+
+    // MARK: - 볼 트래킹 (2026-06-02)
+
+    /// 로봇 온보드 자동 헤드 추적 on/off. 조종기 X 버튼과 동일 상태(state.ballTrackingActive)
+    /// 를 공유 — 화면 토글이든 버튼이든 결과가 일치한다. Mac 미지원이면 비활성.
+    private var ballTrackSection: some View {
+        DSCard(padding: DS.Space.m) {
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                HStack {
+                    DSSectionHeader("볼 트래킹", subtitle: "로봇이 공을 따라 머리 이동")
+                    Spacer()
+                    DSChip(state.ballTrackingActive ? "ON" : "OFF",
+                           tone: state.ballTrackingActive ? .accent : .neutral,
+                           identifier: "remotepilot.balltrack.value")
+                }
+                Button {
+                    Task { await state.toggleBallTracking() }
+                } label: {
+                    Label(state.ballTrackingActive ? "볼 트래킹 끄기" : "볼 트래킹 켜기",
+                          systemImage: state.ballTrackingActive ? "eye.fill" : "eye")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!state.isMacReady || !state.ballTrackingSupported)
+                .accessibilityIdentifier("remotepilot.balltrack.toggle")
+                Text("조종기 X 버튼으로도 토글됩니다.")
+                    .font(DS.Font.caption)
+                    .foregroundStyle(DS.Color.secondaryText)
             }
         }
     }

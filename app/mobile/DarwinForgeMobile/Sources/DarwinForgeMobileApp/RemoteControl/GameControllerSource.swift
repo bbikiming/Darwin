@@ -87,7 +87,9 @@ public final class GameControllerSource: ExternalControllerInputSource {
         let buttons = ExternalControllerButtonState(
             emergencyStop: pad.buttonB.isPressed,
             recover: pad.buttonY.isPressed,
-            stopMotion: pad.buttonA.isPressed)
+            stopMotion: pad.buttonA.isPressed,
+            // 볼 트래킹 (2026-06-02): X/Square — 빈 버튼. 누를 때마다 추적 on/off 토글.
+            ballTrackToggle: pad.buttonX.isPressed)
         return ExternalControllerSnapshot(
             controllerName: controllerName,
             sticks: sticks,

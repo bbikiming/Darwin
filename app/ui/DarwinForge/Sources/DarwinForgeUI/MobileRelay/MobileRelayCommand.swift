@@ -78,6 +78,9 @@ public enum InboundCommandType: String, Codable, Sendable {
     /// "ARM stale 도착 → recoverFromEStop 자동 분기" 위험 발생. 별도 명령으로 분리해
     /// 의도를 명확히 한다 — pilot.arm 은 절대 복구 분기 불가.
     case pilotRecover = "pilot.recover"
+    /// **볼 트래킹 (2026-06-02)**: 로봇 온보드 자동 헤드 추적 on/off. 조종기 버튼/콕핏 토글이
+    /// 발사 → session.ballTrackingEnabled set → OnboardBridge 가 serializedLine 으로 전달.
+    case pilotBallTrack = "pilot.ballTrack"
 }
 
 public enum OutboundResponseType: String, Codable, Sendable {
@@ -188,6 +191,14 @@ public struct StopPayload: Codable, Sendable, Equatable {
     public let reason: String
 }
 
+/// **볼 트래킹 (2026-06-02)** — 로봇 온보드 자동 헤드 추적 on/off.
+/// `pilot.ballTrack` 명령의 payload. true 면 robot-side 브로커리지가 카메라+ColorFinder+
+/// BallTracker 로 자체 헤드를 움직인다(기본 데모와 동일). Mac head 명령은 무시된다.
+public struct BallTrackPayload: Codable, Sendable, Equatable {
+    public let enabled: Bool
+    public init(enabled: Bool) { self.enabled = enabled }
+}
+
 // MARK: - Outbound payloads
 
 public struct WelcomePayload: Codable, Sendable, Equatable {
@@ -226,11 +237,16 @@ public struct WelcomeCapabilities: Codable, Sendable, Equatable {
     public let head: Bool
     public let walkFreeform: Bool
     public let speedScaleAccepted: Bool
+    /// **볼 트래킹 (2026-06-02)**: pilot.ballTrack 명령(로봇 온보드 헤드 추적)을 처리하는지.
+    /// false/누락이면 iOS 가 볼트래킹 버튼 숨김 (forward-compat — 옛 클라이언트는 무시).
+    public let ballTracking: Bool
 
-    public init(head: Bool = false, walkFreeform: Bool = false, speedScaleAccepted: Bool = false) {
+    public init(head: Bool = false, walkFreeform: Bool = false,
+                speedScaleAccepted: Bool = false, ballTracking: Bool = false) {
         self.head = head
         self.walkFreeform = walkFreeform
         self.speedScaleAccepted = speedScaleAccepted
+        self.ballTracking = ballTracking
     }
 }
 

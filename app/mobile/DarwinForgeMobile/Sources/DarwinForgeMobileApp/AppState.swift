@@ -562,6 +562,17 @@ public final class AppState: ObservableObject {
         return serverCapabilities?.head == true   // nil → false (conservative)
     }
 
+    /// 볼 트래킹 (2026-06-02) — 로봇 온보드 자동 헤드 추적. head 와 달리 robot 측에서
+    /// 처리하므로 MVP 지원. Mac 이 capabilities.ballTracking=true 면 버튼 노출.
+    public var ballTrackingSupported: Bool {
+        if connectionMode == .mockReview { return true }
+        return serverCapabilities?.ballTracking == true   // nil → false (conservative)
+    }
+
+    /// 볼 트래킹 현재 on/off 상태 (화면 토글 + 조종기 버튼이 공유하는 source of truth).
+    /// sendBallTrack 이 낙관적으로 갱신, reject/fail 시 롤백.
+    @Published public private(set) var ballTrackingActive: Bool = false
+
     public var armStartDisabledReason: DisabledReason? {
         let reason = CommandPermission.reason(forArm: pilotState,
                                                telemetry: telemetry)
@@ -952,6 +963,56 @@ public final class AppState: ObservableObject {
             appendLog(level: .error, category: .command,
                       message: "헤드 오류: \(error)")
         }
+    }
+
+    /// 볼 트래킹 (2026-06-02) — 로봇 온보드 자동 헤드 추적 on/off 전송.
+    /// 조종기 버튼/화면 토글이 호출. head 와 달리 robot 측 처리라 capabilities.ballTracking
+    /// 로 gate (mockReview 는 항상 허용).
+    public func sendBallTrack(enabled: Bool) async {
+        guard ballTrackingSupported else {
+            appendLog(level: .warning, category: .command,
+                      message: "볼 트래킹은 이 Mac 빌드에서 지원되지 않아요.")
+            return
+        }
+        guard isMacReady else {
+            appendLog(level: .warning, category: .command,
+                      message: "Mac 연결 후 볼 트래킹을 사용할 수 있어요.")
+            return
+        }
+        let previous = ballTrackingActive
+        ballTrackingActive = enabled   // 낙관적 — UI 토글 즉시 반영, reject/fail 시 롤백.
+        let env = commandBuilder.ballTrack(enabled: enabled)
+        do {
+            let receipt = try await relayClient.send(env)
+            lastReceipt = receipt
+            switch receipt.outcome {
+            case .acked(let ms):
+                appendLog(level: .debug, category: .command,
+                          message: "볼 트래킹 \(enabled ? "ON" : "OFF") (\(ms)ms)",
+                          commandId: receipt.commandId)
+            case .rejected(let r, let m):
+                ballTrackingActive = previous
+                appendLog(level: .warning, category: .command,
+                          message: "볼 트래킹 거부 (\(r.rawValue)) \(m ?? "")",
+                          commandId: receipt.commandId)
+            case .failed(let r, _):
+                ballTrackingActive = previous
+                appendLog(level: .error, category: .command,
+                          message: "볼 트래킹 실패 (\(r.rawValue))",
+                          commandId: receipt.commandId)
+            case .accepted:
+                break
+            }
+        } catch {
+            ballTrackingActive = previous
+            appendLog(level: .error, category: .command,
+                      message: "볼 트래킹 오류: \(error)")
+        }
+    }
+
+    /// 조종기 버튼(X) 토글 — 현재 상태를 뒤집어 전송.
+    public func toggleBallTracking() async {
+        await sendBallTrack(enabled: !ballTrackingActive)
     }
 
     public func acknowledgeRecovery() {

@@ -8,16 +8,17 @@ import XCTest
 @MainActor
 final class WalkLabPresetCommandIntegrationTests: XCTestCase {
 
-    /// **유기 검증 #1**: 8 preset 모두 currentWalkingEngineCommand 호출 시 12 필드 직렬화.
-    /// SSH parity (W4): cycle 162 의 10 필드 뒤에 head pan/tilt 2 필드 APPEND.
-    func testAllPresetsProduceTwelveFieldCommand() {
+    /// **유기 검증 #1**: 8 preset 모두 currentWalkingEngineCommand 호출 시 13 필드 직렬화.
+    /// SSH parity (W4): cycle 162 의 10 필드 뒤에 head pan/tilt 2 필드 APPEND,
+    /// 볼 트래킹(2026-06-02) ball_track 1 필드 APPEND.
+    func testAllPresetsProduceThirteenFieldCommand() {
         for preset in WalkLabPreset.allCases {
             let s = WalkLabSession()
             s.current = preset
             let cmd = s.currentWalkingEngineCommand(enabled: true)
             let fields = cmd.serializedLine.split(separator: " ")
-            XCTAssertEqual(fields.count, 12,
-                           "preset=\(preset) 의 serializedLine 12 필드: \(cmd.serializedLine)")
+            XCTAssertEqual(fields.count, 13,
+                           "preset=\(preset) 의 serializedLine 13 필드: \(cmd.serializedLine)")
         }
     }
 
@@ -73,18 +74,19 @@ final class WalkLabPresetCommandIntegrationTests: XCTestCase {
         }
     }
 
-    /// **유기 검증 #5**: stop command 도 12 필드 + default balance + head 0,0.
+    /// **유기 검증 #5**: stop command 도 13 필드 + default balance + head 0,0 + ball_track 0.
     func testStopCommandSchema() {
         let stop = WalkingEngineCommand.stop
         let fields = stop.serializedLine.split(separator: " ")
-        XCTAssertEqual(fields.count, 12)
+        XCTAssertEqual(fields.count, 13)
         XCTAssertEqual(stop.balanceGain, 1.0)
         XCTAssertFalse(stop.balanceEnable)
         XCTAssertEqual(stop.correctorIntensityLevel, 2)
         XCTAssertEqual(stop.headPanDeg, 0, accuracy: 0.01, "stop head pan 정면")
         XCTAssertEqual(stop.headTiltDeg, 0, accuracy: 0.01, "stop head tilt 정면")
-        // 첫 필드 = 0 (disabled), 7번째 = 13.00 (hipPitchOffset default), 11-12 = head 0,0.
-        XCTAssertEqual(stop.serializedLine, "0 0.00 0.00 0.00 0 0 13.00 1.00 0 2 0.00 0.00")
+        XCTAssertFalse(stop.ballTrackingEnabled, "stop 시 볼 트래킹 off")
+        // 첫 필드 = 0 (disabled), 7번째 = 13.00 (hipPitchOffset default), 11-12 = head 0,0, 13 = ball_track 0.
+        XCTAssertEqual(stop.serializedLine, "0 0.00 0.00 0.00 0 0 13.00 1.00 0 2 0.00 0.00 0")
     }
 
     /// **유기 검증 #6**: serializedLine 의 모든 필드 floating/integer format 정확.
@@ -97,10 +99,11 @@ final class WalkLabPresetCommandIntegrationTests: XCTestCase {
             balanceGain: 1.5, balanceEnable: true,
             correctorIntensityLevel: 3
         )
-        // SSH parity (W4): head pan/tilt 미지정 → default 0,0 → trailing "0.00 0.00".
-        let expected = "1 28.00 -5.00 10.00 600 40 13.00 1.50 1 3 0.00 0.00"
+        // SSH parity (W4): head pan/tilt 미지정 → default 0,0 → "0.00 0.00".
+        // 볼 트래킹(2026-06-02): ball_track 미지정 → default 0 → trailing " 0".
+        let expected = "1 28.00 -5.00 10.00 600 40 13.00 1.50 1 3 0.00 0.00 0"
         XCTAssertEqual(cmd.serializedLine, expected,
-                       "format: %d %.2f %.2f %.2f %.0f %.0f %.2f %.2f %d %d %.2f %.2f")
+                       "format: %d %.2f %.2f %.2f %.0f %.0f %.2f %.2f %d %d %.2f %.2f %d")
     }
 
     /// **유기 검증 #7**: enabled 가 cmd.enabled 와 동기 — 사용자 명시 true + idle 가드.
