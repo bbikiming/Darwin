@@ -157,6 +157,12 @@ public struct PilotCockpitView: View {
         // 보행 freeform 과 독립 경로라 걸으면서 동시에 머리를 돌릴 수 있다.
         .onChange(of: cockpit.headPanDeg) { _, _ in dispatchHeadIfAllowed() }
         .onChange(of: cockpit.headTiltDeg) { _, _ in dispatchHeadIfAllowed() }
+        // **볼 트래킹 토글 (2026-06-02)** — DJI 조종기 매핑(Button 3) 또는 게임패드가
+        // cockpit.triggerBallTrackingToggle() 호출 → timestamp 변경 → 여기서 session 토글.
+        // 온보드 자동 헤드 추적 on/off. (콕핏 화면 토글과 동일 상태 공유.)
+        .onChange(of: cockpit.ballTrackingToggleAt) { _, newValue in
+            if newValue != nil { session.ballTrackingEnabled.toggle() }
+        }
         .onChange(of: realMotorEnabled) { _, on in
             // **#1 (2026-05-31)**: 콕핏/조종 시뮬에서 실 모터 ON → WalkLab ARM 없이 **즉시**
             // DXL 전원 + 전체 토크 ON. 종전엔 motorGate 가 "DXL 토크 OFF (워크 랩 ARM 필요)"

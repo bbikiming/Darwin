@@ -202,6 +202,11 @@ public final class DJIVirtualJoystickWatcher: ObservableObject {
             cockpit.triggerRecovery()
             lastAction = "recover"
         }
+        // 볼 트래킹 (2026-06-02) — 토글 버튼 엣지. emergency 와 배타 아님(안전 무관).
+        if actions.ballTracking && !prevActions.ballTracking {
+            cockpit.triggerBallTrackingToggle()
+            lastAction = "ball track toggle"
+        }
         previousButtons = report.buttons
     }
 }

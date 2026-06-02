@@ -373,6 +373,7 @@ public struct CockpitDJIBindingSheet: View {
         case .headPanRight:  return "arrow.right.circle"
         case .headTiltUp:    return "arrow.up.circle"
         case .headTiltDown:  return "arrow.down.circle"
+        case .ballTracking:  return "eye"
         case .emergencyStop: return "exclamationmark.triangle"
         case .recover:       return "shield"
         }

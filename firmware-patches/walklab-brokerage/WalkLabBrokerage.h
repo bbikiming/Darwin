@@ -132,6 +132,14 @@ private:
     /// BallTracker::Process 가 Head::MoveTracking(offset) 또는 검색 scan 을 수행한다.
     /// 보행 여부와 무관 (헤드 전용). 카메라/Head 는 진입 시 이미 초기화돼 있음.
     void ProcessBallTracking();
+
+    /// **공 색상 로드 (2026-06-03)** — config(balltrack.ini)의 [Find Color] 섹션을
+    /// m_ball_finder 에 적용 (싸커 데모의 ColorFinder::LoadINISettings 와 동일).
+    /// 주황 공은 hue≈25. 파일을 편집하고 볼 트래킹을 껐다 켜면 재빌드 없이 반영된다.
+    void ReloadBallColor();
+
+    /// 볼 트래킹 이전 enable 상태 (false→true edge 감지 → ReloadBallColor).
+    bool m_balltrack_prev;
 };
 
 }  // namespace Robotis

@@ -65,6 +65,9 @@ public final class CockpitState: ObservableObject {
     @Published public var emergencyAt: Date?
     /// 가장 최근 복구 트리거 시각.
     @Published public var recoveryAt: Date?
+    /// 볼 트래킹 (2026-06-02) — 가장 최근 토글 트리거 시각. 조종기 버튼이 set,
+    /// PilotCockpitView 가 onChange 로 session.ballTrackingEnabled 를 뒤집는다.
+    @Published public var ballTrackingToggleAt: Date?
 
     // MARK: - Simulated kinematics (chase camera 가 따라가는 값)
     //
@@ -493,6 +496,11 @@ public final class CockpitState: ObservableObject {
 
     public func triggerRecovery() {
         recoveryAt = Date()
+    }
+
+    /// 볼 트래킹 (2026-06-02) — 조종기 버튼이 호출. timestamp 갱신 → view 가 토글 적용.
+    public func triggerBallTrackingToggle() {
+        ballTrackingToggleAt = Date()
     }
 
     public func setController(name: String?) {

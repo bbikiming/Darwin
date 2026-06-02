@@ -117,6 +117,35 @@ final class DJIVirtualJoystickMapperTests: XCTestCase {
             Array(repeating: false, count: 24))
         XCTAssertFalse(actions.emergencyStop)
         XCTAssertFalse(actions.recover)
+        XCTAssertFalse(actions.ballTracking)
+    }
+
+    /// 볼 트래킹 (2026-06-02): Button 3 (index 2) = 헤드 추적 토글.
+    func test_button_3_maps_to_ballTracking_only() {
+        var btns = Array(repeating: false, count: 24)
+        btns[2] = true
+        let actions = DJIVirtualJoystickMapper.ButtonActions.from(btns)
+        XCTAssertTrue(actions.ballTracking)
+        XCTAssertFalse(actions.emergencyStop)
+        XCTAssertFalse(actions.recover)
+    }
+
+    /// djiMode2 기본 프로파일이 ballTracking 을 Button 3 에 바인딩 → buttonActions 평가.
+    func test_djiMode2_ballTracking_bound_to_button3() {
+        XCTAssertEqual(DJIBindingProfile.djiMode2.bindings[.ballTracking], .button(2),
+                       "ballTracking 기본 = Button 3 (index 2)")
+        var btns = Array(repeating: false, count: 24)
+        btns[2] = true
+        let report = DJIVirtualJoystickReport(
+            axisX: 0, axisY: 0, axisZ: 0, axisRx: 0, axisRy: 0, buttons: btns)
+        let actions = DJIVirtualJoystickMapper.buttonActions(
+            report: report, profile: .djiMode2)
+        XCTAssertTrue(actions.ballTracking, "profile 경로로도 Button 3 → ballTracking")
+    }
+
+    /// ballTracking 은 안전 action 아님 — unbound 허용(사용자가 끌 수 있음).
+    func test_ballTracking_not_safety_critical() {
+        XCTAssertFalse(CockpitAction.ballTracking.isSafetyCritical)
     }
 
     func test_short_button_array_does_not_crash() {

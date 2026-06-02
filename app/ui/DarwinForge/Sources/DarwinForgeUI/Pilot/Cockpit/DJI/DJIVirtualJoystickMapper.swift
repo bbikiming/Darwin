@@ -162,7 +162,8 @@ public enum DJIVirtualJoystickMapper {
                                      profile: DJIBindingProfile) -> ButtonActions {
         let estop = bindingValue(.emergencyStop, in: profile, report: report) >= 1.0
         let rec = bindingValue(.recover, in: profile, report: report) >= 1.0
-        return ButtonActions(emergencyStop: estop, recover: rec)
+        let ballTrack = bindingValue(.ballTracking, in: profile, report: report) >= 1.0
+        return ButtonActions(emergencyStop: estop, recover: rec, ballTracking: ballTrack)
     }
 
     /// 버튼 → cockpit safety action 매핑.
@@ -172,18 +173,24 @@ public enum DJIVirtualJoystickMapper {
     public struct ButtonActions: Equatable, Sendable {
         public let emergencyStop: Bool
         public let recover: Bool
+        /// 볼 트래킹 (2026-06-02) — 온보드 헤드 추적 토글 버튼.
+        public let ballTracking: Bool
 
-        public init(emergencyStop: Bool = false, recover: Bool = false) {
+        public init(emergencyStop: Bool = false, recover: Bool = false,
+                    ballTracking: Bool = false) {
             self.emergencyStop = emergencyStop
             self.recover = recover
+            self.ballTracking = ballTracking
         }
 
         /// Button 1 (index 0) = emergency. Button 2 (index 1) = recover.
-        /// 사용자가 실측으로 다른 버튼 사용 원하면 cockpit 패널에 매핑 UI 추가 가능.
+        /// Button 3 (index 2) = 볼 트래킹 토글. 사용자가 실측으로 다른 버튼 사용 원하면
+        /// binding sheet 에서 재매핑 가능.
         public static func from(_ buttons: [Bool]) -> ButtonActions {
             ButtonActions(
                 emergencyStop: buttons.count > 0 && buttons[0],
-                recover:       buttons.count > 1 && buttons[1])
+                recover:       buttons.count > 1 && buttons[1],
+                ballTracking:  buttons.count > 2 && buttons[2])
         }
     }
 

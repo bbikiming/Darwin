@@ -48,6 +48,7 @@
 #include "ColorFinder.h"    // Robot::ColorFinder — HSV 볼 검출
 #include "BallTracker.h"    // Robot::BallTracker — 볼 위치 → Head::MoveTracking
 #include "Point.h"          // Robot::Point2D
+#include "minIni.h"         // Robot::minIni — config 에서 공 색상(HSV) 로드 (싸커 데모와 동일)
 
 namespace Robotis {
 
@@ -58,6 +59,10 @@ namespace Robotis {
     const char* const WalkLabBrokerage::ESTOP_PATH = "/tmp/df-walklab-estop";
     const double WalkLabBrokerage::HIP_PITCH_MIN = 0.0;
     const double WalkLabBrokerage::HIP_PITCH_MAX = 20.0;
+
+    // 공 색상 config 경로 (2026-06-03). [Find Color] 섹션을 ColorFinder 에 로드.
+    // 절대 경로 — 데몬 cwd 무관. install-onboard 가 주황 공 기본값으로 생성한다.
+    #define BALLCOLOR_INI "/robotis/Linux/project/demo/balltrack.ini"
 
     // ===== SIGTERM/SIGINT 핸들러 (§B) ============================================
     // Mac e-stop 의 belt-and-suspenders 경로(`killall -TERM demo demo-pilot`) 와
@@ -210,19 +215,48 @@ namespace Robotis {
     // (1) LinuxCamera::Initialize(0) (demo main.cpp L63, 주입 anchor 이전) 과
     // (2) Head::SetEnableHeadOnly(true,true) 를 수행했다. ColorFinder/BallTracker 만
     // 본 모듈이 lazy-init (첫 enable 시). Run() 무한루프라 delete 불필요.
+    // 공 색상(HSV)을 config 에서 m_ball_finder 로 로드. 파일/키 없으면 ColorFinder 기존값 유지.
+    // 싸커 데모의 `ball_finder->LoadINISettings(ini)` 와 동일 메커니즘 ([Find Color] 섹션).
+    void WalkLabBrokerage::ReloadBallColor() {
+        if (!m_ball_finder) return;
+        // minIni 는 전역 namespace (ROBOTIS Framework — Robot 아님). 데모도 `minIni*` 사용.
+        minIni ini(BALLCOLOR_INI);
+        m_ball_finder->LoadINISettings(&ini);
+    }
+
     void WalkLabBrokerage::ProcessBallTracking() {
         if (!m_vision_ready) {
-            // 기본 생성자 = 주황 공 (ROBOTIS 표준 데모 ball). config.ini 튜닝 없이도 동작.
             m_ball_finder = new Robot::ColorFinder();
+            // **싸커 데모와 동일 (2026-06-03)**: ColorFinder 기본 생성자는 hue356(빨강)이라
+            // 주황 공을 못 잡는다. soccer demo 의 `ball_finder->LoadINISettings(ini)` 처럼
+            // config 에서 [Find Color] 섹션(hue/sat/val/percent)을 로드한다. 파일을 재빌드
+            // 없이 편집해 hue 를 공 색에 맞춰 튜닝 가능 (다음 enable 시 반영 — 아래 재로드).
+            ReloadBallColor();
             m_tracker = new Robot::BallTracker();
             m_vision_ready = true;
-            printf("[WalkLabBrokerage] ball-tracking vision init (orange ball default)\n");
+            printf("[WalkLabBrokerage] ball-tracking vision init (config %s)\n", BALLCOLOR_INI);
         }
         Robot::LinuxCamera::GetInstance()->CaptureFrame();
         Robot::Point2D pos = m_ball_finder->GetPosition(
             Robot::LinuxCamera::GetInstance()->fbuffer->m_HSVFrame);
         // 볼 보이면 Head::MoveTracking(offset), 안 보이면 scan/InitTracking (데모와 동일).
         m_tracker->Process(pos);
+
+        // 검증 로그 (throttled) — /tmp/df-balltrack.log 에 볼 검출 + 헤드 각도 기록.
+        // pos.X<0 = 미검출(scan 모드), >=0 = 검출(추적 모드). Mac 이 SSH 로 tail 해 확인.
+        // 30fps 트래킹 루프에 I/O 부담 안 주게 15프레임마다(~2Hz)만 기록.
+        static int s_bt_log = 0;
+        if ((s_bt_log++ % 15) == 0) {
+            Robot::Head* h = Robot::Head::GetInstance();
+            FILE* lf = fopen("/tmp/df-balltrack.log", "a");
+            if (lf) {
+                fprintf(lf, "balltrack %s px=(%.0f,%.0f) pan=%.1f tilt=%.1f\n",
+                        (pos.X < 0 || pos.Y < 0) ? "NO_BALL" : "FOUND",
+                        pos.X, pos.Y,
+                        h ? h->GetPanAngle() : 0.0, h ? h->GetTiltAngle() : 0.0);
+                fclose(lf);
+            }
+        }
     }
 
     void WalkLabBrokerage::Run(Robot::CM730* cm730) {
@@ -230,6 +264,7 @@ namespace Robotis {
         m_fall_count = 0;   // **v1.13** auto-getup debounce 카운터 초기화.
         // 볼 트래킹 (2026-06-02) — vision 상태 초기화 (lazy-init 은 첫 enable 시).
         m_balltrack_enabled = false;
+        m_balltrack_prev = false;
         m_vision_ready = false;
         m_ball_finder = 0;
         m_tracker = 0;
@@ -355,7 +390,15 @@ namespace Robotis {
                 WriteTelemetry(cm730, walking_active);
             }
 
-            usleep(POLL_INTERVAL_MS * 1000);
+            // **헤드 트래킹 30fps fix (2026-06-02)**: 볼 트래킹 중에는 ProcessBallTracking 의
+            // LinuxCamera::CaptureFrame() 가 카메라 프레임레이트(~30fps ≈ 33ms)로 루프를 paces 한다
+            // — 기본 SOCCER 데모와 동일 구조. 여기에 100ms usleep 을 더하면 ~7fps 로 떨어져 헤드가
+            // 버벅이고 반응이 느려진다(사용자 보고). 트래킹 중엔 usleep 생략 → 카메라 자연 페이스로
+            // 부드러운 추적. e-stop/getup/command 검사도 30Hz 로 더 자주 돌아 반응성도 향상.
+            // 볼 트래킹 OFF 일 때만 100ms idle poll (CPU 절약, 명령 폴링은 충분).
+            if (!m_balltrack_enabled) {
+                usleep(POLL_INTERVAL_MS * 1000);
+            }
         }
     }
 
@@ -427,7 +470,15 @@ namespace Robotis {
 
         // 볼 트래킹 (2026-06-02) — 모드 토글. ON 이면 로봇이 자체 카메라로 헤드를 제어하므로
         // 아래 Mac head MoveByAngle 을 skip (singleton Head 의 last-write-wins 충돌 방지).
-        m_balltrack_enabled = (balltrack > 0.5f);
+        bool want_balltrack = (balltrack > 0.5f);
+        // OFF→ON edge: 공 색상 config 재로드 — balltrack.ini 편집 후 껐다 켜면 재빌드 없이
+        // hue 튜닝이 반영된다 (m_ball_finder 가 lazy-init 됐을 때만).
+        if (want_balltrack && !m_balltrack_prev && m_ball_finder) {
+            ReloadBallColor();
+            printf("[WalkLabBrokerage] ball color reloaded from %s\n", BALLCOLOR_INI);
+        }
+        m_balltrack_prev = want_balltrack;
+        m_balltrack_enabled = want_balltrack;
 
         // **v1.12 (§C)** — head pan/tilt 적용. walklab injection 이 이미
         // Head::GetInstance()->m_Joint.SetEnableHeadOnly(true,true) 호출함.

@@ -22,6 +22,8 @@ public enum CockpitAction: String, CaseIterable, Codable, Sendable {
     case turnLeft, turnRight
     case headPanLeft, headPanRight
     case headTiltUp, headTiltDown
+    /// 볼 트래킹 (2026-06-02) — 누르면 로봇 온보드 자동 헤드 추적 on/off 토글.
+    case ballTracking
     case emergencyStop, recover
 
     public var label: String {
@@ -36,6 +38,7 @@ public enum CockpitAction: String, CaseIterable, Codable, Sendable {
         case .headPanRight:   return "머리 우"
         case .headTiltUp:     return "머리 위"
         case .headTiltDown:   return "머리 아래"
+        case .ballTracking:   return "볼 트래킹"
         case .emergencyStop:  return "긴급 정지"
         case .recover:        return "복구"
         }
@@ -55,7 +58,7 @@ public enum CockpitAction: String, CaseIterable, Codable, Sendable {
             return .movement
         case .turnLeft, .turnRight:
             return .rotation
-        case .headPanLeft, .headPanRight, .headTiltUp, .headTiltDown:
+        case .headPanLeft, .headPanRight, .headTiltUp, .headTiltDown, .ballTracking:
             return .head
         case .emergencyStop, .recover:
             return .safety
@@ -162,6 +165,9 @@ public struct DJIBindingProfile: Codable, Equatable, Sendable {
             .headTiltDown:   .axis(.z,  polarity: .negative),
             .headPanRight:   .axis(.y,  polarity: .positive),
             .headPanLeft:    .axis(.y,  polarity: .negative),
+            // 볼 트래킹 (2026-06-02) — Button 3 (index 2) 기본 할당. 누르면 온보드 헤드 추적 토글.
+            // 사용자는 binding sheet 에서 다른 버튼으로 재매핑 가능.
+            .ballTracking:   .button(2),
             .emergencyStop:  .button(0),
             .recover:        .button(1),
         ])
