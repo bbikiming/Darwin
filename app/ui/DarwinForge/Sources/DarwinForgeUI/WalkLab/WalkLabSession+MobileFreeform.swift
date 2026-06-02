@@ -459,14 +459,51 @@ extension WalkLabSession {
 }
 
 extension WalkMotionLibrary {
+    /// 회전 가속 floor — 풀스틱 회전 시 보행주기 하한 (2026-06-02 "공격적" 채택).
+    /// fastWalk 프리셋(450ms)이 이미 실기 검증된 "공식 모션 선" 안의 값.
+    public static let turnBoostMinPeriodMs: Double = 450
+    /// 회전 가속이 적용되기 시작하는 스틱 데드밴드 — 살짝 꺾은 미세 회전은 base 유지.
+    public static let turnBoostDeadbandDeg: Double = 2
+    /// 회전각 클램프 한계 (관절 충돌 임계). 가속은 이 각을 넘기지 않고 주기로만 한다.
+    public static let mobileFreeformMaxTurnDeg: Double = 12
+
+    /// 회전 가속 (각도 불변, 주기 단축).
+    ///
+    /// 회전 속도 = |turnDeg| ÷ periodMs. turnDeg(=hip-yaw 관절각)을 키우면 60° 안전선을
+    /// 넘겨 무릎·엉덩이가 충돌하므로(±12° 고정), **주기만 단축**해 같은 각도로 더 빠르게 돈다.
+    /// - 저속(작은 스틱, |turnDeg| ≤ 데드밴드): `basePeriodMs` 유지 → 최저 회전속도 보존.
+    /// - 풀스틱(|turnDeg| ≥ maxTurnDeg): `minPeriodMs` 까지 선형 단축 → 최고 회전속도 ↑.
+    ///
+    /// 직진/횡이동만(turnDeg≈0)일 땐 base 그대로라 전진 속도엔 영향 없음.
+    public static func turnBoostedPeriodMs(
+        turnDeg: Double,
+        basePeriodMs: Double,
+        minPeriodMs: Double = turnBoostMinPeriodMs,
+        maxTurnDeg: Double = mobileFreeformMaxTurnDeg,
+        turnDeadbandDeg: Double = turnBoostDeadbandDeg
+    ) -> Double {
+        let mag = abs(turnDeg)
+        guard mag > turnDeadbandDeg, basePeriodMs > minPeriodMs else { return basePeriodMs }
+        let span = max(0.001, maxTurnDeg - turnDeadbandDeg)
+        let t = min(1.0, max(0.0, (mag - turnDeadbandDeg) / span))
+        return basePeriodMs + (minPeriodMs - basePeriodMs) * t
+    }
+
     public static func mobileFreeformClamp(_ base: AdvancedTuning) -> AdvancedTuning {
-        AdvancedTuning(
+        // 회전각은 ±12° 로 고정 (관절 충돌 차단) — 속도는 주기 단축으로만 올린다.
+        let turn = base.turnDeg.clamped(to: -mobileFreeformMaxTurnDeg...mobileFreeformMaxTurnDeg)
+        // 회전 가속: 스틱 회전량에 비례해 base 주기(600~850)를 floor(450)까지 단축.
+        // turn=0 이면 base 그대로 → 최저값 보존 + 직진 보행엔 영향 없음.
+        let basePeriod = base.periodMs.clamped(to: 600...850)
+        let boostedPeriod = turnBoostedPeriodMs(turnDeg: turn, basePeriodMs: basePeriod)
+        return AdvancedTuning(
             strideMm: base.strideMm.clamped(to: -30...38),
             sideMm: base.sideMm.clamped(to: -22...22),
             // -18 → -12 보수화: 고각 회전 시 hip-yaw + cMove 가 60° 안전 임계를
             // 넘겨 무릎·엉덩이가 겹치던 문제 방지 (cockpitTurnDeg 와 동일 한계).
-            turnDeg: base.turnDeg.clamped(to: -12...12),
-            periodMs: base.periodMs.clamped(to: 600...850),
+            turnDeg: turn,
+            // floor 를 450 까지 허용 — turnBoostedPeriodMs 산출치를 재클램프하지 않도록.
+            periodMs: boostedPeriod.clamped(to: turnBoostMinPeriodMs...850),
             footHeightMm: base.footHeightMm.clamped(to: 28...46),
             balanceGain: base.balanceGain.clamped(to: 0.8...1.4),
             hipPitchOffsetDeg: base.hipPitchOffsetDeg.clamped(to: 0...20)

@@ -370,5 +370,59 @@ final class CockpitPilotIntegrationTests: XCTestCase {
         XCTAssertEqual(clamped.strideMm, -30, accuracy: 0.5,
                        "freeform clamp 후진 = -30 (실 motor 값) — 게이지도 이 값 사용")
     }
+
+    // MARK: - 회전 가속 (각도 불변, 주기 단축) — 2026-06-02
+
+    private func freeformPeriod(turnDeg: Double, basePeriodMs: Double = 700) -> Double {
+        WalkMotionLibrary.mobileFreeformClamp(
+            WalkMotionLibrary.AdvancedTuning(
+                strideMm: 0, sideMm: 0, turnDeg: turnDeg,
+                periodMs: basePeriodMs, footHeightMm: 35, balanceGain: 1.0,
+                hipPitchOffsetDeg: 13.0)
+        ).periodMs
+    }
+
+    func test_K25_turnBoost_preserves_base_period_at_low_stick() {
+        // 최저값 보존: 데드밴드(±2°) 이하 미세 회전은 base 주기 유지 → 저속 그대로.
+        XCTAssertEqual(freeformPeriod(turnDeg: 0), 700, accuracy: 0.01,
+                       "turn=0 → 주기 변화 없음 (최저값 보존)")
+        XCTAssertEqual(freeformPeriod(turnDeg: 1.5), 700, accuracy: 0.01,
+                       "데드밴드 이내 → base 유지")
+        XCTAssertEqual(freeformPeriod(turnDeg: -1.5), 700, accuracy: 0.01,
+                       "부호 무관 — 데드밴드 이내 base 유지")
+    }
+
+    func test_K26_turnBoost_full_stick_hits_fast_floor() {
+        // 최고속 ↑: 풀스틱(±12°)에서 주기 floor 450ms (fastWalk 검증치)까지 단축.
+        XCTAssertEqual(freeformPeriod(turnDeg: 12), 450, accuracy: 0.01,
+                       "풀 좌회전 → 450ms (약 +55%)")
+        XCTAssertEqual(freeformPeriod(turnDeg: -12), 450, accuracy: 0.01,
+                       "풀 우회전 → 450ms (대칭)")
+        // 클램프 초과 입력도 450 floor 로 saturate (각도는 ±12 로 별도 고정).
+        XCTAssertEqual(freeformPeriod(turnDeg: 30), 450, accuracy: 0.01,
+                       "과도 입력도 floor 450ms saturate")
+    }
+
+    func test_K27_turnBoost_is_monotonic_between_min_and_max() {
+        // 가변값에 비례: 데드밴드~풀스틱 구간에서 주기가 단조 감소(속도 단조 증가).
+        let p3 = freeformPeriod(turnDeg: 3)
+        let p7 = freeformPeriod(turnDeg: 7)
+        let p11 = freeformPeriod(turnDeg: 11)
+        XCTAssertGreaterThan(p3, p7, "회전량 ↑ → 주기 ↓ (3°>7°)")
+        XCTAssertGreaterThan(p7, p11, "회전량 ↑ → 주기 ↓ (7°>11°)")
+        XCTAssertGreaterThan(p3, 450, "중간 구간은 floor 미만 아님")
+        XCTAssertLessThan(p3, 700, "데드밴드 초과면 base 미만으로 가속 시작")
+    }
+
+    func test_K28_turnBoost_does_not_increase_turn_angle() {
+        // 각도 증가로 충돌 유발 금지 — turnDeg 는 ±12 로만 고정, 속도는 주기로만.
+        let clamped = WalkMotionLibrary.mobileFreeformClamp(
+            WalkMotionLibrary.AdvancedTuning(
+                strideMm: 0, sideMm: 0, turnDeg: 30,
+                periodMs: 700, footHeightMm: 35, balanceGain: 1.0,
+                hipPitchOffsetDeg: 13.0))
+        XCTAssertEqual(clamped.turnDeg, 12, accuracy: 0.01,
+                       "회전각은 ±12° 고정 (관절 충돌 차단) — 가속은 각도가 아님")
+    }
 }
 #endif
