@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — _testOverride* hooks 는 DEBUG-only.
+#if DEBUG
 import ForgeCore
 import XCTest
 @testable import DarwinForgeUI
@@ -249,3 +251,4 @@ final class SafetyGapTests: XCTestCase {
         XCTAssertNil(store.copiedStep, "copiedStep nil set 후 다시 nil")
     }
 }
+#endif

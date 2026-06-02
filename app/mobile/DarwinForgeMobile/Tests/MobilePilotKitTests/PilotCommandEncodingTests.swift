@@ -32,6 +32,22 @@ final class PilotCommandEncodingTests: XCTestCase {
         XCTAssertTrue(s.contains("\"periodMs\":700"))
     }
 
+    func testFreeformJoystickMapsForwardToStrideAndRightToSide() throws {
+        let builder = CommandBuilder(ids: MonotonicCommandIDGenerator(prefix: "test"),
+                                     clock: DeterministicClock())
+        let env = builder.walkFreeform(.init(x: 0.5, y: -0.8, turn: 0.25,
+                                             speedScale: 1.5))
+
+        XCTAssertEqual(env.payload.preset, .freeform)
+        XCTAssertEqual(env.payload.xMm, 20, accuracy: 0.001,
+                       "joystick up/down must map to stride xMm")
+        XCTAssertEqual(env.payload.yMm, 8, accuracy: 0.001,
+                       "joystick left/right must map to lateral yMm")
+        XCTAssertEqual(env.payload.aDeg, 3, accuracy: 0.001)
+        XCTAssertEqual(env.payload.speedScale, 1.5, accuracy: 0.001,
+                       "speedScale is sent separately for Mac-side safety clamp")
+    }
+
     func testInboundTelemetryDecodes() throws {
         let json = """
         {"v":1,"id":"evt_000001","type":"telemetry.state","sentAt":"2026-05-25T12:00:00.000Z","payload":{"mac":"connected","robot":"connected","endpoint":"tcp://1.2.3.4:5530","armed":true,"dxlPower":true,"batteryV":11.7,"maxTempC":42,"latencyMs":34,"lastAckAgeMs":90,"safety":"ready","uiState":"armedReady"}}

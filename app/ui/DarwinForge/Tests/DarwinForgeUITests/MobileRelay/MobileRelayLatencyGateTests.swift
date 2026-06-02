@@ -1,15 +1,23 @@
 import XCTest
 @testable import DarwinForgeUI
 
-/// V291-8 — Walk/Motion latency gate 단위 테스트.
+/// V291-8 + V297-4 — Walk/Motion latency gate 단위 테스트.
 ///
 /// # 비유: 택배 유통기한
 /// 리모컨 신호가 너무 늦게 도착하면 이미 상황이 달라진 셈 —
 /// 화면 보면서 누른 버튼이 1초 뒤 반응하면 의도와 다른 동작이 일어난다.
-/// 150ms(walk) / 200ms(motion) 임계치를 넘은 오래된 명령은 즉시 폐기한다.
+/// 보행/모션 명령은 **서버측 측정 RTT** 임계 (walk 350ms, motion 450ms) 를 넘으면 폐기.
 ///
-/// 테스트 전략: `clock` 클로저 주입으로 시간을 완전히 제어한다.
-/// sentAt = 고정 시각, clock() = sentAt + 측정하려는 latency.
+/// # V297-4 의도된 동작 변경
+///
+/// 종전: iOS clock 기반 (sentAt − clock()) latency 가 임계 (walk 150ms, motion 200ms)
+/// 초과시 reject. → 시계 드리프트로 거짓 reject 위험.
+///
+/// 신규: **서버측 RTT 기반** (`lastRobotRttMs`, 마지막 robot ACK round-trip).
+/// iOS clock 은 ±10초 초과시 clockSkew reject 만. 정상 범위 iOS-Mac latency 는
+/// reject 트리거 안 함 (highLatency 정보성 warning 만).
+///
+/// 테스트 전략: `clock` 클로저로 iOS clock latency 시뮬, port.latencyMs 로 RTT 시뮬.
 final class MobileRelayLatencyGateTests: XCTestCase {
 
     // MARK: - Walk: 100ms → pass
@@ -30,9 +38,12 @@ final class MobileRelayLatencyGateTests: XCTestCase {
         XCTAssertTrue(rejected.isEmpty, "100ms latency 는 통과해야 한다 (gate=150ms)")
     }
 
-    // MARK: - Walk: 150ms → reject "latencyGate"
+    // MARK: - Walk: iOS clock 150ms 만으로는 reject 안 됨 (V297-4)
+    //
+    // 종전: iOS clock 150ms ≥ walk gate → reject. V297-4 이후: 서버측 RTT 가 350ms 미만이면
+    // iOS clock 150ms 는 정상 명령으로 통과. clockSkew 도 ±10s 미만 → 통과.
 
-    func testWalk_150ms_rejectsLatencyGate() async throws {
+    func testWalk_iOSClock150ms_passes_serverRTTNotPrimed() async throws {
         let base = Date(timeIntervalSince1970: 1_748_000_000)
         let code = "lat002"
         let (server, channel) = makeServer(clockOffset: 0.150, base: base, pairingCode: code)
@@ -43,21 +54,16 @@ final class MobileRelayLatencyGateTests: XCTestCase {
             from: channel)
         try await Task.sleep(nanoseconds: 60_000_000)
 
+        // V297-4: iOS clock 150ms 만으로는 reject 트리거 X (서버측 RTT 가 nil → 게이트 관대 통과).
         let rejected = channel.frames.compactMap { decode($0) }
             .filter { $0.id == "cmd_w150" && $0.type == "command.rejected" }
-        XCTAssertFalse(rejected.isEmpty, "150ms latency 는 command.rejected 여야 한다")
-        // reason 검증
-        if let frame = channel.frames.first(where: {
-            decodeHead($0)?.id == "cmd_w150" && decodeHead($0)?.type == "command.rejected"
-        }) {
-            let env = try? RelayCodec.decoder.decode(RelayEnvelope<RejectedPayload>.self, from: frame)
-            XCTAssertEqual(env?.payload.reason, "latencyGate")
-        }
+        XCTAssertTrue(rejected.isEmpty,
+                      "V297-4: iOS clock 150ms 는 reject 트리거 X — 서버측 RTT 기반 게이트")
     }
 
-    // MARK: - Walk: 200ms → reject "latencyGate"
+    // MARK: - Walk: iOS clock 200ms 도 reject 안 됨 (V297-4)
 
-    func testWalk_200ms_rejectsLatencyGate() async throws {
+    func testWalk_iOSClock200ms_passes_serverRTTNotPrimed() async throws {
         let base = Date(timeIntervalSince1970: 1_748_000_000)
         let code = "lat003"
         let (server, channel) = makeServer(clockOffset: 0.200, base: base, pairingCode: code)
@@ -70,7 +76,43 @@ final class MobileRelayLatencyGateTests: XCTestCase {
 
         let rejected = channel.frames.compactMap { decode($0) }
             .filter { $0.id == "cmd_w200" && $0.type == "command.rejected" }
-        XCTAssertFalse(rejected.isEmpty, "200ms latency 도 command.rejected 여야 한다")
+        XCTAssertTrue(rejected.isEmpty,
+                      "V297-4: iOS clock 200ms 도 reject 트리거 X (서버측 RTT 기준)")
+    }
+
+    // MARK: - V297-4 — 서버측 RTT 350ms+ 시 reject
+
+    /// 첫 walk 가 robot ACK latency 400ms 반환 → 서버측 RTT 캐시 = 400ms.
+    /// 두 번째 walk 가 동일 캐시 보고 350ms 임계 초과 → reject.
+    func testWalk_serverRTT400ms_rejectsLatencyGate() async throws {
+        let base = Date(timeIntervalSince1970: 1_748_000_000)
+        let code = "lat003b"
+        let port = MutableLatencyGateTestPort(latencyMs: 400)
+        let (server, channel) = makeServer(port: port,
+                                           clockOffset: 0.020, base: base, pairingCode: code)
+
+        await server.handleClientConnected(channel, handshake: helloFrame(code: code, sentAt: base))
+
+        // 첫 walk — RTT 캐시 prime (이 호출 자체는 RTT nil 이라 게이트 통과 + 400ms cache).
+        await server.handleClientFrame(
+            walkFrame(id: "cmd_w_prime", sentAt: base), from: channel)
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        // 두 번째 walk — 캐시된 400ms 가 walk gate 350ms 초과 → reject.
+        await server.handleClientFrame(
+            walkFrame(id: "cmd_w_after", sentAt: base), from: channel)
+        try await Task.sleep(nanoseconds: 60_000_000)
+
+        let rejected = channel.frames.compactMap { decode($0) }
+            .filter { $0.id == "cmd_w_after" && $0.type == "command.rejected" }
+        XCTAssertFalse(rejected.isEmpty,
+                       "서버측 RTT 400ms 캐시 → walk gate 350ms 초과 → reject")
+        if let frame = channel.frames.first(where: {
+            decodeHead($0)?.id == "cmd_w_after" && decodeHead($0)?.type == "command.rejected"
+        }) {
+            let env = try? RelayCodec.decoder.decode(RelayEnvelope<RejectedPayload>.self, from: frame)
+            XCTAssertEqual(env?.payload.reason, "latencyGate")
+        }
     }
 
     // MARK: - Walk: 음수 latency (clock skew) → pass
@@ -137,9 +179,9 @@ final class MobileRelayLatencyGateTests: XCTestCase {
         XCTAssertTrue(rejected.isEmpty, "199ms latency 는 motion gate (200ms) 를 통과해야 한다")
     }
 
-    // MARK: - Motion: 200ms → reject "latencyGate"
+    // MARK: - Motion: iOS clock 200ms 만으로는 reject 안 됨 (V297-4)
 
-    func testMotion_200ms_rejectsLatencyGate() async throws {
+    func testMotion_iOSClock200ms_passes_serverRTTNotPrimed() async throws {
         let base = Date(timeIntervalSince1970: 1_748_000_000)
         let code = "lat007"
         let (server, channel) = makeServer(clockOffset: 0.200, base: base, pairingCode: code)
@@ -158,12 +200,30 @@ final class MobileRelayLatencyGateTests: XCTestCase {
 
         let rejected = channel.frames.compactMap { decode($0) }
             .filter { $0.id == "cmd_m200" && $0.type == "command.rejected" }
-        XCTAssertFalse(rejected.isEmpty, "200ms latency 는 motion gate 에서 거절돼야 한다")
+        XCTAssertTrue(rejected.isEmpty,
+                      "V297-4: iOS clock 200ms 는 motion reject 트리거 X (서버측 RTT 기준)")
+    }
+
+    // MARK: - V297-4 — clockSkew >10s 양방향 reject
+
+    /// iOS clock 이 Mac 보다 12초 앞선 (음수 raw skew, abs > 10000) → clockSkew reject.
+    func testWalk_iOSClock12sAhead_rejectsClockSkew() async throws {
+        let base = Date(timeIntervalSince1970: 1_748_000_000)
+        let code = "lat_skew"
+        // clock() = base − 12s (iOS clock 이 12초 앞섬 = Mac clock 이 12초 뒤짐)
+        let (server, channel) = makeServer(clockOffset: -12.0, base: base, pairingCode: code)
+        await server.handleClientConnected(channel, handshake: helloFrame(code: code, sentAt: base))
+        await server.handleClientFrame(walkFrame(id: "cmd_skew", sentAt: base), from: channel)
+        try await Task.sleep(nanoseconds: 60_000_000)
+
+        let rejected = channel.frames.compactMap { decode($0) }
+            .filter { $0.id == "cmd_skew" && $0.type == "command.rejected" }
+        XCTAssertFalse(rejected.isEmpty, "12초 음수 skew 는 clockSkew reject 되어야")
         if let frame = channel.frames.first(where: {
-            decodeHead($0)?.id == "cmd_m200" && decodeHead($0)?.type == "command.rejected"
+            decodeHead($0)?.id == "cmd_skew" && decodeHead($0)?.type == "command.rejected"
         }) {
             let env = try? RelayCodec.decoder.decode(RelayEnvelope<RejectedPayload>.self, from: frame)
-            XCTAssertEqual(env?.payload.reason, "latencyGate")
+            XCTAssertEqual(env?.payload.reason, "clockSkew")
         }
     }
 
@@ -249,6 +309,47 @@ final class LatencyGateTestPort: RobotSafetyPort, @unchecked Sendable {
     func runMotion(slot: Int, label: String, confirmRisk: Bool) async throws -> Int { 5 }
     func sendWalk(payload: WalkPayload) async throws -> (latencyMs: Int, robotAckId: String?) { (5, nil) }
     func sendStop(reason: String) async throws -> Int { 5 }
+}
+
+// MARK: - MutableLatencyGateTestPort (V297-4 RTT prime 테스트용)
+
+/// 서버측 RTT 캐시 prime 테스트용 — sendWalk 가 반환하는 latency 를 변경 가능.
+final class MutableLatencyGateTestPort: RobotSafetyPort, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _latencyMs: Int
+
+    init(latencyMs: Int) {
+        self._latencyMs = latencyMs
+    }
+
+    var latencyMs: Int {
+        get { lock.lock(); defer { lock.unlock() }; return _latencyMs }
+        set { lock.lock(); _latencyMs = newValue; lock.unlock() }
+    }
+
+    func snapshot() async -> TelemetryStatePayload {
+        TelemetryStatePayload(
+            mac: .connected, robot: .connected, endpoint: nil,
+            armed: true, dxlPower: true,
+            batteryV: 12.0, maxTempC: 40,
+            latencyMs: latencyMs, lastAckAgeMs: nil,
+            safety: .ready, uiState: .armedReady)
+    }
+
+    func arm(cradleConfirmed: Bool,
+             operator: String,
+             progress: @Sendable @escaping (String, Double) async -> Void) async throws -> Int {
+        await progress("armed", 1.0)
+        return latencyMs
+    }
+
+    func disarm(reason: String) async throws -> Int { latencyMs }
+    func emergencyStop(reason: String) async throws -> Int { latencyMs }
+    func runMotion(slot: Int, label: String, confirmRisk: Bool) async throws -> Int { latencyMs }
+    func sendWalk(payload: WalkPayload) async throws -> (latencyMs: Int, robotAckId: String?) {
+        (latencyMs, "mock-rtt-\(latencyMs)")
+    }
+    func sendStop(reason: String) async throws -> Int { latencyMs }
 }
 
 // MARK: - LatencyGateChannel

@@ -12,8 +12,8 @@ public enum SpeedTier: String, Identifiable, CaseIterable, Sendable {
     public var multiplier: Double {
         switch self {
         case .slow: return 1.0
-        case .medium: return 1.5
-        case .fast: return 2.2
+        case .medium: return 1.25
+        case .fast: return 1.5
         }
     }
 
@@ -26,15 +26,18 @@ public enum SpeedTier: String, Identifiable, CaseIterable, Sendable {
     }
 }
 
-/// Speed selector. In MVP only `slow` is enabled per the safety policy.
+/// Speed selector. The Mac relay clamps accepted walking speed to 0.5...1.5.
 public struct DSSpeedSelector: View {
     @Binding var selected: SpeedTier
     let enabledTiers: Set<SpeedTier>
+    let unavailableLabel: String
 
     public init(selected: Binding<SpeedTier>,
-                enabledTiers: Set<SpeedTier> = [.slow]) {
+                enabledTiers: Set<SpeedTier> = [.slow],
+                unavailableLabel: String = "Mac 미지원") {
         _selected = selected
         self.enabledTiers = enabledTiers
+        self.unavailableLabel = unavailableLabel
     }
 
     public var body: some View {
@@ -51,7 +54,10 @@ public struct DSSpeedSelector: View {
                         Text(tier.rawValue)
                             .font(DS.Font.captionEmphasis)
                         if !isEnabled {
-                            Text("대기").font(.system(size: 9))
+                            Text(unavailableLabel)
+                                .font(.system(size: 9, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
                         }
                     }
                     .frame(maxWidth: .infinity)

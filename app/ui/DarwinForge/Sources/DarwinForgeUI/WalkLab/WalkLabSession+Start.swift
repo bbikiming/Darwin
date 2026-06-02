@@ -157,10 +157,20 @@ extension WalkLabSession {
     /// `current = preset` + `engine.setCommand(...)` + `engine.setPeriodMs(...)`.
     /// 외부 robot 송출이 아닌 sim engine wiring — 실 motor 송출은 별도 `startWalkCycle`
     /// path 에서 처리.
-    internal func startApplyPresetToEngine(_ preset: WalkLabPreset) {
+    ///
+    /// **V297-8 (P3-Mac)**: `speedScale` (0.5~1.5) 를 amplitude 계열 (x/y/a) 에 적용.
+    /// periodMs 는 cadence 안전을 위해 변경 없음. default 1.0 = 기존 동작과 동일.
+    internal func startApplyPresetToEngine(_ preset: WalkLabPreset, speedScale: Double = 1.0) {
         current = preset
         let cmd = effectiveCommand
-        engine.setCommand(x: cmd.x, y: cmd.y, a: cmd.a, enabled: cmd.enabled)
+        // V297-8 (P3-Mac): speedScale 을 amplitude(x/y/a)에만 곱함.
+        // periodMs 는 변경 금지 — cadence 변경은 보행 안정성 위험.
+        engine.setCommand(
+            x: cmd.x * speedScale,
+            y: cmd.y * speedScale,
+            a: cmd.a * speedScale,
+            enabled: cmd.enabled
+        )
         engine.setPeriodMs(effectivePeriodMs)
     }
 
@@ -215,6 +225,15 @@ extension WalkLabSession {
         correctionEnabledAt = enableBalanceCorrection ? Date() : nil
         lastCorrections = nil
         lastSafePose = nil
+        // **M-LPF-reset fix (2026-05-30)**: 이전 walk 의 LPF 잔류값이 다음 walk 첫 tick
+        // 에 잘못된 baseline-aware correction 을 유발. correctorFilteredRoll/Pitch + baseline
+        // EMA 를 명시 reset. balanceBaselineInitialized = false 로 P-control 경로가 다음 tick
+        // 에 seed 를 다시 설정하게 함 (deviation 0 on tick 1 backward-compat 유지).
+        correctorFilteredRoll = 0
+        correctorFilteredPitch = 0
+        pitchBaselineEma = 0
+        rollBaselineEma = 0
+        balanceBaselineInitialized = false
         // **Monitoring dashboard reset**: 시계열 buffer / 이전 상태 reset.
         // safetyEvents 는 유지 — 사용자가 이전 세션의 이벤트 확인 가능.
         safetyTimeline.removeAll()

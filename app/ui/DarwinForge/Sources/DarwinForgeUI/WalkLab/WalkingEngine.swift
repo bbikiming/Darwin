@@ -107,12 +107,21 @@ public struct WalkingEngineCommand: Equatable, Sendable {
     /// robot-side 가 0=off, 1=절반, 2=표준, 3=1.5배, 4=2배 매핑. default 2 (표준).
     public let correctorIntensityLevel: Int
 
+    /// **SSH parity (W4)**: 머리 pan (°). robot-side `Robot::Head::GetInstance()->MoveByAngle(pan, tilt)`.
+    /// + = 로봇 기준 오른쪽. [-90, 90] clamp. default 0 (정면, backward compat — 옛 daemon 은
+    /// trailing 무시). LAN 경로의 head control 과 동등 parity 위해 추가.
+    public let headPanDeg: Double
+    /// **SSH parity (W4)**: 머리 tilt (°). + = 위. [-45, 45] clamp. default 0 (정면).
+    public let headTiltDeg: Double
+
     public init(enabled: Bool, xMm: Double, yMm: Double, aDeg: Double,
                 periodMs: Double, footHeightMm: Double,
                 hipPitchOffsetDeg: Double = 13.0,
                 balanceGain: Double = 1.0,
                 balanceEnable: Bool = false,
-                correctorIntensityLevel: Int = 2) {
+                correctorIntensityLevel: Int = 2,
+                headPanDeg: Double = 0,
+                headTiltDeg: Double = 0) {
         self.enabled = enabled
         self.xMm = xMm
         self.yMm = yMm
@@ -123,23 +132,29 @@ public struct WalkingEngineCommand: Equatable, Sendable {
         self.balanceGain = balanceGain
         self.balanceEnable = balanceEnable
         self.correctorIntensityLevel = max(0, min(4, correctorIntensityLevel))
+        self.headPanDeg = max(-90, min(90, headPanDeg))
+        self.headTiltDeg = max(-45, min(45, headTiltDeg))
     }
 
     /// file 로 write 할 직렬화 — 한 줄, robot-side parser 가 sscanf 로 read.
-    /// 사이클 162: 10 필드 — 옛 daemon (7 필드 sscanf) 는 8-10 trailing 무시 (backward compat).
+    /// **SSH parity (W4)**: 12 필드 — 사이클 162 의 10 필드 뒤에 head pan/tilt 2 필드 APPEND.
+    /// 옛 daemon (7 또는 10 필드 sscanf) 는 trailing head 필드 무시 (backward compat).
     public var serializedLine: String {
-        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg balance_gain balance_enable corrector_level`.
-        // 옛 daemon sscanf: `sscanf(line, "%d %f %f %f %f %f %f", &en,&x,&y,&a,&p,&f,&h)` → 7 필드 read, 무시.
-        // 새 daemon sscanf: `sscanf(line, "%d %f %f %f %f %f %f %f %d %d", &en,...,&bg,&be,&bl)` → 10 필드.
-        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f %.2f %d %d",
+        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg balance_gain balance_enable corrector_level head_pan head_tilt`.
+        // 옛 daemon sscanf: `sscanf(line, "%d %f %f %f %f %f %f", ...)` → 7 필드 read, trailing 무시.
+        // 사이클 162 daemon: `sscanf(line, "%d %f %f %f %f %f %f %f %d %d", ...)` → 10 필드.
+        // 새 daemon (SSH parity): 13 필드 read (cmd_id 포함 14) → head pan/tilt 적용.
+        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f %.2f %d %d %.2f %.2f",
                enabled ? 1 : 0, xMm, yMm, aDeg, periodMs, footHeightMm, hipPitchOffsetDeg,
-               balanceGain, balanceEnable ? 1 : 0, correctorIntensityLevel)
+               balanceGain, balanceEnable ? 1 : 0, correctorIntensityLevel,
+               headPanDeg, headTiltDeg)
     }
 
     /// 정지 명령 — enabled=0, 나머지 0, hipPitchOffsetDeg=13 (기본 유지),
-    /// balance default (1.0 / false / 2).
+    /// balance default (1.0 / false / 2), head 0,0 (정면 — SSH parity W4).
     public static let stop = WalkingEngineCommand(
-        enabled: false, xMm: 0, yMm: 0, aDeg: 0, periodMs: 0, footHeightMm: 0
+        enabled: false, xMm: 0, yMm: 0, aDeg: 0, periodMs: 0, footHeightMm: 0,
+        headPanDeg: 0, headTiltDeg: 0
     )
 
     /// 사이클 164 (codex MAJOR fix, cycle 162 review): 옛 daemon backward compat 경고.

@@ -43,8 +43,12 @@ public struct PreflightChecklistView: View {
         allAutoPassed && manualIphoneCharge
     }
 
+    // V297-6 (PM Story S1): .pending は失敗ではないので failure guidance から除外.
     private var failedItems: [PreflightItem] {
-        autoItems.filter { !$0.isPassed }
+        autoItems.filter {
+            if case .fail = $0.status { return true }
+            return false
+        }
     }
 
     // MARK: - Body
@@ -191,7 +195,12 @@ public struct PreflightChecklistView: View {
             VStack(alignment: .leading, spacing: DS.Space.xxs) {
                 Text(item.title)
                     .font(DS.Font.bodyEmphasis)
-                if case .fail(let reason) = item.status {
+                // V297-6 (PM Story S1): .pending 시 "확인 중…" 안내 문구 표시
+                if case .pending = item.status {
+                    Text("확인 중…")
+                        .font(DS.Font.caption)
+                        .foregroundStyle(DS.Color.secondaryText)
+                } else if case .fail(let reason) = item.status {
                     Text(reason)
                         .font(DS.Font.caption)
                         .foregroundStyle(DS.Color.danger)
@@ -260,8 +269,9 @@ public struct PreflightChecklistView: View {
     @ViewBuilder
     private func statusIcon(for status: PreflightItem.Status) -> some View {
         switch status {
+        // V297-6 (PM Story S1): pending → "clock.arrow.circlepath" 회색
         case .pending:
-            Image(systemName: "clock.fill")
+            Image(systemName: "clock.arrow.circlepath")
                 .foregroundStyle(DS.Color.secondaryText)
         case .pass:
             Image(systemName: "checkmark.circle.fill")

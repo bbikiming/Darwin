@@ -77,7 +77,7 @@ public struct RootView: View {
         let placeholder = ConnectionStoreSafetyPort(hooks: .init(
             armAsync:          { false },
             disarmSync:        { },
-            emergencyStopSync: { },
+            emergencyStopSync: { false },
             sendMotion:        { _, _ in false },
             sendWalk:          { _ in false },
             sendStop:          { _ in true },
@@ -125,26 +125,16 @@ public struct RootView: View {
                     }
                     recoveryToastOverlay
                     safetyAlertBannerOverlay
-                    // **Mobile Pilot Relay** — iOS companion app pairing surface.
-                    // Self-contained controller; user toggles via the floating
-                    // panel in the bottom-trailing corner. Pre-wire-up the
-                    // panel just shows the toggle/QR; the live ConnectionStore
-                    // is plumbed through MobileRelayBootstrap.
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            // P0-1 fix (truth-gap report, 2026-05-25): walkLabSession
-                            // 주입 — 없으면 sendWalk hook 이 walkSessionUnavailable 로
-                            // reject 되어 실 robot 제어 경로가 끊긴다.
-                            MobileRelayBootstrap(store: store,
-                                                 controller: mobileRelayController,
-                                                 walkSession: walkLabSession)
-                                .frame(maxWidth: 320)
-                                .padding(DFSpace.sm)
-                        }
-                    }
-                    .allowsHitTesting(true)
+                    // **V294** — Mobile Relay bootstrap 는 toolbar chip popover 로 통합됨.
+                    // floating panel 완전 제거. MobileRelayBootstrap 의 hook wiring 은
+                    // 0×0 hidden view 로 유지 — ConnectionStore 포트 교체 (rebindHooks)
+                    // 가 .task modifier 안에서 실행되어야 live hooks 가 controller 에 주입됨.
+                    MobileRelayBootstrap(store: store,
+                                         controller: mobileRelayController,
+                                         walkSession: walkLabSession)
+                        .frame(width: 0, height: 0)
+                        .hidden()
+                        .allowsHitTesting(false)
                 }
             }
             // `.balanced` — 좁은 윈도우에서도 사이드바 자동 collapse 안 함.
@@ -1077,6 +1067,8 @@ public struct RootView: View {
             RemotePilotView()
         case .remote:
             RemoteShellView()
+        case .cockpit:
+            PilotCockpitView()
         case .expert:
             expertDetail
         }
@@ -1092,6 +1084,7 @@ public struct RootView: View {
         case .walkData: WalkDataView()
         case .strategy: StrategyView()
         case .harness:  HarnessInspectorView()
+        case .mic:      MicCheckView()
         }
     }
 
@@ -1241,7 +1234,7 @@ public struct RootView: View {
 // MARK: - Sections
 
 private enum Section: String, CaseIterable, Hashable {
-    case studio, teach, motion, walk, conversation, remote, expert, pilot
+    case studio, teach, motion, walk, conversation, remote, expert, pilot, cockpit
 
     init?(id: String) {
         self.init(rawValue: id)
@@ -1257,6 +1250,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .pilot:         return "원격 조종"
         case .remote:        return "원격 명령"
         case .expert:        return "전문가"
+        case .cockpit:       return "조종 시뮬"
         }
     }
 
@@ -1270,6 +1264,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .pilot:         return "gamecontroller.fill"
         case .remote:        return "terminal.fill"
         case .expert:        return "wrench.and.screwdriver"
+        case .cockpit:       return "scope"
         }
     }
 
@@ -1283,6 +1278,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .remote:        return "⌘6"
         case .expert:        return "⌘7"
         case .pilot:         return "⌘8"
+        case .cockpit:       return "⌘9"
         }
     }
 
@@ -1296,12 +1292,13 @@ private enum Section: String, CaseIterable, Hashable {
         case .pilot:         return DFColor.accent
         case .remote:        return DFColor.warning
         case .expert:        return DFColor.textSecondary
+        case .cockpit:       return DFColor.success
         }
     }
 }
 
 private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
-    case board, joints, motion, walk, walkData, strategy, harness
+    case board, joints, motion, walk, walkData, strategy, harness, mic
     var id: String { rawValue }
 
     var label: String {
@@ -1315,6 +1312,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         // V279-2 (P1 discoverability fix): "텔레메트리" 는 일반 사용자에게 모호.
         // → "실시간 센서 데이터" 로 변경 (한국어 + 직관적 의미).
         case .harness:  return "실시간 센서 데이터"
+        case .mic:      return "마이크 체크"
         }
     }
 
@@ -1329,6 +1327,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .walkData: return "저장된 보행 trial 기록 + 분석 차트"
         case .strategy: return "전략 FSM — 자율 보행 / 환경 인식 / 결정 트리"
         case .harness:  return "로봇 관성(IMU) · 압력 · 온도 · 보행 cycle 등의 실시간 데이터를 차트로 볼 수 있어요."
+        case .mic:      return "다윈 마이크로 음성을 캡처해 맥으로 가져오고 인식되는지 확인하는 실험 도구"
         }
     }
     var icon: String {
@@ -1340,6 +1339,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .walkData: return "chart.line.uptrend.xyaxis"
         case .strategy: return "brain.head.profile"
         case .harness:  return "tray.and.arrow.down"
+        case .mic:      return "mic.fill"
         }
     }
 }

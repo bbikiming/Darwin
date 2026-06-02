@@ -45,6 +45,8 @@ public enum CommandType: String, Codable, Sendable, CaseIterable {
     case pilotWalk = "pilot.walk"
     case pilotStop = "pilot.stop"
     case pilotHead = "pilot.head"
+    /// V297-9 CRITICAL-1: 복구 전용 명령 — pilot.arm 재사용 race 해결.
+    case pilotRecover = "pilot.recover"
 }
 
 public enum DisarmReason: String, Codable, Sendable {
@@ -235,6 +237,20 @@ public struct EStopPayload: Codable, Sendable, Equatable {
     public init(reason: EStopReason = .user) { self.reason = reason }
 }
 
+/// V297-9 CRITICAL-1 — 복구 전용 payload.
+public struct RecoverPayload: Codable, Sendable, Equatable {
+    public let cradleConfirmed: Bool
+    public let operator_: String
+    public init(cradleConfirmed: Bool, operator: String) {
+        self.cradleConfirmed = cradleConfirmed
+        self.operator_ = `operator`
+    }
+    private enum CodingKeys: String, CodingKey {
+        case cradleConfirmed
+        case operator_ = "operator"
+    }
+}
+
 public struct MotionPayload: Codable, Sendable, Equatable {
     public let slot: Int
     public let label: String
@@ -328,6 +344,24 @@ public enum ResponseType: String, Codable, Sendable {
     case commandFailed   = "command.failed"
 }
 
+/// V297-5 HIGH-1: iOS strict enum 이 Mac 의 새 reason 코드 decode 실패시 연결이
+/// 종료되던 회귀를 해결. 새 case 등록 + custom decoder 로 unknown fallback.
+///
+/// # 등록된 reason
+///
+/// 프로토콜 §7.2 표준 코드 + Mac 서버가 실제로 송신하는 모든 코드:
+///   - 표준: notArmed, robotDisconnected, busBusy, pairingMismatch, alreadyOwned,
+///           protocolMismatch, unknownPreset, riskNotConfirmed, simulated, latencyGate,
+///           invalidPayload, internalError
+///   - V297-4/5 추가: lowBattery, clockSkew, highRiskNotAllowed, dxlPowerOff,
+///           headUnsupportedInMVP, preflightFailed, walkSessionUnavailable, cradleRequired,
+///           invalidSlot, armFailed, estopVerificationFailed
+///
+/// # Forward compatibility
+///
+/// 미래에 Mac 이 새 reason 추가하면 iOS 가 자동으로 `.unknown` 으로 처리.
+/// raw 값은 별도 `rawReasonString` 컨테이너 미보존 — UI 는 RejectedPayload.message 의
+/// 사람이 읽을 수 있는 설명에 의존.
 public enum RejectionReason: String, Codable, Sendable {
     case notArmed
     case robotDisconnected
@@ -341,16 +375,41 @@ public enum RejectionReason: String, Codable, Sendable {
     case latencyGate
     case invalidPayload
     case internalError
+    // V297-4/5 추가 코드 — Mac 서버가 실제로 송신.
+    case lowBattery
+    case clockSkew
+    case highRiskNotAllowed
+    case dxlPowerOff
+    case headUnsupportedInMVP
+    case preflightFailed
+    case walkSessionUnavailable
+    case cradleRequired
+    case invalidSlot
+    case armFailed
+    case estopVerificationFailed
+    // Forward-compat fallback — 모르는 reason 은 여기로.
     case unknown
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = RejectionReason(rawValue: raw) ?? .unknown
+    }
 }
 
+/// V297-5 HIGH-1: 동일 forward-compat 적용 — Mac 미래 추가 reason 도 .unknown fallback.
 public enum FailureReason: String, Codable, Sendable {
     case noAck
     case staleCommand
     case transportError
     case safetyAbort
     case internalError
+    case stopFailed
     case unknown
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = FailureReason(rawValue: raw) ?? .unknown
+    }
 }
 
 public struct RejectedPayload: Codable, Sendable, Equatable {
@@ -401,15 +460,40 @@ public struct WelcomePayload: Codable, Sendable, Equatable {
     public let sessionId: String
     public let heartbeatIntervalMs: Int
     public let watchdogTimeoutMs: Int
+    /// V297-4 (2026-05-26): optional — Mac 서버가 어떤 명령을 실제로 지원하는지 명시.
+    /// 없으면 모든 명령을 가정해 시도 (legacy backward compat).
+    public let capabilities: WelcomeCapabilities?
 
     public init(macName: String, macVersion: String, relayProtocolVersion: Int,
-                sessionId: String, heartbeatIntervalMs: Int, watchdogTimeoutMs: Int) {
+                sessionId: String, heartbeatIntervalMs: Int, watchdogTimeoutMs: Int,
+                capabilities: WelcomeCapabilities? = nil) {
         self.macName = macName
         self.macVersion = macVersion
         self.relayProtocolVersion = relayProtocolVersion
         self.sessionId = sessionId
         self.heartbeatIntervalMs = heartbeatIntervalMs
         self.watchdogTimeoutMs = watchdogTimeoutMs
+        self.capabilities = capabilities
+    }
+}
+
+/// V297-4/5/8/9 — Mac → iOS 의 capabilities 통보.
+///
+/// 의미체계 (V297-9 LOW-1/2 갱신 — 실 동작 반영):
+///   - `head`: pilot.head 가 실제 로봇 헤드에 적용되는지. false 면 iOS UI 진입점 숨김.
+///     nil capabilities (legacy Mac) 도 false 처리 — AppState.headControlSupported 정책.
+///   - `walkFreeform`: freeform preset 을 서버가 처리하는지. false 면 reject. nil → false.
+///   - `speedScaleAccepted`: WalkPayload.speedScale 필드를 **수신 + 실 적용** 하는지.
+///     V297-8 부터 Mac 가 WalkLabSession.start(speedScale:) 로 amplitude 에 실 곱. nil → false.
+public struct WelcomeCapabilities: Codable, Sendable, Equatable {
+    public let head: Bool
+    public let walkFreeform: Bool
+    public let speedScaleAccepted: Bool
+
+    public init(head: Bool = false, walkFreeform: Bool = false, speedScaleAccepted: Bool = false) {
+        self.head = head
+        self.walkFreeform = walkFreeform
+        self.speedScaleAccepted = speedScaleAccepted
     }
 }
 

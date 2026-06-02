@@ -40,6 +40,11 @@ public protocol BusInterface: AnyObject, Sendable {
 
     @discardableResult
     func setPosition(_ joint: JointID, raw position: UInt16) throws -> UInt16
+
+    /// 다중 관절 동시 write (SYNC_WRITE 1패킷). per-joint 응답 없음 — transport error 만 throw.
+    /// 구현하지 않는 mock 은 extension default (per-joint 루프) 사용.
+    func setPositions(_ targets: [(JointID, UInt16)]) throws
+
     func setMovingSpeed(_ joint: JointID, speed: UInt16) throws
     func setPGain(_ joint: JointID, value: UInt8) throws
 
@@ -62,6 +67,18 @@ public protocol BusInterface: AnyObject, Sendable {
     func motionPlayCancel() throws
 
     var isMotionPlaying: Bool { get }
+}
+
+/// `setPositions` 기본 구현 — per-joint 루프 fallback.
+///
+/// MockBus 처럼 `setPositions` 를 직접 구현하지 않는 conformer 는 이 default 로 동작.
+/// Real `Bus` 는 자체 구현에서 SYNC_WRITE 1패킷 사용.
+extension BusInterface {
+    public func setPositions(_ targets: [(JointID, UInt16)]) throws {
+        for (joint, raw) in targets {
+            _ = try setPosition(joint, raw: raw)
+        }
+    }
 }
 
 /// `Bus` 는 이미 모든 BusInterface 메서드를 구현 — empty conformance.

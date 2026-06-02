@@ -147,6 +147,11 @@ extension WalkDataView {
             if let d = Double(exp.to) { deltas.customAnklePitchGain = d }
         case .customGainAnkleRoll:
             if let d = Double(exp.to) { deltas.customAnkleRollGain = d }
+        // **데이터 기반 자동 튜닝 (2026-05-30)**: 균형 안정성 파라미터 (승인 게이트 경유).
+        case .baselineTauSec:
+            if let d = Double(exp.to) { deltas.baselineTauSec = d }
+        case .derivativeTimeSec:
+            if let d = Double(exp.to) { deltas.derivativeTimeSec = d }
         // **v1.11.14.6 — exhaustive switch**: ResponseAxis 신규 추가 시 silent skip 차단.
         case .none, .unknown:
             break

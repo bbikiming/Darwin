@@ -68,26 +68,31 @@ public enum InputSource: String, Sendable, Equatable, Hashable, CaseIterable, Co
     /// 한국어/영어 keyword spotting → bridge.handleMotion / handleEmergency / handleRecovery.
     /// telemetry 에서 voice 입력 비중 추적 → UX 개선 신호.
     case voice
+    /// 화면 위 가상 조이스틱 (마우스 드래그). `.ui` 와는 별도로 분류하여
+    /// 클릭 버튼과 연속 stick 입력의 telemetry 를 분리한다.
+    case virtualJoystick
 
     public var label: String {
         switch self {
-        case .keyboard:  return "키보드"
-        case .tello:     return "Tello"
-        case .gamepad:   return "게임패드"
-        case .djiRC:     return "DJI RC"
-        case .ui:        return "UI 버튼"
-        case .voice:     return "음성"
+        case .keyboard:        return "키보드"
+        case .tello:           return "Tello"
+        case .gamepad:         return "게임패드"
+        case .djiRC:           return "DJI RC"
+        case .ui:              return "UI 버튼"
+        case .voice:           return "음성"
+        case .virtualJoystick: return "가상 조이스틱"
         }
     }
 
     public var icon: String {
         switch self {
-        case .keyboard:  return "keyboard"
-        case .tello:     return "airplane.circle"
-        case .gamepad:   return "gamecontroller"
-        case .djiRC:     return "antenna.radiowaves.left.and.right"
-        case .ui:        return "hand.tap"
-        case .voice:     return "mic.fill"
+        case .keyboard:        return "keyboard"
+        case .tello:           return "airplane.circle"
+        case .gamepad:         return "gamecontroller"
+        case .djiRC:           return "antenna.radiowaves.left.and.right"
+        case .ui:              return "hand.tap"
+        case .voice:           return "mic.fill"
+        case .virtualJoystick: return "dot.circle.and.cursorarrow"
         }
     }
 }

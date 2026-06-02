@@ -292,6 +292,9 @@ public struct WalkLabView: View {
                 // **v1.21.1 (2026-05-22)** — GamepadPilotAdapter UI wire-up.
                 // PS4/Xbox 등 GCExtendedGamepad 호환 컨트롤러 즉시 사용 가능.
                 GamepadPilotPanel(bridge: bridge)
+                // 마우스 드래그 가상 조이스틱 — 외부 컨트롤러 없이도 즉시 조종 가능.
+                // iOS RemotePilotScreen 과 동일 의미의 stick → WalkingCommand 매핑.
+                VirtualJoystickPilotPanel(bridge: bridge)
                 // **사이클 86 (2026-05-22)** — 4 차원 종합 감도 + smoothing 설정 panel.
                 // 슬라이더 → bridge 즉시 preview, "저장" 클릭 → UserDefaults 영속.
                 // KeyboardPilotPanel 의 1축 multiplier 와 직교 — 정밀 절대값 조정 채널.

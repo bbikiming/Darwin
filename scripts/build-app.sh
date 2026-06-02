@@ -87,7 +87,9 @@ command -v sips >/dev/null 2>&1 || {
 }
 
 INFO_PLIST_SRC="$PKG_ROOT/Sources/DarwinForgeApp/Info.plist"
-ENTITLEMENTS_SRC="$PKG_ROOT/Sources/DarwinForgeApp/DarwinForge.entitlements"
+# 2026-06-01: 비샌드박스 entitlements — 샌드박스는 /usr/bin/ssh spawn + ~/.ssh 키 접근을
+# 막아 로봇 SSH 연결(LAN/온보드)이 전부 실패한다. 이 앱은 로컬 실행 전용이라 비샌드박스가 맞다.
+ENTITLEMENTS_SRC="$PKG_ROOT/Sources/DarwinForgeApp/DarwinForge-NoSandbox.entitlements"
 
 if [ ! -f "$INFO_PLIST_SRC" ]; then
     echo "✗ Info.plist 누락: $INFO_PLIST_SRC" >&2
@@ -139,10 +141,13 @@ cp "$INFO_PLIST_SRC" "$APP_BUNDLE/Contents/Info.plist"
 
 # V297-10: CFBundleVersion 은 git commit count (정수) 사용.
 # App Store Connect 가 정수 또는 마침표-분리 정수만 수락 (hex SHA 거부, -19239 에러).
-# SHA 는 별도 plist 키 (BuildSHA) 로 보관해 traceability 유지.
+# V297-12: BUILD_NUMBER env 로 override 가능 — 코드 변경 없이 재 archive 시 (App Store
+# 는 동일 build 번호 재업로드 거부) 명시 bump 지원. 미설정 시 git commit count 기본.
 GIT_COUNT="$(git -C "$REPO_ROOT" rev-list --count HEAD 2>/dev/null || echo "1")"
 GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "dev")"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GIT_COUNT" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null || true
+BUILD_NUMBER_USED="${BUILD_NUMBER:-$GIT_COUNT}"
+echo "  ✓ build number    : $BUILD_NUMBER_USED ${BUILD_NUMBER:+(env override)}"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER_USED" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :BuildSHA string $GIT_SHA" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Set :BuildSHA $GIT_SHA" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null || true
 

@@ -310,8 +310,26 @@ reason 허용 값: `user`, `deadmanRelease`, `tabSwitch`, `appBackground`, `late
 
 ## 7. 응답 (Server → Client, per command)
 
-Mac relay 는 hello/heartbeat 를 제외한 모든 command 에 대해 다음 4 종류 중 정확히
-하나로 응답한다.
+Mac relay 는 hello/heartbeat 를 제외한 모든 command 에 대해 다음 흐름으로 응답한다 (v1.2):
+
+```
+client → command         (e.g. pilot.walk)
+server → command.accepted  (informational interim, 검증 통과 후 즉시)
+server → command.ack | command.rejected | command.failed   (terminal — 정확히 하나)
+```
+
+`command.accepted` 는 **informational interim event** 다. iOS 가 "처리 중" UI 표시를
+시작할 수 있다는 신호일 뿐이며, terminal 응답을 대체하지 않는다. terminal 응답
+(`command.ack` / `command.rejected` / `command.failed`) 은 항상 정확히 하나 송신된다.
+
+`session.hello` 는 별도 흐름 — `session.welcome` 또는 `session.rejected` (이벤트) 로 응답.
+`pilot.heartbeat` 와 `session.goodbye` 는 응답 없음.
+
+### V297-5 priority commands
+
+`pilot.estop` 와 `pilot.stop` 는 **priority commands** — 진행 중인 다른 long-running
+명령 (예: ARM 의 battery wait) 에 막히지 않고 서버에서 즉시 처리된다. WSChannel
+transport layer 가 frame head 만 sniff 하여 우회 dispatch.
 
 ### 7.1 command.accepted
 
@@ -359,6 +377,22 @@ Mac relay 는 hello/heartbeat 를 제외한 모든 command 에 대해 다음 4 �
 - `invalidPayload` — schema 불일치
 - `internalError` — 그 외
 
+V297-5 (v1.2) 추가 코드:
+
+- `lowBattery` — Mac 측 배터리 게이트 (defense-in-depth) 통과 실패
+- `clockSkew` — iOS envelope.sentAt 가 Mac clock 과 ±10초 이상 드리프트
+- `highRiskNotAllowed` — freeform/jog 등 MVP 비활성 preset 시도
+- `dxlPowerOff` — dxlPower OFF 상태에서 walk 시도
+- `headUnsupportedInMVP` — pilot.head (capabilities.head=false)
+- `preflightFailed` — WalkLabSession.quickPreflight 차단 (cradle/IMU/thermal)
+- `walkSessionUnavailable` — WalkLabSession nil (UI tree 미마운트)
+- `cradleRequired` — ARM 시 cradleConfirmed=false
+- `invalidSlot` — runMotion 슬롯이 UInt8 범위 외
+- `armFailed` — TeleopChannel.arm 결과 .ready 미도달
+
+iOS 클라이언트는 forward-compat 위해 모르는 reason 을 `.unknown` 으로 fallback 한다.
+서버는 미래 reason 추가 시 본 목록 갱신 + iOS RejectionReason enum 추가 case 등록.
+
 ### 7.3 command.ack
 
 robot ACK 수신. 성공으로 표시 가능.
@@ -394,7 +428,10 @@ robot ACK 수신. 성공으로 표시 가능.
 }
 ```
 
-reason 코드: `noAck`, `staleCommand`, `transportError`, `safetyAbort`, `internalError`.
+reason 코드: `noAck`, `staleCommand`, `transportError`, `safetyAbort`, `internalError`, `stopFailed`.
+
+V297-5: `safetyAbort` 는 E-stop verification 실패 (bus nil, torque-off 미확인 등) 도
+포함. `message` 필드에 verification detail (`estopVerificationFailed` 등) 포함.
 
 ## 8. 이벤트 (Server → Client, broadcast)
 
@@ -605,3 +642,20 @@ MVP 보안 모델:
   - `bow/slot 41` 제거 — slot 41 은 `talk2` long-chain
   - watchdog tracking: server 가 walk accepted 시 `activeCommandId` 즉시 설정
   - pairing flow: discovery tap 후 사용자 6자리 코드 입력 필수 (자동 "000000" 제거)
+- 2026-05-26 — v1.2 audit + GPT review fix (V297-4 + V297-5):
+  - **응답 흐름 명시 (§7)**: `command.accepted` 가 interim event, terminal 응답 (ack/rejected/failed)
+    이 정확히 하나. 종전 문서가 "4종 중 하나" 표현이라 구현과 불일치였음.
+  - **priority commands (§7)**: `pilot.estop` / `pilot.stop` 는 transport layer 에서 우회 dispatch.
+    long-running command 의 actor 점유에 막히지 않음.
+  - **새 reason 코드 등록 (§7.2)**: `lowBattery`, `clockSkew`, `highRiskNotAllowed`,
+    `dxlPowerOff`, `headUnsupportedInMVP`, `preflightFailed`, `walkSessionUnavailable`,
+    `cradleRequired`, `invalidSlot`, `armFailed`. iOS 는 forward-compat 위해 `.unknown` fallback.
+  - **`WelcomePayload.capabilities` 신설 (§8.1)**: `head/walkFreeform/speedScaleAccepted` flag.
+    iOS 가 capability 보고 미지원 명령 UI 진입점 숨김.
+  - **reconnect identity (§5)**: `HelloPayload.deviceId` 가 stable identifier. Wi-Fi 깜빡임
+    재연결은 동일 deviceId 매칭으로 인정 — sessionId 보존.
+  - **latency gate (§4 재확정)**: 서버측 robot ACK round-trip 기반 (iOS clock 사용 금지).
+    clockSkew 는 ±10초 양방향 검사.
+  - **transport.warning(highLatency) (§8.5)**: reject 임계의 2/3 도달시 informational warning.
+  - **E-stop verification (§6.5)**: server 가 torque-off 검증 후에만 `command.ack`. 검증 실패시
+    `command.failed(reason=safetyAbort)`.

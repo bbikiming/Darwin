@@ -13,20 +13,28 @@ public final class WebSocketRelayClient: MobileRelayClient, @unchecked Sendable 
     private let session: URLSession
     private let clock: PilotClock
     private let ackTimeoutMs: Int
+    /// 전송 계층 keepalive ping 주기(ms). 유휴 시에도 이 간격으로 WebSocket ping 을
+    /// 보내 (1) 공유기/NAT 의 유휴 연결 정리를 예방하고 (2) 반-개방(half-open) 연결을
+    /// 다음 사용자 입력까지 기다리지 않고 ≤ 이 간격 내에 감지한다. 0 이하면 비활성.
+    private let pingIntervalMs: Int
 
     private let lock = NSLock()
     private var task: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
+    /// keepalive ping 루프 — `.connected` 직후 시작, `close` 에서 취소.
+    private var pingTask: Task<Void, Never>?
     private var pending: [String: CheckedContinuation<CommandReceipt, Error>] = [:]
     private var sessionId: String = ""
     private var connected = false
 
     public init(session: URLSession = .shared,
                 clock: PilotClock = LiveClock(),
-                ackTimeoutMs: Int = 1500) {
+                ackTimeoutMs: Int = 1500,
+                pingIntervalMs: Int = 10_000) {
         self.session = session
         self.clock = clock
         self.ackTimeoutMs = ackTimeoutMs
+        self.pingIntervalMs = pingIntervalMs
         var tCont: AsyncStream<TransportState>.Continuation!
         self.transportStream = AsyncStream { tCont = $0 }
         self.transportContinuation = tCont
@@ -73,6 +81,11 @@ public final class WebSocketRelayClient: MobileRelayClient, @unchecked Sendable 
             transportContinuation.yield(.connected(sessionId: sessionId))
             // Only now start the persistent receive loop.
             receiveTask = Task { [weak self] in await self?.receiveLoop() }
+            // Transport keepalive — keeps NAT mappings warm and detects
+            // half-open sockets within `pingIntervalMs`.
+            if pingIntervalMs > 0 {
+                pingTask = Task { [weak self] in await self?.pingLoop() }
+            }
         } catch {
             // Clean up the socket and surface the failure as a disconnected
             // transport state so observers can react.
@@ -107,18 +120,25 @@ public final class WebSocketRelayClient: MobileRelayClient, @unchecked Sendable 
     }
 
     public func close(reason: String) async {
-        let (socket, pendingCopy) = withLock {
+        let (socket, pendingCopy, wasActive) = withLock { () -> (URLSessionWebSocketTask?, [String: CheckedContinuation<CommandReceipt, Error>], Bool) in
+            // 이미 닫혀 있으면 중복 .disconnected yield 방지 (pingLoop/receiveLoop/외부
+            // disconnect 가 동시에 close 를 호출할 수 있음 — idempotent 보장).
+            let wasActive = (task != nil) || connected
             let socket = task
             task = nil
             connected = false
             let pendingCopy = pending
             pending.removeAll()
-            return (socket, pendingCopy)
+            return (socket, pendingCopy, wasActive)
         }
         receiveTask?.cancel()
         receiveTask = nil
+        pingTask?.cancel()
+        pingTask = nil
         socket?.cancel(with: .goingAway, reason: reason.data(using: .utf8))
-        transportContinuation.yield(.disconnected(reason: reason))
+        if wasActive {
+            transportContinuation.yield(.disconnected(reason: reason))
+        }
         for (_, cont) in pendingCopy {
             cont.resume(throwing: RelayClientError.transportFailure("closed: \(reason)"))
         }
@@ -209,6 +229,40 @@ public final class WebSocketRelayClient: MobileRelayClient, @unchecked Sendable 
             } catch {
                 await close(reason: "receive error: \(error)")
                 return
+            }
+        }
+    }
+
+    /// keepalive ping 루프. `pingIntervalMs` 마다 WebSocket ping 을 보내고, 실패하면
+    /// 반-개방 연결로 간주해 `close` → `.disconnected` 경로로 재연결을 유발한다.
+    private func pingLoop() async {
+        let intervalNs = UInt64(max(1, pingIntervalMs)) * 1_000_000
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: intervalNs)
+            if Task.isCancelled { return }
+            let socket = withLock { task }
+            guard let socket else { return }
+            do {
+                try await sendPing(socket)
+            } catch {
+                // ping 실패 = 연결이 죽었거나 경로가 끊김. 다음 사용자 입력을 기다리지
+                // 않고 즉시 끊김 처리 → AppState 가 자동 재연결을 시작한다.
+                await close(reason: "pingFailed: \(error)")
+                return
+            }
+        }
+    }
+
+    /// `URLSessionWebSocketTask.sendPing` 의 콜백 API 를 async 로 래핑.
+    /// pong 수신 또는 에러 시 단 한 번 콜백되므로 continuation 이중 resume 위험 없음.
+    private func sendPing(_ socket: URLSessionWebSocketTask) async throws {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            socket.sendPing { error in
+                if let error {
+                    cont.resume(throwing: error)
+                } else {
+                    cont.resume()
+                }
             }
         }
     }

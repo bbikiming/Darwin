@@ -34,21 +34,21 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
 
     // MARK: - 2. WalkingEngineCommand
 
-    /// 명령 serialize format: `enabled x y a period foot hipPitch balanceGain balanceEnable correctorLevel`
-    /// (사이클 162 — 10 필드, 옛 robot daemon 은 trailing 3 무시 — backward compat).
+    /// 명령 serialize format: `enabled x y a period foot hipPitch balanceGain balanceEnable correctorLevel headPan headTilt`
+    /// (SSH parity W4 — 12 필드, 옛 robot daemon 은 trailing head 2 무시 — backward compat).
     func testCommandSerializedLineFormat() {
         let cmd = WalkingEngineCommand(
             enabled: true, xMm: 28.0, yMm: 0.0, aDeg: 0.0,
             periodMs: 600, footHeightMm: 40, hipPitchOffsetDeg: 13.0
         )
-        XCTAssertEqual(cmd.serializedLine, "1 28.00 0.00 0.00 600 40 13.00 1.00 0 2",
-            "10 필드 — 기존 7 + balance(1.0/false/2) default trailing")
+        XCTAssertEqual(cmd.serializedLine, "1 28.00 0.00 0.00 600 40 13.00 1.00 0 2 0.00 0.00",
+            "12 필드 — 기존 10 + head pan/tilt(0,0) default trailing")
     }
 
-    /// 정지 명령 — enabled=0, hipPitch default 13, balance default.
+    /// 정지 명령 — enabled=0, hipPitch default 13, balance default, head 0,0.
     func testCommandStopFormat() {
         XCTAssertEqual(WalkingEngineCommand.stop.serializedLine,
-                       "0 0.00 0.00 0.00 0 0 13.00 1.00 0 2")
+                       "0 0.00 0.00 0.00 0 0 13.00 1.00 0 2 0.00 0.00")
     }
 
     /// 음수 turn / side 처리.
@@ -57,7 +57,33 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
             enabled: true, xMm: 18.0, yMm: -5.0, aDeg: -25.0,
             periodMs: 700, footHeightMm: 40, hipPitchOffsetDeg: 5.0
         )
-        XCTAssertEqual(cmd.serializedLine, "1 18.00 -5.00 -25.00 700 40 5.00 1.00 0 2")
+        XCTAssertEqual(cmd.serializedLine, "1 18.00 -5.00 -25.00 700 40 5.00 1.00 0 2 0.00 0.00")
+    }
+
+    /// **SSH parity (W4)**: head pan/tilt 가 11-12번째 필드로 직렬화 + clamp 검증.
+    func testCommandHeadFieldsSerialize() {
+        let cmd = WalkingEngineCommand(
+            enabled: true, xMm: 0, yMm: 0, aDeg: 0,
+            periodMs: 600, footHeightMm: 40, hipPitchOffsetDeg: 13.0,
+            headPanDeg: 30.0, headTiltDeg: -15.0
+        )
+        XCTAssertEqual(cmd.headPanDeg, 30.0, accuracy: 0.01)
+        XCTAssertEqual(cmd.headTiltDeg, -15.0, accuracy: 0.01)
+        let fields = cmd.serializedLine.split(separator: " ")
+        XCTAssertEqual(fields.count, 12, "12 필드: \(cmd.serializedLine)")
+        XCTAssertEqual(String(fields[10]), "30.00", "11번째 = head pan")
+        XCTAssertEqual(String(fields[11]), "-15.00", "12번째 = head tilt")
+    }
+
+    /// **SSH parity (W4)**: head pan [-90,90] / tilt [-45,45] clamp.
+    func testCommandHeadFieldsClamp() {
+        let cmd = WalkingEngineCommand(
+            enabled: true, xMm: 0, yMm: 0, aDeg: 0,
+            periodMs: 600, footHeightMm: 40,
+            headPanDeg: 200.0, headTiltDeg: -200.0
+        )
+        XCTAssertEqual(cmd.headPanDeg, 90.0, accuracy: 0.01, "pan +90 clamp")
+        XCTAssertEqual(cmd.headTiltDeg, -45.0, accuracy: 0.01, "tilt -45 clamp")
     }
 
     /// **v1.11.5.2 chain break fix 회귀**: hipPitchOffsetTrimDeg 변경이 ROBOTIS onboard
@@ -73,7 +99,7 @@ final class WalkLabV115OnboardEngineTests: XCTestCase {
             "hipPitchOffsetTrimDeg → cmd.hipPitchOffsetDeg chain 통과")
         // 사이클 162: 7번째 필드 (hipPitchOffsetDeg) 가 5.00 인지 — split + 위치 검증.
         let fields = cmd.serializedLine.split(separator: " ")
-        XCTAssertEqual(fields.count, 10, "10 필드")
+        XCTAssertEqual(fields.count, 12, "12 필드 (SSH parity: 10 + head 2)")
         XCTAssertEqual(String(fields[6]), "5.00",
             "7번째 필드가 trim 값: \(cmd.serializedLine)")
     }

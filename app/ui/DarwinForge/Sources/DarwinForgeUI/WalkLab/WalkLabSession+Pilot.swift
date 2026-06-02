@@ -83,6 +83,8 @@ extension WalkLabSession {
         if emergencyStopActive {
             return false
         }
+        // M4: stamp "recently piloting" latch (amplitude 경로).
+        lastPilotingAt = Date()
         // advanced=true 자동 활성 (write BEFORE).
         if !advanced {
             advanced = true
@@ -93,10 +95,89 @@ extension WalkLabSession {
         return true
     }
 
+    /// **ROBOTIS Walking 의 속도 = amplitude × cadence (Period 의 역수)**.
+    /// Cockpit 같이 amplitude + period 둘 다 controll 하는 호출자용 facade.
+    ///
+    /// `pilotApplyAmplitude` 는 stride/side/turn 만 write 하고 period 는 preset
+    /// 의 기본값 유지. Cockpit 의 throttle 슬라이더가 cadence 를 직접 control 하
+    /// 려면 본 facade 가 필요.
+    ///
+    /// # 동작
+    ///
+    /// 1. `pilotApplyAmplitude(cmd)` 호출 (emergency 가드 + amplitude write).
+    /// 2. `periodMs` clamp (600..850 — WalkLab freeform 범위) 후 write.
+    /// 3. caller 가 `pilotSyncEngine()` 호출하면 cadence + amplitude 모두 motor 로
+    ///    송출. 시뮬 (`CockpitWalkAnimator`) 도 같은 periodMs 사용 → digital twin.
+    ///
+    /// - Returns: emergency 차단 시 `false`, 정상 write 시 `true`.
+    @discardableResult
+    public func pilotApplyAmplitudeWithPeriod(_ cmd: WalkingCommand,
+                                               periodMs: Double) -> Bool {
+        let accepted = pilotApplyAmplitude(cmd)
+        guard accepted else { return false }
+        // WalkLab freeform clamp 의 600..850 ms 범위. 그 밖이면 saturate.
+        let clamped = max(600.0, min(850.0, periodMs))
+        // pilotApplyAmplitude 가 advanced=true 자동 활성 → customPeriodMs 가
+        // effective. WalkLab 의 advanced slider 와 동일 경로.
+        self.customPeriodMs = clamped
+        return true
+    }
+
     /// engine sync — `syncCommandToEngine()` wrap. bridge 의 latency marker 사이에 호출.
     /// 종전 bridge 가 `session.syncCommandToEngine()` 직접 호출 → facade method 로 대체.
     public func pilotSyncEngine() {
         syncCommandToEngine()
+    }
+
+    // MARK: - Continuous freeform (실시간 무중단 조종 — code review HIGH-1 fix)
+
+    /// **무중단 연속 조종 facade — `startOrUpdateMobileFreeform` 위임**.
+    ///
+    /// # 왜 필요한가 (code review HIGH-1)
+    ///
+    /// 종전 cockpit 은 `pilotStart(.slowWalk)` (preset 경로) + `pilotApplyAmplitude-
+    /// WithPeriod` 조합을 썼다. preset 경로의 `runContinuousWalk` 은 **frozen plan**
+    /// 을 캡쳐하므로, 조종값 (stride/period) 변경을 motor 에 반영하려면 220ms
+    /// debounce 후 `startWalkCycle` **전체 재시작** — 매번 walkReady entry phase 를
+    /// 재삽입한다. 실 robot 에서 이는:
+    ///   1. 조종값 바꿀 때마다 robot 이 잠깐 직립 → 재보행 (balance 외란).
+    ///   2. ~220ms 동안 화면 (animator, 즉시 cadence 변경) vs 실 motor (옛 plan
+    ///      마무리 후 재시작) 가 위상 불일치 → digital-twin 깨짐.
+    ///
+    /// freeform 경로 (`startOrUpdateMobileFreeform`) 는 **단일 연속 task** 를 유지
+    /// 하고 매 phase 마다 `mobileFreeformTuning` 을 재읽기 → restart 0, walkReady
+    /// 멈칫 0. 화면의 즉시-cadence 모델과 motor 모델이 연속적으로 일치.
+    ///
+    /// iOS RemotePilot 이 이미 본 경로로 "stick 각도/거리 변화를 멈춤 없이 반영" 을
+    /// 달성 중 — cockpit 도 동일 메커니즘 재사용.
+    ///
+    /// # 동작
+    ///
+    /// 1. `cmd` (strideMm/sideMm/turnDeg) + `periodMs` → `AdvancedTuning` 합성.
+    ///    footHeight/balanceGain/hipPitchOffset 는 안전 default (실 robot 검증값).
+    /// 2. `startOrUpdateMobileFreeform(tuning:)`:
+    ///    - 보행 미시작 → freeform cycle 1회 start.
+    ///    - 보행 중 → `applyMobileFreeformTuning` 으로 engine.setCommand +
+    ///      setPeriodMs **직접** 갱신 (재시작 없음).
+    ///    - 다른 preset 보행 중 → reject (false).
+    /// 3. emergency 중 → `startOrUpdateMobileFreeform` 가 내부에서 false 반환.
+    ///
+    /// 자이로 보정은 freeform cycle 도 동일하게 `transformPose` (=
+    /// `applyBalanceCorrectionIfEnabled`) 를 wire 하므로 `enableBalanceCorrection`
+    /// 토글이 실시간 반영된다.
+    ///
+    /// - Returns: 시작/갱신 성공 시 `true`. emergency / 다른 보행 활성 등으로 거부 시 `false`.
+    @discardableResult
+    public func pilotApplyFreeform(_ cmd: WalkingCommand, periodMs: Double) -> Bool {
+        let tuning = WalkMotionLibrary.AdvancedTuning(
+            strideMm: cmd.strideMm,
+            sideMm: cmd.sideMm,
+            turnDeg: cmd.turnDeg,
+            periodMs: periodMs,
+            footHeightMm: 35,
+            balanceGain: 1.0,
+            hipPitchOffsetDeg: 13.0)
+        return startOrUpdateMobileFreeform(tuning: tuning)
     }
 
     // MARK: - Preset start
@@ -147,6 +228,13 @@ extension WalkLabSession {
     /// `session.lastRobotEvent` 도 set. 본 facade 는 단순 wrap — 메시지는 bridge 책임
     /// (source label 이 bridge 의 컨텍스트).
     public func pilotEmergencyExit() {
+        // **H1 fix (2026-05-30)**: `.failed` 는 `exitEmergencyMode()` 에서 클리어되지 않아
+        // motorGate(`autoRecoveryPhase != .idle`) 가 영구 차단. 사용자 RECOVER 버튼의
+        // 단일 진입점인 `pilotEmergencyExit()` 에서 클리어. 자동 recovery 도중 mid-flight
+        // 클리어는 허용하지 않음 — 이 경로는 오직 명시적 사용자 액션으로만 진입.
+        if autoRecoveryPhase == .failed {
+            autoRecoveryPhase = .idle
+        }
         exitEmergencyMode()
     }
 

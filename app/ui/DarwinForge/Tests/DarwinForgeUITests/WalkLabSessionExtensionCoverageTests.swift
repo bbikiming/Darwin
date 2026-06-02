@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — _testForceImuAndTick 는 DEBUG-only.
+#if DEBUG
 import Foundation
 import ForgeCore
 import XCTest
@@ -448,3 +450,4 @@ final class WalkLabSessionExtensionCoverageTests: XCTestCase {
         }
     }
 }
+#endif

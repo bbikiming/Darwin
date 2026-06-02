@@ -34,6 +34,10 @@ Package.resolved
 Packages/
 *.xcodeproj
 
+# Distribution artifacts — scripts/archive-app.sh / upload-app.sh 산출물.
+# .xcarchive(120M+)·.pkg·.dmg 는 per-build 산출물이라 commit 안 함.
+dist/
+
 # CocoaPods
 Pods/
 *.pcm

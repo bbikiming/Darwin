@@ -154,6 +154,27 @@ final class WalkLabV1116OnboardRobustTests: XCTestCase {
         XCTAssertTrue(cmd.contains("NO_ACK"), "deadline 후 NO_ACK fallback")
     }
 
+    /// **codex HIGH fix (2026-06-02)**: stale ACK race 차단 — 명령 전 ACK clear + cmd_id 일치까지
+    /// 폴링. 종전 `[ -s ack ]` 단독은 직전 명령의 stale ACK 를 즉시 반환했다.
+    func testWalkLabSendCommandClearsStaleAckAndPollsForCmdId() {
+        let cmdId = "c987_beef"
+        let cmd = RobotSetupCommand.walkLabRobotisSendCommand(line: "1 0 0 0 600 40 13", cmdId: cmdId)
+        // 1) 명령 쓰기 전에 stale ACK 제거.
+        XCTAssertTrue(cmd.contains("rm -f /tmp/df-walklab-ack"),
+                      "명령 전 stale ACK clear. got=\(cmd.prefix(160))")
+        // 2) 이번 cmd_id 가 ACK 에 나타날 때까지 grep 폴링.
+        XCTAssertTrue(cmd.contains("grep -qF '\(cmdId)'"),
+                      "cmd_id 일치까지 폴링(grep). got=\(cmd.prefix(200))")
+        // clear 가 cmd 쓰기보다 먼저 와야 함(순서).
+        if let rmIdx = cmd.range(of: "rm -f /tmp/df-walklab-ack"),
+           let writeIdx = cmd.range(of: "> /tmp/df-walklab-cmd.tmp") {
+            XCTAssertLessThan(rmIdx.lowerBound, writeIdx.lowerBound,
+                              "ACK clear 가 cmd write 보다 먼저")
+        } else {
+            XCTFail("rm/write 구간 탐색 실패")
+        }
+    }
+
     /// **v1.11.16.2 default cmdId**: nil 이면 자동 생성.
     func testWalkLabSendCommandAutoGeneratesCmdId() {
         let cmd1 = RobotSetupCommand.walkLabRobotisSendCommand(line: "1 0 0 0 600 40 13", cmdId: nil)

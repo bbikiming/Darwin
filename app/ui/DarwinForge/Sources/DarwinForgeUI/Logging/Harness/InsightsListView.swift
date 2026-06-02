@@ -279,6 +279,7 @@ struct LiveAlertsBanner: View {
                     .font(.caption2)
                     .controlSize(.mini)
                 }
+                // **V289-5** — 각 알림 행에 severity + 메시지 결합 accessibilityLabel.
                 ForEach(alerts.active) { alert in
                     HStack(spacing: 6) {
                         Circle().fill(tint(alert.severity)).frame(width: 6, height: 6)
@@ -287,11 +288,15 @@ struct LiveAlertsBanner: View {
                         Text(alert.detail).font(.caption2).foregroundStyle(.tertiary)
                             .lineLimit(1)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(alert.severity.rawValue) — \(alert.title): \(alert.detail)")
                 }
             }
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.06)))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.red.opacity(0.3), lineWidth: 1))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("라이브 알림 \(alerts.active.count)건")
         }
     }
 

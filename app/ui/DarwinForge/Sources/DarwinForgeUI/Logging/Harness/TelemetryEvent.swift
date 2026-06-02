@@ -463,6 +463,20 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// data: session_count.
     public static let walklabDataAnalysisStarted: TelemetryKind = "walklab.data_analysis_started"
 
+    // Mobile Pilot Relay — Connection Lifecycle (V295-2)
+    /// WebSocket TCP 수락 — handshake 시작 직전 첫 이벤트.
+    /// 비유: 손님이 문을 열고 들어온 순간. 아직 신원 확인 전.
+    /// data: { channelId }
+    public static let mobilePilotSocketOpened: TelemetryKind = "mobile_pilot.socket_opened"
+    /// hello payload 파싱 성공 — acceptHello 진입. 코드 검증 직전.
+    /// 비유: 손님이 이름을 말하고 신분증을 꺼낸 순간.
+    /// data: { deviceName, codePrefixHint }
+    public static let mobilePilotHelloReceived: TelemetryKind = "mobile_pilot.hello_received"
+    /// welcome 송신 완료 — 페어링 확정. iPhone 이 세션 ID 를 수신한 직후.
+    /// 비유: 출입 스탬프 찍어줌 → 공식 입장 완료.
+    /// data: { sessionId, deviceName }
+    public static let mobilePilotWelcomeSent: TelemetryKind = "mobile_pilot.welcome_sent"
+
     // Mobile Pilot Relay (V291-5)
     /// iPhone 페어링 성공 — hello 수락 + welcome 전송 완료.
     /// data: { deviceName, sessionId }
@@ -488,6 +502,49 @@ public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, Expr
     /// Watchdog 강제 정지 — heartbeat timeout → stop 전송.
     /// data: { lastHeartbeatAgeMs, activeCommandId }
     public static let mobilePilotWatchdogStop: TelemetryKind = "mobile_pilot.watchdog_stop"
+    /// WebSocket send 실패 — deliver() throw 시 발화. V296-1 silent-swallow fix.
+    /// 연속 3회 실패 시 세션 강제 종료 (deliveryFailed).
+    /// data: { errorKind, consecutive }
+    public static let mobilePilotSendFailed: TelemetryKind = "mobile_pilot.send_failed"
+
+    /// V297-5 LOW-1 — highLatency informational warning (reject 아님).
+    /// 종전엔 mobilePilotCommandRejected 로 잘못 기록되어 dashboards 의 rejected 카운터가
+    /// 오염. 별도 kind 로 분리 — 정보성 신호 vs 실 reject 구분.
+    /// data: { latencyMs }
+    public static let mobilePilotHighLatency: TelemetryKind = "mobile_pilot.high_latency"
+
+    // Auto Fall-Recovery (Phase 1)
+    /// Fall detection triggered auto-recovery — robot detected as fallen.
+    /// data: pitch_deg, direction ("forward"/"backward"), get_up_page.
+    public static let recoveryDetected: TelemetryKind = "recovery.detected"
+    /// Recovery entered settling phase — waiting for gyro to stabilize.
+    /// data: direction.
+    public static let recoverySettle: TelemetryKind = "recovery.settle"
+    /// Recovery entered get-up motion phase.
+    /// data: page, attempt, settle_ms.
+    public static let recoveryGetUp: TelemetryKind = "recovery.get_up"
+    /// Recovery succeeded — robot is upright.
+    /// data: pitch_deg, attempts, settle_ms, recovery_total_ms.
+    public static let recoveryDone: TelemetryKind = "recovery.done"
+    /// Recovery failed — max attempts exceeded or torque restore failed.
+    /// data: reason, attempts.
+    public static let recoveryFailed: TelemetryKind = "recovery.failed"
+    /// **E (진단, 2026-05-31)**: 낙하 감지됐으나 게이트가 자동 일어나기를 차단 —
+    /// "왜 getup 대신 비상/정지로 갔는지" 진단용. 동작 변경 없음 (로깅 전용).
+    /// data: { gate, fall_direction, dxl_power, cradle, motor_temp, voltage, phase, recovering }
+    public static let getupGateBlocked: TelemetryKind = "recovery.getup_gate_blocked"
+    /// **E (진단, 2026-05-31)**: L3 비상정지 발동 시 진단 컨텍스트 — raw tilt(영점 미보정) +
+    /// 영점 기준 + getup 적격 여부. 만성 pitch 오프셋이 50° 마진을 잠식했는지 분석.
+    /// data: { trigger, raw_roll_deg, raw_pitch_deg, imu_zero_pitch_deg, imu_zero_roll_deg, getup_block_reason }
+    public static let l3EmergencyDiagnostic: TelemetryKind = "safety.l3_emergency_diagnostic"
+
+    // Calibration / Pilot mapping (2026-05-31 — A·E 진단 계측, 동작 무변경)
+    /// **A (캘리브레이션)**: 정지 상태 IMU 영점 캡처 — walkReady 정지 시 pitch/roll 기준값.
+    /// 모터/안전 동작에는 아직 미적용 (분석용 기록만). data: { pitch_zero_deg, roll_zero_deg, sample_count, source }
+    public static let imuZeroCaptured: TelemetryKind = "calibration.imu_zero_captured"
+    /// 조종기 매핑 스냅샷 — 버튼→동작 + 감도. 로드/연결 시 1회 기록(영속·명확 저장 확인).
+    /// data: { buttons, scaleLR, scaleFB, scaleYaw, smoothing, source }
+    public static let pilotMappingSnapshot: TelemetryKind = "pilot.mapping_snapshot"
 
     // Safety E-Stop verification (V291-12)
     /// E-Stop 후 모든 관절 속도 = 0 확인 — torque 실제 OFF 검증 성공.

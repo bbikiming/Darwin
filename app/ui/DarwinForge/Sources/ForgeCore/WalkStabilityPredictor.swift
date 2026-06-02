@@ -115,8 +115,17 @@ internal enum StabilityThresholds {
 
     /// 보행 주기 ms → 위험 가중치. 짧을수록 (빠를수록) 위험 ↑.
     /// 800..600 안전 / 600..500 주의 / 500..400 위험 / <400 critical.
+    ///
+    /// **V288-1 P0 (2026-05-24)** — 두 가지 수정:
+    ///   1. x 좌표 ascending 정렬 (350→900) — `piecewise()` 의 ascending-knots 규약을
+    ///      준수. 종전 descending 배열은 `x <= first.0=900` 클램프가 항상 true 가 되어
+    ///      period contributor 가 영구 0 인 silent 안전 결함이 있었다 (V287-5 mutation
+    ///      testing 으로 발견).
+    ///   2. (600, 0) — period=600ms 는 `WalkStabilityInput()` 기본값 (idle baseline).
+    ///      종전 (600, 5) 는 fix 후 idle state 가 score 5 로 표시되어 사용자 mental
+    ///      model 위배. 600ms 자체는 default safe baseline 이므로 weight 0 이 적절.
     static let periodKnots: [(Double, Double)] = [
-        (900, 0), (700, 0), (600, 5), (500, 20), (450, 45), (400, 70), (350, 90)
+        (350, 90), (400, 70), (450, 45), (500, 20), (600, 0), (700, 0), (900, 0)
     ]
 
     /// 유효 속도 mm/s → 위험 가중치. monotonic non-decreasing.
@@ -470,13 +479,24 @@ public enum WalkStabilityPredictor {
     // MARK: - Helpers
 
     /// 구간별 linear 보간. knots 은 (입력, 가중치) 순서로 정렬되어 있다고 가정.
+    ///
+    /// # V288-1 (2026-05-24, V287-5 mutation testing 발견 latent bug fix)
+    ///
+    /// 종전: 오름차순 가정 — `periodKnots` 는 역순 (900→350 ms) 으로 정의되어
+    /// `x <= first.0(=900)` 이 항상 true → period contributor 가 영구 0 반환.
+    /// → period=350ms (최대 위험) 에서 score 과소 추정 → 사용자에게 잘못된 안전 신호.
+    /// 신규: monotonicity 자동 감지 + 내림차순 knots 도 정상 처리 (ascending sort 우선).
     internal static func piecewise(_ x: Double, knots: [(Double, Double)]) -> Double {
         guard let first = knots.first, let last = knots.last else { return 0 }
-        if x <= first.0 { return first.1 }
-        if x >= last.0  { return last.1 }
-        for i in 0..<(knots.count - 1) {
-            let a = knots[i]
-            let b = knots[i + 1]
+        // V288-1: 역순 detection → ascending 정렬 후 처리 (단일 호출 비용 ≤ 10 knot 무시 가능).
+        let sortedKnots: [(Double, Double)] = (first.0 <= last.0) ? knots
+            : knots.sorted { $0.0 < $1.0 }
+        guard let fst = sortedKnots.first, let lst = sortedKnots.last else { return 0 }
+        if x <= fst.0 { return fst.1 }
+        if x >= lst.0 { return lst.1 }
+        for i in 0..<(sortedKnots.count - 1) {
+            let a = sortedKnots[i]
+            let b = sortedKnots[i + 1]
             if x >= a.0 && x <= b.0 {
                 let t = (x - a.0) / (b.0 - a.0)
                 return a.1 + (b.1 - a.1) * t

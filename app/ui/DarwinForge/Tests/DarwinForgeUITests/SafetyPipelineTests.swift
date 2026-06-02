@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — _testForceTick/_testInspectL3HardGate 는 DEBUG-only.
+#if DEBUG
 import XCTest
 @testable import DarwinForgeUI
 @testable import ForgeCore
@@ -365,3 +367,4 @@ final class SafetyPipelineTests: XCTestCase {
                        "L4 gate 자동 emergency → trigger = .thermalOverheat")
     }
 }
+#endif

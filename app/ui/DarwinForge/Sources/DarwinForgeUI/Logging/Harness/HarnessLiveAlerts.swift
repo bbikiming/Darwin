@@ -86,7 +86,7 @@ public final class HarnessLiveAlerts: ObservableObject {
                 newAlerts.append(makeAlert(
                     id: "rtt.window_mean",
                     severity: mean > thresholds.rttMeanMs * 1.5 ? .critical : .warn,
-                    title: "RTT 평균 \(fmt(mean))ms — 임계 \(fmt(thresholds.rttMeanMs))ms 초과",
+                    title: "RTT (왕복 지연) 평균 \(fmt(mean))ms — 임계 \(fmt(thresholds.rttMeanMs))ms 초과",
                     detail: "최근 \(Int(windowSeconds))초 동안 \(rttSamples.count) 샘플."
                 ))
             }
@@ -101,7 +101,7 @@ public final class HarnessLiveAlerts: ObservableObject {
                 newAlerts.append(makeAlert(
                     id: "imu.window_stale",
                     severity: .warn,
-                    title: "IMU stale 비율 \(percent(ratio))",
+                    title: "IMU (관성 측정) stale 비율 \(percent(ratio))",
                     detail: "최근 \(Int(windowSeconds))초 heartbeat \(heartbeats.count) 중 \(staleCount) stale."
                 ))
             }
@@ -124,7 +124,7 @@ public final class HarnessLiveAlerts: ObservableObject {
             newAlerts.append(makeAlert(
                 id: "bus.window_write_fail",
                 severity: .warn,
-                title: "Bus 쓰기 실패 \(busWrites) 회",
+                title: "통신 버스 (bus) 쓰기 실패 \(busWrites) 회",
                 detail: "최근 \(Int(windowSeconds))초. 모터 / power / cable."
             ))
         }
@@ -137,7 +137,7 @@ public final class HarnessLiveAlerts: ObservableObject {
             newAlerts.append(makeAlert(
                 id: "estop.window",
                 severity: .critical,
-                title: "비상 정지 \(estops.count) 회",
+                title: "비상 정지 (E-Stop) \(estops.count) 회",
                 detail: "최근 \(Int(windowSeconds))초. 안전 점검 우선."
             ))
         }

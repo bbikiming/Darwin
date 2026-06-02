@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import ForgeCore
 import os.signpost
@@ -34,6 +35,42 @@ public final class ConnectionStore: ObservableObject {
     /// reconnect) 격리 store. 직접 노출 + backward-compat computed property 가 기존 path
     /// (`store.status` / `store.availablePorts` 등) 유지.
     @Published public private(set) var transport: ConnectionTransportStore
+
+    /// **codex CRITICAL fix (2026-06-02)**: 중첩 ObservableObject 변경 전파.
+    /// `transport` 는 class(ObservableObject)라 `transport.status` 같은 내부 @Published 변경은
+    /// `@Published var transport`(참조 동일) 의 objectWillChange 를 발화시키지 못한다 → `store`
+    /// 를 구독하는 뷰(연결 마법사 버튼·`.onChange(of: store.status)`)가 status-only 변경에
+    /// 갱신되지 않음. 종전엔 다른 @Published(telemetryMode 등)가 같이 바뀌어 "묻어서" 갱신돼
+    /// 가려졌으나, 단계별 진행 라벨/타임아웃 에러처럼 status 만 바뀌는 경로에서 드러난다.
+    /// init 에서 transport.objectWillChange 를 본 store 로 포워딩해 근본 해결.
+    private var transportForwarding: AnyCancellable?
+
+    /// **연결 시도 세대 카운터 (codex fix, 2026-06-02 확장)**. 모든 연결 진입점(SSH 온보드 ·
+    /// LAN)이 시작 시 증가시킨다. 비동기 연결 task / 타임아웃 Task 가 시작 시점 세대를 캡처해
+    /// 비교 → ① 오래된 타임아웃이 *나중* 시도를 잘못 .error 로 덮기, ② await 갭 사이 다른 경로로
+    /// 전환됐는데 옛 task 가 공유 상태(networkHost 등)를 읽어 엉뚱한 host 로 붙기 — 둘 다 차단.
+    /// @Published 아님(뷰 무관).
+    public var connectAttemptGeneration: Int = 0
+
+    /// **codex HIGH fix (2026-06-02)**: onboard(SSH) 모드에서 *모터 명령이 실제로 가는* 호스트.
+    /// 종전 UI 가 `networkHost`(사용자 입력값)로 유선/무선을 표기했는데, 그건 활성 경로의 진실이
+    /// 아니다(수동 probe 등으로 어긋날 수 있음). startOnboardTelemetry 가 받는 RemoteShell 의
+    /// host(=명령 셸) 를 캡처해 `activeConnectionHost` 가 진실을 표기하게 한다.
+    @Published public private(set) var onboardActiveHost: String?
+
+    /// **활성 경로의 진짜 host** — 유선/무선 칩(ConnectionLinkKind)이 입력값이 아니라 *실제로
+    /// 붙어 있는* 경로를 표기하도록. onboard 는 명령 셸 host, LAN 은 활성 endpoint host.
+    public var activeConnectionHost: String {
+        switch telemetryMode {
+        case .onboard, .onboardStale:
+            return onboardActiveHost ?? ""
+        case .lan, .offline:
+            // codex MEDIUM fix(2차): networkHost(입력값)로 폴백하지 않는다. USB 시리얼도 .lan
+            // 모드라 활성 endpoint 가 .network 가 아니면 host 가 없는 것 — 빈값(칩 숨김)이 정직.
+            if case .network(let host, _)? = activeEndpoint { return host }
+            return ""
+        }
+    }
 
     // MARK: - Backward-compat delegate (transport)
     //
@@ -119,6 +156,39 @@ public final class ConnectionStore: ObservableObject {
     /// 가장 최근 폴링 텔레메트리 (StatusBar / Studio 등 위젯이 구독).
     @Published public var lastTelemetry: TelemetrySnapshot?
 
+    // MARK: - SSH ↔ LAN parity (2026-06-01) — telemetry source-of-truth + onboard uplink
+    //
+    // 종전: onboard(SSH) 모드에서 Mac 은 텔레메트리 경로가 없어 화면이 LAN 시절의 stale
+    // green 데이터를 계속 표시 + 안전 게이트(L0/L3/L4) 가 입력 없이 동작. 신규:
+    // `telemetryMode` 가 어떤 경로가 살아있는지 단일 source-of-truth — LAN 성공 시 `.lan`,
+    // onboard ingest 시 `.onboard`, 1.5s staleness 시 `.onboardStale`, 미연결 시 `.offline`.
+    // View(W5) 는 이 값으로 badge / desaturation / "SAFETY GATES" 배너를 구동.
+    // (contract §D.5 — 선언은 W3, 읽기는 W5)
+
+    /// 현재 살아있는 텔레메트리 경로. 초기값 `.offline`.
+    @Published public private(set) var telemetryMode: TelemetryMode = .offline
+
+    /// onboard(SSH) 텔레메트리 업링크 poller — onboard 엔진 + brokering 활성 동안만 존재.
+    /// lifecycle 은 W3 가 소유 (start on onboard-enable / stop on disable·disconnect·estop).
+    private var onboardPoller: OnboardTelemetryPoller?
+    /// 현재 poller 가 묶인 RemoteShell — 재시작 시 shell 이 바뀌면 poller 를 재생성해
+    /// onboardActiveHost(표시 host)와 실제 telemetry source 가 갈라지지 않게 한다(codex).
+    /// weak — RemoteShell lifecycle 은 RootView 가 소유(remoteShellRef 와 동일 정책).
+    private weak var onboardPollerShell: RemoteShell?
+    /// onboard 업링크 세대 — `startOnboardTelemetry`/`stopOnboardTelemetry` 호출마다 &+= 1.
+    /// 공유 poller 를 새 RemoteShell 로 재시작(stop 없이)할 때 이전 start 의 onSample 콜백 /
+    /// watchdog Task 가 살아남아 stale health/telemetryMode/status 를 쓰는 것을 차단.
+    /// telemetry 루프의 `self.bus === bus` bus-identity 가드와 동일한 stale-write 방어를
+    /// poller 경로(공유 인스턴스라 identity 비교가 무의미)에 세대 카운터로 적용.
+    private var onboardTelemetryGeneration: Int = 0
+    /// staleness watchdog — read 실패/끊김으로 새 샘플이 안 와도 stale 강등(codex HIGH).
+    private var onboardStaleWatchdog: Task<Void, Never>?
+
+    /// onboard e-stop / telemetry 송수신용 RemoteShell 핸들 (wiring 시점에 외부가 set).
+    /// SSH e-stop 은 bus 가 아닌 SSH 측이므로 store 가 RemoteShell 에 도달할 seam 이 필요.
+    /// RootView 가 strong 보유하는 `RemoteShell` 을 weak 으로 참조 (retain cycle 회피).
+    public weak var remoteShellRef: RemoteShell?
+
     /// **Wave 4.2.1 (사이클 V260-1)** — telemetry / IMU / FSR / sparkline health state.
     /// 종전: 17개 @Published 가 본 store 에 산재 → SwiftUI 가 작은 통계 갱신에도
     ///       전체 view graph 재평가 + god object 화. 신규: 별도 ObservableObject 로 격리.
@@ -136,6 +206,14 @@ public final class ConnectionStore: ObservableObject {
     public var lastSuccessAt: Date? { health.lastSuccessAt }
     /// 연결 시작 시각 — uptime 계산용.
     public var connectedAt: Date? { health.connectedAt }
+
+    /// 통합 로봇 연결 여부 — LAN(`bus`) 또는 SSH 온보드(telemetry 라이브) 어느 쪽이든 true.
+    /// 종전: 화면들이 `bus != nil` 만 봐서 온보드(bus 없음)에선 "미연결" 로 오표시됐다(사용자
+    /// 보고). 단 개별 관절 직접 제어(Studio/Joints)는 bus 가 필요하므로 그 화면들은 여전히
+    /// `bus != nil` 로 게이트한다(온보드에선 로봇 demo 가 모터를 소유 — Mac 직접 제어 불가).
+    public var isRobotConnected: Bool {
+        bus != nil || telemetryMode == .onboard || telemetryMode == .onboardStale
+    }
     /// 누적 통신 통계 (대시보드 카드).
     public var successCount: Int { health.successCount }
     public var failureCount: Int { health.failureCount }
@@ -267,6 +345,49 @@ public final class ConnectionStore: ObservableObject {
     /// V283-4 — 동일 모듈 내 caller (WalkLabSession, TeleopChannel 등)의 gate 상태 갱신.
     internal func _setDxlPowerState(_ on: Bool) { isDxlPowerOn = on }
 
+    /// V297-4 (mobile-relay audit, 2026-05-26) — 명시적 E-stop 활성 플래그.
+    ///
+    /// # 비유
+    ///
+    /// 자동차 비상등 스위치 자체의 상태. 종전엔 "전조등 꺼짐 + 기어 P + 시동 ON" 같은
+    /// 간접 신호로 추론했는데, 정상 주차 상태와 구분이 안 됐다. 신규는 비상등 스위치
+    /// 자체를 단일 source-of-truth 로 사용.
+    ///
+    /// # 종전 (휴리스틱)
+    ///
+    /// `MobileRelayBootstrap.snapshot` 가 `!dxlPower && !armed && busConnected` 식으로
+    /// estopActive 를 추론. 부팅 직후 정상 idle 상태가 이 식을 모두 만족 → iOS UI 의
+    /// PilotUIState 가 `estopped` 로 잘못 표시되어 사용자가 "비상정지 상태에 박힘".
+    ///
+    /// # 신규
+    ///
+    /// - `emergencyStop()` 본문 진입 시 set true.
+    /// - `recoverFromEStop` 정상 완료 시 reset false.
+    /// - `connect()` 성공 시 reset false (새 연결은 깨끗한 상태).
+    /// - `disconnect()` 시 reset false (fresh).
+    @Published public private(set) var emergencyStopActive: Bool = false
+
+    /// 내부 / Mobile Relay 게이트 동기화용 — emergencyStop / recover / connect 경로에서 set.
+    internal func _setEmergencyStopActive(_ active: Bool) { emergencyStopActive = active }
+
+    // MARK: - V297-8 (P3-Mac): ROBOTIS demo USB 점유 휴리스틱 감지
+
+    /// V297-8 (P3-Mac): ROBOTIS demo 가 USB bus 를 점유했을 가능성이 높다는 휴리스틱 플래그.
+    ///
+    /// # 비유
+    ///
+    /// 공중전화를 걸려는데 3번 모두 통화 중 신호 — 누군가가 계속 통화 중(demo 점유)일
+    /// 가능성이 높다는 추측. 100% 확실하지 않으므로 휴리스틱.
+    ///
+    /// # 동작
+    ///
+    /// `performConnect` 3회 시도 모두 실패 + 마지막 error 의 localizedDescription 에
+    /// "timeout" / "no response" / "timed out" 키워드 포함 시 true 로 set.
+    /// 성공 path 와 disconnect 에서 false 로 reset.
+    ///
+    /// TODO: 정확한 demo 감지 회로는 후속 PR — 펌웨어 응답 패턴 분석 필요.
+    @Published public private(set) var isDemoBusyDetected: Bool = false
+
     // MARK: - IMU plausibility 자동 진단 (2026-05-17 v1.7 정정)
 
     /// IMU raw 값 sanity 진단. v1.7 (2026-05-17) — cm.rs/lib.rs 10-bit ADC 정정 후의
@@ -392,6 +513,11 @@ public final class ConnectionStore: ObservableObject {
         self.health = ConnectionHealthStore()
         // Wave 4.2.2 — transport state 격리 store.
         self.transport = ConnectionTransportStore()
+        // codex CRITICAL fix: 중첩 store 의 objectWillChange 를 본 store 로 전파 (위 주석 참조).
+        // willChange→willChange 순서가 유지되어 SwiftUI 갱신 타이밍이 올바르다.
+        self.transportForwarding = self.transport.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         // 앱 시작 시 마지막 성공 endpoint 복원.
         if let data = UserDefaults.standard.data(forKey: Self.lastEndpointKey),
            let ep = try? JSONDecoder().decode(Endpoint.self, from: data) {
@@ -481,6 +607,10 @@ public final class ConnectionStore: ObservableObject {
     /// 임의 endpoint(USB / TCP)로 연결. 비동기 + 3회 재시도 (stale buffer/misalignment 보정).
     /// 메인 스레드 block 없음. UI 는 status 변화로 즉시 반영.
     public func connect(endpoint: Endpoint) {
+        // codex fix: 모든 endpoint 연결 시도(수동 probe/Bonjour/quick-connect/USB/LAN/재연결)를
+        // 새 세대로 — 직전 경로의 stale 타임아웃/비동기 task 가 이 시도의 상태를 덮지 못하게 한다.
+        connectAttemptGeneration &+= 1
+        let gen = connectAttemptGeneration
         cancelReconnect()
         status = .connecting(endpoint.displayName)
         // v1.12.2 (Codex P1-3 fix) — telemetry harness: 연결 시도 기록 (redacted).
@@ -491,13 +621,13 @@ public final class ConnectionStore: ObservableObject {
             context: harnessContext()
         )
         Task { @MainActor in
-            await performConnect(endpoint: endpoint, maxAttempts: 3)
+            await performConnect(endpoint: endpoint, maxAttempts: 3, generation: gen)
         }
     }
 
     /// 내부 재시도 루프. 한 번 실패해도 200ms 후 다시 — Dynamixel byte sync slide 가
     /// 한 차례의 stale data 를 흡수하지 못하는 케이스 보정.
-    private func performConnect(endpoint: Endpoint, maxAttempts: Int) async {
+    private func performConnect(endpoint: Endpoint, maxAttempts: Int, generation gen: Int) async {
         var lastError: Error?
         for attempt in 1...maxAttempts {
             do {
@@ -505,6 +635,10 @@ public final class ConnectionStore: ObservableObject {
                 let t0 = Date()
                 let snap = try bus.boardSnapshot()
                 let rtt = Date().timeIntervalSince(t0) * 1000
+                // codex HIGH fix: await(Bus 생성/스냅샷) 동안 더 새로운 연결 시도가 시작됐으면
+                // 이 결과를 폐기 — bus/status/endpoint 를 덮지 않는다. 새로 만든 bus 는 스코프
+                // 이탈로 ARC 가 닫는다(다음 시도/경로가 ttyUSB0/소켓 소유).
+                guard gen == connectAttemptGeneration else { return }
                 self.bus = bus
                 self.activeEndpoint = endpoint
                 self.transport.recordSuccessfulEndpoint(endpoint)
@@ -513,6 +647,10 @@ public final class ConnectionStore: ObservableObject {
                 self.status = .connected(snap)
                 self.lastTelemetry = TelemetrySnapshot(board: snap, joints: [:])
                 self.health.recordConnected(rttMs: rtt)
+                // V297-4: 새 연결은 깨끗한 상태 — 이전 e-stop 흔적 제거.
+                self.emergencyStopActive = false
+                // V297-8 (P3-Mac): 연결 성공 — demo 점유 의심 해제.
+                self.isDemoBusyDetected = false
                 startTelemetry(cadence: .light)
                 // v1.12.2 telemetry — 연결 성공 (redacted).
                 harness.record(
@@ -527,14 +665,25 @@ public final class ConnectionStore: ObservableObject {
             } catch {
                 lastError = error
                 if attempt < maxAttempts {
+                    // codex HIGH fix: 재시도 상태도 superseded 면 덮지 않고 중단.
+                    guard gen == connectAttemptGeneration else { return }
                     self.status = .connecting("\(endpoint.displayName) — 재시도 \(attempt + 1)/\(maxAttempts)")
                     try? await Task.sleep(nanoseconds: 250_000_000)
                 }
             }
         }
+        // codex HIGH fix: 최종 실패도 더 새로운 시도가 진행 중이면 그 상태를 덮지 않는다.
+        guard gen == connectAttemptGeneration else { return }
         let msg = (lastError as? ForgeError)?.localizedDescription
               ?? lastError?.localizedDescription ?? "원인 불명"
         self.status = .error("연결 실패 (\(maxAttempts)회 시도): \(msg)")
+        // V297-8 (P3-Mac): 3회 모두 timeout/no-response 계열 에러면 demo 점유 의심 set.
+        // 휴리스틱 — 정확한 demo 감지는 후속 PR (펌웨어 응답 패턴 분석 필요).
+        let lowerMsg = msg.lowercased()
+        let timeoutKeywords = ["timeout", "no response", "timed out"]
+        if timeoutKeywords.contains(where: { lowerMsg.contains($0) }) {
+            self.isDemoBusyDetected = true
+        }
         // v1.12.2 telemetry — 연결 실패 (endpoint redacted, error msg 도 길이+해시만).
         harness.record(
             .connectFailure, level: .error, actor: .system,
@@ -616,22 +765,33 @@ public final class ConnectionStore: ObservableObject {
     /// loop 내부에서 `Task.isCancelled` 체크 두 번 (delay 전/후) — cancellation latency
     /// 최소화. 모든 attempt 실패 시 `reconnHandleAllFailed` 로 위임.
     private func reconnSpawnTask(target: Endpoint) {
+        // codex MEDIUM fix: 재연결도 새 연결 시도 — 직전 경로(onboard 등)의 stale 12s 타임아웃이
+        // 재연결 .connecting 상태를 덮지 못하게 세대를 올린다.
+        connectAttemptGeneration &+= 1
+        let gen = connectAttemptGeneration
         reconnectTask = Task { [weak self] in
             for attempt in 1...Self.maxReconnectAttempts {
                 if Task.isCancelled { break }
+                // codex HIGH fix: 더 새로운 연결 시도가 시작됐으면(세대 변경) 재연결 중단 —
+                // reconnTryAttempt 는 동기라, 호출 직전 1회 체크로 stale status/bus 쓰기를 막는다.
+                guard let s0 = self, gen == s0.connectAttemptGeneration else { break }
                 let delaySeconds = Double(1 << (attempt - 1))   // 1, 2, 4, 8, 16
-                self?.transport.updateReconnectAttempt(attempt)
+                s0.transport.updateReconnectAttempt(attempt)
                 try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
                 if Task.isCancelled { break }
-                guard let self else { break }
+                guard let self, gen == self.connectAttemptGeneration else { break }
 
                 if self.reconnTryAttempt(attempt: attempt, delaySeconds: delaySeconds, target: target) {
                     return  // 성공 — task 정상 종료.
                 }
                 // 실패 → 다음 attempt (백오프 loop continue).
             }
-            // 모든 시도 실패.
-            self?.reconnHandleAllFailed(target: target)
+            // 모든 시도 실패 — **단** 취소됐거나(수동 connect/disconnect) 더 새로운 시도가 시작됐으면
+            // (세대 변경) 최종 .error 를 쓰지 않는다(codex HIGH fix). 종전: 취소 후에도 무조건
+            // reconnHandleAllFailed 가 newer .connecting/.disconnected 를 .error 로 덮었다.
+            if Task.isCancelled { return }
+            guard let self, gen == self.connectAttemptGeneration else { return }
+            self.reconnHandleAllFailed(target: target)
         }
     }
 
@@ -664,6 +824,10 @@ public final class ConnectionStore: ObservableObject {
             self.activeEndpoint = target
             self.status = .connected(snap)
             self.lastTelemetry = TelemetrySnapshot(board: snap, joints: [:])
+            // V297-5 MEDIUM-1: 자동 reconnect 성공도 fresh state.
+            // 종전 [V297-4 line 542 reset] 은 일반 connect 만 cover — auto-reconnect path
+            // 에서 e-stop flag 가 stale true 로 남는 회로 차단.
+            self.emergencyStopActive = false
             self.startTelemetry(cadence: .light)
             self.transport.endReconnecting()
             self.reconnectTask = nil
@@ -732,6 +896,9 @@ public final class ConnectionStore: ObservableObject {
     /// 으로 플래그 안 해제 → `isRecovering=true` 잔류 → 버튼 영구 disabled. disconnect
     /// 가 복구 관련 flag 도 동기 리셋해야 함.
     public func disconnect() {
+        // codex HIGH fix: 명시적 disconnect 도 새 세대 — 진행 중이던 onboard/LAN 연결 task 와
+        // 12s 타임아웃이 disconnect 이후 깨어나 telemetry/status 를 되살리는 "좀비 재연결" 차단.
+        connectAttemptGeneration &+= 1
         // v1.12.0 telemetry — 사용자 명시 disconnect (uptime 함께 기록).
         let uptime: Double = connectedAt.map { Date().timeIntervalSince($0) } ?? 0
         harness.record(
@@ -752,11 +919,18 @@ public final class ConnectionStore: ObservableObject {
         if isMovingPose { isMovingPoseCancelled = true }
         transport.clearLastSuccessfulEndpoint()   // 명시적 disconnect는 자동 재연결 후보 제거.
         stopTelemetry()
+        // SSH ↔ LAN parity (2026-06-01): onboard 업링크도 정리 + 텔레메트리 경로 offline.
+        stopOnboardTelemetry()
+        telemetryMode = .offline
         bus = nil
         activeEndpoint = nil
         jointStates.removeAll()
         lastTelemetry = nil
         health.resetConnectionStats()
+        // V297-4: disconnect = fresh state. 다음 연결을 위해 e-stop flag 도 reset.
+        emergencyStopActive = false
+        // V297-8 (P3-Mac): disconnect — demo 점유 의심도 fresh reset.
+        isDemoBusyDetected = false
         // 2026-05-17 disconnect 시 IMU scale 진단 reset — 다음 연결에서 재진단.
         imuAccelZSamples.removeAll()
         imuAccelZMagnitudeAvg = 0
@@ -1286,6 +1460,11 @@ public final class ConnectionStore: ObservableObject {
         imuAccelZMagnitudeAvg = 0
         imuScaleSuspicion = .unknown
         jointConsecutiveFailures.removeAll()
+        // V297-9 MEDIUM-1: bus=nil 강제 경로에서도 emergencyStopActive 명시 reset.
+        // 종전엔 set true 인 채로 남아 telemetry factory 가 robot=disconnected 임에도
+        // estopped 우선표시 → iOS UI 가 disconnected 가 아닌 estopped 로 잘못 표시.
+        emergencyStopActive = false
+        isDxlPowerOn = false
         status = .error(message)
         consecutiveBusFailures = 0
 
@@ -1301,13 +1480,71 @@ public final class ConnectionStore: ObservableObject {
     /// `walkSession.emergencyStop()` 의 Phase 5 가 본 메서드를 재호출하지만
     /// `emergencyStopActive=true` (Phase 3 에서 set) 가드로 즉시 fall-through.
     public func emergencyStop() {
-        if let walk = walkSession, walk.isWalkActive, !walk.emergencyStopActive {
+        // **H2 fix (2026-05-30)**: 종전 `walk.isWalkActive` 조건은 recovery 진행 중
+        // (`autoRecoveryPhase != .idle`) 에서 `pilotStop()` 이 `isRobotWalking=false`
+        // 로 설정하므로 `isWalkActive=false` → E-STOP delegation 이 스킵됨.
+        // recovery task 취소(Phase4b) + motionPlayCancel 이 실행되지 않아 get-up 모션이
+        // 계속 실행되는 안전 위반. 조건을 `isWalkActive || autoRecoveryPhase != .idle`
+        // 로 확장 → recovery 중 E-STOP 도 8-phase 안전 체인으로 위임.
+        // === SSH ↔ LAN parity (2026-06-01) — onboard e-stop FIRST (safety floor) ===
+        // onboard 경로에선 robot 이 모터를 소유한다(Mac bus 아님). 어떤 경로(8-phase 위임/
+        // bus)로 빠지든 robot 이 반드시 정지 명령을 받도록, delegation 보다 **먼저** SSH e-stop
+        // (touch /tmp/df-walklab-estop + killall -TERM demo)을 보낸다.
+        // 게이트는 telemetryMode 가 아니라 **엔진 상태** 기준 — poller 가 아직 첫 샘플을 못 받아
+        // telemetryMode 가 .offline 인 race 에서도 e-stop 이 동작해야 하기 때문(검증 CRITICAL).
+        let onboardActive = (walkSession?.walkingEngine == .robotisOnboard)
+            || telemetryMode == .onboard || telemetryMode == .onboardStale
+        if onboardActive {
+            emergencyStopActive = true
+            // **codex CRITICAL fix (2026-06-02)**: SSH e-stop 전달을 *검증*한다. 종전엔
+            // ① remoteShellRef 가 nil 이면 아무것도 안 보내고 침묵, ② send 결과를 무시 →
+            // UI 는 "정지됨"으로 보이지만 로봇은 데드맨(≤6s)까지 계속 움직일 수 있었다.
+            // 이제 ESTOP_OK 확인 실패/채널 없음이면 사용자에게 물리적 개입 + 데드맨 안내.
+            if let shell = remoteShellRef {
+                Task { @MainActor [weak self] in
+                    let ex = await shell.send(RobotSetupCommand.walkLabRobotisEstop, timeoutSeconds: 5)
+                    let confirmed = (ex?.error == nil) && ((ex?.result ?? "").contains("ESTOP_OK"))
+                    if !confirmed {
+                        self?.walkSession?.setLastRobotEvent(
+                            "🛑⚠️ 온보드 E-STOP 전달 미확인 — WiFi/SSH 확인. 로봇이 데드맨(≤6s)까지 움직일 수 있어요. 필요시 직접 잡으세요.")
+                        self?.harness.record(
+                            .busEStop, level: .error, actor: .system,
+                            data: ["source": AnyCodable("emergencyStop.onboard"),
+                                   "delivery": AnyCodable("UNCONFIRMED")])
+                    }
+                }
+            } else {
+                walkSession?.setLastRobotEvent(
+                    "🛑⚠️ 온보드 E-STOP 채널 없음(SSH 미초기화) — 데드맨(≤6s) 대기 또는 로봇을 직접 잡으세요.")
+                harness.record(
+                    .busEStop, level: .error, actor: .system,
+                    data: ["source": AnyCodable("emergencyStop.onboard"),
+                           "delivery": AnyCodable("NO_CHANNEL")])
+            }
+            stopOnboardTelemetry()
+            harness.record(
+                .busEStop, level: .error, actor: .user,
+                data: ["source": AnyCodable("emergencyStop.onboard")],
+                context: harnessContext()
+            )
+        }
+        // **H2 fix (2026-05-30)**: 종전 `walk.isWalkActive` 조건은 recovery 진행 중
+        // (`autoRecoveryPhase != .idle`) 에서 `pilotStop()` 이 `isRobotWalking=false`
+        // 로 설정하므로 `isWalkActive=false` → E-STOP delegation 이 스킵됨.
+        // recovery task 취소(Phase4b) + motionPlayCancel 이 실행되지 않아 get-up 모션이
+        // 계속 실행되는 안전 위반. 조건을 `isWalkActive || autoRecoveryPhase != .idle`
+        // 로 확장 → recovery 중 E-STOP 도 8-phase 안전 체인으로 위임.
+        if let walk = walkSession,
+           (walk.isWalkActive || walk.autoRecoveryPhase != .idle),
+           !walk.emergencyStopActive {
             walk.emergencyStop()
             return
         }
         guard let bus else { return }
         // V283-4: e-stop 발동 시 dxlPower 상태를 OFF 로 리셋 — gate 일관성 유지.
         isDxlPowerOn = false
+        // V297-4: e-stop 활성 flag set — Mobile Relay snapshot 단일 source-of-truth.
+        emergencyStopActive = true
         // v1.12.0 telemetry — e-stop 발동 (사용자 액션).
         harness.record(
             .busEStop, level: .error, actor: .user,
@@ -1328,6 +1565,128 @@ public final class ConnectionStore: ObservableObject {
             )
         }
     }
+
+    // MARK: - SSH ↔ LAN parity (2026-06-01) — onboard telemetry uplink (contract §D.3)
+    //
+    // robot 이 5Hz 로 /tmp/df-walklab-telemetry 에 IMU/voltage 를 쓰고, Mac 이 SSH 로
+    // 2Hz polling 해 기존 telemetry/IMU 파이프라인에 주입 → HUD + L0(voltage)/L3(tilt)
+    // 안전 게이트가 onboard 에서도 동작. L4(thermal) 은 joint temp 가 없어 offline (UI 가 표시).
+
+    /// onboard 텔레메트리 업링크 시작. onboard 엔진 + brokering 활성 시 호출.
+    /// idempotent — poller 가 이미 살아있으면 교체 없이 재시작(start 자체가 idempotent).
+    public func startOnboardTelemetry(remoteShell: RemoteShell) {
+        // 이후 e-stop 등에서 쓸 수 있도록 seam 도 채워둔다.
+        remoteShellRef = remoteShell
+        // codex HIGH fix: 유선/무선 칩이 *실제 명령 경로* host 를 표기하도록 캡처.
+        onboardActiveHost = remoteShell.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        // stale-write 가드: 이 start 호출의 세대를 캡처. stop 없이 재시작되면 세대가 전진해
+        // 이전 콜백/watchdog 의 write 가 무시된다 (telemetry 루프의 bus-identity 가드와 동형).
+        onboardTelemetryGeneration &+= 1
+        let gen = onboardTelemetryGeneration
+        // shell 이 교체됐으면(또는 최초) poller 재생성 — 기존 poller 는 old shell 을 계속
+        // 폴링하므로 표시 host 와 실제 source 가 갈라진다(codex). 동일 shell 이면 idempotent 재사용.
+        if onboardPoller == nil || onboardPollerShell !== remoteShell {
+            onboardPoller?.stop()
+            onboardPoller = OnboardTelemetryPoller(remoteShell: remoteShell)
+            onboardPollerShell = remoteShell
+        }
+        onboardPoller?.start { [weak self] sample in
+            guard let self, gen == self.onboardTelemetryGeneration else { return }
+            self.ingestOnboardTelemetry(sample)
+        }
+        // **codex HIGH fix (2026-06-02)**: ingest 는 *파싱된 샘플*이 와야 stale 강등한다.
+        // read 실패(파일 삭제/SSH 끊김)로 샘플이 아예 안 오면 telemetryMode 가 .onboard
+        // (라이브/녹색)로 고착될 수 있다. 0.5s 주기 watchdog 으로 새 샘플과 무관하게,
+        // poller.isStale 이면 .onboard → .onboardStale 로 강등(콕핏 게이트가 조종 차단).
+        onboardStaleWatchdog?.cancel()
+        onboardStaleWatchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self, gen == self.onboardTelemetryGeneration else { return }
+                if (self.onboardPoller?.isStale ?? true), self.telemetryMode == .onboard {
+                    self.telemetryMode = .onboardStale
+                }
+            }
+        }
+    }
+
+    /// onboard 텔레메트리 업링크 중지 — disable / disconnect / e-stop disarm 시.
+    /// 중지 후 텔레메트리 경로가 사라지므로 mode 를 .offline 로 내린다 (LAN 이 살아있으면
+    /// 다음 LAN tick 이 .lan 으로 복원).
+    public func stopOnboardTelemetry() {
+        // stale-write 가드: 세대 전진 → in-flight onSample/watchdog 콜백 무효화.
+        onboardTelemetryGeneration &+= 1
+        onboardStaleWatchdog?.cancel()
+        onboardStaleWatchdog = nil
+        onboardPoller?.stop()
+        onboardPoller = nil
+        onboardPollerShell = nil
+        onboardActiveHost = nil   // codex HIGH fix: 경로 종료 시 host 표기도 비움.
+        if telemetryMode == .onboard || telemetryMode == .onboardStale {
+            telemetryMode = .offline
+        }
+    }
+
+    /// onboard 샘플 1개를 기존 파이프라인에 주입 — HUD + L0/L3 게이트 동작 (contract §D.3 PINNED).
+    ///
+    /// 규칙:
+    ///   - `imu = sample.toImuRaw()`; `health.recordImuSuccess(raw: imu)` (IMU stale/unavailable
+    ///     clear + lastImuRaw set).
+    ///   - voltage 미상(deci-volts 0)이면 board 는 nil → 직전 board 유지 (L0 flapping 방지).
+    ///   - joints 는 onboard 에 없음 → `[:]` (L4 thermal 은 telemetryMode 로 offline 판단).
+    ///   - staleness 는 poller.isStale → .onboardStale, 그 외 .onboard.
+    func ingestOnboardTelemetry(_ sample: OnboardTelemetry) {
+        // **false-positive fix (2026-06-02, codex MEDIUM)**: frozen(ts 미전진) 샘플은
+        // 안전게이트(L0 voltage / L3 tilt / IMU health)에 **먹이지 않는다**. 죽은 demo 의
+        // 고정 IMU 값으로 낙상감지가 "정상"으로 오판하면 위험. mode 만 강등하고 반환.
+        let stale = onboardPoller?.isStale ?? false
+        if stale {
+            // 한 번이라도 live 였다가 frozen → .onboardStale("지연"). 한 번도 live 아니면
+            // (.offline) 그대로 — frozen-from-start 는 절대 연결됨/라이브가 안 됨.
+            if telemetryMode == .onboard { telemetryMode = .onboardStale }
+            return
+        }
+        // 신선(ts 전진) — IMU/health/telemetry 갱신 + connected.
+        let imu = sample.toImuRaw()
+        health.recordImuSuccess(raw: imu)         // lastImuRaw set + IMU stale 카운터 clear.
+        diagnoseImuScale(imu)                     // 1g 중력 sanity.
+        // voltage 미상이면 직전 board 유지 — L0 voltage 게이트가 0V 로 false-trip 안 하게.
+        let board = sample.toBoardSnapshot() ?? lastTelemetry?.board
+        lastTelemetry = TelemetrySnapshot(board: board, joints: [:], imu: imu)
+        // codex HIGH fix: 로봇 낙상 표면화 + 재낙상 루프 차단 (아래 helper).
+        updateOnboardFallen(sample.fallen)
+        if telemetryMode != .onboard { telemetryMode = .onboard }
+        if case .connected = status {
+            // 이미 연결됨 — 유지.
+        } else {
+            let snap = board ?? BoardSnapshot(modelNumber: 740, version: 0, voltageRaw: 0, button: 0)
+            status = .connected(snap)
+        }
+    }
+
+    /// **온보드 로봇 낙상 상태 (codex HIGH fix, 2026-06-02)** — 텔레메트리 `fallen`(-1/0/1).
+    /// 0=기립. 온보드는 로봇 demo 가 자율 getup 하지만, 종전엔 Mac 이 이 플래그를 전혀 쓰지
+    /// 않아 ① 사용자가 낙상을 모르고 ② getup 후 Mac 이 동일 보행 명령을 계속 스트림해 즉시
+    /// 재보행→재낙상 루프가 가능했다(로봇측 escalation 없음). UI 표시 + 디바운스 후 보행 정지.
+    @Published public private(set) var onboardFallen: Int = 0
+    /// 낙상 디바운스 — 보행 jolt 의 순간 FALLEN 으로 인한 spurious 정지 방지.
+    private var onboardFallenStreak: Int = 0
+
+    /// 낙상 표면화 + 재낙상 루프 차단. 3 연속 fresh 샘플(~600ms, 로봇 getup debounce 와 정합)
+    /// 시에만 실제 낙상으로 처리해 보행을 정지(사용자가 재명령해야 재개). 로봇 getup 은 자율.
+    private func updateOnboardFallen(_ fallen: Int) {
+        onboardFallen = fallen
+        if fallen == 0 { onboardFallenStreak = 0; return }
+        onboardFallenStreak += 1
+        guard onboardFallenStreak == 3 else { return }   // edge — 1회만 발화.
+        walkSession?.setLastRobotEvent(
+            "⚠️ 로봇 낙상 — 자율 일어나기 중. 보행 정지(재낙상 루프 방지), 일어선 뒤 다시 조종하세요.")
+        walkSession?.pilotStop()
+    }
+
+    // (markOnboardConnected 제거 2026-06-02): 첫 텔레메트리 샘플 전 eager "연결됨" 은
+    // 거짓 양성(codex M1)이라 폐기. 이제 onboard "연결됨" 은 ingestOnboardTelemetry 가
+    // 실제 ts_ms-전진 샘플을 받았을 때만 status 를 .connected 로 올린다(truth 기반).
 
     /// 사이클 V283-4 (V282-2 CRITICAL-3 fix) — dxlPower gate 가 있는 setPosition wrapper.
     ///
@@ -1353,6 +1712,21 @@ public final class ConnectionStore: ObservableObject {
             throw DxlGateError.dxlPowerOff
         }
         return try bus.setPosition(joint, raw: raw)
+    }
+
+    /// dxlPower gate 가 있는 setMovingSpeed wrapper — 관절의 목표 추종 속도 설정.
+    ///
+    /// position write 와 달리 **보조 설정**이므로 OFF 시 조용히 throw (emergencyStop
+    /// 부작용 없음 — 속도 설정 실패가 E-STOP 을 유발하면 과도). 머리 조종 등에서 모터가
+    /// 목표각을 일정 속도로 부드럽게 추종(stop-and-go 제거)하게 한다. speed=0 은
+    /// Dynamixel factory default(무제한 — 즉시 이동)로 복원.
+    ///
+    /// - Throws: `DxlGateError.dxlPowerOff` (dxlPower OFF 또는 bus nil 시).
+    public func writeJointMovingSpeed(_ joint: JointID, speed: UInt16) throws {
+        guard isDxlPowerOn, let bus else {
+            throw DxlGateError.dxlPowerOff
+        }
+        try bus.setMovingSpeed(joint, speed: speed)
     }
 
     // MARK: - 로봇 복구 (E-stop 이후 액추에이터 재활성)
@@ -1587,7 +1961,11 @@ public final class ConnectionStore: ObservableObject {
         try? await Task.sleep(nanoseconds: 200_000_000)
 
         // [3] 내부 상태 리셋 — 사용자가 다시 동작을 보낼 수 있도록.
+        //     stale-write 가드: 200ms 정착 await 사이 재연결로 bus 가 교체됐으면
+        //     이 recovery 는 stale — newer bus 의 consecutiveBusFailures 를 덮어쓰지 않는다
+        //     (telemetry 루프의 `self.bus === bus` bus-identity 가드와 동형).
         await MainActor.run {
+            guard self.bus === ctx.bus else { return }
             self.isMovingPoseCancelled = false
             self.consecutiveBusFailures = 0
             self.lastSafetyEvent = nil
@@ -1611,9 +1989,9 @@ public final class ConnectionStore: ObservableObject {
     ///   - `diag.summary.isEmpty == false` → `.failure` (통신 진단)
     ///   - else → `.failure` ("부분 완료")
     private func reFinalizeAndReport(ctx: RecoverContext) async {
-        let diag = await applyPoseSlowlyForRecovery(.walkReady)
+        let diag = await applyPoseSlowlyForRecovery(.walkReady, bus: ctx.bus)
         ctx.diag = diag
-        await finalizeRecoveryState()
+        await finalizeRecoveryState(ctx: ctx)
 
         await MainActor.run {
             self.lastSafetyEvent = nil
@@ -1623,6 +2001,8 @@ public final class ConnectionStore: ObservableObject {
             if diag.reached {
                 self.lastRecoveryOutcome = ctx.pGainFailures > 0 ? .failure : .success
                 self.lastRecoveryResult = "복구 완료 — 기본 자세 + 토크 ON + 모든 메뉴 동작 가능\(pGainSuffix)"
+                // V297-4: 복구 성공 시 e-stop flag clear — Mobile Relay 가 즉시 정상 상태로 인식.
+                self.emergencyStopActive = false
             } else if diag.cancelledByUser {
                 self.lastRecoveryOutcome = .failure
                 self.lastRecoveryResult = "복구 취소됨 — 다시 시도하세요"
@@ -1648,8 +2028,13 @@ public final class ConnectionStore: ObservableObject {
     ///   3. (텔레메트리) 한 번 fresh poll — applyPoseSmoothly 의 load watchdog 이 stale 값으로
     ///      false-positive trip 하지 않도록 갱신.
     ///   4. (정착) 400 ms 대기 — Dynamixel 의 present_load 노이즈 안정화.
-    private func finalizeRecoveryState() async {
-        guard let bus = bus else { return }
+    private func finalizeRecoveryState(ctx: RecoverContext) async {
+        // stale-write 가드: applyPoseSlowly 의 긴 settling await 사이 재연결로 bus 가
+        // 교체됐으면 이 recovery 는 stale — newer bus 의 하드웨어 레지스터/카운터(line ~1975
+        // consecutiveBusFailures)를 건드리지 않고 즉시 반환. 종전엔 `self.bus` 를 재독해
+        // newer bus 로 setMovingSpeed/state-reset 을 실행할 수 있었다 (codex MEDIUM).
+        // telemetry 루프의 `self.bus === bus` bus-identity 가드와 동형.
+        guard let bus = bus, bus === ctx.bus else { return }
 
         // [a] moving_speed = 0 (factory default) — Dynamixel 내부 throttle 해제.
         //     이후 callers 가 setMovingSpeed 명시적으로 호출 안 해도 정상 속도로 동작.
@@ -1672,7 +2057,10 @@ public final class ConnectionStore: ObservableObject {
         try? await Task.sleep(nanoseconds: 400_000_000)
 
         // [d] 텔레메트리 1 회 fresh refresh — UI 와 verify 가 최신 load / voltage 사용.
+        //     stale-write 가드: 400ms await 사이 bus 가 교체됐으면 newer bus 의 jointStates 를
+        //     stale recovery 가 refresh 하지 않는다 (refreshJointState 가 self.bus 를 재독하므로).
         await MainActor.run {
+            guard self.bus === ctx.bus else { return }
             for j in JointID.allCases {
                 self.refreshJointState(j)
             }
@@ -1708,8 +2096,11 @@ public final class ConnectionStore: ObservableObject {
     ///   3. 5 초 정착 대기 (250 ms × 20). 그 동안 isMovingPoseCancelled 가 true 되면 즉시 종료.
     ///   4. 모든 setMovingSpeed / setPosition 호출 결과를 **카운트** — 실패 수 진단 토스트 표시.
     ///   5. lastSafetyEvent 는 **절대 작성하지 않음**.
-    private func applyPoseSlowlyForRecovery(_ target: RobotPose) async -> RecoveryDiagnostics {
-        guard let bus = bus else {
+    private func applyPoseSlowlyForRecovery(_ target: RobotPose, bus: any BusInterface) async -> RecoveryDiagnostics {
+        // stale-write 가드: recovery 가 시작될 때 잡은 bus 로만 쓴다. 진입 시점에 이미
+        // bus 가 교체됐으면(재연결) 이 recovery 는 stale — newer bus 에 setMovingSpeed/
+        // setPosition 을 보내지 않고 즉시 not-reached 반환 (telemetry 루프 bus-identity 가드와 동형).
+        guard self.bus === bus else {
             return RecoveryDiagnostics(
                 reached: false,
                 speedWriteFailures: 0,
@@ -1740,6 +2131,17 @@ public final class ConnectionStore: ObservableObject {
         // 모터가 새 speed 를 적용할 짧은 시간.
         try? await Task.sleep(nanoseconds: 100_000_000)
 
+        // stale-write 가드: 100ms await 사이 bus 가 교체됐으면 goal_position 을 newer bus 에
+        // 쓰지 않고 중단 (사용자 취소와 동일 취급 — recovery 미완료로 보고).
+        guard self.bus === bus else {
+            return RecoveryDiagnostics(
+                reached: false,
+                speedWriteFailures: speedFailures,
+                positionWriteFailures: posFailures,
+                cancelledByUser: true
+            )
+        }
+
         // [2] 목표 위치 한 번에 송출 — Dynamixel 의 내부 controller 가 부드럽게 이동.
         for j in JointID.allCases {
             let raw = UInt16(clamping: target.positions[j] ?? 2048)
@@ -1760,7 +2162,8 @@ public final class ConnectionStore: ObservableObject {
         // [3] 5 초 동안 모터 물리 도달 대기 — 250 ms × 20 = 5 s.
         //     중간에 사용자가 E-stop 다시 누르거나 disconnect 하면 즉시 종료.
         for _ in 0..<20 {
-            if isMovingPoseCancelled {
+            // 사용자 취소 또는 bus 교체(stale recovery) → 즉시 종료.
+            if isMovingPoseCancelled || self.bus !== bus {
                 return RecoveryDiagnostics(
                     reached: false,
                     speedWriteFailures: speedFailures,
@@ -1875,7 +2278,11 @@ public final class ConnectionStore: ObservableObject {
             // 측정 가이드: docs/architecture/timing-baseline.md
             let signpostID = Self.imuLoopSignposter.makeSignpostID()
             let signpostState = Self.imuLoopSignposter.beginInterval("imu_iter", id: signpostID)
-            switch await imuLoopReadOnce(bus: bus) {
+            let imuResult = await imuLoopReadOnce(bus: bus)
+            // codex MEDIUM fix: detached read 동안 bus 가 교체됐으면(다른 경로의 새 연결) stale
+            // 결과로 IMU health / lastTelemetry 를 건드리지 않는다 — board/joint/FSR 가드와 동일.
+            guard self.bus === bus else { break }
+            switch imuResult {
             case .success(let value): imuLoopHandleSuccess(value, state: state)
             case .failure(let error): imuLoopHandleFailure(error, state: state)
             }
@@ -2094,7 +2501,8 @@ public final class ConnectionStore: ObservableObject {
         }
 
         // 카운터 임계 도달 시 self.bus가 nil이 되어 다음 iteration의 while 조건에서 종료.
-        if self.bus == nil { return false }
+        // codex MEDIUM fix: nil 뿐 아니라 *교체*(다른 경로의 새 bus)도 감지 — stale 성공 발행 차단.
+        guard self.bus === bus else { return false }
 
         // Joint reads — background. readJoints 자체는 MainActor (per-joint
         // counter 업데이트 때문) 이지만 read 호출만 background로 위임.
@@ -2108,14 +2516,17 @@ public final class ConnectionStore: ObservableObject {
             return false
         }
 
-        // 이 사이에 watchdog가 trigger됐으면 종료.
-        if self.bus == nil { return false }
+        // 이 사이에 watchdog가 trigger됐거나 bus 가 교체됐으면 종료(stale 발행 차단, codex MEDIUM fix).
+        guard self.bus === bus else { return false }
 
         // 한 사이클 내 모든 호출이 성공하면 카운터 reset.
         if !didFail { resetBusFailureCounter() }
 
         let snap = TelemetrySnapshot(board: board, joints: joints, imu: imu)
         self.lastTelemetry = snap
+        // SSH ↔ LAN parity (2026-06-01): LAN 폴링이 한 사이클 성공 = 풀 텔레메트리 경로 live.
+        // onboard ingest 가 .onboard 로 올렸더라도, LAN bus 가 다시 응답하면 .lan 로 복원.
+        if telemetryMode != .lan { telemetryMode = .lan }
         // 주요 관절 캐시 업데이트.
         for (j, s) in joints { self.jointStates[j] = s }
 
@@ -2144,6 +2555,9 @@ public final class ConnectionStore: ObservableObject {
             do { return .success(try bus.boardSnapshot()) }
             catch { return .failure(error) }
         }.value
+        // codex MEDIUM fix: detached read 동안 bus 가 교체됐으면(다른 경로의 새 연결) success/failure
+        // 어느 쪽도 stale 결과로 health/state 를 건드리지 않는다(옛 bus 실패로 새 연결 끊김 방지 포함).
+        guard self.bus === bus else { return nil }
         switch result {
         case .success(let snap):
             let rtt = Date().timeIntervalSince(t0) * 1000
@@ -2184,6 +2598,9 @@ public final class ConnectionStore: ObservableObject {
         let rightOpt: FsrReading? = {
             if case .success(let r) = fsrResult.1 { return r } else { return nil }
         }()
+        // codex MEDIUM fix: detached FSR read 가 도는 동안 bus 가 교체됐으면 stale 결과로
+        // health/FSR-disable 를 건드리지 않는다.
+        guard self.bus === bus else { return }
         let fsrOk = (leftOpt != nil) || (rightOpt != nil)
         if fsrOk {
             self.health.updateFsr(left: leftOpt, right: rightOpt)
@@ -2280,6 +2697,8 @@ public final class ConnectionStore: ObservableObject {
                     jointConsecutiveFailures[j, default: 0] += 1
                 } else {
                     // Bus-level (port closed / IO error) — global watchdog.
+                    // codex HIGH fix: stale bus(이미 교체된 연결)의 실패면 무시.
+                    guard self.bus === bus else { return out }
                     handleBusError(error)
                     if self.bus == nil { return out }
                 }
@@ -2312,6 +2731,9 @@ public final class ConnectionStore: ObservableObject {
             return out
         }.value
 
+        // codex MEDIUM fix: detached read 동안 bus 가 교체됐으면 success/failure 어느 쪽도 stale
+        // 결과로 jointStates/per-joint counter/watchdog 를 건드리지 않는다(빈 결과 반환).
+        guard self.bus === bus else { return [:] }
         // MainActor: 결과를 jointStates / per-joint counter / watchdog 에 반영.
         var out: [JointID: JointState] = [:]
         for (j, result) in results {

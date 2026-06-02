@@ -31,6 +31,8 @@
 /// 2. baseline P50/P95/P99 → `docs/architecture/baselines/walk_tick_<date>.json`.
 /// 3. actor 추출 후 동일 measurement → P99 < 5ms 확인.
 /// 4. 본 measure tests 의 absolute envelope 비교 (sanity check).
+// V288-5: `#if DEBUG` wrap — _testForceTick 는 DEBUG-only.
+#if DEBUG
 import XCTest
 @testable import DarwinForgeUI
 @testable import ForgeCore
@@ -103,3 +105,4 @@ final class TimingBaselineTests: XCTestCase {
         }
     }
 }
+#endif

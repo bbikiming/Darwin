@@ -189,6 +189,20 @@ public struct WalkSessionSample: Codable, Sendable {
     /// fall predictor 가 recommend emergency 인가.
     public let fallRecommendEmergency: Bool?
 
+    // MARK: - Phase 1 fall-recovery telemetry fields (backward-compat optional)
+
+    /// 현재 auto-recovery 진행 단계 rawValue 문자열.
+    /// nil = 기록 없음 (legacy 또는 session 시작 전). 분석: 낙하 발생 전후 timeline.
+    public let autoRecoveryPhase: String?
+    /// 낙하 방향 rawValue (`"forward"` / `"backward"`). nil = 낙하 감지 안 됨.
+    public let fallDirection: String?
+    /// 이 tick 에 "최근 5s 내 pilot 명령" latch 가 활성 상태였는가 (M4 gate).
+    /// nil = 기록 없음 (legacy).
+    public let recentlyPiloting: Bool?
+    /// 이 tick 의 다리 관절 presentLoad 최대값 (JointStateSnapshot.l 기준).
+    /// 낙하 직전 하체 부하 특성 분석. nil = joint telemetry 미수신 또는 기록 없음.
+    public let peakLegLoad: Double?
+
     public init(
         t: Double,
         preset: String,
@@ -237,7 +251,12 @@ public struct WalkSessionSample: Codable, Sendable {
         fsrRight: FsrSampleSnapshot? = nil,
         // v1.11.25 audit P1 log-H
         fallScore: Double? = nil,
-        fallRecommendEmergency: Bool? = nil
+        fallRecommendEmergency: Bool? = nil,
+        // Phase 1 fall-recovery telemetry
+        autoRecoveryPhase: String? = nil,
+        fallDirection: String? = nil,
+        recentlyPiloting: Bool? = nil,
+        peakLegLoad: Double? = nil
     ) {
         self.t = t
         self.preset = preset
@@ -287,6 +306,11 @@ public struct WalkSessionSample: Codable, Sendable {
         // v1.11.25 audit P1 log-H
         self.fallScore = fallScore
         self.fallRecommendEmergency = fallRecommendEmergency
+        // Phase 1 fall-recovery telemetry
+        self.autoRecoveryPhase = autoRecoveryPhase
+        self.fallDirection = fallDirection
+        self.recentlyPiloting = recentlyPiloting
+        self.peakLegLoad = peakLegLoad
     }
 }
 
@@ -621,6 +645,23 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
     /// Candidate vs applied delta 분리 통계. nil = legacy summary.
     public let candidateApplied: CandidateAppliedSplit?
 
+    // MARK: - 데이터 기반 자동 튜닝 (2026-05-30) — 균형 안정성 파라미터 권고 (tau/D항)
+
+    /// 본 세션에서 사용된 자이로 D항(s). 권고 방향 산출 기준. nil = legacy.
+    public let derivativeTimeSecUsed: Double?
+    /// 권고 D항(s). used 와 다르면 변경 권고. nil = legacy/미산출.
+    public let recommendedDerivativeTimeSec: Double?
+    /// 본 세션에서 사용된 baseline tau(s). nil = legacy.
+    public let baselineTauSecUsed: Double?
+    /// 권고 baseline tau(s). nil = legacy/미산출.
+    public let recommendedBaselineTauSec: Double?
+    /// 안정성 권고 이유 (D항 + tau 결합 메시지). nil = legacy.
+    public let stabilityRecommendationReason: String?
+    /// 안정성 권고 신뢰도 (0..1). nil = legacy.
+    public let stabilityConfidence: Double?
+    /// caution 이상 상태 비율 (0..1) — 불안정 corroboration. nil = legacy.
+    public let cautionRatio: Double?
+
     public init(
         id: String, preset: String, startTimeIso: String,
         durationSec: Double, sampleCount: Int, intensityLevelUsed: Int,
@@ -632,7 +673,14 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
         confidence: Double,
         dataQuality: DataQualityReport? = nil,
         sagittal: SagittalMetric? = nil,
-        candidateApplied: CandidateAppliedSplit? = nil
+        candidateApplied: CandidateAppliedSplit? = nil,
+        derivativeTimeSecUsed: Double? = nil,
+        recommendedDerivativeTimeSec: Double? = nil,
+        baselineTauSecUsed: Double? = nil,
+        recommendedBaselineTauSec: Double? = nil,
+        stabilityRecommendationReason: String? = nil,
+        stabilityConfidence: Double? = nil,
+        cautionRatio: Double? = nil
     ) {
         self.id = id
         self.preset = preset
@@ -654,6 +702,13 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
         self.dataQuality = dataQuality
         self.sagittal = sagittal
         self.candidateApplied = candidateApplied
+        self.derivativeTimeSecUsed = derivativeTimeSecUsed
+        self.recommendedDerivativeTimeSec = recommendedDerivativeTimeSec
+        self.baselineTauSecUsed = baselineTauSecUsed
+        self.recommendedBaselineTauSec = recommendedBaselineTauSec
+        self.stabilityRecommendationReason = stabilityRecommendationReason
+        self.stabilityConfidence = stabilityConfidence
+        self.cautionRatio = cautionRatio
     }
 
     // MARK: - Backward-compat decode (v1.11.9 이전 .summary.json 호환)
@@ -663,6 +718,9 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
         case oscillationScore, correctorEffectivenessScore
         case recommendedIntensityLevel, recommendationReason, confidence
         case dataQuality, sagittal, candidateApplied
+        case derivativeTimeSecUsed, recommendedDerivativeTimeSec
+        case baselineTauSecUsed, recommendedBaselineTauSec
+        case stabilityRecommendationReason, stabilityConfidence, cautionRatio
     }
 
     public init(from decoder: Decoder) throws {
@@ -687,5 +745,12 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
         self.dataQuality = try c.decodeIfPresent(DataQualityReport.self, forKey: .dataQuality)
         self.sagittal = try c.decodeIfPresent(SagittalMetric.self, forKey: .sagittal)
         self.candidateApplied = try c.decodeIfPresent(CandidateAppliedSplit.self, forKey: .candidateApplied)
+        self.derivativeTimeSecUsed = try c.decodeIfPresent(Double.self, forKey: .derivativeTimeSecUsed)
+        self.recommendedDerivativeTimeSec = try c.decodeIfPresent(Double.self, forKey: .recommendedDerivativeTimeSec)
+        self.baselineTauSecUsed = try c.decodeIfPresent(Double.self, forKey: .baselineTauSecUsed)
+        self.recommendedBaselineTauSec = try c.decodeIfPresent(Double.self, forKey: .recommendedBaselineTauSec)
+        self.stabilityRecommendationReason = try c.decodeIfPresent(String.self, forKey: .stabilityRecommendationReason)
+        self.stabilityConfidence = try c.decodeIfPresent(Double.self, forKey: .stabilityConfidence)
+        self.cautionRatio = try c.decodeIfPresent(Double.self, forKey: .cautionRatio)
     }
 }

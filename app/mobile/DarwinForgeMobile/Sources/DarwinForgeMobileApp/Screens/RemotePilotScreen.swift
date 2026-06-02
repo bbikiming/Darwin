@@ -1,21 +1,40 @@
 import SwiftUI
 import MobilePilotKit
 
-/// 메인 조종기 화면 — 실시간 analog 조종.
+/// **메인 조종기 화면 — Cockpit HUD 모드**.
 ///
-/// 레이아웃 (portrait):
-///   [Status Rail + E-Stop]
-///   [Robot 상태 카드 + 속도]
-///   [ARM 슬라이더 또는 ARM 완료 banner]
-///   ┌──────────────────────┐
-///   │   대형 이동 조이스틱   │   (XY: 전후 + 측면)
-///   └──────────────────────┘
-///   [회전 다이얼]
-///   [헤드 컨트롤 카드]
-///   [현재 명령 status banner]
+/// # 레이아웃 (portrait)
+///
+/// ```
+/// ┌──────────────────────────────────────┐
+/// │ [Status Rail · E-Stop]                │
+/// │ [Cockpit Telemetry Grid 11필드]      │
+/// │ [Attitude Indicator | Position Map]   │   ← cockpit HUD 좌우 split
+/// │ [Speed Gauge       | Command Readout]│
+/// │ [Freeform Banner (필요시)]            │
+/// │ [ARM 슬라이더 / 잠금 해제 카드]       │
+/// │ [대형 이동 조이스틱]                  │
+/// │ [회전 다이얼]                         │
+/// │ [모션 빠른 액션 · walkReady/sit/...] │
+/// │ [헤드 컨트롤 카드]                    │
+/// │ [현재 명령 status banner]             │
+/// └──────────────────────────────────────┘
+/// ```
+///
+/// # Cockpit 연동 (Mac 9번 메뉴 ⌘9 와 시각적 등가)
+///
+/// 본 화면은 Mac `PilotCockpitView` 의 instrument suite 를 iOS 에서 재현한다. 조이스틱
+/// 입력은 `CockpitSimulator` 로 동시에 흘려 sim 위치/속도/거리/trail 을 30Hz 로 적분
+/// 한다. 사용자가 보는 게이지 숫자 (mm/s) 는 Mac Cockpit 의 CockpitSpeedGauge 와 동일한
+/// ROBOTIS Walking 공식 `forward_speed_mmps = strideMm × 2000 / periodMs` 으로 계산.
+///
+/// Mac 측 텔레메트리 (`TelemetryStatePayload` 11 필드 — robot/safety/dxlPower/battery/temp/
+/// latency/ackAge/uiState…) 는 `CockpitTelemetryGrid` 가 모두 카드로 시각화. 종전 화면이
+/// battery/temp/latency 3 개만 보여주던 갭을 해소한다.
 public struct RemotePilotScreen: View {
 
     @EnvironmentObject var state: AppState
+    @StateObject private var simulator = CockpitSimulator()
     @State private var showArmChecklist = false
     @State private var speed: SpeedTier = .slow
     @State private var headEnabled = false
@@ -26,6 +45,15 @@ public struct RemotePilotScreen: View {
     @State private var lastFreeform: WalkFreeformInput = .zero
     @State private var rotationActive: Double = 0
     @State private var stickActive: DSJoystick.Vector = .zero
+    @State private var simEnabled: Bool = true
+
+    /// External controller adapter — owned by the screen so its lifecycle
+    /// matches the screen's appearance. Bridges into `state` via the
+    /// `RemoteControlBridge` protocol so the same `streamWalk` / `releaseWalk`
+    /// path that the on-screen joystick uses also receives controller input.
+    @StateObject private var controllerAdapter = ExternalControllerAdapter(
+        bridge: nil,
+        source: GameControllerSource())
 
     public init() {}
 
@@ -35,10 +63,13 @@ public struct RemotePilotScreen: View {
                 VStack(spacing: DS.Space.l) {
                     statusRailSection
                     freeformModeBanner
-                    statePanelSection
+                    cockpitTelemetrySection
+                    cockpitHUDSection
+                    cockpitGaugeSection
                     armSection
                     joystickSection
                     rotationSection
+                    motionQuickSection
                     headSection
                     feedbackSection
                 }
@@ -48,6 +79,30 @@ public struct RemotePilotScreen: View {
             .navigationTitle("조종기")
             .dfInlineNavigationTitle()
             .accessibilityIdentifier("remotepilot.root")
+            .task {
+                // Wire the bridge once and start polling. The adapter does
+                // nothing until a controller actually connects, so it's safe
+                // to leave running for the screen's lifetime.
+                if controllerAdapter.bridge == nil {
+                    controllerAdapter.bridge = state
+                    controllerAdapter.start()
+                }
+                simulator.start()
+                simulator.setSpeedScale(speed.multiplier)
+            }
+            .onDisappear {
+                stopStream()
+                controllerAdapter.stop()
+                simulator.stop()
+                Task { await state.releaseWalk() }
+            }
+            .onChange(of: speed) { _, newValue in
+                controllerAdapter.setSpeedScale(newValue.multiplier)
+                simulator.setSpeedScale(newValue.multiplier)
+            }
+            .onChange(of: simEnabled) { _, newValue in
+                simulator.simulationEnabled = newValue
+            }
             .sheet(isPresented: $showArmChecklist) {
                 NavigationStack {
                     ArmChecklistContent(state: state)
@@ -65,12 +120,17 @@ public struct RemotePilotScreen: View {
         }
     }
 
-    // MARK: - Sections
+    // MARK: - Status / banner
 
     private var statusRailSection: some View {
         HStack(spacing: DS.Space.s) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: DS.Space.s) {
+                    if state.isReconnecting {
+                        DSChip("재연결 중 \(state.autoReconnectAttempt)회",
+                               tone: .warning,
+                               identifier: "remotepilot.status.reconnecting")
+                    }
                     DSChip(state.statusRail.macLabel,
                            tone: macTone, identifier: "remotepilot.status.mac")
                     DSChip(state.statusRail.robotLabel,
@@ -81,33 +141,128 @@ public struct RemotePilotScreen: View {
                            value: state.statusRail.latencyLabel,
                            tone: state.statusRail.latencyWarning ? .warning : .neutral,
                            identifier: "remotepilot.status.latency")
+                    if let name = controllerAdapter.connectedControllerName {
+                        DSChip(name,
+                               tone: .accent,
+                               identifier: "remotepilot.status.controller")
+                    }
                 }
             }
             EmergencyStopButton {
-                Task { await state.performEStop() }
+                Task {
+                    simulator.release()
+                    await state.performEStop()
+                }
             }
         }
     }
 
-    private var statePanelSection: some View {
-        DSCard(padding: DS.Space.m) {
-            HStack(spacing: DS.Space.m) {
-                metric(label: "전압",
-                       value: state.telemetry?.batteryV.map { String(format: "%.1f V", $0) } ?? "—")
-                Divider().frame(height: 32)
-                metric(label: "온도",
-                       value: state.telemetry?.maxTempC.map { String(format: "%.0f ℃", $0) } ?? "—")
-                Divider().frame(height: 32)
-                metric(label: "지연",
-                       value: state.telemetry.map { "\($0.latencyMs) ms" } ?? "—")
-                Spacer()
-                if let banner = state.recoveryBanner {
-                    DSChip(banner.kind.rawValue.uppercased(),
-                           tone: .danger, identifier: "remotepilot.recovery")
+    @ViewBuilder
+    private var freeformModeBanner: some View {
+        if !state.freeformWalkSupported {
+            DSCard(tone: .danger, padding: DS.Space.m) {
+                HStack(alignment: .top, spacing: DS.Space.s) {
+                    Image(systemName: "exclamationmark.octagon.fill")
+                        .foregroundStyle(DS.Color.danger)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("이 Mac 앱은 아직 자유 조종을 지원하지 않습니다.")
+                            .font(DS.Font.bodyEmphasis)
+                        Text("Mac 앱을 최신 빌드로 업데이트하거나 「동작」 탭의 전진, 좌회전, 우회전, 정지 버튼을 사용하세요.")
+                            .font(DS.Font.caption)
+                            .foregroundStyle(DS.Color.secondaryText)
+                    }
                 }
             }
+            .accessibilityIdentifier("remotepilot.freeform.banner")
         }
     }
+
+    // MARK: - Cockpit HUD sections (NEW)
+
+    /// 텔레메트리 그리드 — Mac → iOS 의 `TelemetryStatePayload` 11 필드를 모두 시각화.
+    private var cockpitTelemetrySection: some View {
+        CockpitTelemetryGrid(
+            telemetry: state.telemetry,
+            history: latencyHistory,
+            macConnected: macIsConnected,
+            pilotStateLabel: pilotStateKorean
+        )
+    }
+
+    /// Cockpit HUD 1행 — 헤딩 컴퍼스 + 위치 미니맵 좌우 split.
+    private var cockpitHUDSection: some View {
+        HStack(alignment: .top, spacing: DS.Space.s) {
+            CockpitAttitudeIndicator(
+                headingDeg: simulator.simHeadingDeg,
+                isWalking: !simulator.isStopped,
+                isArmed: state.pilotState.isArmed,
+                stickMagnitude: stickActive.magnitude)
+            CockpitMinimap(
+                positionMM: simulator.simPositionMM,
+                headingDeg: simulator.simHeadingDeg,
+                trail: simulator.pathTrail,
+                totalDistanceMm: simulator.totalDistanceMm,
+                isSim: true)
+        }
+    }
+
+    /// Cockpit HUD 2행 — 속도 게이지 + 명령 readout 좌우 split.
+    private var cockpitGaugeSection: some View {
+        VStack(spacing: DS.Space.s) {
+            CockpitSpeedGauge(
+                forwardMmPerSec: simulator.forwardSpeedMmPerSec,
+                lateralMmPerSec: simulator.lateralSpeedMmPerSec,
+                turnDegPerSec: simulator.turnSpeedDegPerSec,
+                peakForwardMmPerSec: simulator.peakForwardSpeedMmPerSec,
+                forwardNorm: simulator.forwardSpeedNorm,
+                lateralNorm: simulator.lateralSpeedNorm,
+                turnNorm: simulator.turnSpeedNorm)
+            CockpitCommandReadout(
+                strideMm: simulator.commandedStrideMm,
+                sideMm: simulator.commandedSideMm,
+                turnDeg: simulator.commandedTurnDeg,
+                periodMs: simulator.periodMs,
+                speedScale: simulator.speedScale,
+                isActiveDispatch: state.pendingCommandLabel != nil
+                                  || streamTask != nil,
+                source: controllerAdapter.connectedControllerName ?? "조이스틱")
+            simulationToggle
+        }
+    }
+
+    /// 시뮬레이션 ON/OFF 토글 (Mac Cockpit 의 시뮬 토글과 동일).
+    private var simulationToggle: some View {
+        HStack {
+            Toggle(isOn: $simEnabled) {
+                HStack(spacing: 6) {
+                    Image(systemName: "scope")
+                        .foregroundStyle(simEnabled ? DS.Color.warning : DS.Color.tertiaryText)
+                    Text("위치 시뮬")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .tint(DS.Color.warning)
+            Spacer()
+            if simEnabled {
+                Text("미니맵·헤딩·거리 적분 활성")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(DS.Color.tertiaryText)
+            }
+            Button {
+                simulator.resetVisuals()
+            } label: {
+                Label("초기화", systemImage: "arrow.counterclockwise")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, DS.Space.s)
+    }
+
+    // MARK: - Arm / joystick / rotation (기존 유지)
 
     @ViewBuilder
     private var armSection: some View {
@@ -121,7 +276,10 @@ public struct RemotePilotScreen: View {
                     DSButton("잠금",
                              systemImage: "lock.fill",
                              style: .secondary, size: .small) {
-                        Task { await state.performDisarm() }
+                        Task {
+                            simulator.release()
+                            await state.performDisarm()
+                        }
                     }
                     .accessibilityIdentifier("remotepilot.disarm")
                 }
@@ -162,7 +320,7 @@ public struct RemotePilotScreen: View {
                 HStack {
                     DSSectionHeader("이동",
                                     subtitle: state.freeformWalkSupported
-                                        ? "전후 + 측면. 손을 떼면 정지합니다. (연습)"
+                                        ? "방향과 기울기만큼 속도가 바뀝니다. 손을 떼면 정지합니다."
                                         : "자유 조종은 실 로봇에서 비활성")
                     Spacer()
                     DSChip(stickMovementLabel(),
@@ -180,34 +338,23 @@ public struct RemotePilotScreen: View {
                     .accessibilityIdentifier("remotepilot.move.joystick")
                     Spacer()
                 }
-                DSSpeedSelector(selected: $speed, enabledTiers: [.slow])
+                DSSpeedSelector(selected: $speed,
+                                enabledTiers: state.speedScaleSupported
+                                    ? Set(SpeedTier.allCases)
+                                    : [.slow])
                     .accessibilityIdentifier("remotepilot.speed")
+                if !state.speedScaleSupported {
+                    Label("현재 Mac 앱은 느림만 지원합니다. 업데이트 후 보통과 빠름을 사용할 수 있어요.",
+                          systemImage: "speedometer")
+                        .font(DS.Font.caption)
+                        .foregroundStyle(DS.Color.secondaryText)
+                }
                 if !joystickEnabled {
                     Label(joystickDisabledHint, systemImage: "info.circle")
                         .font(DS.Font.caption)
                         .foregroundStyle(DS.Color.secondaryText)
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var freeformModeBanner: some View {
-        if !state.freeformWalkSupported {
-            DSCard(tone: .danger, padding: DS.Space.m) {
-                HStack(alignment: .top, spacing: DS.Space.s) {
-                    Image(systemName: "exclamationmark.octagon.fill")
-                        .foregroundStyle(DS.Color.danger)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("자유 조종은 첫 빌드에서 실제 로봇에 전달되지 않습니다.")
-                            .font(DS.Font.bodyEmphasis)
-                        Text("실제 보행은 「동작」 탭의 검증된 전진, 좌회전, 우회전, 정지 버튼을 사용하세요.")
-                            .font(DS.Font.caption)
-                            .foregroundStyle(DS.Color.secondaryText)
-                    }
-                }
-            }
-            .accessibilityIdentifier("remotepilot.freeform.banner")
         }
     }
 
@@ -235,6 +382,89 @@ public struct RemotePilotScreen: View {
         }
     }
 
+    // MARK: - Motion quick actions (NEW)
+
+    /// 자주 쓰는 모션 빠른 진입 — walkReady/basic/sit/greeting. ARM 후만 활성.
+    private var motionQuickSection: some View {
+        DSCard(padding: DS.Space.m) {
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                HStack {
+                    DSSectionHeader("모션", subtitle: "안전 자세 빠른 진입")
+                    Spacer()
+                    if let label = state.pendingCommandLabel {
+                        DSChip(label,
+                               tone: .accent,
+                               identifier: "remotepilot.motion.pending")
+                    }
+                }
+                let labels = ["walkReady", "basicPosture", "sit", "greeting"]
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: DS.Space.s) {
+                        ForEach(labels, id: \.self) { motion in
+                            motionButton(label: motion)
+                        }
+                    }
+                }
+                if !motionEnabled {
+                    Label("잠금 해제 후 사용 가능", systemImage: "info.circle")
+                        .font(DS.Font.caption)
+                        .foregroundStyle(DS.Color.secondaryText)
+                }
+            }
+        }
+    }
+
+    private func motionButton(label: String) -> some View {
+        let entry = SafeMotionCatalog.entry(forLabel: label)
+        let korean = entry?.koreanName ?? label
+        return Button {
+            Task { await state.performMotion(label: label) }
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: iconFor(motion: label))
+                    .font(.title3)
+                Text(korean)
+                    .font(.system(size: 11, weight: .semibold))
+                if let slot = entry?.slot {
+                    Text("slot \(slot)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(DS.Color.tertiaryText)
+                }
+            }
+            .padding(.horizontal, DS.Space.m)
+            .padding(.vertical, DS.Space.s)
+            .frame(minWidth: 84)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.s)
+                    .fill(DS.Color.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.s)
+                    .stroke(DS.Color.divider, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!motionEnabled)
+        .opacity(motionEnabled ? 1 : 0.4)
+        .accessibilityIdentifier("remotepilot.motion.\(label)")
+    }
+
+    private func iconFor(motion: String) -> String {
+        switch motion {
+        case "walkReady": return "figure.walk"
+        case "basicPosture": return "figure.stand"
+        case "sit": return "chair"
+        case "greeting": return "hand.wave"
+        default: return "figure.walk"
+        }
+    }
+
+    private var motionEnabled: Bool {
+        state.pilotState.isArmed && state.isMacReady
+    }
+
+    // MARK: - Head section
+
     private var headSection: some View {
         DSCard(padding: DS.Space.l) {
             VStack(alignment: .leading, spacing: DS.Space.s) {
@@ -261,6 +491,8 @@ public struct RemotePilotScreen: View {
         }
     }
 
+    // MARK: - Feedback section
+
     @ViewBuilder
     private var feedbackSection: some View {
         if let label = state.pendingCommandLabel {
@@ -280,15 +512,32 @@ public struct RemotePilotScreen: View {
                 }
             }
         }
+        if let banner = state.recoveryBanner {
+            DSCard(tone: .danger, padding: DS.Space.m) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(banner.kind.rawValue.uppercased(),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(DS.Font.bodyEmphasis)
+                        .foregroundStyle(DS.Color.danger)
+                    Text(banner.message)
+                        .font(DS.Font.caption)
+                        .foregroundStyle(DS.Color.secondaryText)
+                    DSButton("확인", style: .secondary, size: .small) {
+                        state.acknowledgeRecovery()
+                    }
+                }
+            }
+        }
     }
 
-    // MARK: - Handlers
+    // MARK: - Handlers (joystick / rotation)
 
     private func handleJoystickChange(_ v: DSJoystick.Vector) {
         stickActive = v
         let input = WalkFreeformInput(x: v.x, y: v.y, turn: rotationActive,
                                       speedScale: speed.multiplier)
         lastFreeform = input
+        simulator.apply(input: input)
         scheduleStream(input)
     }
 
@@ -296,6 +545,7 @@ public struct RemotePilotScreen: View {
         stickActive = .zero
         let input = WalkFreeformInput(x: 0, y: 0, turn: rotationActive,
                                       speedScale: speed.multiplier)
+        simulator.apply(input: input)
         if abs(rotationActive) > 0.05 {
             scheduleStream(input)
         } else {
@@ -308,14 +558,16 @@ public struct RemotePilotScreen: View {
         rotationActive = v
         let input = WalkFreeformInput(x: stickActive.x, y: stickActive.y, turn: v,
                                       speedScale: speed.multiplier)
+        simulator.apply(input: input)
         scheduleStream(input)
     }
 
     private func handleRotationRelease() {
         rotationActive = 0
+        let input = WalkFreeformInput(x: stickActive.x, y: stickActive.y, turn: 0,
+                                      speedScale: speed.multiplier)
+        simulator.apply(input: input)
         if stickActive.magnitude > 0.05 {
-            let input = WalkFreeformInput(x: stickActive.x, y: stickActive.y, turn: 0,
-                                          speedScale: speed.multiplier)
             scheduleStream(input)
         } else {
             stopStream()
@@ -358,7 +610,7 @@ public struct RemotePilotScreen: View {
 
     private var joystickDisabledHint: String {
         if !state.freeformWalkSupported {
-            return "자유 조종은 실 로봇에서 비활성 — 「동작」 탭의 버튼을 사용하세요."
+            return "Mac 앱 업데이트 후 자유 조종을 사용할 수 있어요."
         }
         return CommandPermission.reason(forWalk: state.pilotState,
                                         telemetry: state.telemetry)?.koreanCopy
@@ -369,10 +621,33 @@ public struct RemotePilotScreen: View {
         state.armStartDisabledReason?.koreanCopy
     }
 
-    private var disabledHint: String {
-        CommandPermission.reason(forWalk: state.pilotState,
-                                 telemetry: state.telemetry)?.koreanCopy
-            ?? "잠금 해제 후 사용 가능합니다."
+    /// PilotState → 한국어 라벨 (텔레메트리 그리드 표시용).
+    private var pilotStateKorean: String {
+        switch state.pilotState {
+        case .notPaired: return "미페어링"
+        case .pairing: return "페어링 중"
+        case .pairedNoMac: return "Mac 대기"
+        case .macConnectedNoRobot: return "Mac만 연결"
+        case .robotConnectedLocked: return "로봇 연결"
+        case .arming: return "ARM 중"
+        case .armedReady: return "준비 완료"
+        case .commandActive: return "명령 중"
+        case .staleStop: return "STALE"
+        case .estopped: return "E-STOP"
+        }
+    }
+
+    /// Transport.connected (associated value 무시) 매칭.
+    private var macIsConnected: Bool {
+        if case .connected = state.transport { return true }
+        return false
+    }
+
+    /// CockpitTelemetryGrid 용 latency sparkline 입력.
+    private var latencyHistory: [CockpitTelemetryGrid.LatencySample] {
+        state.telemetryHistory.suffix(24).map {
+            CockpitTelemetryGrid.LatencySample(latencyMs: $0.latencyMs)
+        }
     }
 
     private func stickMovementLabel() -> String {
@@ -394,15 +669,7 @@ public struct RemotePilotScreen: View {
         }
     }
 
-    // MARK: - Subviews
-
-    private func metric(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(DS.Font.caption)
-                .foregroundStyle(DS.Color.secondaryText)
-            Text(value).font(DS.Font.metric)
-        }
-    }
+    // MARK: - Tones (status rail)
 
     private var macTone: DSChip.Tone {
         switch state.transport {

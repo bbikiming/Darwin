@@ -32,6 +32,11 @@ public final class MockBus: BusInterface, @unchecked Sendable {
     public private(set) var motionPlayCancelCount: Int = 0
     public private(set) var pingCalls: [UInt8] = []
 
+    /// `setPositions` 배치 호출 기록 — CommBatch 테스트에서 "1 batched call not N individual" 검증.
+    public private(set) var batchPositionCalls: [[(joint: JointID, raw: UInt16)]] = []
+    /// transport failure injection for `setPositions` batch call.
+    public var failNextSetPositions: Bool = false
+
     // MARK: - In-memory state
 
     private var positions: [JointID: UInt16] = [:]
@@ -166,6 +171,22 @@ public final class MockBus: BusInterface, @unchecked Sendable {
         return position
     }
 
+    /// `setPositions` — SYNC_WRITE 1패킷 시뮬. 전체 배치를 `batchPositionCalls` 에 기록하고,
+    /// 각 target 을 `positionWrites` 에도 개별 추가해 기존 assertion 과 호환.
+    public func setPositions(_ targets: [(JointID, UInt16)]) throws {
+        guard !targets.isEmpty else { return }
+        if failNextSetPositions {
+            failNextSetPositions = false
+            throw ForgeError.io
+        }
+        let batch = targets.map { (joint: $0.0, raw: $0.1) }
+        batchPositionCalls.append(batch)
+        for (joint, raw) in targets {
+            positionWrites.append((joint, raw))
+            positions[joint] = raw
+        }
+    }
+
     public func setMovingSpeed(_ joint: JointID, speed: UInt16) throws {
         if failNextSetMovingSpeed {
             failNextSetMovingSpeed = false
@@ -249,6 +270,7 @@ public final class MockBus: BusInterface, @unchecked Sendable {
         motionPlaySlotCalls = []
         motionPlayCancelCount = 0
         pingCalls = []
+        batchPositionCalls = []
     }
 
     /// 외부에서 in-memory position 직접 seed — readState 가 그 값 반환.

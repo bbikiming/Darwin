@@ -31,19 +31,35 @@ final class MobileRelayWalkIntegrationTests: XCTestCase {
         XCTAssertEqual(WalkPresetMapper.map(.freeform), .idle)
     }
 
-    // MARK: - 안전 whitelist: freeform reject
+    // MARK: - freeform joystick path
 
-    func testFreeformPreset_isRejectedByWhitelist() async throws {
+    func testFreeformPreset_isAcceptedByWalkPort() async throws {
         let port = MockWalkSafetyPort(dxlPower: true, walkSessionAvailable: true)
         let (server, channel) = try await makeArmedServer(port: port)
 
-        let walk = makeWalkFrame(id: "cmd_fw", preset: "freeform")
+        let walk = makeWalkFrame(id: "cmd_fw", preset: "freeform",
+                                 xMm: 18, yMm: 6, aDeg: 3, speedScale: 1.25)
         await server.handleClientFrame(walk, from: channel)
         try await Task.sleep(nanoseconds: 80_000_000)
 
-        let rejected = channel.frames.compactMap { decode($0) }
-            .filter { $0.id == "cmd_fw" && $0.type == "command.rejected" }
-        XCTAssertFalse(rejected.isEmpty, "freeform 은 command.rejected 를 받아야 한다")
+        let acks = channel.frames.compactMap { decode($0) }
+            .filter { $0.id == "cmd_fw" && $0.type == "command.ack" }
+        XCTAssertFalse(acks.isEmpty, "freeform 정상 시 command.ack 를 받아야 한다")
+        XCTAssertEqual(port.lastWalkPayload?.preset, .freeform)
+        XCTAssertEqual(port.lastWalkPayload?.speedScale, 1.25)
+    }
+
+    func testFreeformMapper_appliesSpeedScaleAndClamp() {
+        let payload = WalkPayload(preset: .freeform, enabled: true,
+                                  xMm: 40, yMm: 40, aDeg: 40,
+                                  periodMs: 700, footMm: 35,
+                                  hipPitchDeg: 13, speedScale: 1.5)
+        let tuning = MobileFreeformWalkMapper.tuning(from: payload,
+                                                     speedScale: payload.speedScale ?? 1.0)
+        XCTAssertEqual(tuning.strideMm, 38, accuracy: 0.001)
+        XCTAssertEqual(tuning.sideMm, 22, accuracy: 0.001)
+        // turn clamp 18 → 12 보수화 (다리 충돌 방지, 모든 조종 경로 공통).
+        XCTAssertEqual(tuning.turnDeg, 12, accuracy: 0.001)
     }
 
     // MARK: - dxlPower OFF 시 reject
@@ -127,11 +143,20 @@ final class MobileRelayWalkIntegrationTests: XCTestCase {
         return (server, channel)
     }
 
-    private func makeWalkFrame(id: String, preset: String) -> Data {
-        makeFrame(type: "pilot.walk", id: id,
-                  payload: ["preset": preset, "enabled": true,
-                            "xMm": 20.0, "yMm": 0.0, "aDeg": 0.0,
-                            "periodMs": 700, "footMm": 35.0, "hipPitchDeg": 13.0])
+    private func makeWalkFrame(id: String, preset: String,
+                               xMm: Double = 20.0,
+                               yMm: Double = 0.0,
+                               aDeg: Double = 0.0,
+                               speedScale: Double? = nil) -> Data {
+        var payload: [String: Any] = ["preset": preset, "enabled": true,
+                                      "xMm": xMm, "yMm": yMm, "aDeg": aDeg,
+                                      "periodMs": 700, "footMm": 35.0,
+                                      "hipPitchDeg": 13.0]
+        if let speedScale {
+            payload["speedScale"] = speedScale
+        }
+        return makeFrame(type: "pilot.walk", id: id,
+                         payload: payload)
     }
 
     private func helloFrame(code: String) -> Data {
@@ -175,9 +200,11 @@ final class MockWalkSafetyPort: RobotSafetyPort, @unchecked Sendable {
     private var _walkActive: Bool
     private var _walkStarted = false
     private var _walkStopped = false
+    private var _lastWalkPayload: WalkPayload?
 
     var walkStarted: Bool { lock.lock(); defer { lock.unlock() }; return _walkStarted }
     var walkStopped: Bool { lock.lock(); defer { lock.unlock() }; return _walkStopped }
+    var lastWalkPayload: WalkPayload? { lock.lock(); defer { lock.unlock() }; return _lastWalkPayload }
 
     init(dxlPower: Bool, walkSessionAvailable: Bool, walkActive: Bool = false) {
         _dxlPower = dxlPower
@@ -215,7 +242,7 @@ final class MockWalkSafetyPort: RobotSafetyPort, @unchecked Sendable {
         lock.unlock()
 
         // 안전 whitelist 확인.
-        let safelist: Set<WalkPreset> = [.slowForward, .turnLeft, .turnRight, .stop]
+        let safelist: Set<WalkPreset> = [.slowForward, .turnLeft, .turnRight, .stop, .freeform]
         guard safelist.contains(payload.preset) else {
             throw RelayServerError.rejected("highRiskNotAllowed")
         }
@@ -231,7 +258,10 @@ final class MockWalkSafetyPort: RobotSafetyPort, @unchecked Sendable {
             }
             return (5, nil)
         }
-        lock.lock(); _walkStarted = true; lock.unlock()
+        lock.lock()
+        _walkStarted = true
+        _lastWalkPayload = payload
+        lock.unlock()
         return (10, "mock-\(payload.preset.rawValue)")
     }
 

@@ -236,7 +236,25 @@ extension WalkLabSession {
             fsrRight: fsrR,
             // v1.11.25 audit P1 log-H — fall predictor 시계열.
             fallScore: fallPrediction.score,
-            fallRecommendEmergency: fallPrediction.recommendEmergency
+            fallRecommendEmergency: fallPrediction.recommendEmergency,
+            // Phase 1 fall-recovery telemetry fields.
+            autoRecoveryPhase: String(describing: autoRecoveryPhase),
+            fallDirection: {
+                if case .fallen(let dir) = autoRecoveryPhase {
+                    return dir == .forward ? "forward" : "backward"
+                }
+                return nil
+            }(),
+            recentlyPiloting: recentlyPiloting,
+            peakLegLoad: {
+                // jointStatesSnapshot が存在する tick にのみ leg load 最大値を計算する。
+                guard let snap = jointStatesSnapshot else { return nil }
+                let legJointNames = Set(JointID.allCases.filter {
+                    $0.bodyPart == .rightLeg || $0.bodyPart == .leftLeg
+                }.map { $0.name })
+                let loads = snap.filter { legJointNames.contains($0.key) }.map { Double($0.value.l) }
+                return loads.max()
+            }()
         )
         logger.append(sample)
     }
@@ -261,7 +279,10 @@ extension WalkLabSession {
             startTime: started,
             durationSec: duration,
             intensityLevelUsed: correctorIntensityLevel,
-            header: logger.header   // v1.11.10: V2 metric (quality + sagittal + candidateApplied)
+            header: logger.header,   // v1.11.10: V2 metric (quality + sagittal + candidateApplied)
+            // **데이터 기반 자동 튜닝 (2026-05-30)**: 본 세션 실제 안정성 파라미터 — 권고 방향 산출.
+            derivativeTimeSecUsed: derivativeTimeSec,
+            baselineTauSecUsed: baselineTauSec
         )
         try? logger.writeSummary(summary)
         // v1.11.24 audit iter2-H + iter3-F — footer 로 motor write 진단 export.

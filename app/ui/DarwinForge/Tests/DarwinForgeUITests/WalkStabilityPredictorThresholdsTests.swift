@@ -75,34 +75,22 @@ final class WalkStabilityPredictorThresholdsTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(knots.last?.1 ?? 0, 80, "strideKnots: 최대 stride 에서 critical 영역")
     }
 
-    /// x 좌표가 strictly decreasing 인지 — periodKnots 처럼 첫 knot 이 안전 구간 (큰 x),
-    /// 마지막 knot 이 위험 구간 (작은 x) 인 패턴 검증.
-    private func assertXStrictlyDecreasing(
-        _ knots: [(Double, Double)],
-        label: String,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) {
-        for i in 0..<(knots.count - 1) {
-            XCTAssertGreaterThan(
-                knots[i].0, knots[i + 1].0,
-                "\(label): knot x 좌표가 단조 감소하지 않음 (\(knots[i].0) <= \(knots[i+1].0))",
-                file: file, line: line
-            )
-        }
-    }
+    // **V288-1 critic action item #3**: assertXStrictlyDecreasing helper 제거.
+    // periodKnots 이 V288-1 에서 ascending 으로 정규화 → strictly decreasing 패턴은
+    // 더 이상 어떤 knot table 에도 적용되지 않음. 모든 9개 knot table 이 ascending-x.
 
     func testPeriodKnotsAreMonotonic() {
+        // **V288-1 (2026-05-24)** — periodKnots 을 ascending x 로 정렬 (피스와이즈 규약 통일).
         // periodKnots 의 실제 구조:
-        //   x (period ms): 900 -> 350 (decreasing) — first.x 가 안전, last.x 가 위험.
-        //   weight: 0 -> 90 (increasing) — 짧은 주기일수록 위험 ↑.
-        // 의미적으로 단조 — period 가 감소함에 따라 weight 가 증가.
+        //   x (period ms): 350 -> 900 (increasing) — first.x 가 위험, last.x 가 안전.
+        //   weight: 90 -> 0 (decreasing) — 짧은 주기일수록 위험 ↑.
+        // 의미적으로 단조 — period 가 증가함에 따라 weight 가 감소.
         let knots = StabilityThresholds.periodKnots
-        assertXStrictlyDecreasing(knots, label: "periodKnots")
-        assertWeightMonotonicNonDecreasing(knots, label: "periodKnots")
-        // 사후 조건: 첫 knot (900 ms) 안전, 마지막 knot (350 ms) critical.
-        XCTAssertEqual(knots.first?.1, 0, "periodKnots: 가장 긴 주기 (900 ms) 에서 위험 0")
-        XCTAssertGreaterThanOrEqual(knots.last?.1 ?? 0, 80, "periodKnots: 가장 짧은 주기에서 critical")
+        assertXStrictlyIncreasing(knots, label: "periodKnots")
+        assertWeightMonotonicNonIncreasing(knots, label: "periodKnots")
+        // 사후 조건: 첫 knot (350 ms) critical, 마지막 knot (900 ms) 안전.
+        XCTAssertGreaterThanOrEqual(knots.first?.1 ?? 0, 80, "periodKnots: 가장 짧은 주기 (350 ms) 에서 critical")
+        XCTAssertEqual(knots.last?.1, 0, "periodKnots: 가장 긴 주기 (900 ms) 에서 위험 0")
     }
 
     func testEffSpeedKnotsAreMonotonic() {
@@ -279,15 +267,17 @@ final class WalkStabilityPredictorThresholdsTests: XCTestCase {
     }
 
     func testPeriodKnotsExactValuesAreUnchanged() {
+        // **V288-1 (2026-05-24)** — ascending x 로 정렬, (600, 5) → (600, 0).
+        // 변경 의도: piecewise() 규약 통일 + idle baseline (period=600 default) score=0 유지.
         let knots = StabilityThresholds.periodKnots
         XCTAssertEqual(knots.count, 7)
-        XCTAssertEqual(knots[0].0, 900); XCTAssertEqual(knots[0].1, 0)
-        XCTAssertEqual(knots[1].0, 700); XCTAssertEqual(knots[1].1, 0)
-        XCTAssertEqual(knots[2].0, 600); XCTAssertEqual(knots[2].1, 5)
+        XCTAssertEqual(knots[0].0, 350); XCTAssertEqual(knots[0].1, 90)
+        XCTAssertEqual(knots[1].0, 400); XCTAssertEqual(knots[1].1, 70)
+        XCTAssertEqual(knots[2].0, 450); XCTAssertEqual(knots[2].1, 45)
         XCTAssertEqual(knots[3].0, 500); XCTAssertEqual(knots[3].1, 20)
-        XCTAssertEqual(knots[4].0, 450); XCTAssertEqual(knots[4].1, 45)
-        XCTAssertEqual(knots[5].0, 400); XCTAssertEqual(knots[5].1, 70)
-        XCTAssertEqual(knots[6].0, 350); XCTAssertEqual(knots[6].1, 90)
+        XCTAssertEqual(knots[4].0, 600); XCTAssertEqual(knots[4].1, 0)
+        XCTAssertEqual(knots[5].0, 700); XCTAssertEqual(knots[5].1, 0)
+        XCTAssertEqual(knots[6].0, 900); XCTAssertEqual(knots[6].1, 0)
     }
 
     func testCapThresholdsExactValuesAreUnchanged() {

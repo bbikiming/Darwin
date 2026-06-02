@@ -37,9 +37,9 @@
     <!-- (build phase): `agvtool next-version -all` 또는 git commit count: -->
     <!--   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" Info.plist -->
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.23.0</string>
+    <string>1.24.0</string>
     <key>CFBundleExecutable</key>
     <string>DarwinForgeApp</string>
     <key>CFBundlePackageType</key>

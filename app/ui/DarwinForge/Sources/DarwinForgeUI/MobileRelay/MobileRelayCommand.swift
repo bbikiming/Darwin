@@ -14,6 +14,28 @@ public enum MobileRelayWireProtocol {
     public static let webSocketPath: String = "/mobile-relay"
     public static let heartbeatIntervalMs: Int = 100
     public static let watchdogTimeoutMs: Int = 500
+
+    /// V297-5 CRITICAL-1: priority command 분류.
+    ///
+    /// # 비유
+    ///
+    /// 비행기 관제탑에 일반 교신 / "MAYDAY" 두 채널. 일반 교신이 길게 늘어져도
+    /// MAYDAY 는 즉시 처리되어야 한다. E-stop/stop 도 동일 — ARM battery wait 같은
+    /// long-running command 가 actor 점유 중이어도 frame 단계에서 우회 dispatch.
+    ///
+    /// # 정책
+    ///
+    /// WSChannel 의 frame Task chain 은 hello → 일반 명령의 순서 보장에 필요하지만,
+    /// E-stop 는 그 chain 에 묶이면 안 된다. `pilot.estop` / `pilot.stop` 만 priority 분류.
+    /// `session.hello` 는 첫 frame 이라 chain 시작점 — priority 분류 불요.
+    public static let priorityCommandTypes: Set<String> = [
+        InboundCommandType.pilotEstop.rawValue,
+        InboundCommandType.pilotStop.rawValue,
+    ]
+
+    public static func isPriorityCommand(_ type: String) -> Bool {
+        priorityCommandTypes.contains(type)
+    }
 }
 
 // MARK: - Envelope
@@ -52,6 +74,10 @@ public enum InboundCommandType: String, Codable, Sendable {
     case pilotWalk = "pilot.walk"
     case pilotStop = "pilot.stop"
     case pilotHead = "pilot.head"
+    /// V297-9 CRITICAL-1: E-stop 복구 전용 명령. 종전엔 pilot.arm 을 재사용했으나
+    /// "ARM stale 도착 → recoverFromEStop 자동 분기" 위험 발생. 별도 명령으로 분리해
+    /// 의도를 명확히 한다 — pilot.arm 은 절대 복구 분기 불가.
+    case pilotRecover = "pilot.recover"
 }
 
 public enum OutboundResponseType: String, Codable, Sendable {
@@ -114,6 +140,20 @@ public struct EStopPayload: Codable, Sendable, Equatable {
     public let reason: String
 }
 
+/// V297-9 CRITICAL-1: pilot.recover payload. iOS "복구" 버튼 전용.
+public struct RecoverPayload: Codable, Sendable, Equatable {
+    public let cradleConfirmed: Bool
+    public let operator_: String
+    private enum CodingKeys: String, CodingKey {
+        case cradleConfirmed
+        case operator_ = "operator"
+    }
+    public init(cradleConfirmed: Bool, operator: String) {
+        self.cradleConfirmed = cradleConfirmed
+        self.operator_ = `operator`
+    }
+}
+
 public struct MotionPayload: Codable, Sendable, Equatable {
     public let slot: Int
     public let label: String
@@ -157,6 +197,41 @@ public struct WelcomePayload: Codable, Sendable, Equatable {
     public let sessionId: String
     public let heartbeatIntervalMs: Int
     public let watchdogTimeoutMs: Int
+    /// V297-4: optional — older iOS 클라이언트는 무시 (forward compatible).
+    /// 서버가 어떤 명령을 실제로 지원하는지 명시 → iOS UI 가 미지원 명령 버튼 숨김.
+    public let capabilities: WelcomeCapabilities?
+
+    public init(macName: String, macVersion: String, relayProtocolVersion: Int,
+                sessionId: String, heartbeatIntervalMs: Int, watchdogTimeoutMs: Int,
+                capabilities: WelcomeCapabilities? = nil) {
+        self.macName = macName
+        self.macVersion = macVersion
+        self.relayProtocolVersion = relayProtocolVersion
+        self.sessionId = sessionId
+        self.heartbeatIntervalMs = heartbeatIntervalMs
+        self.watchdogTimeoutMs = watchdogTimeoutMs
+        self.capabilities = capabilities
+    }
+}
+
+/// V297-4 / V297-5 / V297-8 / V297-9 — 서버 capabilities 통보.
+///
+/// 의미체계 (V297-9 LOW-1 갱신 — 실 동작 반영):
+///   - `head`: pilot.head 명령을 실제 robot 에 전달하는지. false 면 iOS UI 숨김.
+///   - `walkFreeform`: pilot.walk(preset=freeform) 을 처리하는지. false 면 highRiskNotAllowed reject.
+///   - `speedScaleAccepted`: WalkPayload.speedScale 필드를 **수신 + 실 적용** 하는지.
+///     V297-8 부터 Mac WalkLabSession.start(speedScale:) 로 amplitude (cmd.x/y/a) 에
+///     실 적용. period 는 보존. iOS 가 이 값을 보면 "전달 + 효과 보장" 으로 해석 가능.
+public struct WelcomeCapabilities: Codable, Sendable, Equatable {
+    public let head: Bool
+    public let walkFreeform: Bool
+    public let speedScaleAccepted: Bool
+
+    public init(head: Bool = false, walkFreeform: Bool = false, speedScaleAccepted: Bool = false) {
+        self.head = head
+        self.walkFreeform = walkFreeform
+        self.speedScaleAccepted = speedScaleAccepted
+    }
 }
 
 public struct SessionRejectedPayload: Codable, Sendable, Equatable {

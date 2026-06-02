@@ -82,19 +82,32 @@ public enum PreflightEvaluator {
     public static let batteryMinVoltage: Double = 10.5
 
     /// telemetry 를 받아 자동 Preflight 항목 배열을 반환한다.
-    /// - Parameter telemetry: 현재 텔레메트리 페이로드 (nil 이면 모두 fail)
+    /// - Parameter telemetry: 현재 텔레메트리 페이로드
+    ///   - nil → 모두 `.pending` (페어링 직후 ~1초 수신 전, 가짜 fail 방지)
+    ///   - non-nil → 필드별 pass/fail 평가 (기존 로직 유지)
     /// - Returns: 자동 체크 결과 배열
+    // V297-6 (PM Story S1): telemetry==nil 시 모든 항목을 .pending 으로.
+    // 페어링 직후 ~1초간 telemetry 미수신 기간에 dxlPower 등이 빨간 fail 로
+    // 표시되는 UX 결함 수정. telemetry 있지만 개별 필드 nil 인 경우는 기존 .fail 유지.
     public static func evaluate(telemetry: TelemetryStatePayload?) -> [PreflightItem] {
+        // telemetry 자체가 nil → 아직 수신 전. 모두 .pending.
+        guard let t = telemetry else {
+            return [
+                PreflightItem(id: "imu",         title: "IMU 응답 정상",          kind: .automatic, status: .pending),
+                PreflightItem(id: "battery",      title: "배터리 > 30%",           kind: .automatic, status: .pending),
+                PreflightItem(id: "calibration",  title: "관절 캘리브레이션 통과",  kind: .automatic, status: .pending),
+                PreflightItem(id: "dxlPower",     title: "dxlPower 현재 OFF",      kind: .automatic, status: .pending),
+            ]
+        }
+
         var items: [PreflightItem] = []
 
-        // 1. IMU 응답: telemetry 수신 여부
+        // 1. IMU 응답: robot 상태
         let imuStatus: PreflightItem.Status
-        if let t = telemetry, t.robot == .connected || t.robot == .sim {
+        if t.robot == .connected || t.robot == .sim {
             imuStatus = .pass
-        } else if telemetry != nil {
-            imuStatus = .fail(reason: "로봇 연결 상태를 확인하세요")
         } else {
-            imuStatus = .fail(reason: "텔레메트리 수신 전")
+            imuStatus = .fail(reason: "로봇 연결 상태를 확인하세요")
         }
         items.append(PreflightItem(id: "imu",
                                    title: "IMU 응답 정상",
@@ -103,7 +116,7 @@ public enum PreflightEvaluator {
 
         // 2. 배터리 > 30%
         let batteryStatus: PreflightItem.Status
-        if let v = telemetry?.batteryV {
+        if let v = t.batteryV {
             let voltageText = String(format: "%.1f", v) + "V"
             // **V292-C critic MAJOR-2 fix** — Mac WalkLabSession 의 lowBatteryThreshold (10.5V) 와 일관.
             // Mac 는 `v <= 10.5` 차단 → mobile 도 `> 10.5` 통과 (경계값은 보수적으로 차단).
@@ -120,29 +133,19 @@ public enum PreflightEvaluator {
                                    kind: .automatic,
                                    status: batteryStatus))
 
-        // 3. 관절 calibration (telemetry 에 calibration 필드 없을 경우 sim → pass, 없으면 fail)
-        let calibStatus: PreflightItem.Status
-        if let t = telemetry {
-            // sim 은 calibration 패스, 실 로봇은 robot == .connected 이면 패스
-            calibStatus = (t.robot == .sim || t.robot == .connected) ? .pass
+        // 3. 관절 calibration (sim → pass, connected → pass, 나머지 fail)
+        let calibStatus: PreflightItem.Status =
+            (t.robot == .sim || t.robot == .connected) ? .pass
                 : .fail(reason: "관절 캘리브레이션을 확인하세요")
-        } else {
-            calibStatus = .fail(reason: "캘리브레이션 상태 수신 전")
-        }
         items.append(PreflightItem(id: "calibration",
                                    title: "관절 캘리브레이션 통과",
                                    kind: .automatic,
                                    status: calibStatus))
 
         // 4. dxlPower 현재 OFF (safe baseline — TelemetryStatePayload.dxlPower 기준)
-        let dxlStatus: PreflightItem.Status
-        if let t = telemetry {
-            // t.dxlPower == false 이면 OFF → pass (safe baseline)
-            let powerOff = !t.dxlPower
-            dxlStatus = powerOff ? .pass : .fail(reason: "dxlPower 가 ON — 안전 기준 위반")
-        } else {
-            dxlStatus = .fail(reason: "dxlPower 상태 수신 전")
-        }
+        let dxlStatus: PreflightItem.Status = !t.dxlPower
+            ? .pass
+            : .fail(reason: "dxlPower 가 ON — 안전 기준 위반")
         items.append(PreflightItem(id: "dxlPower",
                                    title: "dxlPower 현재 OFF",
                                    kind: .automatic,

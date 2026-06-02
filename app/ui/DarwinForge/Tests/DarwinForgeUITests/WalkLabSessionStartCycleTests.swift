@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — _testFeed*/_testImuScaleSamplesRequired 는 DEBUG-only.
+#if DEBUG
 import XCTest
 @testable import DarwinForgeUI
 @testable import ForgeCore
@@ -537,3 +539,4 @@ final class WalkLabSessionStartCycleTests: XCTestCase {
         }
     }
 }
+#endif

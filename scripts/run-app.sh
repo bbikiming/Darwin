@@ -59,6 +59,10 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
     <string>NSApplication</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>원격 조종 화면에서 로봇의 제어 브리지와 8080 카메라 미리보기에 연결합니다.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>마이크 체크 / 음성 명령을 위해 마이크 접근이 필요합니다.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>캡처한 음성을 텍스트로 인식하기 위해 음성 인식 사용을 허용합니다.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
@@ -67,6 +71,18 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
 </dict>
 </plist>
 EOF
+
+# 3b) ad-hoc 코드사인 + entitlements (audio-input 포함).
+#     마이크/음성 인식은 TCC 가 usage description + 서명을 요구 — 미서명 시 권한
+#     요청 순간 SIGABRT(TCC privacy violation)로 즉시 종료된다(2026-05-31 회귀).
+ENTITLEMENTS="$PKG/Sources/DarwinForgeApp/DarwinForge.entitlements"
+if [[ -f "$ENTITLEMENTS" ]]; then
+    codesign --force --deep --sign - --entitlements "$ENTITLEMENTS" --no-strict "$APP_PATH" \
+        && echo "▶ ad-hoc 사인 + entitlements 첨부 완료"
+else
+    codesign --force --deep --sign - --no-strict "$APP_PATH" || true
+    echo "⚠︎ entitlements 파일 없음 — 기본 서명만"
+fi
 
 # 4) 정리: 이전 인스턴스 종료 후 open
 echo "▶ 이전 인스턴스 종료"

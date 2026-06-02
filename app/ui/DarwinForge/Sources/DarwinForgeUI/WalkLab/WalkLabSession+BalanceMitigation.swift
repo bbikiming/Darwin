@@ -72,7 +72,21 @@ extension WalkLabSession {
             if dangerStateConsecutiveSamples >= 3,
                isRobotWalking, store?.bus != nil {
                 lastRobotEvent = "🛑 기울기 45°+ 지속 — 자세 동결 (낙상 직전)"
-                cancelWalkCycle(eventLabel: "Danger state 지속 자세 동결")
+                // **H3 fix**: danger(45°+ 지속) 정지는 walkReady 직립 NOT.
+                // `.walkReady` 로 다리를 펴면 45°+ 기울기에서 낙상 가속 위험.
+                // `lastSafePose` (마지막 안전 보행 자세) 로 freeze.
+                // nil 이면 cancelWalkCycle 내부에서 nil 검출 — tilt 기반 E-STOP 으로 격상.
+                let safePose = lastSafePose
+                if let safeTarget = safePose {
+                    cancelWalkCycle(
+                        eventLabel: "Danger state 지속 자세 동결",
+                        returnTarget: safeTarget
+                    )
+                } else {
+                    // lastSafePose 없음(보행 직후 감지) → 즉시 emergencyStop(torque OFF).
+                    // walkReady straighten 은 절대 금지 — torque OFF 가 더 안전.
+                    emergencyStop(trigger: .balanceLostL3)
+                }
                 dangerStateConsecutiveSamples = 0
             }
         case .emergency:

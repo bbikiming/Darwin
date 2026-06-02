@@ -191,6 +191,36 @@ public struct AutoTunerCard: View {
                     .font(DFFont.label)
                     .foregroundStyle(DFColor.success)
             }
+            // **데이터 기반 자동 튜닝 (2026-05-30)**: 균형 안정성 권고 (tau/D항 — 넘어짐 방지 직결).
+            if let srec = tuner.pendingStabilityRecommendation {
+                Divider().padding(.vertical, 1)
+                HStack(spacing: DFSpace.xs2) {
+                    Image(systemName: "scope")
+                        .font(DFFont.label)
+                        .foregroundStyle(DFColor.info)
+                    Text("안정성 권고 (넘어짐 방지)")
+                        .font(DFFont.sectionLabel)
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+                Text(srec.reason)
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.info)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(String(format: "→ D항 %.2fs · baseline %.1fs", srec.derivativeTimeSec, srec.baselineTauSec))
+                    .font(DFFont.monoLabel)
+                    .foregroundStyle(DFColor.textPrimary)
+                if session.correctionApplyMode == "robotApplied" {
+                    Text("실 robot 적용은 승인 게이트(데이터 분석 패널) 경유 — 자동 변경 차단.")
+                        .font(DFFont.label)
+                        .foregroundStyle(DFColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("SIM 모드 — 다음 보행 cycle 에 자동 적용됨.")
+                        .font(DFFont.label)
+                        .foregroundStyle(DFColor.success)
+                }
+            }
             if let latest = tuner.recentSummaries.first {
                 HStack(spacing: DFSpace.sm) {
                     metric("평균 tilt", String(format: "%.1f°", max(latest.meanAbsRoll, latest.meanAbsPitch)))

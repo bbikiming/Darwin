@@ -31,6 +31,24 @@ final class KinematicsTests: XCTestCase {
         XCTAssertEqual(Kinematics.raw(fromDegrees: -1000), 0)
     }
 
+    func testHeadRawEndpoints() {
+        // 머리 동작 할당이 사용하는 각도→raw 변환 (Cockpit dispatchHeadIfAllowed).
+        XCTAssertEqual(Kinematics.raw(fromDegrees: 90), 3072)    // headPan +90°
+        XCTAssertEqual(Kinematics.raw(fromDegrees: -90), 1024)   // headPan -90°
+        XCTAssertEqual(Kinematics.raw(fromDegrees: 45), 2560)    // headTilt +45°
+        XCTAssertEqual(Kinematics.raw(fromDegrees: -45), 1536)   // headTilt -45°
+        XCTAssertEqual(Kinematics.raw(fromDegrees: 0), 2048)     // 정면
+    }
+
+    func testHeadDegreeLimitsMatchCockpit() {
+        // CockpitState 의 headPanLimit(-90...90)/headTiltLimit(-45...45) 리터럴이
+        // 공식 JointLimits 와 일치하는지 — 어긋나면 머리가 공식 범위를 못 채운다.
+        XCTAssertEqual(JointID.headPan.degreeLimits.lowerBound, -90)
+        XCTAssertEqual(JointID.headPan.degreeLimits.upperBound, 90)
+        XCTAssertEqual(JointID.headTilt.degreeLimits.lowerBound, -45)
+        XCTAssertEqual(JointID.headTilt.degreeLimits.upperBound, 45)
+    }
+
     func testDegreeLimits() {
         // 좌·우 대칭 signed range — 공식 motion_4096 / ini_pose 의 좌측 음수 값 통과 보장.
         // 출처: docs/architecture/joint-conventions.md + forge-core::joint::state::JointLimits.

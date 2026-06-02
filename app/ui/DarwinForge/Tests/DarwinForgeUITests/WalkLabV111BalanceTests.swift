@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — _testForceImuAndTick 는 DEBUG-only.
+#if DEBUG
 import XCTest
 @testable import DarwinForgeUI
 @testable import ForgeCore
@@ -574,3 +576,4 @@ final class WalkLabV111BalanceTests: XCTestCase {
             "custom profile = robotisOriginal fallback (expert slider override)")
     }
 }
+#endif

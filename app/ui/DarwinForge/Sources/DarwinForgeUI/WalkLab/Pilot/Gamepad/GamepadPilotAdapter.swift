@@ -133,6 +133,9 @@ public final class GamepadPilotAdapter {
                    "controller_name": AnyCodable(connectedControllerName ?? "none")]
         )
 
+        // 2026-05-31: 조종기 매핑(버튼→동작 + 감도) 영속 + 1회 로깅 — "유지/명확 저장" 보장.
+        persistAndLogMapping()
+
         // GCController 알림 등록 — 실 GCController source 만 의미 있으나 mock 도 무해.
         connectObserver = NotificationCenter.default.addObserver(
             forName: .GCControllerDidConnect,
@@ -289,6 +292,33 @@ public final class GamepadPilotAdapter {
             lastActionLabel = "recovery (START / ☰)"
         }
         return false
+    }
+
+    // MARK: - 조종기 매핑 영속/로깅 (2026-05-31)
+
+    /// 현재 조종기 매핑(버튼→동작 + 영속된 감도)을 UserDefaults 에 저장하고 harness 에 1회 로깅.
+    /// 사용자가 "현재 매핑이 무엇으로 저장돼 있는지" 를 명확히 확인할 수 있게 한다.
+    private func persistAndLogMapping() {
+        let prefs = UserDefaultsPilotPreferencesStore().load()
+        let mapping = GamepadButtonMapping.current(
+            prefs: prefs,
+            nowISO: ISO8601DateFormatter().string(from: Date())
+        )
+        GamepadMappingStore().save(mapping)
+
+        let bindingStrings = mapping.bindings.map { "\($0.button) → \($0.action)" }
+        harness.record(
+            .pilotMappingSnapshot, level: .info, actor: .user,
+            data: [
+                "source": AnyCodable("gamepad"),
+                "controller_name": AnyCodable(connectedControllerName ?? "none"),
+                "bindings": AnyCodable(bindingStrings.map { AnyCodable($0) }),
+                "scaleLR": AnyCodable(mapping.scaleLR),
+                "scaleFB": AnyCodable(mapping.scaleFB),
+                "scaleYaw": AnyCodable(mapping.scaleYaw),
+                "smoothing": AnyCodable(mapping.smoothingFactor)
+            ]
+        )
     }
 
     // MARK: - Controller binding

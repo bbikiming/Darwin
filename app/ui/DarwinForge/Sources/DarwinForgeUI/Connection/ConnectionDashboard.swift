@@ -137,6 +137,10 @@ public struct ConnectionDashboardView: View {
     private var content: some View {
         ScrollView {
             VStack(spacing: DFSpace.sm3) {
+                if isConnectedNow {
+                    telemetryModeBanner
+                    liveStatusHero
+                }
                 topRowCards
                 bottomRowCards
                 sparklinesRow
@@ -145,6 +149,176 @@ public struct ConnectionDashboardView: View {
             .padding(DFSpace.md)
         }
         .glassScroll(accent: DFColor.accent)
+    }
+
+    // MARK: - 텔레메트리 경로/엔진 배지 + 안전게이트 배너 (W5)
+
+    /// 현재 텔레메트리 경로(LAN vs 온보드SSH)와 안전게이트 온/오프라인을 한 줄로.
+    ///
+    /// **정직성**: 온보드(SSH) 모드는 로봇이 IMU/전압만 업링크하므로(관절/온도 없음)
+    /// "초록불=실시간"을 오해시키지 않도록 경로를 명시하고, 신선 샘플이 끊기면
+    /// (`.onboardStale`) 호박색으로 강등한다. 안전게이트는 `mode.isLive` 일 때만 온라인.
+    private var telemetryModeBanner: some View {
+        let mode = store.telemetryMode
+        return HStack(spacing: DFSpace.sm) {
+            // 경로/엔진 배지.
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: mode.iconSystemName)
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
+                Text(mode.pathLabel)
+                    .font(.system(size: DFFontSize.s12, weight: .bold))
+            }
+            .foregroundStyle(mode.tint)
+            .padding(.horizontal, DFSpace.sm)
+            .padding(.vertical, DFSpace.xs2)
+            .background(mode.tint.opacity(DFOpacity.o15))
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(mode.tint.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline))
+
+            // **활성 경로 정직성 (2026-06-02)**: 지금 붙어 있는 경로가 유선(케이블)인지 무선(WiFi)
+            // 인지 + host 를 명시. "무선이라 믿었는데 실은 유선" 혼동을 제거(랜선 뽑으면 끊김).
+            // host 가 없으면(USB 시리얼/미연결) 칩을 숨긴다 — 유선/무선 개념이 없음.
+            if mode != .offline, !store.activeConnectionHost.trimmingCharacters(in: .whitespaces).isEmpty {
+                linkKindChip
+            }
+
+            Spacer()
+
+            // 안전게이트 — **정직성 fix**: Mac 게이트 실제 동작 여부 기준(온보드는 로봇 자율).
+            let banner = mode.safetyBanner
+            let bannerColor: Color = {
+                switch banner.level {
+                case .ok:      return DFColor.success
+                case .caution: return DFColor.warning
+                case .danger:  return DFColor.danger
+                }
+            }()
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: banner.level == .ok ? "checkmark.shield.fill"
+                      : (banner.level == .caution ? "shield.lefthalf.filled" : "shield.slash.fill"))
+                    .font(.system(size: DFFontSize.s12, weight: .semibold))
+                Text(banner.text)
+                    .font(.system(size: DFFontSize.s12, weight: .bold))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(bannerColor)
+            .padding(.horizontal, DFSpace.sm)
+            .padding(.vertical, DFSpace.xs2)
+            .background(bannerColor.opacity(DFOpacity.o15))
+            .clipShape(Capsule())
+        }
+        .help(mode.hasThermal
+              ? "LAN 경로 — Mac 이 전압·IMU·관절·온도 전체 비상게이트 모니터링."
+              : "온보드(SSH) — Mac 비상게이트(전압·기울기·열)는 미작동(bus 없음). "
+              + "낙상 시 일어나기·정지는 로봇 demo 가 자율 처리.")
+    }
+
+    /// **활성 유선/무선 + host 칩** — 케이블 의존 여부를 한눈에. 유선은 "랜선 뽑으면 끊김"
+    /// 경고 톤, 무선은 success 톤. host 가 비면 노출 안 함(`mode != .offline` 가드는 호출부).
+    private var linkKindChip: some View {
+        let host = store.activeConnectionHost.trimmingCharacters(in: .whitespaces)
+        let link = ConnectionLinkKind.classify(host: host)
+        return HStack(spacing: DFSpace.xs2) {
+            Image(systemName: link.icon)
+                .font(.system(size: DFFontSize.s12, weight: .semibold))
+            Text(host.isEmpty ? link.label : "\(link.label) · \(host)")
+                .font(.system(size: DFFontSize.s12, weight: .bold))
+                .lineLimit(1)
+            if link.requiresCable {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: DFFontSize.s10, weight: .bold))
+            }
+        }
+        .foregroundStyle(link.tint)
+        .padding(.horizontal, DFSpace.sm)
+        .padding(.vertical, DFSpace.xs2)
+        .background(link.tint.opacity(DFOpacity.o15))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(link.tint.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline))
+        .help(link.cableHint)
+        .accessibilityIdentifier("dashboard.linkKind")
+    }
+
+    // MARK: - 실시간 연결 상태 히어로
+
+    /// 연결 유지 시간을 큰 실시간 시계(HH:MM:SS)로 + 데이터 신선도를 한눈에.
+    /// `now` 1초 tick 으로 매초 갱신 → "실시간" 체감. 연결 상태에서만 노출.
+    ///
+    /// 표시 데이터는 모두 실측: `store.connectedAt`(연결 성공 시각),
+    /// `store.lastSuccessAt`(마지막 성공 board read 시각). 가공/추정 없음.
+    private var liveStatusHero: some View {
+        let uptime = store.connectedAt.map { now.timeIntervalSince($0) } ?? 0
+        return HStack(alignment: .top, spacing: DFSpace.md) {
+            VStack(alignment: .leading, spacing: DFSpace.xs) {
+                HStack(spacing: DFSpace.xs2) {
+                    livePulseDot
+                    Text("실시간 연결 유지 시간")
+                        .font(DFFont.caption)
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+                Text(formatUptimeClock(uptime))
+                    .font(.system(size: DFFontSize.s32, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(DFColor.textPrimary)
+                    .contentTransition(.numericText())
+                if let at = store.connectedAt {
+                    Text("\(at.formatted(date: .omitted, time: .standard)) 연결 시작")
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+            }
+            Spacer()
+            freshnessBadge
+        }
+        .padding(DFSpace.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DFColor.success.opacity(DFOpacity.o06))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.md)
+                .stroke(DFColor.success.opacity(DFOpacity.o20), lineWidth: DFSize.borderHairline)
+        )
+    }
+
+    /// 살아있는 폴링을 알리는 맥동 점 (SF Symbols pulse).
+    private var livePulseDot: some View {
+        Image(systemName: "circle.fill")
+            .font(.system(size: DFFontSize.s8))
+            .foregroundStyle(DFColor.success)
+            .symbolEffect(.pulse, options: .repeating)
+    }
+
+    /// 데이터 신선도 — 마지막 성공 read 로부터 경과로 "실시간성" 을 색으로 표현.
+    ///
+    /// **정직성(W5)**: `telemetryMode` 가 라이브가 아니거나 온보드 지연이면 경과시간이
+    /// 짧더라도 초록을 띄우지 않는다(stale-green 금지). 오프라인/지연은 회색/호박색.
+    private var freshnessBadge: some View {
+        let mode = store.telemetryMode
+        return VStack(alignment: .trailing, spacing: DFSpace.xs) {
+            Text("데이터 신선도")
+                .font(.system(size: DFFontSize.s10))
+                .foregroundStyle(DFColor.textSecondary)
+            if !mode.isLive {
+                // 오프라인/지연 — 마지막 성공값이 있어도 "실시간"으로 표시 금지.
+                Text(mode == .onboardStale ? "온보드 지연" : "라이브 아님")
+                    .font(.system(size: DFFontSize.s16, weight: .bold, design: .rounded))
+                    .foregroundStyle(mode == .onboardStale ? DFColor.warning : DFColor.textSecondary)
+            } else if let last = store.lastSuccessAt {
+                let elapsed = now.timeIntervalSince(last)
+                let (txt, tint): (String, Color) =
+                    elapsed < 1.5 ? ("실시간", DFColor.success)
+                    : elapsed < 5  ? ("\(Int(elapsed))초 전", DFColor.success)
+                    : ("\(Int(elapsed))초 지연", DFColor.warning)
+                Text(txt)
+                    .font(.system(size: DFFontSize.s16, weight: .bold, design: .rounded))
+                    .foregroundStyle(tint)
+                    .contentTransition(.numericText())
+            } else {
+                Text("대기 중")
+                    .font(.system(size: DFFontSize.s16, weight: .bold, design: .rounded))
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+        }
     }
 
     // MARK: - 원격 도구
@@ -302,10 +476,15 @@ public struct ConnectionDashboardView: View {
                         batteryStatusChip(v)
                     }
                     voltageBar(v)
+                    metricRow(label: "추정 잔량", value: "약 \(batteryPercent(v))%", tint: batteryColor)
                     Text(batteryAdvice(v))
                         .font(DFFont.caption)
                         .foregroundStyle(DFColor.textSecondary)
                 }
+                // staleness 탈색 — 라이브가 아니거나 온보드 지연이면 마지막 전압을
+                // fresh-green 으로 표시하지 않도록 채도를 낮춰 "보존된 값" 임을 알린다.
+                .saturation(store.telemetryMode.shouldDesaturate ? 0 : 1)
+                .opacity(store.telemetryMode.shouldDesaturate ? DFOpacity.o70 : 1)
             } else {
                 emptyState(text: "전압 데이터 없음")
             }
@@ -357,6 +536,13 @@ public struct ConnectionDashboardView: View {
         }
         .frame(height: 6)
     }
+    /// 추정 잔량 % — voltageBar 와 동일한 8.0~12.6V 선형 매핑.
+    /// 3S LiPo 의 전압-SoC 곡선은 비선형이므로 정밀 SoC 가 아닌 **추정치** ("약 N%").
+    private func batteryPercent(_ v: Double) -> Int {
+        let frac = (v - 8.0) / (12.6 - 8.0)
+        return Int((max(0, min(1, frac)) * 100).rounded())
+    }
+
     private func batteryAdvice(_ v: Double) -> String {
         if v >= 11.5 { return "정상 동작 가능" }
         if v >= 11.1 { return "충전 권장 (1시간 내)" }
@@ -372,14 +558,10 @@ public struct ConnectionDashboardView: View {
                 VStack(alignment: .leading, spacing: DFSpace.sm) {
                     metricRow(label: "방식", value: ep.kindLabel)
                     metricRow(label: "엔드포인트", value: ep.detail, mono: true)
-                    if let connectedAt = store.connectedAt {
-                        metricRow(label: "연결 시간", value: formatUptime(now.timeIntervalSince(connectedAt)))
-                    }
-                    if let last = store.lastSuccessAt {
-                        let elapsed = Int(now.timeIntervalSince(last))
-                        metricRow(label: "마지막 응답",
-                                  value: elapsed < 2 ? "방금" : "\(elapsed)초 전",
-                                  tint: elapsed > 5 ? DFColor.warning : DFColor.success)
+                    // 연결 유지 시간·신선도는 상단 히어로에서 실시간 표시 — 중복 제거.
+                    // 대신 실측 수신 관절 수(폴링 중인 관절)를 노출.
+                    if let joints = store.lastTelemetry?.joints, !joints.isEmpty {
+                        metricRow(label: "관절 수신", value: "\(joints.count)개")
                     }
                     if store.isReconnecting {
                         metricRow(label: "재연결 시도",
@@ -468,9 +650,28 @@ public struct ConnectionDashboardView: View {
                 tint: tempColor,
                 values: store.avgTempHistory,
                 unit: "°C",
-                format: "%.0f"
+                format: "%.0f",
+                footnote: tempFootnote
             )
         }
+    }
+
+    /// 온도 스파크라인 보조 라인 — 실측 최고 관절 온도 + 토크 ON 관절 수.
+    /// `hottestJoint`/`torqueOnCount` 는 폴링된 관절 집합 기준 실측값.
+    ///
+    /// **정직성(W5, 계약 §F-6)**: 온보드(SSH) 모드는 관절 온도가 없어 L4 열 게이트가
+    /// 오프라인이다. 빈 값을 침묵하지 말고 "열 오프라인"으로 명시한다.
+    private var tempFootnote: String? {
+        if !store.telemetryMode.hasThermal && store.telemetryMode != .offline {
+            return "열 오프라인 — 온보드 경로엔 관절 온도 없음"
+        }
+        guard let snap = store.lastTelemetry, !snap.joints.isEmpty else { return nil }
+        var parts: [String] = []
+        if let hot = snap.hottestJoint {
+            parts.append("최고 \(Int(hot.1.presentTemperature))°C")
+        }
+        parts.append("토크 \(snap.torqueOnCount)/\(snap.joints.count)")
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var tempColor: Color {
@@ -480,7 +681,7 @@ public struct ConnectionDashboardView: View {
         return DFColor.success
     }
 
-    private func sparklineCard(title: String, tint: Color, values: [Double], unit: String, format: String) -> some View {
+    private func sparklineCard(title: String, tint: Color, values: [Double], unit: String, format: String, footnote: String? = nil) -> some View {
         DFMetricCard(title: title, icon: "chart.xyaxis.line", tint: tint, expanded: true) {
             VStack(alignment: .leading, spacing: DFSpace.xs2) {
                 if let last = values.last {
@@ -507,6 +708,22 @@ public struct ConnectionDashboardView: View {
                 }
                 MiniSparkline(values: values, tint: tint)
                     .frame(height: 38)
+                // 60초 창의 최저/최고 범위 + (옵션) 실측 보조 정보.
+                if values.count >= 2 || footnote != nil {
+                    HStack(spacing: DFSpace.xs2) {
+                        if values.count >= 2, let lo = values.min(), let hi = values.max() {
+                            Text("최저 \(String(format: format, lo)) · 최고 \(String(format: format, hi)) \(unit)")
+                                .font(.system(size: DFFontSize.s9, design: .monospaced))
+                                .foregroundStyle(DFColor.textSecondary)
+                        }
+                        Spacer()
+                        if let footnote {
+                            Text(footnote)
+                                .font(.system(size: DFFontSize.s9))
+                                .foregroundStyle(DFColor.textSecondary)
+                        }
+                    }
+                }
             }
         }
     }
@@ -567,14 +784,13 @@ public struct ConnectionDashboardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func formatUptime(_ s: TimeInterval) -> String {
-        let total = Int(s)
+    /// 연결 유지 시간을 매초 갱신되는 HH:MM:SS 시계로 — 실시간 체감.
+    private func formatUptimeClock(_ s: TimeInterval) -> String {
+        let total = max(0, Int(s))
         let h = total / 3600
         let m = (total / 60) % 60
         let sec = total % 60
-        if h > 0 { return "\(h)시간 \(m)분" }
-        if m > 0 { return "\(m)분 \(sec)초" }
-        return "\(sec)초"
+        return String(format: "%02d:%02d:%02d", h, m, sec)
     }
 }
 

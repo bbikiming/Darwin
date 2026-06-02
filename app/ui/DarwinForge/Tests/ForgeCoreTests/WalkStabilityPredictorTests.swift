@@ -302,4 +302,78 @@ final class WalkStabilityPredictorTests: XCTestCase {
         XCTAssertGreaterThan(r.score, 0,
             "발 높이 27mm 에서 위험 점수 > 0 이어야 함")
     }
+
+    // MARK: - V288-1 P0 Safety: piecewise() 역순 knot 버그
+
+    /// V287-5 mutation testing 발견 → V288-1 fix.
+    ///
+    /// **이전 (버그)**: periodKnots 이 역순(900→350)이라 piecewise() 의
+    /// `x <= first.0` (= x <= 900) 이 항상 true → period contributor 영구 0.
+    /// **수정**: periodKnots 을 ascending (350→900) 재정렬 + piecewise() 에
+    /// 방어적 sort 추가 (data + algorithm 양쪽).
+    /// **회귀 가드**: period=350ms 에서 score 기여도 > 0 (90 이 정답).
+    func testPeriodScore_ShortPeriod_ContributesNonZero() {
+        // period=350ms 는 periodKnots (350,90) — 최대 위험 knot.
+        // 현 ascending 정렬: piecewise(350, [(350,90),...,(900,0)]) = 90.
+        let r = WalkStabilityPredictor.evaluate(WalkStabilityInput(
+            strideMm: 0, sideMm: 0, turnDeg: 0,
+            periodMs: 350, footHeightMm: 40, balanceGain: 1.0
+        ))
+        XCTAssertTrue(
+            r.breakdown.contains(where: { $0.id == "period" }),
+            "period=350ms 는 period contributor 가 있어야 함 — piecewise() 역순 knot 버그 방어"
+        )
+        XCTAssertGreaterThan(
+            r.breakdown.first(where: { $0.id == "period" })?.weight ?? 0,
+            0,
+            "period=350ms 의 period 기여도는 양수여야 함 (periodKnots 역순 처리 확인)"
+        )
+    }
+
+    /// piecewise() 직접 호출: ascending periodKnots 의 내부 knot 값 정확도.
+    /// period=500ms → periodKnots 에서 weight=20 이어야 함.
+    func testPiecewise_PeriodKnots_InternalKnotAccuracy() {
+        // periodKnots (V288-1 ascending): (350,90),(400,70),(450,45),(500,20),(600,0),(700,0),(900,0)
+        // x=500 → 정확히 (500,20) knot → weight=20.
+        let w = WalkStabilityPredictor.piecewise(500.0, knots: StabilityThresholds.periodKnots)
+        XCTAssertEqual(w, 20.0, accuracy: 1e-9,
+            "piecewise(500, periodKnots) = 20 — ascending knot 내부 정확도")
+    }
+
+    /// piecewise() 첫 knot (최소 period = 최대 위험).
+    /// period=350ms → first knot (350, 90) → weight=90.
+    func testPiecewise_PeriodKnots_MinPeriodMaxWeight() {
+        // periodKnots (V288-1 ascending) first=(350,90).
+        // x=350 → `x <= fst.0=350` → return fst.1 = 90.
+        let w = WalkStabilityPredictor.piecewise(350.0, knots: StabilityThresholds.periodKnots)
+        XCTAssertEqual(w, 90.0, accuracy: 1e-9,
+            "piecewise(350, periodKnots) = 90 (최대 위험) — ascending first.1 clamp")
+    }
+
+    /// **V288-1 critic action item #2** — piecewise() defensive sort 경로 직접 검증.
+    /// 역순 input 을 직접 전달해 ascending 정렬 후 보간이 정확히 수행되는지 확인.
+    /// 현재 모든 caller 가 ascending 을 전달하므로 본 path 는 평소 trigger 안 됨 →
+    /// regression 가드로 명시.
+    func testPiecewise_DefensiveSort_HandlesReversedInput() {
+        // 역순 input: x 가 큰 값 → 작은 값.
+        let reversedKnots: [(Double, Double)] = [
+            (900, 0), (700, 0), (600, 0), (500, 20), (450, 45), (400, 70), (350, 90)
+        ]
+        // x=500 → sort 후 (500, 20) knot → weight=20.
+        let w500 = WalkStabilityPredictor.piecewise(500.0, knots: reversedKnots)
+        XCTAssertEqual(w500, 20.0, accuracy: 1e-9,
+            "piecewise(500, reversed) = 20 — defensive sort 경로 (역순 자동 정렬)")
+        // x=350 → sort 후 first.0 = 350 → return 90.
+        let w350 = WalkStabilityPredictor.piecewise(350.0, knots: reversedKnots)
+        XCTAssertEqual(w350, 90.0, accuracy: 1e-9,
+            "piecewise(350, reversed) = 90 — defensive sort 후 clamp")
+        // x=900 → sort 후 last.0 = 900 → return 0.
+        let w900 = WalkStabilityPredictor.piecewise(900.0, knots: reversedKnots)
+        XCTAssertEqual(w900, 0.0, accuracy: 1e-9,
+            "piecewise(900, reversed) = 0 — defensive sort 후 last clamp")
+        // x=425 (interpolate between (400,70) and (450,45)) → 57.5.
+        let w425 = WalkStabilityPredictor.piecewise(425.0, knots: reversedKnots)
+        XCTAssertEqual(w425, 57.5, accuracy: 1e-9,
+            "piecewise(425, reversed) interpolation accuracy")
+    }
 }

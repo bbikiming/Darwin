@@ -140,10 +140,10 @@ final class WalkLabGyroClosedLoopIntegrationTests: XCTestCase {
                       "session.enableBalanceCorrection → cmd.balanceEnable")
         XCTAssertEqual(cmd.correctorIntensityLevel, 3,
                        "session.correctorIntensityLevel → cmd.correctorIntensityLevel")
-        // serializedLine — 10 필드 확인.
+        // serializedLine — 12 필드 확인 (SSH parity W4: 10 + head 2).
         let fields = cmd.serializedLine.split(separator: " ")
-        XCTAssertEqual(fields.count, 10,
-                       "10 필드 확인 (cycle 162 schema 확장)")
+        XCTAssertEqual(fields.count, 12,
+                       "12 필드 확인 (cycle 162 schema + head pan/tilt)")
     }
 
     /// **유기 검증 #6**: correctorIntensityLevel clamp + cmd 일관성.

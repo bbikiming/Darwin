@@ -98,6 +98,10 @@ public enum StateInput: Sendable {
     case transportClosed
     case ackTimeout
     case recoveryAcknowledged
+    /// V297-7 재검증 P2: 복구 시도 실패 — estopped 유지하되 사용자 명시 E-stop 과는
+    /// 구분되는 trace. `.estopRequested` 의 사이드이펙트 (사용자 E-stop log, haptic error,
+    /// banner 재open) 를 발생시키지 않는다.
+    case recoveryFailed(reason: String)
 }
 
 // MARK: - Transition result
@@ -187,6 +191,12 @@ public struct MobilePilotStateMachine: Sendable {
                                     sideEffects: [.haptic(.warningNotification),
                                                   .stopActiveCommand(reason: .latencyGate),
                                                   .logSafety("ACK timeout")])
+        case .recoveryFailed(let reason):
+            // V297-7 재검증 P2: 복구 시도 실패 — estopped 유지하되 사용자 명시 E-stop
+            // 사이드이펙트 (errorNotification haptic, openRecoveryBanner, 가짜 "E-stop
+            // requested by user" 로그) 발생시키지 않는다. log 만 정확한 reason 으로 기록.
+            return TransitionResult(nextState: .estopped,
+                                    sideEffects: [.logSafety("Recovery failed: \(reason)")])
         default:
             break
         }
@@ -208,6 +218,15 @@ public struct MobilePilotStateMachine: Sendable {
              (.armedReady, .armRequested),
              (.macConnectedNoRobot, .armRequested):
             return TransitionResult(nextState: .arming)
+        // V297-7 P2-i1 (CRITICAL): estopped → armRequested 는 "복구" 버튼 흐름.
+        // iOS UI 가 estopped 상태에서 같은 위치 버튼이 녹색 "복구" 로 전환되어 사용자가
+        // 누르면 pilot.arm 송신 → Mac 이 emergencyStopActive 분기로 recoverFromEStop.
+        // FSM 이 이 transition 을 명시적으로 인정해야 ack 받은 후 armedReady 로 진행 가능.
+        // staleStop 도 동일 정책 — 사용자 복구 인지 = arming 진입.
+        case (.estopped, .armRequested),
+             (.staleStop, .armRequested):
+            return TransitionResult(nextState: .arming,
+                                    sideEffects: [.logSafety("Recovery requested from estopped")])
         case (.arming, .armingProgress):
             return TransitionResult(nextState: .arming)
         case (.arming, .armed):
@@ -242,7 +261,22 @@ public struct MobilePilotStateMachine: Sendable {
 
     private static func stateFromTelemetry(current: PilotState,
                                            payload: TelemetryStatePayload) -> PilotState {
-        // Hard overrides
+        // V297-7 P2-i1 (CRITICAL fix): arming/armedReady 는 사용자가 복구 명령을
+        // 시작한 상태 — telemetry 가 잠시 estopped 라도 ack/recover 완료 전까지는
+        // FSM 이 estopped 로 끌리지 않게 한다. 사용자가 직접 .estopRequested 를
+        // 보내거나 watchdog/transport 이벤트가 들어와야 estopped 진입.
+        switch current {
+        case .arming, .armedReady, .commandActive:
+            // 단, telemetry safety=estopped 가 5초 이상 지속되면 별도 watchdog 로직이
+            // .watchdogStopped 또는 .estopRequested 를 보내 정상 처리한다. 여기는 그 외
+            // race 윈도우 (복구 ack 직후의 잔존 telemetry) 만 무시.
+            if payload.safety == .estopped {
+                return current   // 사용자 의도(복구) 우선.
+            }
+        default:
+            break
+        }
+        // Hard overrides — 위 사용자-의도 분기에 안 잡힌 경우만 적용.
         if payload.safety == .estopped {
             return .estopped
         }

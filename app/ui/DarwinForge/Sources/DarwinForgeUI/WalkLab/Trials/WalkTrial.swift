@@ -322,6 +322,18 @@ public struct TrialOutcome: Codable, Sendable, Equatable {
     /// nil = 미수집 (legacy trial 또는 보정 disabled 전체 구간).
     public let correctionEffectMetric: CorrectionEffectMetric?
 
+    // MARK: - Phase 1 fall-recovery slots (backward-compat optional)
+    //
+    // Phase 2 will populate these from FallRecoveryMetrics.aggregate().
+    // Phase 1 just adds the fields so the schema is forward-ready.
+
+    /// Fraction of falls in this trial that were successfully recovered (0…1).
+    /// nil = no falls occurred OR not yet populated (Phase 2).
+    public let recoverySuccessRate: Double?
+    /// Mean total recovery time (ms) across all falls in this trial.
+    /// nil = no falls occurred OR not yet populated (Phase 2).
+    public let recoveryMeanMs: Double?
+
     /// 사이클 163: 보정 효과 측정 결과.
     /// 보정 ON 구간 vs OFF 구간 의 peak abs roll/pitch 비교.
     public struct CorrectionEffectMetric: Codable, Sendable, Equatable {
@@ -386,7 +398,9 @@ public struct TrialOutcome: Codable, Sendable, Equatable {
         busWriteFailures: Int,
         stepsExecuted: Int,
         sampleCount: Int,
-        correctionEffectMetric: CorrectionEffectMetric? = nil
+        correctionEffectMetric: CorrectionEffectMetric? = nil,
+        recoverySuccessRate: Double? = nil,
+        recoveryMeanMs: Double? = nil
     ) {
         self.stabilityScore = stabilityScore
         self.smoothnessScore = smoothnessScore
@@ -404,6 +418,8 @@ public struct TrialOutcome: Codable, Sendable, Equatable {
         self.stepsExecuted = stepsExecuted
         self.sampleCount = sampleCount
         self.correctionEffectMetric = correctionEffectMetric
+        self.recoverySuccessRate = recoverySuccessRate
+        self.recoveryMeanMs = recoveryMeanMs
     }
 
     /// "good trial" 판정 — rule-based recommender 의 baseline.

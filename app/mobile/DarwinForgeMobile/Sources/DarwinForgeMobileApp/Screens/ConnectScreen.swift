@@ -186,6 +186,11 @@ public struct ConnectScreen: View {
                 connectedStatusCard
             }
 
+            // V297-6 (PM Story S2.3): 자동 페어링 진행 중 spinner
+            if state.isAutoPairing {
+                autoPairingCard
+            }
+
             // Hero area
             VStack(spacing: DS.Space.m) {
                 Image(systemName: "desktopcomputer.and.iphone")
@@ -602,6 +607,34 @@ public struct ConnectScreen: View {
             qrPrefillRaw = raw
             showManualSheet = true
         }
+    }
+
+    // MARK: - Auto-pairing card (V297-6 / S2.3)
+
+    private var autoPairingCard: some View {
+        DSCard(tone: .standard) {
+            HStack(spacing: DS.Space.m) {
+                ProgressView()
+                    .accessibilityLabel("자동 연결 중")
+                VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                    Text("자동 연결 중…")
+                        .font(DS.Font.bodyEmphasis)
+                    if let saved = state.persistedEndpoint {
+                        Text("\(saved.macName) (\(saved.host):\(saved.port))")
+                            .font(DS.Font.caption)
+                            .foregroundStyle(DS.Color.secondaryText)
+                    }
+                }
+                Spacer()
+                Button("취소") {
+                    state.cancelAutoPair()
+                }
+                .font(DS.Font.caption)
+                .foregroundStyle(DS.Color.danger)
+                .accessibilityIdentifier("connect.autoPair.cancel")
+            }
+        }
+        .accessibilityIdentifier("connect.autoPair.card")
     }
 
     // MARK: - Permission priming (V292-2)

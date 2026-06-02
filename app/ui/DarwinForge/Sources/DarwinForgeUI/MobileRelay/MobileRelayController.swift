@@ -156,6 +156,9 @@ public final class MobileRelayController: ObservableObject {
     /// nil 기본값 → ARM reject (보수 정책; 주입 전 시동 방지).
     private var batteryVoltage: @Sendable () async -> Double? = { nil }
     private var telemetryTask: Task<Void, Never>?
+    // V297-6 (PM Story S2.1): 세션 시작 시각 — burst 모드 판정용.
+    // 페어링 완료 시 nil → Date() 로 갱신, 세션 해제 시 nil 리셋.
+    private var sessionStartedAt: Date?
     private let pairingStore: PersistedPairingStore
     private let harness: any HarnessFacade
 
@@ -235,6 +238,8 @@ public final class MobileRelayController: ObservableObject {
                 self?.activeSessionId = sessionId
                 self?.pairedSince = Date()
                 self?.hasActiveSocket = true
+                // V297-6 (PM Story S2.1): 페어링 완료 시 세션 시작 시각 기록 → burst 모드 트리거.
+                self?.sessionStartedAt = Date()
                 self?.appendTimeline(event: "페어링 완료", detail: device)
             }
         }
@@ -245,6 +250,8 @@ public final class MobileRelayController: ObservableObject {
                 self?.pairedSince = nil
                 self?.lastHeartbeatAt = nil
                 self?.hasActiveSocket = false
+                // V297-6 (PM Story S2.1): 세션 해제 시 시작 시각 리셋.
+                self?.sessionStartedAt = nil
                 self?.appendTimeline(event: "끊김", detail: nil)
             }
         }
@@ -377,7 +384,18 @@ public final class MobileRelayController: ObservableObject {
                                             actor: .system, data: ["source": "lockout"])
                     }
                 }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                // V297-6 (PM Story S2.1): 동적 polling 주기 — burst/steady 전환.
+                // 세션 시작 후 첫 5초: 200ms (5Hz burst) — iOS 가 페어링 직후
+                // dxlPower/robot 상태를 빠르게 확인할 수 있도록.
+                // 5초 이후 또는 세션 없음: 1초 (1Hz steady) — CPU/배터리 절감.
+                let startedAt = await self?.sessionStartedAt
+                let sleepNs: UInt64
+                if let start = startedAt, Date().timeIntervalSince(start) < 5.0 {
+                    sleepNs = 200_000_000   // burst: 200ms
+                } else {
+                    sleepNs = 1_000_000_000 // steady: 1s (세션 없음 포함)
+                }
+                try? await Task.sleep(nanoseconds: sleepNs)
             }
         }
     }

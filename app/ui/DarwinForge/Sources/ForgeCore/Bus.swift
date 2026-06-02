@@ -427,6 +427,33 @@ public final class Bus: @unchecked Sendable {
         }
     }
 
+    /// 다중 관절 동시 goal position 설정 (SYNC_WRITE 1패킷). 안전 한계는 Rust 측에서 clamp.
+    ///
+    /// SYNC_WRITE 는 status packet 을 반환하지 않으므로 per-joint 응답 확인 불가.
+    /// transport 실패(USB I/O error 등) 만 throw 로 노출. per-servo liveness 는
+    /// Phase 2 BULK_READ 에서 추가 예정.
+    ///
+    /// - Parameter targets: `(JointID, rawPosition)` 쌍 배열. 빈 배열이면 no-op.
+    public func setPositions(_ targets: [(JointID, UInt16)]) throws {
+        guard !targets.isEmpty else { return }
+        try locked {
+            let ids: [UInt8] = targets.map { $0.0.rawValue }
+            let raws: [UInt16] = targets.map { $0.1 }
+            try ids.withUnsafeBufferPointer { idsBuf in
+                try raws.withUnsafeBufferPointer { rawsBuf in
+                    try checkForgeReturn(
+                        fc_joint_set_positions_many(
+                            self.raw(),
+                            idsBuf.baseAddress,
+                            rawsBuf.baseAddress,
+                            UInt(targets.count)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
     public func setMovingSpeed(_ joint: JointID, speed: UInt16) throws {
         try locked { try checkForgeReturn(fc_joint_set_moving_speed(self.raw(), joint.rawValue, speed)) }
     }
@@ -452,10 +479,10 @@ public final class Bus: @unchecked Sendable {
     /// `motion_4096.bin` 의 `slot` 페이지를 실 robot 에 동기 송출.
     ///
     /// - Parameters:
-    ///   - slot: 페이지 번호 (예: 24/27 단발, 9 walkready, 12/13 HighRisk get-up)
+    ///   - slot: 페이지 번호 (예: 24/27 단발, 9 walkready, 10/11 = get-up (f up/b up); 12/13 = kick (rk/lk))
     ///   - binPath: nil 이면 `FORGE_MOTION_BIN` env 또는 소스 트리 기본 경로 사용
     ///   - dryRun: true 면 stdout 로그만 (실 송출 없음)
-    ///   - confirmRisk: HighRisk 모션 (page 12/13 등) 실행 허용
+    ///   - confirmRisk: HighRisk 모션 실행 허용 (get-up page 10/11 포함)
     ///   - singleFootOk: 단일 발 지지 페이지 허용 (PRD §7.1 — confirmRisk 와 등가)
     ///   - followChain: `page.next_page` chain 을 따라감. 기본 false (단일 page only)
     ///   - maxChainDepth: chain 최대 깊이. 0 이면 내부 기본값 10

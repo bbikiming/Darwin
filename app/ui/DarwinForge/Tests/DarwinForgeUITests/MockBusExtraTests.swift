@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — ConnectionStore._test* hooks 는 DEBUG-only.
+#if DEBUG
 import XCTest
 @testable import DarwinForgeUI
 @testable import ForgeCore
@@ -359,3 +361,4 @@ final class MockBusExtraTests: XCTestCase {
 }
 
 // AlwaysFailFsrMockBus と SingleJointFailMockBus は Mocks/FailingMockBuses.swift (V269-2) に統合済み。
+#endif

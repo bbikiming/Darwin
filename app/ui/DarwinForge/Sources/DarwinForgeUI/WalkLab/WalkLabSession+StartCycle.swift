@@ -72,6 +72,16 @@ extension WalkLabSession {
     /// startBlockedReason / lastRobotEvent 업데이트 순서 원본 동일.
     internal func swcResolveStoreAndCradle(_ preset: WalkLabPreset) -> (ConnectionStore, any BusInterface)? {
         guard let store = store, let bus = store.bus else {
+            // **codex HIGH fix (2026-06-02) — 정직성**: 온보드(SSH) 모드는 bus 가 *원래* 없다
+            // (로봇 demo 가 ttyUSB0 점유, 공식 보행). 보행 명령은 `current`(Phase 6b 에서 설정)
+            // 를 WalkLabOnboardBridge 가 x/y/a 로 송출해 실제로 걷는다 — 이 Mac-키프레임 cycle 은
+            // 생략이 맞다. 종전엔 그걸 "🛑 시뮬레이션만 — 로봇 미연결" 로 거짓 표시했다(연결+보행
+            // 중인데). 온보드면 정보성 메시지 + start_blocked 미발행(차단 아님 — 경로가 다를 뿐).
+            let onboard = (walkingEngine == .robotisOnboard)
+            if onboard {
+                lastRobotEvent = "ℹ️ 온보드(SSH) — \(preset.label): 로봇 demo 공식 보행으로 송출(브리지). Mac 키프레임 cycle 생략."
+                return nil
+            }
             let f = WalkPreflightFailure(cause: .noConnection)
             lastPreflightFailure = f
             startBlockedReason = f.diagnosticCode  // v1.11.24 audit iter2-D
@@ -345,6 +355,36 @@ extension WalkLabSession {
         }
     }
 
+    // MARK: - Phase 5a' — autoTuner 안정성 파라미터 적용 (데이터 기반 자동 튜닝 2026-05-30)
+
+    /// autoTuner 의 안정성 권고(tau/D항) 자동 적용. **swcApplyAutoTuningLevel 과 동일 안전
+    /// 정책**: `correctionApplyMode == "robotApplied"` (실 모터 송출) 면 자동 적용 차단 —
+    /// 안정성 파라미터는 미관측 변경 위험이 크므로 **승인 게이트(ExperimentApproval) 경유만**
+    /// 허용. SIM/observeOnly/off 모드에서만 자동 적용 (analyzer 가 이미 단일 step 보수 권고).
+    internal func swcApplyAutoTuningStability() {
+        guard autoTuner.autoApplyEnabled else { return }
+        if correctionApplyMode == "robotApplied" {
+            if autoTuner.pendingStabilityRecommendation != nil {
+                logSafetyEvent(
+                    kind: .correctorOn,
+                    message: "자동 튜닝(안정성) 차단: 실 robot 적용 모드 — 승인 게이트 경유만 허용"
+                )
+            }
+            return
+        }
+        let applied = autoTuner.stabilityToApply(
+            currentDTerm: derivativeTimeSec, currentTau: baselineTauSec
+        )
+        var changed = false
+        if abs(applied.dTerm - derivativeTimeSec) > 1e-9 { derivativeTimeSec = applied.dTerm; changed = true }
+        if abs(applied.tau - baselineTauSec) > 1e-9 { baselineTauSec = applied.tau; changed = true }
+        if changed {
+            lastRobotEvent = String(
+                format: "🧠 자동 튜닝(SIM): D항 %.2f·baseline %.1fs 적용", derivativeTimeSec, baselineTauSec
+            )
+        }
+    }
+
     // MARK: - Phase 5b — WalkSessionLogger init
 
     /// `enableSessionLogging=true` 일 때 WalkSessionLogger 생성. 실패 시 silent
@@ -505,9 +545,11 @@ extension WalkLabSession {
                     return await self.isBusAliveSnapshot()
                 },
                 // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 시 exit phase 스킵.
+                // C1b: recovery 진행 중에도 write 를 차단 — exitEmergencyMode() 이후에도
+                // autoRecoveryPhase != .idle 이면 get-up 윈도우가 보호됨.
                 isHardStopped: { [weak self] in
                     guard let self else { return true }
-                    return await MainActor.run { self.emergencyStopActive }
+                    return await MainActor.run { self.emergencyStopActive || self.autoRecoveryPhase != .idle }
                 },
                 // v1.11.1 MEDIUM-5: bus write 실패 시 ConnectionStore counter 누적.
                 onBusWriteFailure: { [weak self] in
@@ -591,9 +633,11 @@ extension WalkLabSession {
                     return await self.isBusAliveSnapshot()
                 },
                 // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 시 walkReady 복귀 스킵.
+                // C1b: recovery 진행 중에도 write 를 차단 — exitEmergencyMode() 이후에도
+                // autoRecoveryPhase != .idle 이면 get-up 윈도우가 보호됨.
                 isHardStopped: { [weak self] in
                     guard let self else { return true }
-                    return await MainActor.run { self.emergencyStopActive }
+                    return await MainActor.run { self.emergencyStopActive || self.autoRecoveryPhase != .idle }
                 },
                 // v1.11.1 MEDIUM-5: bus write 실패 시 ConnectionStore counter 누적.
                 onBusWriteFailure: { [weak self] in

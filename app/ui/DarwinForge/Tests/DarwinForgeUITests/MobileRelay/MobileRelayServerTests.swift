@@ -30,13 +30,20 @@ final class MobileRelayServerTests: XCTestCase {
     }
 
     func testSingleAuthorityRejectsSecondClient() async throws {
+        // V297-4: identity 기준이 channel.clientId 에서 hello.payload.deviceId 로 변경.
+        // single-authority 검증은 **다른 deviceId** 두 폰이 같은 페어링 코드로 접속할 때
+        // 두 번째가 alreadyOwned 거절되는지가 핵심. 동일 deviceId 는 reconnect 시나리오.
         let pairing = MobileRelayPairing(initialCode: "555000")
         let server = MobileRelayServer(pairing: pairing, port: InMemorySafetyPort())
         let first = InMemoryChannel()
         let second = InMemoryChannel()
 
-        await server.handleClientConnected(first, handshake: helloFrame(code: "555000"))
-        await server.handleClientConnected(second, handshake: helloFrame(code: "555000"))
+        await server.handleClientConnected(first,
+                                            handshake: helloFrame(code: "555000",
+                                                                  deviceId: "phone-A"))
+        await server.handleClientConnected(second,
+                                            handshake: helloFrame(code: "555000",
+                                                                  deviceId: "phone-B"))
         try await Task.sleep(nanoseconds: 50_000_000)
 
         XCTAssertTrue(first.frames.contains { decode($0)?.type == "session.welcome" })
@@ -115,13 +122,13 @@ final class MobileRelayServerTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func helloFrame(code: String) -> Data {
+    private func helloFrame(code: String, deviceId: String = "TEST") -> Data {
         makeFrame(type: "session.hello", id: "cmd_hello",
                   payload: ["app": "ios",
                             "appVersion": "0.1.0",
                             "protocolVersion": 1,
                             "deviceName": "Tester iPhone",
-                            "deviceId": "TEST",
+                            "deviceId": deviceId,
                             "pairingCode": code])
     }
 

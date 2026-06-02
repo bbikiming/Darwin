@@ -1,17 +1,28 @@
 import SwiftUI
 import MobilePilotKit
 
+// V297-6 (PM Story S3.1): onRecover 추가 — estopped 시 복구 버튼 표시.
 public struct StatusRailView: View {
     let model: StatusRailModel
     let isMockMode: Bool
     let onEStop: () -> Void
+    let onRecover: () -> Void
 
     public init(model: StatusRailModel,
                 isMockMode: Bool = false,
-                onEStop: @escaping () -> Void) {
+                onEStop: @escaping () -> Void,
+                onRecover: @escaping () -> Void = {}) {
         self.model = model
         self.isMockMode = isMockMode
         self.onEStop = onEStop
+        self.onRecover = onRecover
+    }
+
+    // estopped 상태 판단 — pilotState 또는 telemetry.uiState 기준.
+    private var isEstopped: Bool {
+        if case .estopped = model.pilotState { return true }
+        if model.telemetry?.uiState == .estopped { return true }
+        return false
     }
 
     public var body: some View {
@@ -42,7 +53,11 @@ public struct StatusRailView: View {
                 }
                 .padding(.horizontal, 4)
             }
-            EmergencyStopButton(onTap: onEStop)
+            // V297-6 (PM Story S3.1): estopped → 녹색 복구 버튼, 아니면 빨간 긴급 정지.
+            EmergencyStopButton(
+                mode: isEstopped ? .recover : .estop,
+                onTap: isEstopped ? onRecover : onEStop
+            )
         }
         .accessibilityIdentifier("pilot.status.rail")
     }

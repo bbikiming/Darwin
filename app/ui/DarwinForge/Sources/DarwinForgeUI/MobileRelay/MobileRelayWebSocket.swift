@@ -162,8 +162,29 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
     private let queue = DispatchQueue(label: "darwinforge.mobile.relay.ws.channel")
     private var handshakeDone = false
     private var firstAppFrameDelivered = false
+    /// V297-9 CRITICAL-2: hello 처리 완료 (onConnect await 끝) 후에만 true.
+    /// priority bypass 가 hello 처리 전 estop 받아 actor 에서 alreadyOwned 거절되는
+    /// 회로 차단. 종전 firstAppFrameDelivered 는 frame parse 시점에 set 되어
+    /// onConnect 의 acceptHello 완료 전에 priority frame 이 chain 우회로 actor 진입 가능.
+    private var handshakeAccepted = false
     private var buffer = Data()
     private var disconnected = false
+    /// V297-4 frame ordering — Task chain.
+    ///
+    /// # 종전 (race)
+    ///
+    /// 각 frame 마다 독립 Task spawn → Task 실행 순서 무보장. hello 보다 heartbeat 가
+    /// 먼저 actor 에 진입하면 `guard let session` 실패 → respondRejected(alreadyOwned).
+    /// iOS 가 welcome 받기 전엔 heartbeat 안 보내므로 보통 트리거 안 되지만 리팩터에 취약.
+    ///
+    /// # 신규 (serial Task chain)
+    ///
+    /// 각 새 Task 가 이전 Task 의 `.value` 를 await 한 후 자기 처리. parseFrames 가
+    /// 단일 queue 위에서 sync 호출이라 `taskChain` 변수 자체 race 없음. 결과적으로
+    /// 모든 frame 이 도착 순서대로 처리됨.
+    ///
+    /// 비유: 자판기에 줄 서기 — 동전이 동시에 들어가도 처리는 한 명씩.
+    private var taskChain: Task<Void, Never>?
 
     init(connection: NWConnection, owner: MobileRelayWebSocketServer) {
         self.connection = connection
@@ -303,12 +324,38 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
             }
             switch frame.opcode {
             case .text, .binary:
-                Task { [self, frame] in
-                    if self.firstAppFrameDelivered {
+                // V297-5/9 priority bypass + handshakeAccepted 가드.
+                //
+                // priority command (pilot.estop/stop) 는 ARM battery wait 같은 long
+                // command 와 별도 Task 로 즉시 dispatch — chain 우회. 단 그 우회 자체는
+                // **handshakeAccepted == true** 일 때만 (acceptHello 완료 후) 활성화.
+                //
+                // V297-9 CRITICAL-2: hello 처리 완료 전 priority frame 이 actor 에
+                // 도달하면 session.channel.clientId 가 새 channel 과 미일치 →
+                // alreadyOwned reject → estop 유실. 그래서 handshakeAccepted=false
+                // 동안은 priority 도 chain 대기.
+                let priorityType = WSChannel.peekPriorityType(frame.payload,
+                                                              firstFrameDelivered: handshakeAccepted)
+                if priorityType != nil {
+                    // bypass — 즉시 dispatch (handshake 완료 보장됨).
+                    Task { [self, frame] in
                         await self.owner?.onFrame(frame.payload, self)
-                    } else {
-                        self.firstAppFrameDelivered = true
-                        await self.owner?.onConnect(self, frame.payload)
+                    }
+                } else {
+                    // 기존 chain 직렬화.
+                    let previous = taskChain
+                    taskChain = Task { [self, frame] in
+                        await previous?.value
+                        if self.firstAppFrameDelivered {
+                            await self.owner?.onFrame(frame.payload, self)
+                        } else {
+                            self.firstAppFrameDelivered = true
+                            // V297-9 CRITICAL-2: handshakeAccepted 는 onConnect (=
+                            // acceptHello) 완료 **후** 에 set. 그래야 priority bypass 가
+                            // 그 전 frame 을 chain 으로 강제할 수 있다.
+                            await self.owner?.onConnect(self, frame.payload)
+                            self.handshakeAccepted = true
+                        }
                     }
                 }
             case .close:
@@ -405,6 +452,24 @@ final class WSChannel: RelayClientChannel, @unchecked Sendable {
 
     func deliver(_ frame: Data) async throws {
         try await sendText(frame)
+    }
+
+    /// V297-5 CRITICAL-1: frame payload head sniff for priority bypass.
+    ///
+    /// - Parameters:
+    ///   - payload: WebSocket frame text payload (RelayEnvelope JSON).
+    ///   - firstFrameDelivered: hello 이미 전달됐는지. false 면 priority 분류 불요
+    ///     (priority command 는 hello 다음에만 의미).
+    /// - Returns: priority type string 또는 nil. 디코드 실패는 nil (일반 chain).
+    // V297-9 MEDIUM-2: internal 노출 — 단위 테스트가 handshakeAccepted 가드 동작 검증.
+    internal static func peekPriorityType(_ payload: Data,
+                                          firstFrameDelivered: Bool) -> String? {
+        guard firstFrameDelivered else { return nil }
+        guard let head = try? RelayCodec.decoder.decode(RelayEnvelopeHead.self,
+                                                        from: payload) else {
+            return nil
+        }
+        return MobileRelayWireProtocol.isPriorityCommand(head.type) ? head.type : nil
     }
 
     private func sendText(_ data: Data) async throws {

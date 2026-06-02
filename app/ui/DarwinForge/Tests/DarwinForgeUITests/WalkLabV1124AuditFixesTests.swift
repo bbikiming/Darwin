@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — _testForceWalkActive 는 DEBUG-only.
+#if DEBUG
 import XCTest
 @testable import DarwinForgeUI
 @testable import ForgeCore
@@ -615,3 +617,4 @@ final class WalkLabV1124AuditFixesTests: XCTestCase {
         XCTAssertEqual(decoded.lastRobotEventAtStart, "보행 진행 중")
     }
 }
+#endif

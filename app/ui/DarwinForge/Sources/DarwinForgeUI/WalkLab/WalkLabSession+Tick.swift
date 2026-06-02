@@ -182,6 +182,47 @@ extension WalkLabSession {
         balanceState = BalanceState.from(maxTilt: maxTilt)
 
         appendSessionSampleIfLogging()
+
+        // Phase 1: feed fall-telemetry ring buffer every tick.
+        // Build a lightweight sample from live sensor state; only include joint data
+        // when a fresh telemetry snapshot arrived this tick (sparse, like WalkSessionSample).
+        let tMs = sessionStartedAt.map { Date().timeIntervalSince($0) * 1000.0 } ?? 0
+        let raw = store?.lastImuRaw
+        var jLoad: [String: Double]? = nil
+        var jTemp: [String: Double]? = nil
+        if let tel = store?.lastTelemetry, tel.timestamp != lastLoggedTelemetryAt {
+            var ld: [String: Double] = [:]
+            var tp: [String: Double] = [:]
+            for (jid, js) in tel.joints {
+                ld[jid.name] = Double(js.presentLoad)
+                tp[jid.name] = Double(js.presentTemperature)
+            }
+            if !ld.isEmpty { jLoad = ld }
+            if !tp.isEmpty { jTemp = tp }
+        }
+        let ringSample = FallTelemetrySample(
+            tMs: tMs,
+            imuRollDeg: imuRollDeg,
+            imuPitchDeg: imuPitchDeg,
+            gyroXDps: raw?.gyroXDps ?? 0,
+            gyroYDps: raw?.gyroYDps ?? 0,
+            gyroZDps: raw?.gyroZDps ?? 0,
+            accelXG: raw?.accelXG ?? 0,
+            accelYG: raw?.accelYG ?? 0,
+            accelZG: raw?.accelZG ?? 0,
+            balanceState: String(describing: balanceState),
+            autoRecoveryPhase: String(describing: autoRecoveryPhase),
+            perJointLoad: jLoad,
+            perJointTemp: jTemp,
+            cmdStrideMm: current != .idle ? strideMm : nil,
+            cmdSideMm: current != .idle ? sideMm : nil,
+            cmdTurnDeg: current != .idle ? turnDeg : nil
+        )
+        fallTelemetryRecorder.pushSample(ringSample)
+        // During an active recovery, also append live samples for real-time capture.
+        if autoRecoveryPhase != .idle {
+            fallTelemetryRecorder.appendLiveSample(ringSample)
+        }
     }
 
     // MARK: - Phase 5 — Safety Pipeline (Mitigation + L3/L4/L0)
@@ -259,9 +300,47 @@ extension WalkLabSession {
                 message: String(format: "L3 hard gate — tilt R%+.1f° P%+.1f° 3샘플 연속 ≥50° → 정지",
                                 imuRollDeg, imuPitchDeg)
             )
-            emergencyStop(trigger: .balanceLostL3)
+            // E (2026-05-31): L3 발동 맥락 — raw tilt(영점 미보정)와 영점 기준을 함께 기록.
+            harness.record(
+                .l3EmergencyDiagnostic, level: .error, actor: .system,
+                data: [
+                    "trigger": AnyCodable("balanceLostL3"),
+                    "raw_roll_deg": AnyCodable((imuRollDeg * 10).rounded() / 10),
+                    "raw_pitch_deg": AnyCodable((imuPitchDeg * 10).rounded() / 10),
+                    "imu_zero_pitch_deg": AnyCodable(lastImuZero?.pitchZeroDeg ?? 0),
+                    "getup_block_reason": AnyCodable(getupBlockReason() ?? "none(eligible)")
+                ]
+            )
+            // **Fix B (2026-05-31 사용자 결정)**: 걷다 낙상(L3) 시 토크를 끄는 emergencyStop 대신,
+            // 자동 일어나기가 가능하면 **즉시 getup 으로 인계(토크 유지)**. getup 의 waitForSettle 이
+            // 실제 바닥 정착을 기다린 뒤 일어나기 모션을 실행하므로 중간 낙하에 오작동하지 않는다.
+            // getup 이 불가(비활성/전원off/과열/저전압/이미 복구중)할 때만 종전대로 emergencyStop.
+            let getupEligible = enableAutoGetUp
+                && getupBlockReason() == nil
+                && (autoRecoveryPhase == .idle || autoRecoveryPhase == .done)
+                && store?.bus != nil
+            if getupEligible {
+                let dir: AutoFallRecovery.FallDirection
+                if let raw = store?.lastImuRaw,
+                   let d = AutoFallRecovery.detectFallFromAccel(accelYRaw: Int(raw.accelY)) {
+                    dir = d
+                } else {
+                    dir = imuPitchDeg >= 0 ? .forward : .backward
+                }
+                logSafetyEvent(
+                    kind: .stateChange,
+                    message: String(format: "L3 → 자동 일어나기 인계 (토크 유지, page %d)", dir.getUpPage)
+                )
+                triggerFallRecovery(direction: dir)
+            } else {
+                emergencyStop(trigger: .balanceLostL3)
+            }
             l3HardGateConsecutiveSamples = 0
         }
+
+        // Auto Fall-Recovery 는 `fallMonitorTimer` (always-on, 10Hz) 가 전담.
+        // walk tick 과 독립 실행 → 보행 중지 후에도 낙하 감지 가능 (ROOT CAUSE FIX).
+        // `tickAutoFallRecoveryIfActive()` 호출은 이중 트리거 방지를 위해 제거됨.
 
         // L4 — 온도 임계
         if maxMotorTemp >= 60 {

@@ -130,6 +130,8 @@ extension WalkLabSession {
         current = .idle
         // v1.11.24 audit P1-1 — 실 motor task 가 멈춘 시점에 activeRobotPreset clear.
         activeRobotPreset = nil
+        mobileFreeformActive = false
+        mobileFreeformTuning = nil
         // sway 도 zero 로 디케이 — 다음 tick 에서 매끄럽게 감소.
     }
 
@@ -175,6 +177,8 @@ extension WalkLabSession {
         requestedPreset = nil
         startBlockedReason = nil
         onboardAckStatus = nil
+        mobileFreeformActive = false
+        mobileFreeformTuning = nil
         // v1.11.25 audit-C — 매 보행 세션마다 idempotent 동의 위반 차단.
         riskAcknowledged = false
         walkTuningRestartTask?.cancel()
@@ -233,11 +237,20 @@ extension WalkLabSession {
     ///
     /// 보행 cycle 즉시 cancel — 모터 송출 중지. walkTuningRestartTask 도 cancel
     /// (debounce 중인 자동 재시작 차단). `isRobotWalking=false` 로 UI 상태 즉시 반영.
+    ///
+    /// **M1 — E-STOP halts smooth-return**: `smoothReturnTask` cancel + nil.
+    /// `store.cancelMovingPose()` 로 진행 중인 `applyPoseSmoothly` drain 도 즉시 중단.
+    /// E-STOP 이 토크 OFF 를 내리는 시점에 leg joint write 가 계속되면 torque OFF 이후
+    /// write 가 들어가 예측 불가 자세로 스냅되는 안전 위반.
     internal func esCancelAllTasks() {
         walkCycleTask?.cancel()
         walkCycleTask = nil
         walkTuningRestartTask?.cancel()
         walkTuningRestartTask = nil
+        // M1: smooth-return Task 도 즉시 중단 — E-STOP 이후 어떤 joint write 도 금지.
+        smoothReturnTask?.cancel()
+        smoothReturnTask = nil
+        store?.cancelMovingPose()
         isRobotWalking = false
     }
 
@@ -288,6 +301,8 @@ extension WalkLabSession {
         activeRobotPreset = nil
         onboardWalkingActive = false
         onboardAckStatus = nil
+        mobileFreeformActive = false
+        mobileFreeformTuning = nil
     }
 
     /// **Phase 8 — 진단 필드 reset + lastRobotEvent 표시**.

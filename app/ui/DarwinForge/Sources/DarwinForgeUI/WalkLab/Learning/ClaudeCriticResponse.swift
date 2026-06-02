@@ -111,6 +111,9 @@ public enum ResponseAxis: String, Codable, Sendable {
     case customGainKnee
     case customGainAnklePitch
     case customGainAnkleRoll
+    // **데이터 기반 자동 튜닝 — 균형 안정성 (2026-05-30)**: 넘어짐 방지 직결 파라미터.
+    case baselineTauSec
+    case derivativeTimeSec
     // 의도적 "no specific axis".
     case none = "null"
     // forward-compat fallback.
@@ -223,6 +226,11 @@ extension ClaudeCriticResponse {
             (.customGainKnee, 0.0...2.0, "custom knee gain"),
             (.customGainAnklePitch, 0.0...2.0, "custom ankle pitch gain"),
             (.customGainAnkleRoll, 0.0...2.0, "custom ankle roll gain"),
+            // **데이터 기반 자동 튜닝 (2026-05-30)**: 균형 안정성 안전 범위.
+            // tau 2~10s (너무 작으면 의도 전경각 오인, 너무 크면 적응 지연).
+            // D항 0~0.25s (0=P-only 안전, 0.25 초과는 gyro 노이즈 증폭 위험).
+            (.baselineTauSec, 2.0...10.0, "baseline tau (s)"),
+            (.derivativeTimeSec, 0.0...0.25, "자이로 D항 (s)"),
         ]
         for (axis, range, label) in ranges where exp.axis == axis {
             if !range.contains(target) {
@@ -256,8 +264,9 @@ extension ClaudeCriticResponse {
         case .walkingEngine, .enableBalanceCorrection, .hipPitchOffsetTrimDeg,
              .strideMm, .sideMm, .turnDeg, .periodMs, .footHeightMm, .balanceGain,
              .customGainHipRoll, .customGainKnee, .customGainAnklePitch, .customGainAnkleRoll,
+             .baselineTauSec, .derivativeTimeSec,
              .none, .unknown:
-            break  // 시뮬 변경 X — config 자체에 영향 없는 axis. axis 별 가드는 validate(currentConfig:) 본체에서 처리.
+            break  // 시뮬 변경 X — config 자체에 영향 없는 axis (tau/D항은 별도 세션 프로퍼티). axis 별 가드는 validate(currentConfig:) 본체에서 처리.
         }
         return BalanceExperimentConfig(
             algorithmMode: algorithm, signConvention: sign,

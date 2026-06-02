@@ -129,14 +129,19 @@ public struct CommandBuilder: Sendable {
     /// vector into a WalkPayload with the `freeform` preset tag.
     ///
     /// Baseline at speedScale=1.0:
-    /// - forward (-y): max 25 mm/step
-    /// - lateral (+x): max 15 mm/step
-    /// - turn: max 10 deg/step
+    /// - forward (-y): xMm max 25 mm/step
+    /// - lateral (+x): yMm max 15 mm/step
+    /// - turn: aDeg max 10 deg/step
+    ///
+    /// `speedScale` is sent separately so the Mac relay can clamp and apply
+    /// the same policy it uses for preset walking. The joystick vector itself
+    /// still controls proportional speed because the normalized x/y/turn
+    /// values are multiplied into the baseline amplitudes here.
     public func walkFreeform(_ input: WalkFreeformInput) -> RelayEnvelope<WalkPayload> {
         let moving = input.isMoving
-        let xMm = input.x * 15.0 * input.speedScale
-        let yMm = (-input.y) * 25.0 * input.speedScale  // joystick up is forward
-        let aDeg = input.turn * 10.0 * input.speedScale
+        let xMm = (-input.y) * 25.0  // joystick up is forward stride
+        let yMm = input.x * 15.0     // joystick right is lateral right
+        let aDeg = input.turn * 10.0
         let params = WalkParams(
             enabled: moving,
             xMm: xMm.rounded(),
@@ -153,6 +158,11 @@ public struct CommandBuilder: Sendable {
 
     public func head(_ payload: HeadPayload) -> RelayEnvelope<HeadPayload> {
         envelope(type: CommandType.pilotHead, payload: payload)
+    }
+
+    /// V297-9 CRITICAL-1: 복구 전용 명령 builder. iOS "복구" 버튼이 사용.
+    public func recover(_ payload: RecoverPayload) -> RelayEnvelope<RecoverPayload> {
+        envelope(type: CommandType.pilotRecover, payload: payload)
     }
 
     public func stop(_ payload: StopPayload = .init()) -> RelayEnvelope<StopPayload> {

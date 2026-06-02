@@ -746,6 +746,57 @@ pub unsafe extern "C" fn fc_joint_set_position(
     })
 }
 
+/// 다중 관절 동시 goal position 설정 (SYNC_WRITE 1패킷). 안전 한계로 clamp.
+///
+/// 인자:
+/// - `ids_ptr`: 관절 rawValue (u8) 배열 (길이 = `count`).
+/// - `raws_ptr`: 목표 position (u16) 배열 (길이 = `count`). `ids_ptr[i]` 와 쌍.
+/// - `count`: 관절 수.
+///
+/// 반환: 0=OK, 음수=에러. SYNC_WRITE 는 status packet 없음 — transport 실패만 감지.
+/// ids 또는 raws 가 null 이거나 count == 0 이면 `FC_ERR_INVALID`.
+/// 매핑되지 않은 관절 ID 는 무시 (silent skip).
+#[no_mangle]
+pub unsafe extern "C" fn fc_joint_set_positions_many(
+    handle: *mut FcBus,
+    ids_ptr: *const u8,
+    raws_ptr: *const u16,
+    count: usize,
+) -> c_int {
+    if handle.is_null() || ids_ptr.is_null() || raws_ptr.is_null() || count == 0 {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let ids = std::slice::from_raw_parts(ids_ptr, count);
+        let raws = std::slice::from_raw_parts(raws_ptr, count);
+        let targets: Vec<(forge_core::joint::JointId, u16)> = ids
+            .iter()
+            .zip(raws.iter())
+            .filter_map(|(&raw_id, &pos)| {
+                forge_core::joint::JointId::from_byte(raw_id).map(|j| (j, pos))
+            })
+            .collect();
+        if targets.is_empty() {
+            return FC_OK;
+        }
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            targets: &[(forge_core::joint::JointId, u16)],
+        ) -> c_int {
+            let mut jc = JointController::new(b);
+            jc.set_positions_many(targets)
+                .map(|_| FC_OK)
+                .unwrap_or_else(|e| err_code(&e))
+        }
+        match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, &targets),
+            BusBackend::Loopback(b) => run(b, &targets),
+            BusBackend::Tcp(b) => run(b, &targets),
+        }
+    })
+}
+
 /// 한 관절 moving_speed 설정 — Dynamixel MX-28T address 32-33 (2 byte).
 /// speed: 0 = 무제한 (default), 1-1023 = 단계별 (0.114 rpm per unit).
 /// 자세 변경 시 모터의 보간 속도 제한 → 부드러운 이동.

@@ -4,9 +4,9 @@ public struct RootView: View {
 
     @StateObject private var state = AppState()
     @Environment(\.scenePhase) private var scenePhase
-    // P0-2 fix (truth-gap report, 2026-05-25): 첫 탭은 검증된 preset/action
-    // 중심 PilotScreen. 조종기 탭(RemotePilotScreen)은 Mock/Review 모드용
-    // 시뮬레이션 보조 화면으로 두 번째에 배치한다.
+    // 첫 탭은 검증된 preset/action 중심 PilotScreen. 조종기(RemotePilotScreen)는
+    // 아날로그 조이스틱 + 외부 컨트롤러(MFi / DJI RC) 입력 경로 — Mac 서버의
+    // capabilities.walkFreeform 이 true 일 때 실 로봇으로 명령을 전달한다.
     @State private var selectedTab: Tab = .actions
 
     public init() {}
@@ -23,7 +23,7 @@ public struct RootView: View {
                 .accessibilityIdentifier("tab.actions")
 
             RemotePilotScreen()
-                .tabItem { Label("조종기 (연습)", systemImage: "gamecontroller.fill") }
+                .tabItem { Label("조종기", systemImage: "gamecontroller.fill") }
                 .tag(Tab.pilot)
                 .accessibilityIdentifier("tab.pilot")
 
@@ -43,18 +43,22 @@ public struct RootView: View {
                 .accessibilityIdentifier("tab.logs")
         }
         .environmentObject(state)
-        .task { state.bootstrap() }
+        // V297-6 (PM Story S2.3): bootstrap 후 자동 페어링 시도.
+        .task {
+            state.bootstrap()
+            await state.attemptAutoPair()
+        }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active {
+            if phase == .active {
+                // 포그라운드 복귀 — 백그라운드에서 iOS 가 끊은 연결을 되살린다.
+                state.appDidBecomeActive()
+            } else {
                 state.appWillResignActive()
             }
         }
         .onChange(of: selectedTab) { old, new in
-            // Leaving any pilot-style tab while an active command is running
-            // must trigger a stop — applies to both 조종기 (.pilot) and 동작 (.actions).
-            if (old == .pilot || old == .actions) && (new != .pilot && new != .actions) {
-                Task { await state.stopWalk(reason: .tabSwitch) }
-            }
+            guard old != new, state.activeWalkPreset != nil else { return }
+            Task { await state.stopWalk(reason: .tabSwitch) }
         }
     }
 }

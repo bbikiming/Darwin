@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// SMB 기반 원격 명령 실행 패널.
+/// SSH 기반 원격 명령 실행 패널.
 ///
 /// UI 구성:
-///   - 상단: host/share 정보 + 셋업 명령 복사 + 마운트 상태
+///   - 상단: 채널 상태(SSH/탐색/연결없음) + 셋업 가이드 토글
 ///   - 중앙: 명령 입력 (multi-line) + 자주 쓰는 프리셋 칩
 ///   - 하단: 실행 기록 (명령 + 결과 + 경과 시간)
 public struct RemoteShellView: View {
@@ -41,7 +41,7 @@ public struct RemoteShellView: View {
             "원격 명령",
             subtitle: shouldShowSetupWizard
                 ? "처음이라면 4단계 셋업 — 한 번이면 영구"
-                : "SSH 30ms 즉시 / SMB 2초 폴링 자동 선택",
+                : "SSH key 인증으로 30-80ms 즉시 실행",
             icon: "terminal.fill",
             tint: DFColor.forge,
             trailing: { headerTrailing }
@@ -75,11 +75,6 @@ public struct RemoteShellView: View {
     private var headerTrailing: some View {
         HStack(spacing: DFSpace.xs2) {
             channelChip
-            if let path = shell.lastMountPath {
-                DFChip(URL(fileURLWithPath: path).lastPathComponent,
-                       icon: "externaldrive.fill",
-                       style: .neutral, mono: true)
-            }
             modeToggle
         }
     }
@@ -118,7 +113,7 @@ public struct RemoteShellView: View {
                         .font(DFFont.caption)
                 }
                 .buttonStyle(.borderless)
-                .help("셋업 무시하고 명령 패널로 — 채널은 SMB 가 됨")
+                .help("셋업 무시하고 명령 패널로 — SSH 미연결이면 명령은 실패해요")
             }
             .padding(DFSpace.sm)
             .background(DFColor.elev2)
@@ -231,28 +226,13 @@ public struct RemoteShellView: View {
         .buttonStyle(.plain)
     }
 
-    private var mountChip: some View {
-        HStack(spacing: DFSpace.xs) {
-            channelChip
-            if let path = shell.lastMountPath {
-                Label(URL(fileURLWithPath: path).lastPathComponent,
-                      systemImage: "externaldrive.fill")
-                    .font(DFFont.caption.monospaced())
-                    .padding(.horizontal, DFSpace.xs2).padding(.vertical, DFSpace.micro2 + 1)
-                    .background(DFColor.textSecondary.opacity(DFOpacity.o10))
-                    .foregroundStyle(DFColor.textSecondary)
-                    .clipShape(Capsule())
-            }
-        }
-    }
-
-    /// SSH(즉시) / SMB(폴링) 채널 표시 — 사용자가 응답 속도 인지.
+    /// 채널 상태 표시 — SSH 연결 여부를 사용자가 인지.
     private var channelChip: some View {
         let (text, icon, tint): (String, String, Color) = {
             switch shell.activeChannel {
-            case .ssh:     return ("SSH",      "bolt.fill",     DFColor.success)
-            case .smb:     return ("SMB",      "tray.fill",     DFColor.warning)
-            case .unknown: return ("탐색 중", "ellipsis.circle", DFColor.textSecondary)
+            case .ssh:         return ("SSH",      "bolt.fill",       DFColor.success)
+            case .unavailable: return ("연결 없음", "bolt.slash.fill", DFColor.warning)
+            case .unknown:     return ("탐색 중",  "ellipsis.circle", DFColor.textSecondary)
             }
         }()
         return Label(text, systemImage: icon)
@@ -266,9 +246,9 @@ public struct RemoteShellView: View {
 
     private var channelHelp: String {
         switch shell.activeChannel {
-        case .ssh:     return "SSH 채널 — 30-80ms 즉시 응답 (key 인증 완료)"
-        case .smb:     return "SMB watcher — 2초 폴링. SSH key 인증 셋업하면 즉시로 전환"
-        case .unknown: return "채널 탐색 중…"
+        case .ssh:         return "SSH 채널 — 30-80ms 즉시 응답 (key 인증 완료)"
+        case .unavailable: return "SSH 연결 불가 — 로봇 전원과 유선 LAN을 확인하고 ‘채널 재탐색’을 누르세요"
+        case .unknown:     return "채널 탐색 중…"
         }
     }
 

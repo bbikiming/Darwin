@@ -178,6 +178,25 @@ if [[ "$METHOD" == "app-store" ]]; then
     fi
 fi
 
+# ===== Step 1.7: Quarantine + 모든 extended attribute 제거 =====
+# V297-14 (Apple ITMS-91109 reject): provisioning profile 을 ~/Downloads/ 에서 가져오면
+# macOS 가 com.apple.quarantine 자동 부착. 그 상태로 codesign 해도 attr 잔존 →
+# App Store reject ("Invalid package contents").
+#
+# 다른 자산 (icons, resource bundles) 도 다운로드 경유면 동일 위험. `.app/` 전체에
+# `xattr -cr` (clear, recursive) 로 모든 extended attribute 제거 후 codesign 진행.
+# codesign 가 만드는 metadata (com.apple.cs.CodeSignature 등) 는 codesign 단계에서
+# 다시 부착되므로 제거해도 안전.
+echo "▶ Step 1.7: 확장 속성 (quarantine 등) 전체 제거 → App Store 호환"
+xattr -cr "$APP_BUNDLE" 2>&1 | head -3 || true
+# 검증 — quarantine 잔존 여부.
+QUAR_COUNT=$(find "$APP_BUNDLE" -exec xattr {} \; 2>/dev/null | grep -c "com.apple.quarantine" || true)
+if [[ "$QUAR_COUNT" -gt 0 ]]; then
+    echo "  ⚠ quarantine 잔존 $QUAR_COUNT 파일 — 강제 재제거" >&2
+    find "$APP_BUNDLE" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
+fi
+echo "  ✓ extended attributes 모두 제거됨"
+
 # ===== Step 2: Distribution 용 codesign 재실행 =====
 # Apple 공식 codesign 절차: nested content 부터 inside-out 으로 sign.
 # 종전엔 .framework / .bundle 만 처리해 `unsealed contents` 경고. 모든 위치

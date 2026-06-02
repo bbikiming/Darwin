@@ -8,9 +8,14 @@ import Foundation
 public enum SessionMarkdownReport {
 
     /// 세션 meta + 분석 결과 → markdown 텍스트.
+    ///
+    /// **2026-06-02 — events 옵셔널 추가(하위호환)**: 비어있지 않으면 SSH 연결·조종
+    /// 전용 진단 섹션(성공률/지연 분포/실패 원인/카테고리/최악 명령)을 덧붙인다.
+    /// events 미전달 시 종전과 동일 출력.
     public static func render(meta: TelemetrySessionMeta,
                                 analysis: SessionAnalysis,
-                                maxEnvelopes: Int = 10) -> String {
+                                maxEnvelopes: Int = 10,
+                                events: [TelemetryEvent] = []) -> String {
         var out: [String] = []
 
         out.append("# DarwinForge Harness Session — \(meta.id.prefix(8))")
@@ -79,6 +84,15 @@ public enum SessionMarkdownReport {
             out.append("")
             for env in analysis.errors.prefix(maxEnvelopes) {
                 out.append(renderEnvelope(env))
+                out.append("")
+            }
+        }
+
+        // SSH 연결·조종 전용 진단 — events 가 주어졌고 관련 이벤트가 있을 때만.
+        if !events.isEmpty {
+            let ssh = SSHConnectionDiagnostics.analyze(events: events)
+            if !ssh.isEmpty {
+                out.append(SSHConnectionDiagnostics.markdown(ssh))
                 out.append("")
             }
         }

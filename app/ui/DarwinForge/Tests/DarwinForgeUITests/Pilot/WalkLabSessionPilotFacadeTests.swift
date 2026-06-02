@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — _testForceWalkActive 는 DEBUG-only.
+#if DEBUG
 import Foundation
 import XCTest
 @testable import DarwinForgeUI
@@ -211,3 +213,4 @@ final class WalkLabSessionPilotFacadeTests: XCTestCase {
                       "tail 절단 마커")
     }
 }
+#endif

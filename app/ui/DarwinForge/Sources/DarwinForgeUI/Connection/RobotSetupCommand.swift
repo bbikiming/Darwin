@@ -264,13 +264,18 @@ public enum RobotSetupCommand {
       rm -f /tmp/df-pilot-mode    # 잔여 파일이 의도치 않은 모드 진입을 일으키지 않도록.
     fi
 
-    echo "▶ 이전 데모 종료"
+    echo "▶ 이전 데모 종료 + 카메라/장치 해제 대기"
     sudo killall demo demo-pilot walk_demo action_editor 2>/dev/null
-    sleep 0.3
+    # **fix (2026-06-02)**: 이전 demo 가 카메라(/dev/video0)를 쥔 채라 0.3s 로는 해제 전에
+    # 새 demo 가 떠 "VIDIOC_S_FMT busy" 로 크래시했다. 프로세스 종료 + 카메라 해제까지 대기.
+    for i in $(seq 1 20); do pgrep -x demo >/dev/null 2>&1 || pgrep -x demo-pilot >/dev/null 2>&1 || break; sleep 0.2; done
+    sleep 1.5
 
     echo "▶ demo 시작 → $BIN"
     cd "$(dirname "$BIN")" || exit 1
-    sudo nohup "$BIN" >/tmp/df-demo.log 2>&1 &
+    # nohup 이 sudo 를 감싸야 비대화형 SSH 에서 동작 (sudo nohup 은 nohup 이 NOPASSWD 화이트리스트에
+    # 없어 비밀번호 프롬프트 → 실패). demo 바이너리는 NOPASSWD 등록됨.
+    nohup sudo -n "$BIN" >/tmp/df-demo.log 2>&1 &
     sleep 1
 
     PROC=$(pgrep -x "$(basename "$BIN")" 2>/dev/null)
@@ -311,6 +316,9 @@ public enum RobotSetupCommand {
     /// - 미patch 시: `demo-pilot` 가 default SOCCER 모드로 시작 → ball tracker 동작
     public static let walkLabRobotisStart: String = #"""
     set +e
+    # === DarwinForge SSH parity (2026-06-01) — 시작 시 항상 re-arm ===
+    # §B REMOVER: 새 start 는 잔여 e-stop flag 를 제거해 다시 보행 가능 상태로.
+    rm -f /tmp/df-walklab-estop 2>/dev/null
     echo "▶ forge-bridge 종료 (USB bus 해제)"
     sudo killall socat 2>/dev/null
     sleep 0.3
@@ -318,12 +326,14 @@ public enum RobotSetupCommand {
     echo "▶ ROBOTIS demo binary 탐색 (patched 우선)"
     BIN=""
     PATCHED=0
+    # 1) 별도 demo-pilot 바이너리 우선.
     for d in "$HOME/Framework/Linux/project/demo/demo-pilot" \
              "$HOME/darwin/Linux/project/demo/demo-pilot" \
              "/darwin/Linux/project/demo/demo-pilot" \
              "/robotis/Linux/project/demo/demo-pilot"; do
-      if [ -x "$d" ]; then BIN="$d"; PATCHED=1; break; fi
+      if [ -x "$d" ]; then BIN="$d"; break; fi
     done
+    # 2) 없으면 demo (이 로봇은 demo 자체에 brokerage 를 in-place patch — 내용으로 판정).
     if [ -z "$BIN" ]; then
       for d in "$HOME/Framework/Linux/project/demo/demo" \
                "$HOME/darwin/Linux/project/demo/demo" \
@@ -336,29 +346,39 @@ public enum RobotSetupCommand {
       echo "demo / demo-pilot binary not found"
       exit 1
     fi
+    # **codex HIGH fix (2026-06-02)**: PATCHED 여부는 **파일명이 아니라 바이너리 내용**으로만 판정.
+    # 종전: demo-pilot 라는 이름이면 무조건 PATCHED=1 → brokerage 패치 안 된 demo-pilot 도
+    # walklab 으로 오인(거짓 "활성"). df-walklab-cmd 문자열 포함 = brokerage 패치 확정.
+    if grep -qa "df-walklab-cmd" "$BIN" 2>/dev/null; then PATCHED=1; fi
 
     if [ "$PATCHED" = "1" ]; then
       echo "   patched binary 사용: $BIN"
+      # §D.4 (리뷰 codex H3 fix): 영구 walklab 표식은 **patched 확정 후에만** 기록.
+      # 종전: 시작부에서 무조건 기록 → 원본 demo 폴백 시에도 표식이 남아 verify 가 false-active.
+      mkdir -p ~/.config/darwinforge 2>/dev/null
+      echo walklab > ~/.config/darwinforge/pilot-mode 2>/dev/null
       echo "walklab" > /tmp/df-pilot-mode
-      # 빈 명령 파일 생성 — Mac 측이 x/y/a brokering write.
       : > /tmp/df-walklab-cmd
       chmod 0666 /tmp/df-walklab-cmd 2>/dev/null
-      echo "▶ /tmp/df-walklab-cmd 생성 — Mac 측 brokering 준비 완료"
       echo "▶ /tmp/df-pilot-mode = walklab"
     else
-      echo "   ⚠️  원본 demo 사용 (patched binary 미설치): $BIN"
-      echo "   → WalkLab brokerage 미지원 — SOCCER 기본 모드로 시작됩니다"
+      echo "   ⚠️  원본 demo 사용 (patched 아님): $BIN — SOCCER 기본 모드"
       echo "   robot-side patch 적용 후 재시도 권장"
-      rm -f /tmp/df-pilot-mode 2>/dev/null
+      rm -f /tmp/df-pilot-mode ~/.config/darwinforge/pilot-mode 2>/dev/null
     fi
 
-    echo "▶ 이전 데모 종료"
+    echo "▶ 이전 데모 종료 + 카메라/장치 해제 대기"
     sudo killall demo demo-pilot walk_demo action_editor 2>/dev/null
-    sleep 0.3
+    # **fix (2026-06-02)**: 이전 demo 가 카메라(/dev/video0)를 쥔 채라 0.3s 로는 해제 전에
+    # 새 demo 가 떠 "VIDIOC_S_FMT busy" 로 크래시했다. 프로세스 종료 + 카메라 해제까지 대기.
+    for i in $(seq 1 20); do pgrep -x demo >/dev/null 2>&1 || pgrep -x demo-pilot >/dev/null 2>&1 || break; sleep 0.2; done
+    sleep 1.5
 
     echo "▶ demo 시작 → $BIN"
     cd "$(dirname "$BIN")" || exit 1
-    sudo nohup "$BIN" >/tmp/df-demo.log 2>&1 &
+    # nohup 이 sudo 를 감싸야 비대화형 SSH 에서 동작 (sudo nohup 은 nohup 이 NOPASSWD 화이트리스트에
+    # 없어 비밀번호 프롬프트 → 실패). demo 바이너리는 NOPASSWD 등록됨.
+    nohup sudo -n "$BIN" >/tmp/df-demo.log 2>&1 &
     sleep 1
 
     PROC=$(pgrep -x "$(basename "$BIN")" 2>/dev/null)
@@ -445,10 +465,15 @@ public enum RobotSetupCommand {
         //   "NO_ACK"                       — daemon 없음 또는 firmware 미패치
         let id = cmdId ?? generateCmdId()
         let fullLine = "\(id) \(line)"
-        // Bash polling loop: 최대 1.5s 대기 + 50ms 단위 check (안전 margin 충분).
-        // 종전 sleep 0.25 는 daemon polling 200ms + 부하 시 부족.
-        let pollLoop = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do sleep 0.05; if [ -s /tmp/df-walklab-ack ]; then cat /tmp/df-walklab-ack; exit 0; fi; done; echo NO_ACK"
-        return "printf '%s\\n' '\(fullLine)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd && (\(pollLoop))"
+        // **codex HIGH fix (2026-06-02)**: ACK 를 **cmd_id 일치까지** 폴링한다. 종전엔 `[ -s ack ]`
+        // (파일 비어있지 않음)만 보고 즉시 cat → 직전 명령의 stale ACK 를 반환(로봇 poll 100ms vs
+        // shell 50ms race). 펌웨어는 새 명령 처리 시에만 ACK 를 cmd_id 와 함께 기록하므로,
+        //   1) 명령 전 ACK clear (stale 제거),
+        //   2) 이번 cmd_id 가 ACK 에 나타날 때까지 폴링(grep)
+        // 으로 항상 *이번 명령*의 fresh ACK 를 받는다. 구형 firmware(cmd_id 미echo)는 loop 후
+        // clear 이후 생긴 비어있지 않은 ACK 로 폴백. (로봇 busybox `seq` 미보장 → 명시 리스트.)
+        let pollLoop = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do sleep 0.05; if grep -qF '\(id)' /tmp/df-walklab-ack 2>/dev/null; then cat /tmp/df-walklab-ack; exit 0; fi; done; if [ -s /tmp/df-walklab-ack ]; then cat /tmp/df-walklab-ack; exit 0; fi; echo NO_ACK"
+        return "rm -f /tmp/df-walklab-ack 2>/dev/null; printf '%s\\n' '\(fullLine)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd && (\(pollLoop))"
     }
 
     /// **v1.11.16.2 (2026-05-19)**: cmd_id 생성 — UUID prefix 8글자 + millisecond timestamp.
@@ -664,6 +689,46 @@ public enum RobotSetupCommand {
                 dfMp3Mode  = "../../../Data/mp3/Vision processing mode.mp3";
                 dfMp3Start = "../../../Data/mp3/Start vision processing demonstration.mp3";
                 dfLed = 0x04;
+            } else if (strcmp(dfBuf, "walklab") == 0) {
+                // === WalkLab ROBOTIS onboard brokerage (DarwinForge 2026-05-31) ===
+                // Mac DarwinForge 의 `.robotisOnboard` 엔진 경로. 공식 Walking::GetInstance()
+                // (8ms/125Hz CPG + 루프 내 자이로 밸런스 — ball-tracker 와 동일 메커니즘)을
+                // 로봇에서 직접 구동하고, Mac 은 `/tmp/df-walklab-cmd` 로 X/Y/A 만 보내는
+                // 얇은 원격이 된다. 준비 시퀀스는 SOCCER 분기와 동일(모션 enable / walk-ready
+                // page 9 / 자이로 캘리브레이션) — 그 뒤 브로커리지 무한 루프가 SOCCER 메인
+                // 루프를 대체한다. 이 분기는 `WalkLabBrokerage.h` 가 build 시 main.cpp 에
+                // include 되어 있어야 한다(demoBuildPatched 가 주입).
+                fprintf(stderr, "[df-pilot] auto-mode: walklab (ROBOTIS onboard brokerage)\n");
+                DF_PROGRESS("walklab-init");
+                cm730.WriteByte(CM730::P_LED_PANNEL, 0x05, NULL);
+                LinuxActionScript::PlayMP3((char*)"../../../Data/mp3/Autonomous soccer mode.mp3");
+                usleep(500*1000);
+                MotionManager::GetInstance()->Reinitialize();
+                MotionManager::GetInstance()->SetEnable(true);
+                Action::GetInstance()->m_Joint.SetEnableBody(true, true);
+                DF_PROGRESS("walk-ready");
+                Action::GetInstance()->Start(9);   // walk-ready 자세 (page 9)
+                while (Action::GetInstance()->IsRunning() == true) usleep(8000);
+                Head::GetInstance()->m_Joint.SetEnableHeadOnly(true, true);
+                Walking::GetInstance()->m_Joint.SetEnableBodyWithoutHead(true, true);
+                DF_PROGRESS("gyro-calibration");
+                MotionManager::GetInstance()->ResetGyroCalibration();
+                { int dfW = 0;
+                  while (dfW < 30) {
+                      int s = MotionManager::GetInstance()->GetCalibrationStatus();
+                      if (s == 1) { LinuxActionScript::PlayMP3((char*)"../../../Data/mp3/Sensor calibration complete.mp3"); break; }
+                      if (s == -1) MotionManager::GetInstance()->ResetGyroCalibration();
+                      usleep(100*1000); dfW++;
+                  } }
+                // 공식 gait 엔진 준비 — 주입점이 원본 Walking::Initialize() 앞일 수 있어
+                // 명시 호출(idempotent). 이후 브로커리지가 Start()/X·Y·A 제어.
+                Walking::GetInstance()->Initialize();
+                StatusCheck::m_is_started = 1;
+                DF_PROGRESS("walklab-active");
+                unlink("/tmp/df-pilot-mode");
+                fprintf(stderr, "[df-pilot] entering WalkLabBrokerage.Run()\n");
+                Robotis::WalkLabBrokerage().Run();   // 무한 루프 — SIGTERM 까지. SOCCER 루프 우회.
+                return 0;                            // 도달 불가(Run 무한). 방어적.
             }
 
             if (dfTarget != -1) {
@@ -762,6 +827,23 @@ public enum RobotSetupCommand {
         fi
         echo "   $SRC"
 
+        # 0) WalkLab brokerage 소스 배치 (onboard walk 분기 컴파일에 필수, 2026-05-31).
+        #    injection 블록의 walklab 분기가 Robotis::WalkLabBrokerage 를 참조하므로
+        #    이 파일들 + include + OBJECTS 항목이 없으면 빌드 실패한다.
+        #    INTEGRATION.md 의 scp 위치(~/walklab-brokerage/) 또는 SRC 에 이미 있으면 사용.
+        WLB_SRC=""
+        for d in "$HOME/walklab-brokerage" "$SRC"; do
+          if [ -f "$d/WalkLabBrokerage.cpp" ] && [ -f "$d/WalkLabBrokerage.h" ]; then WLB_SRC="$d"; break; fi
+        done
+        if [ -z "$WLB_SRC" ]; then
+          echo "✗ WalkLabBrokerage 소스 없음 — onboard walk 빌드 불가."
+          echo "   Mac 에서 먼저: scp -r firmware-patches/walklab-brokerage/ darwin@<robot-ip>:~/walklab-brokerage/"
+          exit 1
+        fi
+        cp -f "$WLB_SRC/WalkLabBrokerage.h"   "$SRC/WalkLabBrokerage.h"
+        cp -f "$WLB_SRC/WalkLabBrokerage.cpp" "$SRC/WalkLabBrokerage.cpp"
+        echo "   WalkLab brokerage 소스 배치: $WLB_SRC → $SRC"
+
         # 1) injection 블록 작성.
         cat > /tmp/df_inject.cpp << 'EOF_DF_INJECT'
         \#(demoInjectBlock)
@@ -777,6 +859,7 @@ public enum RobotSetupCommand {
         # 3) 백업 + 패치.
         cd "$SRC" || exit 1
         cp -p main.cpp main.cpp.df-orig
+        cp -p Makefile Makefile.df-orig
         # anchor: "MotionManager::GetInstance()->LoadINISettings(ini);" 다음 줄에 injection.
         sed -i.df-bak '/MotionManager::GetInstance()->LoadINISettings(ini);/r /tmp/df_inject.cpp' main.cpp
 
@@ -785,6 +868,17 @@ public enum RobotSetupCommand {
           cp main.cpp.df-orig main.cpp 2>/dev/null
           exit 1
         fi
+
+        # walklab 분기 컴파일 의존성: include + OBJECTS (idempotent).
+        grep -q 'WalkLabBrokerage.h' main.cpp || \
+          sed -i '/#include "StatusCheck.h"/a #include "WalkLabBrokerage.h"' main.cpp
+        if ! grep -q 'WalkLabBrokerage.h' main.cpp; then
+          echo "✗ include 주입 실패 — StatusCheck.h anchor 못 찾음"
+          cp main.cpp.df-orig main.cpp; exit 1
+        fi
+        # GNU Make 암묵 규칙(%.o:%.cpp, CXXFLAGS 에 INCLUDE_DIRS)이 컴파일 — OBJECTS 등록만.
+        grep -q 'WalkLabBrokerage.o' Makefile || \
+          sed -i 's/^OBJECTS = \(.*\)$/OBJECTS = \1 WalkLabBrokerage.o/' Makefile
 
         # 4) make + binary 이름 보존.
         echo "▶ make"
@@ -805,10 +899,12 @@ public enum RobotSetupCommand {
           exit 1
         fi
 
-        # 5) main.cpp 원본 복구 — 추후 사용자가 원본 demo 도 다시 빌드 가능.
+        # 5) main.cpp + Makefile 원본 복구 — 추후 사용자가 원본 demo 도 다시 빌드 가능.
+        #    (demo-pilot 바이너리는 이미 링크 완료 — 복구해도 영향 없음.)
         cp main.cpp.df-orig main.cpp
+        [ -f Makefile.df-orig ] && cp Makefile.df-orig Makefile && rm -f Makefile.df-orig
         rm -f main.cpp.df-bak /tmp/df_inject.cpp
-        echo "▶ 원본 main.cpp 복구 완료"
+        echo "▶ 원본 main.cpp / Makefile 복구 완료"
         echo
         echo "이제 Mac DarwinForge → 원격 조종 → '공 자동 추적' 한 번 클릭으로 SOCCER 자동 진입."
         """#
@@ -1236,5 +1332,144 @@ public enum RobotSetupCommand {
     echo "✅ Remote shell 셋업 완료. Mac DarwinForge → '원격 명령' 패널에서 사용."
     echo "   Inbox:  $INBOX"
     echo "   Outbox: $OUTBOX"
+    """#
+
+    // MARK: - SSH ↔ LAN parity (2026-06-01) — E-STOP · telemetry · mode persist/verify
+    //
+    // onboard(SSH) 경로가 wired-LAN(5530 bridge) 경로와 동일 기능을 갖게 하는 robot-side
+    // helper 묶음. 모두 docs/ssh-parity-contract.md §B / §D.4 에 PINNED 된 문자열·동작.
+    //
+    // robot 은 service/killall/demo/reboot 에 대해 NOPASSWD sudo 를 가진다 (마스터 셋업 가정).
+
+    /// **SSH E-STOP** — `/tmp/df-walklab-estop` flag 생성 + `demo`/`demo-pilot` SIGTERM.
+    ///
+    /// 의미: 파일의 *존재* = STOP (명령 큐 아님). robot 의 `Run()` poll loop 가 매 200ms
+    /// 이 flag 를 확인 → `Walking::Stop()` + body torque OFF. `killall -TERM` 은 belt-and-
+    /// suspenders 병렬 보험 (SIGTERM 핸들러가 gait 즉시 정지).
+    /// **codex CRITICAL fix (2026-06-02)**: 종전엔 `touch` 실패(권한/RO-FS)에도 무조건
+    /// `echo ESTOP_OK` 라 Mac 이 거짓으로 "정지됨"으로 신뢰했다. flag 가 *실제로 존재*할 때만
+    /// `ESTOP_OK`, 아니면 `ESTOP_FAIL` 을 echo → Mac 이 전달 실패를 감지해 경고/물리개입 안내.
+    public static let walkLabRobotisEstop: String =
+        "touch /tmp/df-walklab-estop 2>/dev/null; sudo killall -TERM demo demo-pilot 2>/dev/null; [ -f /tmp/df-walklab-estop ] && echo ESTOP_OK || echo ESTOP_FAIL"
+
+    /// **텔레메트리 1줄 read** — robot 이 5Hz 로 쓰는 `/tmp/df-walklab-telemetry` 의 최신 줄
+    /// (또는 빈 문자열). `OnboardTelemetryPoller` 가 주기적으로 이 명령을 SSH 로 보내고
+    /// 결과를 `OnboardTelemetry.parse` 로 파싱한다. (contract §A.3 / §D.4 — 문자열 PINNED)
+    public static let walkLabReadTelemetry: String =
+        "cat /tmp/df-walklab-telemetry 2>/dev/null"
+
+    /// **E-stop flag 제거 (re-arm)** — 사용자가 명시적 복구/재무장 시 또는 onboard 재시작 시.
+    /// `walkLabRobotisStart` 가 이미 시작 시 `rm -f` 를 수행하므로 이건 명시적 복구 버튼용.
+    /// (contract §B REMOVER / §D.4 — 문자열 PINNED)
+    public static let walkLabClearEstop: String =
+        "rm -f /tmp/df-walklab-estop 2>/dev/null; echo CLEARED"
+
+    /// **walklab 모드 영구 표식 기록** — 재부팅 후에도 connect-time verify 가 모드를 알도록.
+    /// PINNED marker file: `~/.config/darwinforge/pilot-mode`, 내용 `walklab`.
+    /// (contract §D.4 — 문자열 PINNED)
+    public static let walkLabPersistMode: String =
+        "mkdir -p ~/.config/darwinforge 2>/dev/null; echo walklab > ~/.config/darwinforge/pilot-mode; echo PERSIST_OK"
+
+    /// **재부팅을 가로질러 walklab 모드 자동 복원** — rc.local 에 1줄 hook 을 idempotent 설치.
+    ///
+    /// 흐름:
+    ///   1. `walkLabPersistMode` 와 동일하게 표식 파일 기록 (현재 세션 즉시 반영).
+    ///   2. `/etc/rc.local` 의 `exit 0` 앞에 `df-walklab-restore` 마커가 달린 1줄 삽입 —
+    ///      부팅 시 표식 파일이 `walklab` 이면 `demo-pilot` 을 nohup 으로 재시작.
+    ///   3. 이미 마커가 있으면 skip (idempotent — 중복 삽입 방지).
+    ///
+    /// goal #5 (모드 영구 보존 + connect-time 복원) 의 robot-side 절반. Mac 측은 connect
+    /// 시 `walkLabVerifyMode` 결과가 `missing` 이면 `walkLabRobotisStart` 를 다시 호출.
+    /// service/killall/demo NOPASSWD sudo 가정.
+    public static let walkLabPersistModeAcrossReboot: String = #"""
+    set +e
+    # 1) 현재 세션 표식.
+    mkdir -p ~/.config/darwinforge 2>/dev/null
+    echo walklab > ~/.config/darwinforge/pilot-mode
+    USER_HOME="$HOME"
+
+    # 2) rc.local 보장 (없으면 생성 + 실행권한).
+    if [ ! -f /etc/rc.local ]; then
+      sudo bash -c 'printf "#!/bin/sh -e\nexit 0\n" > /etc/rc.local'
+      sudo chmod +x /etc/rc.local
+    fi
+
+    # 3) hook idempotent 삽입 — 마커가 이미 있으면 skip.
+    if sudo grep -q "df-walklab-restore" /etc/rc.local 2>/dev/null; then
+      echo "REBOOT_PERSIST_OK (already installed)"
+    else
+      # demo-pilot 후보 경로 탐색 결과를 부팅 시 평가하도록 한 줄 hook 작성.
+      HOOK='[ "$(cat '"$USER_HOME"'/.config/darwinforge/pilot-mode 2>/dev/null)" = walklab ] && for d in '"$USER_HOME"'/Framework/Linux/project/demo/demo-pilot '"$USER_HOME"'/darwin/Linux/project/demo/demo-pilot /darwin/Linux/project/demo/demo-pilot /robotis/Linux/project/demo/demo-pilot; do [ -x "$d" ] && { rm -f /tmp/df-walklab-estop; echo walklab > '"$USER_HOME"'/.config/darwinforge/pilot-mode; cd "$(dirname "$d")"; nohup "$d" >/tmp/df-demo.log 2>&1 & break; }; done  # df-walklab-restore'
+      # exit 0 앞에 삽입 (없으면 파일 끝에 append).
+      if sudo grep -q "^exit 0" /etc/rc.local 2>/dev/null; then
+        TMP=$(mktemp 2>/dev/null || echo /tmp/df-rc.tmp)
+        sudo awk -v hook="$HOOK" '/^exit 0/ && !done { print hook; done=1 } { print }' /etc/rc.local > "$TMP" 2>/dev/null && sudo cp "$TMP" /etc/rc.local && rm -f "$TMP"
+      else
+        echo "$HOOK" | sudo tee -a /etc/rc.local >/dev/null
+      fi
+      echo "REBOOT_PERSIST_OK (installed)"
+    fi
+    """#
+
+    /// **connect-time 모드 검증** — onboard 브로커리지가 살아있는지 + 어떤 모드인지 보고.
+    ///
+    /// 출력 contract (첫 줄 marker, Mac 파싱):
+    ///   `DF_WALKLAB=active`   — demo/demo-pilot 실행 중 AND walklab 표식/명령 파일 존재
+    ///   `DF_WALKLAB=idle`     — 프로세스는 살아있으나 walklab 모드 아님 (e.g. SOCCER)
+    ///   `DF_WALKLAB=missing`  — demo 바이너리 미실행 → Mac 이 walkLabRobotisStart 재호출
+    /// (contract §D.4 — 출력 marker PINNED)
+    public static let walkLabVerifyMode: String = #"""
+    set +e
+    if pgrep -x demo-pilot >/dev/null 2>&1 || pgrep -x demo >/dev/null 2>&1; then
+      # **fix (2026-06-02)**: walklab 브로커리지가 *실제로 동작* 중인지를 **telemetry 신선도**
+      # 로 판정한다. 종전엔 영구 marker(~/.config/darwinforge/pilot-mode)나 /tmp/df-walklab-cmd
+      # 존재만 봤는데, 둘 다 재부팅(soccer 자동시작) 후에도 잔존해 false-active 를 유발 →
+      # 앱이 재시작을 건너뛰고 "연결 중" 고착. walklab 데몬만 telemetry 를 ~5Hz 로 쓰므로
+      # 최근 3초 내 갱신됐으면 active, 아니면 idle(soccer 등).
+      NOW=$(date +%s 2>/dev/null || echo 0)
+      MT=$(stat -c %Y /tmp/df-walklab-telemetry 2>/dev/null || echo 0)
+      if [ -f /tmp/df-walklab-telemetry ] && [ "$((NOW - MT))" -le 3 ]; then
+        echo "DF_WALKLAB=active"
+      else
+        echo "DF_WALKLAB=idle"
+      fi
+    else
+      echo "DF_WALKLAB=missing"
+    fi
+    """#
+
+    /// **WiFi IP 자동 탐지 (2026-06-02)** — 로봇 wlan0 의 IPv4 를 읽어 "WIFI_IP=x.x.x.x" 출력.
+    /// 무선 연결 호스트 자동 채움용 (유선 경유 SSH 로 조회). 없으면 "WIFI_IP=".
+    public static let readWifiIP: String = #"""
+    IP=$(ip -o -4 addr show wlan0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+    # 구형 ifconfig 폴백: 출력이 "inet addr:192.168.x.x" 형태라 addr: 접두 제거 (리뷰 codex M2).
+    if [ -z "$IP" ]; then IP=$(/sbin/ifconfig wlan0 2>/dev/null | awk '/inet /{print $2}' | sed 's/addr://' | head -1); fi
+    echo "WIFI_IP=$IP"
+    """#
+
+    /// **LAN(5530) 자동 연결 (2026-06-01)** — "알아서 포트 열어서 연결".
+    /// demo(온보드, ttyUSB0 점유)를 종료해 포트를 양보하고, socat 5530 bridge 를 백그라운드로
+    /// 시작한 뒤 :5530 listen 을 최대 4초 대기한다. `BRIDGE_OK` 또는 `BRIDGE_FAIL` 출력.
+    ///
+    /// - sudo: `killall` 만 사용(NOPASSWD 등록됨). socat/stty 는 robotis 가 `dialout` 그룹
+    ///   이라 **sudo 불필요** (ttyUSB0 crw-rw---- root:dialout).
+    /// - ⚠️ demo 종료 시 SIGTERM 핸들러가 body torque off → 로봇이 풀린다(거치/파지 필요).
+    public static let startLanBridge: String = #"""
+    set +e
+    # 1) 온보드 demo 종료 — ttyUSB0 점유 해제 (LAN bus 와 상호 배타).
+    sudo killall -TERM demo demo-pilot 2>/dev/null
+    for i in $(seq 1 15); do pgrep -x demo >/dev/null 2>&1 || break; sleep 0.2; done
+    rm -f /tmp/df-pilot-mode 2>/dev/null   # LAN 모드 — walklab 표식 제거
+    # 2) 이미 listen 중이면 즉시 성공.
+    if (netstat -tln 2>/dev/null || ss -tln 2>/dev/null) | grep -q ':5530 '; then echo BRIDGE_OK; exit 0; fi
+    # 3) socat bridge 백그라운드 시작 (dialout → sudo 불필요).
+    nohup bash -c 'stty -F /dev/ttyUSB0 1000000 raw -echo -echoe -echok -echoctl -echoke -ixon -ixoff -isig -icanon 2>/dev/null; exec socat tcp-l:5530,reuseaddr,fork,nodelay open:/dev/ttyUSB0,nonblock=0' >/tmp/df-bridge.log 2>&1 &
+    # 4) :5530 listen 대기 (최대 ~4s).
+    for i in $(seq 1 20); do
+      if (netstat -tln 2>/dev/null || ss -tln 2>/dev/null) | grep -q ':5530 '; then echo BRIDGE_OK; exit 0; fi
+      sleep 0.2
+    done
+    echo BRIDGE_FAIL
+    tail -5 /tmp/df-bridge.log 2>/dev/null
     """#
 }

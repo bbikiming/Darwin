@@ -26,9 +26,11 @@ public struct PilotScreen: View {
     public var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
+                // V297-6 (PM Story S3.1): estopped 시 onRecover 연결.
                 StatusRailView(model: state.statusRail,
                                isMockMode: state.isMockMode,
-                               onEStop: { Task { await state.performEStop() } })
+                               onEStop: { Task { await state.performEStop() } },
+                               onRecover: { Task { await state.performRecover() } })
                     .padding(.horizontal)
 
                 if let banner = state.recoveryBanner {
@@ -220,7 +222,7 @@ private struct ActionGrid: View {
                     Task { await state.performMotion(label: entry.label) }
                 }
             }
-            ActionButton(title: "정지",
+            ActionButton(title: "보행 정지",
                          systemImage: "stop.circle.fill",
                          risk: .safe,
                          disabled: false,
@@ -242,6 +244,8 @@ private struct ActionGrid: View {
 
 private struct WalkSection: View {
     @ObservedObject var state: AppState
+    // V297-9 HIGH: speed tier 상태 + capabilities 기반 enable.
+    @State private var speed: SpeedTier = .slow
 
     var body: some View {
         VStack(spacing: 14) {
@@ -249,19 +253,28 @@ private struct WalkSection: View {
                 Text("속도")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Picker("속도", selection: .constant(0)) {
-                    Text("느림").tag(0)
-                    Text("보통").tag(1)
-                    Text("빠름").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .disabled(true)
-                .frame(maxWidth: 240)
             }
+            // V297-9 HIGH: 실제 동작하는 DSSpeedSelector. capabilities.speedScaleAccepted
+            // 가 true 면 medium/fast 활성. 종전 segmented Picker (.disabled(true)) 는 사망 컨트롤.
+            DSSpeedSelector(selected: $speed,
+                            enabledTiers: enabledTiersForCapabilities())
+                .accessibilityIdentifier("pilot.speed")
+            if !state.speedScaleSupported {
+                Label("현재 Mac 앱은 느림만 지원합니다. 업데이트 후 보통과 빠름을 사용할 수 있어요.",
+                      systemImage: "speedometer")
+                    .font(DS.Font.caption)
+                    .foregroundStyle(DS.Color.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Label("전진, 좌회전, 우회전은 누르는 동안만 움직입니다.",
+                  systemImage: "hand.tap")
+                .font(DS.Font.caption)
+                .foregroundStyle(DS.Color.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
             WalkPad(
                 disabled: walkDisabled,
                 onPressBegan: { preset in
-                    Task { await state.startWalk(preset) }
+                    Task { await state.startWalk(preset, speedScale: speed.multiplier) }
                 },
                 onReleased: {
                     Task { await state.stopWalk(reason: .deadmanRelease) }
@@ -280,6 +293,18 @@ private struct WalkSection: View {
     private var walkDisabledReason: String? {
         CommandPermission.reason(forWalk: state.pilotState,
                                  telemetry: state.telemetry)?.koreanCopy
+    }
+
+    /// V297-9 HIGH: 서버 capabilities.speedScaleAccepted 가 true 면 모든 tier 활성.
+    /// false/nil (legacy Mac) 면 안전 우선 .slow 만 — Mac 이 speedScale 무시하므로
+    /// 사용자에게 가짜 속도 선택지를 노출하지 않는다.
+    private func enabledTiersForCapabilities() -> Set<SpeedTier> {
+        if state.connectionMode == .mockReview {
+            return Set(SpeedTier.allCases)
+        }
+        return state.speedScaleSupported
+            ? Set(SpeedTier.allCases)
+            : [.slow]
     }
 }
 

@@ -219,6 +219,29 @@ extension WalkLabSession {
         return (roll: rollDeg, pitch: pitchDeg)
     }
 
+    /// **gyro 각속도(dps) 정규화 — PD D-term 입력**.
+    ///
+    /// 각도(`bcNormalizedImuAngles`)와 **동일 축·동일 signConvention** 으로 맞춰
+    /// `BalanceCorrector` 의 rate 파라미터에 전달. ImuFilter 와 같은 mounting 매핑
+    /// (roll ← gyroX, pitch ← gyroY). 실 robot 의 `lastImuRaw` 가 없으면(sim/미연결)
+    /// **(0,0) → P-only fallback** 으로 기존 동작 보존.
+    private func bcNormalizedGyroRates(config: BalanceExperimentConfig) -> (rollRate: Double, pitchRate: Double) {
+        guard let raw = store?.lastImuRaw else { return (0, 0) }
+        var rollRate = raw.gyroXDps
+        var pitchRate = raw.gyroYDps
+        if config.pitchInputConvention == .negateForwardIsNegative { pitchRate = -pitchRate }
+        if config.rollInputConvention == .negateLeftIsNegative { rollRate = -rollRate }
+        // **HIGH-1 fix (2026-05-30 리뷰)**: D항(`effErr = angle + D×rate`)은 raw MEMS gyro 에
+        // 직접 작용하므로 노이즈 스파이크가 effErr 를 지배해 진동/limit-cycle(넘어짐 모드)을
+        // 유발할 수 있다 — 특히 D항 상향(0.05→0.12) 시. 정상 보행/기울임 rate(±수십~150°/s)는
+        // 보존하고 노이즈 스파이크만 차단하도록 합리적 대역(±300°/s)으로 클램프.
+        // (지속적 chatter 추가 저감은 향후 rate EMA — 본 클램프는 스파이크 dominance 차단.)
+        let maxRateDps = 300.0
+        rollRate = max(-maxRateDps, min(maxRateDps, rollRate))
+        pitchRate = max(-maxRateDps, min(maxRateDps, pitchRate))
+        return (rollRate: rollRate, pitchRate: pitchRate)
+    }
+
     // MARK: - Phase 4: Algorithm Off / Legacy Toggle
 
     /// Mode `.off` 또는 `enableBalanceCorrection == false` → identity (corrections 비움, log 도 0).
@@ -305,9 +328,13 @@ extension WalkLabSession {
         }
 
         // **v1.11.3 P1.1**: normalizedImuPitchDeg 사용 (default `.imuRaw` 면 imuPitchDeg 그대로).
+        // gyro 각속도 D-term — 넘어짐 선행 대응 (rate 없으면 0 → P-only).
+        let rates = bcNormalizedGyroRates(config: config)
         let result = balanceCorrector.hybridCorrections(
             imuRollDeg: normalized.roll,
             imuPitchDeg: normalized.pitch,
+            rollRateDps: rates.rollRate,
+            pitchRateDps: rates.pitchRate,
             elapsedMs: elapsedMs,
             periodMs: periodMs,
             state: &hybridBalanceState,
@@ -357,9 +384,43 @@ extension WalkLabSession {
         let isWalkingActive = (current != .idle)
         let deadband: Double = isWalkingActive ? 2.5 : 1.0
         let alpha = 0.5
-        // **v1.11.3 P1.1**: normalized 입력 (default `.imuRaw` 면 imuRollDeg/imuPitchDeg 그대로).
-        correctorFilteredRoll = alpha * normalized.roll + (1 - alpha) * correctorFilteredRoll
-        correctorFilteredPitch = alpha * normalized.pitch + (1 - alpha) * correctorFilteredPitch
+
+        // MARK: Baseline-aware gyro — slow EMA subtracts chronic posture offset.
+        //
+        // ROOT CAUSE: robot walks at imuPitch ≈ -20° (intended forward-lean from
+        // hipPitchOffset). Raw P-control sees that as a 20° tilt error and
+        // over-corrects every cycle. This EMA learns the chronic baseline so only
+        // the real ±5° deviations above it are fed to the corrector.
+        //
+        // BACKWARD-COMPAT: baseline 0 (pre-walk, not initialized) → pitchDev == normalized.pitch.
+        // Identical to previous behavior — regression 0 when balanceBaselineInitialized=false.
+        //
+        // dt = tickDtSec (0.1 s); tau = baselineTauSec (5.0 s) → alpha ≈ 0.02 per tick.
+        let dt = tickDtSec
+        if !balanceBaselineInitialized {
+            // Seed on first tick of a walk — no convergence lag, deviation 0 on tick 1.
+            pitchBaselineEma = normalized.pitch
+            rollBaselineEma  = normalized.roll
+            balanceBaselineInitialized = true
+        } else {
+            pitchBaselineEma = BalanceBaseline.step(
+                prev: pitchBaselineEma, sample: normalized.pitch,
+                tau: baselineTauSec, dt: dt
+            )
+            rollBaselineEma  = BalanceBaseline.step(
+                prev: rollBaselineEma, sample: normalized.roll,
+                tau: baselineTauSec, dt: dt
+            )
+        }
+        // Real deviation: only the dynamic part above chronic posture.
+        let pitchDev = normalized.pitch - pitchBaselineEma
+        let rollDev  = normalized.roll  - rollBaselineEma
+
+        // **v1.11.3 P1.1**: feed baseline-removed deviation into LPF (not raw normalized).
+        // When baseline == 0 (not initialized / fresh start seed), pitchDev == normalized.pitch
+        // → behavior is IDENTICAL to the previous code (backward-compat).
+        correctorFilteredRoll = alpha * rollDev + (1 - alpha) * correctorFilteredRoll
+        correctorFilteredPitch = alpha * pitchDev + (1 - alpha) * correctorFilteredPitch
         let effRoll = abs(correctorFilteredRoll) > deadband
             ? correctorFilteredRoll - copysign(deadband, correctorFilteredRoll)
             : 0.0
@@ -367,16 +428,23 @@ extension WalkLabSession {
             ? correctorFilteredPitch - copysign(deadband, correctorFilteredPitch)
             : 0.0
 
+        // gyro 각속도 D-term — 넘어짐 선행 대응 (rate 없으면 0 → 기존 P 동일).
+        let rates = bcNormalizedGyroRates(config: config)
         let rawCorr = balanceCorrector.corrections(
             rollErrDeg: effRoll,
             pitchErrDeg: effPitch,
+            rollRateDps: rates.rollRate,
+            pitchRateDps: rates.pitchRate,
             signConvention: config.signConvention
         )
         lastRawCandidate = rawCorr
         let effectiveScale = ramp * freshnessGate
+        // rate 에도 effectiveScale 적용 → freshness gate(IMU stale) 시 D-term 도 감쇠.
         let rampedCorr = balanceCorrector.corrections(
             rollErrDeg: effRoll * effectiveScale,
             pitchErrDeg: effPitch * effectiveScale,
+            rollRateDps: rates.rollRate * effectiveScale,
+            pitchRateDps: rates.pitchRate * effectiveScale,
             signConvention: config.signConvention
         )
         lastCorrections = rampedCorr
@@ -396,16 +464,15 @@ extension WalkLabSession {
             lastCorrectionApplied = false
             return pose
         }
-        let corrected = balanceCorrector.apply(
-            to: pose,
-            rollErrDeg: effRoll,
-            pitchErrDeg: effPitch,
-            enabled: true,
-            // v1.11.1 HIGH-3: freshnessGate 가 secondsSinceEnable 에 곱해져 corrections 감쇠.
-            // apply() 가 ramp 0..1 로 clamp → effectiveScale 도 안전.
-            secondsSinceEnable: ramp * freshnessGate,
-            signConvention: config.signConvention
-        )
+        // **C1 fix (2026-05-30)**: 종전 `balanceCorrector.apply(...)` 는 내부에서
+        // `derivativeTimeSec` 없는 새 corrector 를 생성하고 `corrections()` 를
+        // rollRateDps/pitchRateDps 없이 호출 → D-term 이 실 motor 에 미전달.
+        // `rampedCorr` 은 이미 `corrections(... rollRateDps: rates.rollRate*scale, ...)`
+        // 로 계산돼 D-term 포함. `applyCorrections(rampedCorr, to: pose)` 는 hybrid 경로와
+        // 동일 static 을 사용 → D-term-inclusive corrections 가 실 motor 에 도달.
+        // 부가 효과: `lastSafePose` (danger lockdown 동결 기준) 도 D-term 포함 pose 를
+        // 저장하므로 HIGH-6 mismatch 도 해소됨.
+        let corrected = Self.applyCorrections(rampedCorr, to: pose)
         lastSafePose = corrected
         lastCorrectionApplied = true
         return corrected

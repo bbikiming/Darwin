@@ -65,6 +65,10 @@ extension WalkLabSession {
         public var customAnkleRollGain: Double? = nil
         public var walkingEngine: WalkingEngine? = nil
         public var enableBalanceCorrection: Bool? = nil
+        // **데이터 기반 자동 튜닝 (2026-05-30)**: 균형 안정성 파라미터 — 승인 게이트 경유로만
+        // 실 로봇 적용 (autoTuner 의 robotApplied 차단 정책과 일치). nil = 현재값 유지.
+        public var baselineTauSec: Double? = nil
+        public var derivativeTimeSec: Double? = nil
 
         public init() {}
 
@@ -75,6 +79,7 @@ extension WalkLabSession {
                 && balanceGain == nil && customHipRollGain == nil && customKneeGain == nil
                 && customAnklePitchGain == nil && customAnkleRollGain == nil
                 && walkingEngine == nil && enableBalanceCorrection == nil
+                && baselineTauSec == nil && derivativeTimeSec == nil
         }
 
         /// tuning slider (stride/side/turn/period/foot/balanceGain) 가 포함되면 true.
@@ -104,6 +109,9 @@ extension WalkLabSession {
         public let customAnkleRollGain: Double
         public let walkingEngine: WalkingEngine
         public let enableBalanceCorrection: Bool
+        // **데이터 기반 자동 튜닝 (2026-05-30)**: rollback 대상에 안정성 파라미터 포함.
+        public let baselineTauSec: Double
+        public let derivativeTimeSec: Double
         public let advanced: Bool
     }
 
@@ -161,6 +169,8 @@ extension WalkLabSession {
             customAnklePitchGain: customAnklePitchGain, customAnkleRollGain: customAnkleRollGain,
             walkingEngine: walkingEngine,
             enableBalanceCorrection: enableBalanceCorrection,
+            baselineTauSec: baselineTauSec,
+            derivativeTimeSec: derivativeTimeSec,
             advanced: advanced
         )
         // 실제 config 변경.
@@ -181,6 +191,12 @@ extension WalkLabSession {
         // 도 실 적용. 종전엔 ResponseAxis 에 있지만 silent no-op.
         if let v = deltas.walkingEngine { walkingEngine = v }
         if let v = deltas.enableBalanceCorrection { enableBalanceCorrection = v }
+        // **데이터 기반 자동 튜닝 (2026-05-30)**: 안정성 파라미터 적용.
+        // derivativeTimeSec 의 didSet 이 corrector 를 즉시 재빌드 → 튜닝값이 live 경로 반영.
+        // **MEDIUM-1 리뷰**: validate(currentConfig:) 가 범위를 사전 검증하지만, 모델 경계에서도
+        // 안전 범위로 재클램프 — 어떤 caller 경로든 극단값이 live corrector 에 도달 불가.
+        if let v = deltas.baselineTauSec { baselineTauSec = min(10.0, max(2.0, v)) }
+        if let v = deltas.derivativeTimeSec { derivativeTimeSec = min(0.25, max(0.0, v)) }
         // **v1.11.14.5 — 사용자 평가 HIGH 3 fix**: tuning slider delta 있으면 advanced=true.
         // 종전엔 advanced=false 시 currentWalkTuning 이 preset default 사용 → 데이터상
         // "실험 적용" 처럼 보이지만 실 보행은 거의 그대로. critic 의 강건한 비교 차단.
@@ -282,6 +298,8 @@ extension WalkLabSession {
         customAnkleRollGain = snapshot.customAnkleRollGain
         walkingEngine = snapshot.walkingEngine
         enableBalanceCorrection = snapshot.enableBalanceCorrection
+        baselineTauSec = snapshot.baselineTauSec
+        derivativeTimeSec = snapshot.derivativeTimeSec
         advanced = snapshot.advanced
         let expId = activeExperimentId ?? "?"
         // **사이클 V276-2 (Wave 4.1.3)**: metadata clear → controller 위임 (단일 책임).

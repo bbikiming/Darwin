@@ -38,6 +38,8 @@ public final class AppState: ObservableObject {
     @Published public private(set) var armProgressStage: ArmingStage?
     @Published public private(set) var activeWalkPreset: WalkPreset?
     @Published public private(set) var pendingCommandLabel: String?
+    // V297-8 (P3-iOS): E-Stop ack 검증 결과 문자열. nil = 정상 / non-nil = 경고 메시지.
+    @Published public private(set) var estopVerificationStatus: String?
 
     public struct LogEntry: Identifiable, Equatable, Sendable {
         public let id: UUID
@@ -92,6 +94,47 @@ public final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - PersistedRelayEndpoint (S2.2)
+
+    // V297-6 (PM Story S2.2): 마지막 성공 페어링의 endpoint + code 를 UserDefaults 에 보관.
+    // 앱 재시작 또는 재접속 시 자동 페어링 시도에 사용 (S2.3).
+    public struct PersistedRelayEndpoint: Codable, Equatable, Sendable {
+        public let host: String
+        public let port: Int
+        public let pairingCode: String
+        public let macName: String
+
+        public init(host: String, port: Int, pairingCode: String, macName: String) {
+            self.host = host
+            self.port = port
+            self.pairingCode = pairingCode
+            self.macName = macName
+        }
+    }
+
+    private enum PersistKeys {
+        static let lastRelayEndpoint = "darwinforge.lastRelayEndpoint"
+        static let autoPairCancelled = "darwinforge.autoPairCancelled"
+    }
+
+    /// 마지막 성공 페어링 endpoint 를 UserDefaults 에서 읽어 반환 (없으면 nil).
+    public var persistedEndpoint: PersistedRelayEndpoint? {
+        guard let data = UserDefaults.standard.data(forKey: PersistKeys.lastRelayEndpoint),
+              let decoded = try? JSONDecoder().decode(PersistedRelayEndpoint.self, from: data)
+        else { return nil }
+        return decoded
+    }
+
+    private func saveEndpoint(_ endpoint: RelayEndpoint, macName: String) {
+        let persisted = PersistedRelayEndpoint(host: endpoint.host,
+                                               port: endpoint.port,
+                                               pairingCode: endpoint.pairingCode,
+                                               macName: macName)
+        if let data = try? JSONEncoder().encode(persisted) {
+            UserDefaults.standard.set(data, forKey: PersistKeys.lastRelayEndpoint)
+        }
+    }
+
     // MARK: - Dependencies
 
     private var relayClient: MobileRelayClient
@@ -113,6 +156,20 @@ public final class AppState: ObservableObject {
     /// V292-B: 페어링 성공 후 ARM 게이트 상태.
     /// none → brief → preflight → drill(첫 페어링 only) → ready.
     @Published public private(set) var safetyGateState: SafetyGateState = .none
+    // V297-6 (PM Story S2.3): 자동 페어링 시도 중 여부. ConnectScreen spinner 표시용.
+    @Published public private(set) var isAutoPairing: Bool = false
+    // V297-8 (P3-iOS): transport 끊김 시 자동 재시도 횟수 (0=미시도, 1.. 진행 중).
+    @Published public private(set) var autoReconnectAttempt: Int = 0
+    // 자동 재연결 루프가 활성인지 (UI "재연결 중…" 배너 표시용).
+    @Published public private(set) var isReconnecting: Bool = false
+    // V297-8 (P3-iOS): 사용자가 명시적으로 disconnect 했으면 true → 자동 재시도 skip.
+    private var userInitiatedDisconnect: Bool = false
+    // V297-8 (P3-iOS): 진행 중인 자동 재시도 Task (취소용).
+    private var autoReconnectTask: Task<Void, Never>?
+    // 자동 재연결 backoff 정책 (순수, 테스트됨).
+    private let reconnectPolicy = ReconnectPolicy.standard
+    // 네트워크 경로 모니터 — 오프라인 동안 재시도 소진 방지 + 복구 즉시 재연결.
+    private let pathMonitor = NetworkPathMonitor()
     private var heartbeat: HeartbeatController?
     private let deviceId: String
 
@@ -154,6 +211,121 @@ public final class AppState: ObservableObject {
 
     public func bootstrap() {
         bindClient(relayClient)
+        // 네트워크 복구 시 즉시 재연결 트리거.
+        pathMonitor.onRestored = { [weak self] in
+            self?.kickReconnectNow(trigger: "네트워크 복구")
+        }
+        pathMonitor.start()
+    }
+
+    // V297-6 (PM Story S2.3): 자동 페어링 시도.
+    // RootView.task { state.bootstrap() } 직후 attemptAutoPair() 를 호출한다.
+    // 저장된 endpoint 가 없거나 사용자가 cancel 누른 경우 즉시 반환.
+    public func attemptAutoPair() async {
+        guard let saved = persistedEndpoint else { return }
+        guard !UserDefaults.standard.bool(forKey: PersistKeys.autoPairCancelled) else {
+            // 사용자가 명시적으로 취소한 적 있으면 자동 시도 안 함.
+            UserDefaults.standard.removeObject(forKey: PersistKeys.autoPairCancelled)
+            return
+        }
+        // realRelay 모드 전환 (필요 시)
+        if connectionMode != .realRelay {
+            await setConnectionMode(.realRelay)
+        }
+        isAutoPairing = true
+        appendLog(level: .info, category: .connection,
+                  message: "자동 페어링 시도: \(saved.macName) (\(saved.host):\(saved.port))")
+        let endpoint = RelayEndpoint(host: saved.host, port: saved.port,
+                                     pairingCode: saved.pairingCode)
+        await connect(to: endpoint)
+        // connect() 가 실패했거나 isAutoPairing 이 welcome 핸들러에서 이미 false 됐을 수 있음.
+        isAutoPairing = false
+    }
+
+    /// ConnectScreen 수동 취소 시 호출 — 자동 재시도 방지.
+    public func cancelAutoPair() {
+        isAutoPairing = false
+        UserDefaults.standard.set(true, forKey: PersistKeys.autoPairCancelled)
+    }
+
+    /// transport 끊김 후 **무한 자동 재시도** (포그라운드 + 온라인 동안).
+    ///
+    /// 종전 5회(31초) 제한 → 실제 WiFi 끊김이 31초를 넘기면 포기해 수동 재연결을
+    /// 강요했다. 신규 정책:
+    /// - 멈춤 조건: 사용자 명시 disconnect / Task 취소 / 연결 성공뿐.
+    /// - 오프라인 동안에는 시도를 소진하지 않고 `NetworkPathMonitor` 복구 신호를 대기.
+    /// - backoff 는 `ReconnectPolicy`(equal jitter, cap 5초).
+    /// - **`connect(to:)`/`setConnectionMode` 미사용** — 둘 다 내부에서 disconnect 로
+    ///   `autoReconnectTask` 를 cancel 하므로 루프가 자기 자신을 끊는다. 대신
+    ///   `performConnect(to:)` 직접 호출 (이미 닫힌 소켓 위에서 안전).
+    private func scheduleAutoReconnect() {
+        guard let saved = persistedEndpoint else { return }
+        guard !userInitiatedDisconnect else { return }
+        autoReconnectTask?.cancel()
+        isReconnecting = true
+        autoReconnectTask = Task { [weak self] in
+            await self?.runReconnectLoop(host: saved.host,
+                                         port: saved.port,
+                                         pairingCode: saved.pairingCode)
+        }
+    }
+
+    /// 자동 재연결 루프 본문. `Task { [weak self] in await self?.runReconnectLoop() }`
+    /// 형태로만 호출되므로 클로저는 self 를 약하게 캡처 → cancel 시 정상 해제.
+    private func runReconnectLoop(host: String, port: Int, pairingCode: String) async {
+        var attempt = 0
+        while !Task.isCancelled {
+            if userInitiatedDisconnect { break }
+
+            // 오프라인이면 시도를 소진하지 않고 네트워크 복구까지 대기.
+            if !pathMonitor.isOnline {
+                appendLog(level: .info, category: .connection,
+                          message: "네트워크 끊김 — 복구를 기다립니다")
+                while !Task.isCancelled, !pathMonitor.isOnline, !userInitiatedDisconnect {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
+                if Task.isCancelled || userInitiatedDisconnect { break }
+                attempt = 0   // 복구 직후엔 최소 지연으로 빠르게 재시도
+            }
+
+            attempt += 1
+            autoReconnectAttempt = attempt
+            let delayMs = reconnectPolicy.delayMs(attempt: attempt)
+            appendLog(level: .info, category: .connection,
+                      message: "자동 재연결 시도 \(attempt)회 (\(delayMs)ms 후)")
+            try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
+            if Task.isCancelled || userInitiatedDisconnect { break }
+
+            // 외부 끊김은 realRelay 모드에서만 발생. 모드가 다르면 (mock 등) 자동
+            // 재연결 대상이 아니므로 종료. (setConnectionMode 는 disconnect 를 호출해
+            // 이 루프를 cancel 하므로 여기서 호출하지 않는다.)
+            guard connectionMode == .realRelay else { break }
+
+            // 이전 소켓이 남아있을 수 있으니 idempotent close 로 정리 후 재연결.
+            await relayClient.close(reason: "reconnectRetry")
+            let endpoint = RelayEndpoint(host: host, port: port, pairingCode: pairingCode)
+            let ok = await performConnect(to: endpoint)
+            if ok {
+                autoReconnectAttempt = 0
+                isReconnecting = false
+                appendLog(level: .info, category: .connection,
+                          message: "자동 재연결 성공 (\(attempt)회 시도)")
+                return
+            }
+        }
+        isReconnecting = false
+        autoReconnectAttempt = 0
+    }
+
+    /// 네트워크 복구 / 앱 포그라운드 복귀 시 즉시 재연결을 트리거.
+    private func kickReconnectNow(trigger: String) {
+        guard !userInitiatedDisconnect else { return }
+        guard persistedEndpoint != nil else { return }
+        if case .connected = transport { return }
+        appendLog(level: .info, category: .connection,
+                  message: "\(trigger) — 재연결 시도")
+        autoReconnectAttempt = 0
+        scheduleAutoReconnect()   // 기존 루프 cancel 후 새로 시작 (중복 안전)
     }
 
     public func setConnectionMode(_ mode: ConnectionMode) async {
@@ -279,12 +451,27 @@ public final class AppState: ObservableObject {
         endpoint.host == "mock" && endpoint.port == 0
     }
 
-    public func connect(to endpoint: RelayEndpoint) async {
+    /// 사용자/자동 페어링 진입점. 모드 전환 + 기존 세션 정리 후 실제 연결.
+    ///
+    /// **자동 재연결 루프는 이 메서드를 호출하지 않는다** — 내부 `disconnect()` 가
+    /// `autoReconnectTask` 를 cancel 해 루프가 자기 자신을 끊는 버그가 있었기 때문.
+    /// 루프는 정리 단계 없이 `performConnect(to:)` 를 직접 호출한다.
+    @discardableResult
+    public func connect(to endpoint: RelayEndpoint) async -> Bool {
         let desiredMode = Self.desiredConnectionMode(for: endpoint)
         if desiredMode != connectionMode {
             await setConnectionMode(desiredMode)
         }
         await disconnect(reason: "reconnect")
+        // 사용자/자동 페어링은 "연결을 원함" 의사 표명 — 이후 외부 끊김 시 자동
+        // 재연결이 다시 동작하도록 플래그 해제 (disconnect 가 true 로 만든 직후).
+        userInitiatedDisconnect = false
+        return await performConnect(to: endpoint)
+    }
+
+    /// 실제 hello/welcome 핸드셰이크만 수행 (정리/모드전환 없음). 성공 시 true.
+    @discardableResult
+    private func performConnect(to endpoint: RelayEndpoint) async -> Bool {
         telemetryHistory.removeAll()
         serverCapabilities = nil
         let hello = HelloPayload(appVersion: appVersion,
@@ -309,12 +496,14 @@ public final class AppState: ObservableObject {
             // "Mac 확인 중" 표시.
             appendLog(level: .info, category: .connection,
                       message: "← welcome 수신 (Mac=\(endpoint.host):\(endpoint.port))")
+            return true
         } catch {
             stateMachine.apply(.pairingFailed)
             pilotState = stateMachine.state
             lastError = String(describing: error)
             appendLog(level: .error, category: .connection,
                       message: "연결 실패: \(lastError ?? "?")")
+            return false
         }
     }
 
@@ -323,6 +512,12 @@ public final class AppState: ObservableObject {
     }
 
     public func disconnect(reason: String = "user") async {
+        // V297-8 (P3-iOS): 사용자/시스템 명시 disconnect — 자동 재시도 방지.
+        userInitiatedDisconnect = true
+        autoReconnectTask?.cancel()
+        autoReconnectTask = nil
+        autoReconnectAttempt = 0
+        isReconnecting = false
         await heartbeat?.stop(sendStop: false, reason: .user)
         heartbeat = nil
         await relayClient.close(reason: reason)
@@ -330,6 +525,7 @@ public final class AppState: ObservableObject {
         telemetry = nil
         telemetryHistory.removeAll()
         serverCapabilities = nil
+        estopVerificationStatus = nil
         if case .commandActive = pilotState {
             stateMachine.apply(.transportClosed)
         }
@@ -356,11 +552,14 @@ public final class AppState: ObservableObject {
     /// relay has no verified production adapter for head servos, so real
     /// relay mode must not send `pilot.head` and then present a fake ACK.
     ///
-    /// P2-2: real relay 에서는 서버 capabilities.head 가 true 인 경우에만 허용.
-    /// Mock 모드는 항상 시뮬레이션으로 허용.
+    /// P2-2 / V297-5 MEDIUM-4: real relay 에서는 서버 capabilities.head 가 true 인
+    /// 경우에만 허용. **nil 정책**: legacy Mac (capabilities 자체 미송신) 도 안전 우선
+    /// 으로 false 로 취급 — 종전 주석 "legacy 로 시도" 가 실제 코드와 불일치였음.
+    /// legacy Mac 으로 head 보내면 unknownType 또는 internalError 응답을 받아 UX 가
+    /// 일관되지 않으므로 차단이 안전.
     public var headControlSupported: Bool {
         if connectionMode == .mockReview { return true }
-        return serverCapabilities?.head == true
+        return serverCapabilities?.head == true   // nil → false (conservative)
     }
 
     public var armStartDisabledReason: DisabledReason? {
@@ -452,13 +651,89 @@ public final class AppState: ObservableObject {
         appendLog(level: .warning, category: .safety,
                   message: "긴급 정지 발동 (\(reason.rawValue))",
                   commandId: env.id)
+        // V297-8 (P3-iOS): send() 로 receipt 수신 후 outcome 분기 처리.
+        // Mac safetyAbort 검증 실패 시 사용자에게 즉시 경고.
         do {
-            try await relayClient.sendFireAndForget(env)
+            let receipt = try await relayClient.send(env)
+            lastReceipt = receipt
+            switch receipt.outcome {
+            case .acked:
+                appendLog(level: .info, category: .safety,
+                          message: "긴급 정지 확인", commandId: receipt.commandId)
+                estopVerificationStatus = nil
+            case .rejected(let rejReason, let message):
+                estopVerificationStatus = "정지 검증 실패: \(rejReason.rawValue) — \(message ?? "")"
+                appendLog(level: .error, category: .safety,
+                          message: "정지 검증 실패: \(rejReason.rawValue) — 물리 정지 버튼 즉시 누르세요!",
+                          commandId: receipt.commandId)
+            case .failed(let failReason, let message):
+                estopVerificationStatus = "정지 실패: \(failReason.rawValue) — \(message ?? "")"
+                appendLog(level: .error, category: .safety,
+                          message: "정지 실패: \(failReason.rawValue) (\(message ?? "")) — 즉시 물리 정지 버튼!",
+                          commandId: receipt.commandId)
+            case .accepted:
+                break
+            }
         } catch {
             appendLog(level: .error, category: .safety,
                       message: "긴급 정지 전송 실패: \(error). 물리 긴급 정지 버튼을 사용하세요.")
         }
         _ = result
+    }
+
+    // V297-6 / V297-7 / V297-9 CRITICAL-1: E-Stop 이후 복구 흐름.
+    //
+    // V297-9: pilot.arm 재사용에서 **pilot.recover 전용 명령** 으로 분리.
+    // 이유: arm → recover 자동 분기가 stale ARM 의 자동 복구로 둔갑 가능 (race).
+    // 명령 type 자체를 분리해 의도를 명확히.
+    //
+    // Flow:
+    //   estopped + armRequested → arming  (state machine V297-7)
+    //   arming  + armed         → armedReady (recover ack)
+    //   arming  + 실패 path     → estopped 유지 (.recoveryFailed apply — V297-7 P2)
+    public func performRecover() async {
+        let localEstopped = (pilotState == .estopped)
+        let remoteEstopped = (telemetry?.uiState == .estopped)
+        guard localEstopped || remoteEstopped else { return }
+        // V297-9: 별도 pilot.recover 명령.
+        let env = commandBuilder.recover(RecoverPayload(cradleConfirmed: true,
+                                                        operator: deviceName))
+        pendingCommandLabel = "복구"
+        stateMachine.apply(.armRequested)
+        pilotState = stateMachine.state
+        do {
+            let receipt = try await relayClient.send(env)
+            lastReceipt = receipt
+            switch receipt.outcome {
+            case .acked:
+                stateMachine.apply(.armed)
+                recoveryBanner = nil
+                appendLog(level: .info, category: .safety,
+                          message: "복구 완료", commandId: receipt.commandId)
+            case .rejected(let reason, let message):
+                // V297-7 재검증 P2: 복구 실패는 .recoveryFailed 로 — .estopRequested 의
+                // 사이드이펙트 (가짜 "E-stop requested by user" 로그, banner 중복) 회피.
+                stateMachine.apply(.recoveryFailed(reason: "rejected:\(reason.rawValue)"))
+                appendLog(level: .warning, category: .safety,
+                          message: "복구 거부: \(reason.rawValue) — \(message ?? "") · 다시 시도하세요",
+                          commandId: receipt.commandId)
+            case .failed(let reason, let message):
+                stateMachine.apply(.recoveryFailed(reason: "failed:\(reason.rawValue)"))
+                appendLog(level: .error, category: .safety,
+                          message: "복구 실패: \(reason.rawValue) — \(message ?? "") · 케이블/전원 확인 후 재시도",
+                          commandId: receipt.commandId)
+            case .accepted:
+                break
+            }
+            pilotState = stateMachine.state
+        } catch {
+            // V297-7 재검증 P2: 송신 자체 실패 — recoveryFailed.
+            stateMachine.apply(.recoveryFailed(reason: "sendError"))
+            pilotState = stateMachine.state
+            appendLog(level: .error, category: .safety,
+                      message: "복구 송신 실패: \(error) · 연결 확인 후 재시도")
+        }
+        pendingCommandLabel = nil
     }
 
     public func performMotion(label: String) async {
@@ -510,7 +785,9 @@ public final class AppState: ObservableObject {
         pendingCommandLabel = nil
     }
 
-    public func startWalk(_ preset: WalkPreset) async {
+    /// V297-9 HIGH: speedScale 전달 path. 호출자는 0.5~1.5 범위 (1.0 default).
+    /// 기존 startWalk(_:) 와 호환 위해 default speedScale=1.0.
+    public func startWalk(_ preset: WalkPreset, speedScale: Double = 1.0) async {
         guard preset != .stop else { await stopWalk(reason: .user); return }
         if let reason = CommandPermission.reason(forWalk: pilotState,
                                                   telemetry: telemetry) {
@@ -524,7 +801,9 @@ public final class AppState: ObservableObject {
                 return
             }
         }
-        let env = commandBuilder.walk(preset)
+        // V297-9 HIGH: speedScale 실 전송 — 0.5~1.5 clamp 후 builder 에 전달.
+        let clampedScale = min(max(0.5, speedScale), 1.5)
+        let env = commandBuilder.walk(preset, speedScale: clampedScale)
         activeWalkPreset = preset
         pendingCommandLabel = label(for: preset)
         stateMachine.apply(.commandStarted(commandId: env.id))
@@ -578,28 +857,33 @@ public final class AppState: ObservableObject {
 
     // MARK: - Freeform analog walk streaming
 
-    /// Whether analog freeform walking is actually executable in the current
-    /// session. The first build only supports it in Mock/Review mode; on the
-    /// real Mac relay the server rejects `freeform` (highRiskNotAllowed) so
-    /// the iOS side refuses to send and surfaces a clear reason.
-    ///
-    /// P2-2 fix (검수 2026-05-26): real relay 는 서버 capabilities.walkFreeform
-    /// 이 true 여야 허용. 현재 ConnectionStoreSafetyPort 가 false 반환하므로
-    /// 실제로는 mock 모드에서만 활성.
+    /// Whether analog freeform walking is executable in the current session.
+    /// Real relay mode requires an explicit server capability so older Mac
+    /// builds still fail closed.
     public var freeformWalkSupported: Bool {
         if connectionMode == .mockReview { return true }
-        return serverCapabilities?.walkFreeform == true
+        return serverCapabilities?.walkFreeform == true   // nil → false
     }
 
-    /// Stream a single analog walk frame. Throttled in the joystick view at
-    /// ~10Hz to stay aligned with Mac watchdog (5Hz send to robot).
-    ///
-    /// P0-2 fix (truth-gap report, 2026-05-25): real relay mode no longer
-    /// dispatches `freeform` to the server. UI continues to render visual
-    /// feedback in Mock mode for product preview, but no fake "ACK" path on
-    /// real hardware.
+    /// V297-9 HIGH: Mac 서버가 WalkPayload.speedScale 을 실 적용하는지.
+    /// V297-8 부터 Mac WalkLabSession.start(speedScale:) 로 amplitude 곱셈 적용.
+    /// nil/false → false (보수). iOS UI 의 medium/fast 활성 여부.
+    public var speedScaleSupported: Bool {
+        if connectionMode == .mockReview { return true }
+        return serverCapabilities?.speedScaleAccepted == true
+    }
+
+    /// Stream a single analog walk frame. The joystick view throttles to
+    /// ~10Hz; the Mac relay applies each update to the active freeform walk
+    /// loop and the heartbeat watchdog still owns deadman safety.
     public func streamWalk(_ input: WalkFreeformInput) async {
         guard pilotState.isArmed else { return }
+        if let reason = CommandPermission.reason(forWalk: pilotState,
+                                                 telemetry: telemetry) {
+            appendLog(level: .warning, category: .command,
+                      message: "자유 조종 대기: \(reason.koreanCopy)")
+            return
+        }
         guard freeformWalkSupported else {
             // One-shot log per "active gesture" — flag and stop sending.
             if lastError != "freeformUnsupportedInMVP" {
@@ -614,7 +898,7 @@ public final class AppState: ObservableObject {
             stateMachine.apply(.commandStarted(commandId: env.id))
             pilotState = stateMachine.state
             activeWalkPreset = .freeform
-            pendingCommandLabel = "조종 중 (시뮬)"
+            pendingCommandLabel = "조종 중"
             await ensureHeartbeat(activeCommandId: env.id)
         }
         try? await relayClient.sendFireAndForget(env)
@@ -772,6 +1056,7 @@ public final class AppState: ObservableObject {
         serverCapabilities = nil
         activeWalkPreset = nil
         pendingCommandLabel = nil
+        estopVerificationStatus = nil
         // 상태 머신에 외부 transport 닫힘 통지 — active command 면 latencyGate
         // 사이드 이펙트 (stop active command) 발화.
         stateMachine.apply(.transportClosed)
@@ -783,6 +1068,10 @@ public final class AppState: ObservableObject {
         lineOfSightConfirmed = false
         recoveryBanner = RecoveryBanner(kind: .transport,
                                         message: "Mac 앱과 연결이 끊겼어요. 다시 연결하세요. (\(reason))")
+        // V297-8 (P3-iOS): 사용자 비명시 끊김이면 자동 재연결 시도.
+        if !userInitiatedDisconnect {
+            scheduleAutoReconnect()
+        }
     }
 
     private func handle(_ message: InboundMessage) {
@@ -795,8 +1084,20 @@ public final class AppState: ObservableObject {
             serverCapabilities = env.payload.capabilities
             if let cap = env.payload.capabilities {
                 appendLog(level: .debug, category: .connection,
-                          message: "Server caps — head=\(cap.head) freeform=\(cap.walkFreeform) speedScale=\(cap.speedScale)")
+                          message: "Server caps — head=\(cap.head) freeform=\(cap.walkFreeform) speedScaleAccepted=\(cap.speedScaleAccepted)")
             }
+            // V297-6 (PM Story S2.2): welcome 수신 직후 endpoint persist.
+            // pairedEndpoint 는 connect() 에서 이미 set 돼 있음.
+            if let ep = pairedEndpoint {
+                saveEndpoint(ep, macName: env.payload.macName)
+            }
+            // S2.3: 자동 페어링 성공 → 플래그 해제.
+            isAutoPairing = false
+            // V297-8 (P3-iOS): 페어링 성공 — 자동 재시도 상태 reset.
+            userInitiatedDisconnect = false
+            autoReconnectAttempt = 0
+            autoReconnectTask?.cancel()
+            autoReconnectTask = nil
         case .sessionRejected(let env):
             appendLog(level: .error, category: .connection,
                       message: "거부됨: \(env.payload.reason.rawValue)")
@@ -933,6 +1234,17 @@ public final class AppState: ObservableObject {
                 await stopWalk(reason: .appBackground)
             }
         }
+    }
+
+    /// 앱이 포그라운드로 복귀했을 때 호출 (RootView scenePhase `.active`).
+    ///
+    /// iOS 는 백그라운드 진입 수초 내 WebSocket 을 정지시키므로, 복귀 시 죽은 연결을
+    /// 되살린다. 저장된 세션이 있고 사용자가 끊은 게 아니며 현재 미연결이면 즉시 재연결.
+    ///
+    /// **안전**: 전송만 복구하며 자동 ARM/보행 재개는 없다 (`handleExternalDisconnect`
+    /// 가 ARM/safetyGate 를 이미 reset). 재연결 후 사용자가 다시 ARM 해야 한다.
+    public func appDidBecomeActive() {
+        kickReconnectNow(trigger: "앱 활성화")
     }
 }
 

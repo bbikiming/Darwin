@@ -55,7 +55,11 @@ extension WalkLabSession {
         // 토크 OFF 이후 walkReady setPosition race 차단.
         isHardStopped: @Sendable () async -> Bool = { false },
         // v1.11.1 MEDIUM-5: bus write 실패 callback (ConnectionStore 누적).
-        onBusWriteFailure: (@MainActor @Sendable () -> Void)? = nil
+        onBusWriteFailure: (@MainActor @Sendable () -> Void)? = nil,
+        // V288-2: Hexagonal architecture port — dxlPower gate 강제.
+        // 모든 joint write 의 공식 entry — DXL power gate 가 자동 차단.
+        // nil 이면 기존 bus.setPosition 직접 호출 (하위 호환 유지).
+        robotPort: (any RobotPort)? = nil
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -117,9 +121,20 @@ extension WalkLabSession {
                 var lastErr: Error?
                 for attempt in 0..<2 {
                     do {
-                        _ = try bus.setPosition(joint, raw: rawVal)
+                        // V288-2: robotPort 경유 → dxlPower gate 자동 강제.
+                        // 마치 공식 매표소 통과 — gate 없는 뒷문(bus.setPosition) 폐쇄.
+                        if let port = robotPort {
+                            _ = try await port.writeJointPosition(joint, raw: rawVal)
+                        } else {
+                            _ = try bus.setPosition(joint, raw: rawVal)
+                        }
                         lastErr = nil
                         break
+                    } catch let portErr as RobotPortError where portErr == .dxlPowerOff {
+                        // dxlPower OFF gate 차단 — e-stop chain 실행 후 실패 기록.
+                        await robotPort?.emergencyStop()
+                        lastErr = portErr
+                        break   // retry 무의미 — power OFF 는 즉시 중단.
                     } catch {
                         lastErr = error
                         if attempt == 0 {
@@ -233,8 +248,19 @@ extension WalkLabSession {
             let changedFinal = target.changedJoints(from: previous)
             for joint in changedFinal {
                 let rawVal = UInt16(clamping: target.raw(joint))
-                do { _ = try bus.setPosition(joint, raw: rawVal) }
-                catch {
+                do {
+                    // V288-2: exit phase 도 robotPort 경유 — gate 보호 일관성 유지.
+                    if let port = robotPort {
+                        _ = try await port.writeJointPosition(joint, raw: rawVal)
+                    } else {
+                        _ = try bus.setPosition(joint, raw: rawVal)
+                    }
+                } catch let portErr as RobotPortError where portErr == .dxlPowerOff {
+                    await robotPort?.emergencyStop()
+                    positionFailures += 1
+                    if let cb = onBusWriteFailure { Task { @MainActor in cb() } }
+                    sampleError = "\(joint.name) 복귀쓰기(dxlPowerOff): \(portErr.localizedDescription)"
+                } catch {
                     positionFailures += 1
                     // v1.11.1 MEDIUM-5: bus write 실패 누적 callback.
                     if let cb = onBusWriteFailure {
@@ -283,7 +309,11 @@ extension WalkLabSession {
         // v1.11.22.1 (Codex HIGH-1 fix): emergencyStop 시 true → exit phase skip.
         isHardStopped: @Sendable () async -> Bool = { false },
         // v1.11.1 MEDIUM-5: bus write 실패 callback (ConnectionStore 누적).
-        onBusWriteFailure: (@MainActor @Sendable () -> Void)? = nil
+        onBusWriteFailure: (@MainActor @Sendable () -> Void)? = nil,
+        // V288-2: Hexagonal architecture port — dxlPower gate 강제.
+        // 모든 joint write 의 공식 entry — DXL power gate 가 자동 차단.
+        // nil 이면 기존 bus.setPosition 직접 호출 (하위 호환 유지).
+        robotPort: (any RobotPort)? = nil
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -347,8 +377,17 @@ extension WalkLabSession {
                     var lastErr: Error?
                     for attempt in 0..<2 {
                         do {
-                            _ = try bus.setPosition(joint, raw: rawVal)
+                            // V288-2: robotPort 경유 → dxlPower gate 자동 강제.
+                            if let port = robotPort {
+                                _ = try await port.writeJointPosition(joint, raw: rawVal)
+                            } else {
+                                _ = try bus.setPosition(joint, raw: rawVal)
+                            }
                             lastErr = nil
+                            break
+                        } catch let portErr as RobotPortError where portErr == .dxlPowerOff {
+                            await robotPort?.emergencyStop()
+                            lastErr = portErr
                             break
                         } catch {
                             lastErr = error
@@ -422,8 +461,19 @@ extension WalkLabSession {
         let changedFinal = walkReady.changedJoints(from: previous)
         for joint in changedFinal {
             let rawVal = UInt16(clamping: walkReady.raw(joint))
-            do { _ = try bus.setPosition(joint, raw: rawVal) }
-            catch {
+            do {
+                // V288-2: walkReady 복귀 write 도 robotPort 경유 — gate 보호 일관성 유지.
+                if let port = robotPort {
+                    _ = try await port.writeJointPosition(joint, raw: rawVal)
+                } else {
+                    _ = try bus.setPosition(joint, raw: rawVal)
+                }
+            } catch let portErr as RobotPortError where portErr == .dxlPowerOff {
+                await robotPort?.emergencyStop()
+                positionFailures += 1
+                if let cb = onBusWriteFailure { Task { @MainActor in cb() } }
+                sampleError = "\(joint.name) 복귀쓰기(dxlPowerOff): \(portErr.localizedDescription)"
+            } catch {
                 positionFailures += 1
                 // v1.11.1 MEDIUM-5: bus write 실패 누적 callback.
                 if let cb = onBusWriteFailure {

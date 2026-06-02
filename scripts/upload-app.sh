@@ -106,12 +106,21 @@ case "$METHOD" in
         echo "▶ Step 2: altool 업로드 → App Store Connect"
         # macOS 14+/Xcode 16 altool: --apple-id/--password 는 deprecated.
         # 신규: --username/--app-password (+ --team-id 는 그대로).
+        # V297-13: 사용자 Apple ID 가 multiple providers 에 attach 시 라우팅 모호.
+        # PROVIDER_PUBLIC_ID 환경변수로 명시. 미설정 시 altool 가 single-provider
+        # 가정 (잘못된 team 으로 라우팅될 위험).
+        PROVIDER_ARG=()
+        if [[ -n "${PROVIDER_PUBLIC_ID:-}" ]]; then
+            PROVIDER_ARG=(--asc-public-id "$PROVIDER_PUBLIC_ID")
+        fi
+        # `${arr[@]+...}` — set -u 하 empty array expansion 안전 패턴.
         if ! xcrun altool --upload-app \
             --type macos \
             --file "$PKG_PATH" \
             --username "$APPLE_ID" \
             --app-password "$APP_PASSWORD" \
-            --team-id "$TEAM_ID"; then
+            --team-id "$TEAM_ID" \
+            ${PROVIDER_ARG[@]+"${PROVIDER_ARG[@]}"}; then
             echo ""
             echo "✗ altool 업로드 실패 — 위 에러 메시지 확인 후 archive-app.sh 재실행"
             exit 1
