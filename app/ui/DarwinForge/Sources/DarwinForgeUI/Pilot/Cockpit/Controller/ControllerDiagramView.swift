@@ -34,9 +34,9 @@ struct ControllerDiagramView: View {
             trigger("RT", index: 5, at: CGPoint(x: 470, y: 95))
 
             // 좌 스틱 (axis 0/1) + 4 petal
-            stickCluster(center: CGPoint(x: 150, y: 175), xIndex: 0, yIndex: 1, label: "L")
+            stickCluster(center: CGPoint(x: 150, y: 175), xIndex: 0, yIndex: 1)
             // 우 스틱 (axis 2/3) + 4 petal
-            stickCluster(center: CGPoint(x: 390, y: 175), xIndex: 2, yIndex: 3, label: "R")
+            stickCluster(center: CGPoint(x: 390, y: 175), xIndex: 2, yIndex: 3)
 
             // 면 버튼 ABXY (우측 다이아몬드) — button 0/1/2/3
             faceButton("A", .button(index: 0), at: CGPoint(x: 480, y: 215), tint: .green)
@@ -59,7 +59,7 @@ struct ControllerDiagramView: View {
 
     // MARK: - 스틱 클러스터 (중앙 스틱 + 4방향 petal)
 
-    private func stickCluster(center: CGPoint, xIndex: Int, yIndex: Int, label: String) -> some View {
+    private func stickCluster(center: CGPoint, xIndex: Int, yIndex: Int) -> some View {
         let dx = snapshot.axis(xIndex), dy = snapshot.axis(yIndex)
         return ZStack {
             // 베이스 + 라이브 위치 점
@@ -70,8 +70,6 @@ struct ControllerDiagramView: View {
             Circle().fill(Color.white.opacity(0.8))
                 .frame(width: 18, height: 18)
                 .offset(x: CGFloat(dx) * 22, y: CGFloat(dy) * 22)
-            Text(label).font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
-                .offset(y: 40)
             // 4 petal
             petal(.axis(index: yIndex, polarity: .negative), at: CGPoint(x: 0, y: -42), active: dy < -0.2)
             petal(.axis(index: yIndex, polarity: .positive), at: CGPoint(x: 0, y: 42), active: dy > 0.2)
