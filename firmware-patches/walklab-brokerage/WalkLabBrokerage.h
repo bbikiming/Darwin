@@ -42,12 +42,21 @@ public:
     /// `rm -f` (Mac re-arm) 전까지 hold-stopped.
     static const char* const ESTOP_PATH;
 
+    /// **UDP 업링크 타깃 파일 (2026-06-03)** — Mac 이 "IP PORT" 한 줄 기록 → 로봇이 매 poll
+    /// 그 주소로 telemetry `TEL …` 라인을 UDP push (`RefreshUplinkTarget` 가 read).
+    /// 없으면 파일+SSH(폴링) fallback. SSH cat 폴링(≈2Hz) 대비 10–30Hz·1 RTT 신선도.
+    static const char* const UPLINK_PATH;
+
     /// Polling 주기 (ms). **v1.12** — e-stop latency 단축 위해 200→100ms 로 강화.
     /// Telemetry write 는 ~200ms(5Hz) 로 gate (매 2 poll).
     static const int POLL_INTERVAL_MS = 100;
 
-    /// Telemetry write 주기 (ms). 200ms = 5Hz (§A.1).
+    /// Telemetry write 주기 (ms). 200ms = 5Hz (§A.1). **파일 write 전용** — UDP push 는
+    /// 매 poll(10–30Hz) 전송하고, 파일만 이 주기로 gate 한다(SSH fallback·디스크 churn 억제).
     static const int TELEMETRY_INTERVAL_MS = 200;
+
+    /// **UDP 업링크 타깃 파일 재read 주기 (ms, 2026-06-03)**. 타깃은 거의 안 바뀌므로 1s throttle.
+    static const int UPLINK_REFRESH_MS = 1000;
 
     /// 명령 stale 임계 (ms). Mac 명령 갱신 끊긴 후 자동 stop.
     static const int STALE_TIMEOUT_MS = 5000;
@@ -87,9 +96,16 @@ private:
     /// @return true = 정상 parse, false = 파싱 실패 (이전 명령 유지).
     bool ParseAndApply(Robot::Walking* walking, bool& walking_active);
 
-    /// **v1.12** — Telemetry 한 줄 atomic write (§A.2). tmp + rename.
-    /// cm730 NULL 이면 MotionStatus fallback (§A.1).
-    void WriteTelemetry(Robot::CM730* cm730, bool walking_active);
+    /// **v1.12** — Telemetry 한 줄 (§A.2). 한 번 format 후: UDP push(매 poll) + (write_file
+    /// 면) 파일 atomic write(tmp+rename, 200ms gate). cm730 NULL 이면 MotionStatus fallback.
+    void WriteTelemetry(Robot::CM730* cm730, bool walking_active, bool write_file);
+
+    /// **UDP 업링크 (2026-06-03)** — UPLINK_PATH("IP PORT")를 주기적(UPLINK_REFRESH_MS) read.
+    void RefreshUplinkTarget(long long now_ms);
+    /// UDP 소켓 lazy-open (비차단). 실패 시 m_udp_fd 는 -1 유지 → 파일+SSH fallback.
+    void EnsureUdpSocket();
+    /// telemetry 한 줄을 업링크 타깃으로 UDP 전송 (비차단 sendto, 실패 무음 — lossy 허용).
+    void SendTelemetryUDP(const char* line, int len);
 
     /// **v1.12** — E-stop flag 존재 여부 (§B). access(F_OK).
     static bool EstopRequested();
@@ -109,6 +125,12 @@ private:
 
     /// **v1.12** — head 가 한 번이라도 non-zero 명령을 받았는지 (default pose 보존용).
     bool m_head_commanded;
+
+    // ===== UDP 텔레메트리 업링크 (2026-06-03) =====
+    int m_udp_fd;               ///< UDP 소켓 fd. -1 = 미생성(lazy-open).
+    char m_uplink_ip[64];       ///< 업링크 타깃 IP 문자열. "" = 타깃 없음.
+    int m_uplink_port;          ///< 업링크 타깃 포트. 0 = 타깃 없음.
+    long long m_last_uplink_ms; ///< 마지막 UPLINK_PATH read 시각(ms) — refresh throttle.
 
     /// **v1.13** — 연속 낙상 poll 카운터 (debounce). STANDUP 복귀 시 0 으로 reset.
     int m_fall_count;

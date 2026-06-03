@@ -38,6 +38,11 @@
 #include <signal.h>
 #include <math.h>          // 두리번 스캔 sweep (sin)
 #include <sys/stat.h>
+#include <sys/socket.h>     // UDP 업링크 (2026-06-03) — socket / sendto
+#include <netinet/in.h>     // sockaddr_in
+#include <arpa/inet.h>      // inet_addr / htons / INADDR_NONE
+#include <fcntl.h>          // O_NONBLOCK (비차단 소켓)
+#include <errno.h>
 #include "Walking.h"        // Robot::Walking::GetInstance()
 #include "Head.h"           // Robot::Head::GetInstance()
 #include "CM730.h"          // Robot::CM730 register map + bulk-read buffer
@@ -59,6 +64,7 @@ namespace Robotis {
     const char* const WalkLabBrokerage::ACK_PATH = "/tmp/df-walklab-ack";
     const char* const WalkLabBrokerage::TELEMETRY_PATH = "/tmp/df-walklab-telemetry";
     const char* const WalkLabBrokerage::ESTOP_PATH = "/tmp/df-walklab-estop";
+    const char* const WalkLabBrokerage::UPLINK_PATH = "/tmp/df-walklab-uplink";
     const double WalkLabBrokerage::HIP_PITCH_MIN = 0.0;
     const double WalkLabBrokerage::HIP_PITCH_MAX = 20.0;
 
@@ -193,7 +199,7 @@ namespace Robotis {
         while (walking->IsRunning()) {
             // 리뷰(codex C1) fix: getup 대기 중에도 e-stop 즉시 반응 — 정지 유지하고 복귀.
             if (EstopRequested()) { m_fall_count = 0; return true; }
-            WriteTelemetry(cm730, walking_active);
+            WriteTelemetry(cm730, walking_active, true);  // getup 중 파일+UDP 계속 보고.
             usleep(8000);   // 공식 demo 와 동일 8ms.
         }
 
@@ -212,7 +218,7 @@ namespace Robotis {
         while (action->Start(page) == false) {
             // 리뷰(codex C1) fix: e-stop 시 getup 시작 중단 + body torque off.
             if (EstopRequested()) { action->m_Joint.SetEnableBody(false, true); m_fall_count = 0; return true; }
-            WriteTelemetry(cm730, walking_active);
+            WriteTelemetry(cm730, walking_active, true);  // getup 중 파일+UDP 계속 보고.
             usleep(8000);
         }
 
@@ -220,7 +226,7 @@ namespace Robotis {
         while (action->IsRunning()) {
             // 리뷰(codex C1) fix: getup 모션 중 e-stop → 모션 중단(Stop) + body torque off.
             if (EstopRequested()) { action->Stop(); action->m_Joint.SetEnableBody(false, true); m_fall_count = 0; return true; }
-            WriteTelemetry(cm730, walking_active);
+            WriteTelemetry(cm730, walking_active, true);  // getup 중 파일+UDP 계속 보고.
             usleep(8000);
         }
 
@@ -422,6 +428,11 @@ namespace Robotis {
         m_found_streak = 0;
         m_limit_stuck = 0;
         m_last_pan = 0.0; m_last_tilt = 0.0;
+        // UDP 텔레메트리 업링크 (2026-06-03) — lazy-open. 타깃은 Mac 이 UPLINK_PATH 로 알림.
+        m_udp_fd = -1;
+        m_uplink_ip[0] = 0;
+        m_uplink_port = 0;
+        m_last_uplink_ms = 0;
         InstallSignalHandlers();
 
         Robot::Walking* walking = Robot::Walking::GetInstance();
@@ -449,6 +460,15 @@ namespace Robotis {
         long long last_tel_ms = 0;
 
         while (true) {
+            // 루프 시각 1회 계산 — uplink refresh throttle + telemetry gate 공용.
+            struct timespec loop_ts;
+            clock_gettime(CLOCK_REALTIME, &loop_ts);
+            long long now_ms =
+                (long long)loop_ts.tv_sec * 1000LL + loop_ts.tv_nsec / 1000000LL;
+            // UDP 업링크 타깃(/tmp/df-walklab-uplink) 주기 갱신(내부 1Hz throttle). Mac 연결 시
+            // 자기 IP:port 를 기록 → 로봇이 그쪽으로 telemetry push. e-stop 전에 둬 정지 중에도 갱신.
+            RefreshUplinkTarget(now_ms);
+
             // **v1.12 (§B)** — e-stop flag 검사를 명령 parse 보다 먼저. presence == STOP.
             // flag 존재 시 즉시 Stop()+body torque off, 제거될 때까지 hold (재-arm 가능하도록
             // 루프 종료 X). SIGTERM 경로는 별도 핸들러가 처리 (_exit).
@@ -460,7 +480,7 @@ namespace Robotis {
                     walking_active = false;
                     estop_latched = true;
                 }
-                WriteTelemetry(cm730, walking_active);  // Mac 에 정지 상태 계속 보고.
+                WriteTelemetry(cm730, walking_active, true);  // Mac 에 정지 상태 계속 보고(파일+UDP).
                 usleep(POLL_INTERVAL_MS * 1000);
                 continue;   // flag 가 있는 동안 명령 무시.
             } else if (estop_latched) {
@@ -534,15 +554,12 @@ namespace Robotis {
                 ProcessBallTracking();
             }
 
-            // **v1.12 (§A)** — telemetry uplink. ~200ms(5Hz) 로 gate.
-            struct timespec now_ts;
-            clock_gettime(CLOCK_REALTIME, &now_ts);
-            long long now_ms =
-                (long long)now_ts.tv_sec * 1000LL + now_ts.tv_nsec / 1000000LL;
-            if (now_ms - last_tel_ms >= TELEMETRY_INTERVAL_MS) {
-                last_tel_ms = now_ms;
-                WriteTelemetry(cm730, walking_active);
-            }
+            // **v1.12 (§A) + UDP push (2026-06-03)** — telemetry uplink.
+            // UDP 는 매 poll 전송(10Hz idle / ~30Hz 볼트래킹 — 1 RTT 신선도). 파일은 종전대로
+            // 200ms(5Hz) gate(SSH fallback·디스크 churn 억제). now_ms 는 루프 상단에서 계산됨.
+            bool write_tel_file = (now_ms - last_tel_ms >= TELEMETRY_INTERVAL_MS);
+            if (write_tel_file) last_tel_ms = now_ms;
+            WriteTelemetry(cm730, walking_active, write_tel_file);
 
             // **헤드 트래킹 30fps fix (2026-06-02)**: 볼 트래킹 중에는 ProcessBallTracking 의
             // LinuxCamera::CaptureFrame() 가 카메라 프레임레이트(~30fps ≈ 33ms)로 루프를 paces 한다
@@ -693,7 +710,7 @@ namespace Robotis {
     // 매 ~200ms(5Hz) 호출. cm730 의 bulk-read 버퍼(motion loop 가 8ms 마다 갱신)에서
     // voltage + 3축 raw IMU 를 추가 bus 트래픽 없이 read. cm730 NULL 이면 MotionStatus
     // 로 graceful degrade. tmp + rename 으로 atomic write (부분 read 차단).
-    void WalkLabBrokerage::WriteTelemetry(Robot::CM730* cm730, bool walking_active) {
+    void WalkLabBrokerage::WriteTelemetry(Robot::CM730* cm730, bool walking_active, bool write_file) {
         int gx, gy, gz, ax, ay, az, vdV;
 
         if (cm730) {
@@ -727,13 +744,73 @@ namespace Robotis {
         long long ts_ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 
         // §A.2 PINNED 형식: "TEL {ts} {gx} {gy} {gz} {ax} {ay} {az} {vdV} {w} {fallen}\n"
-        const char* tel_tmp = "/tmp/df-walklab-telemetry.tmp";
-        FILE* fp = fopen(tel_tmp, "w");
-        if (!fp) return;
-        fprintf(fp, "TEL %lld %d %d %d %d %d %d %d %d %d\n",
-                ts_ms, gx, gy, gz, ax, ay, az, vdV, walking01, fallen);
+        // 한 번 format → UDP(매 poll) + (write_file 면) 파일. 두 경로가 동일 바이트열을 쓴다.
+        char buf[128];
+        int n = snprintf(buf, sizeof(buf), "TEL %lld %d %d %d %d %d %d %d %d %d\n",
+                         ts_ms, gx, gy, gz, ax, ay, az, vdV, walking01, fallen);
+        if (n < 0) return;
+        if (n > (int)sizeof(buf)) n = (int)sizeof(buf);   // snprintf truncation guard.
+
+        // UDP push — 매 호출(매 poll). 비차단·실패 무음(타깃 미설정/소켓 실패면 no-op).
+        SendTelemetryUDP(buf, n);
+
+        // 파일 — write_file(200ms gate)일 때만. tmp + rename 으로 atomic(부분 read 차단).
+        if (write_file) {
+            const char* tel_tmp = "/tmp/df-walklab-telemetry.tmp";
+            FILE* fp = fopen(tel_tmp, "w");
+            if (!fp) return;
+            fwrite(buf, 1, (size_t)n, fp);
+            fclose(fp);
+            rename(tel_tmp, TELEMETRY_PATH);   // atomic (같은 filesystem 보장).
+        }
+    }
+
+    // ===== UDP 텔레메트리 업링크 (2026-06-03) ===================================
+    // Mac 이 UPLINK_PATH 에 "IP PORT" 를 쓰면 로봇이 매 poll 그 주소로 TEL 라인을 UDP push.
+    // SSH cat 폴링(≈2Hz) 대비 10–30Hz·1 RTT. 전부 비차단·실패 무음 (텔레메트리는 lossy 허용;
+    // 신뢰 경로인 명령/ACK/e-stop 은 파일+SSH 그대로 — 안전 영향 없음).
+
+    // UPLINK_PATH("IP PORT")를 ~1s 마다 read 해 타깃 갱신. 타깃은 거의 안 바뀌므로 throttle.
+    void WalkLabBrokerage::RefreshUplinkTarget(long long now_ms) {
+        if (m_last_uplink_ms != 0 && (now_ms - m_last_uplink_ms) < UPLINK_REFRESH_MS) return;
+        m_last_uplink_ms = now_ms;
+        FILE* fp = fopen(UPLINK_PATH, "r");
+        if (!fp) return;   // 없음 → 기존 타깃 유지(또는 미설정 → UDP no-op, 파일 fallback).
+        char ip[64];
+        int port = 0;
+        ip[0] = 0;
+        if (fscanf(fp, "%63s %d", ip, &port) == 2 && port > 0 && port <= 65535) {
+            strncpy(m_uplink_ip, ip, sizeof(m_uplink_ip) - 1);
+            m_uplink_ip[sizeof(m_uplink_ip) - 1] = 0;
+            m_uplink_port = port;
+        }
         fclose(fp);
-        rename(tel_tmp, TELEMETRY_PATH);   // atomic (같은 filesystem 보장).
+    }
+
+    // UDP 소켓 lazy-open (비차단). 실패해도 -1 유지 → 다음에 재시도(파일+SSH fallback).
+    void WalkLabBrokerage::EnsureUdpSocket() {
+        if (m_udp_fd >= 0) return;
+        int fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd < 0) return;
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);   // belt-and-suspenders.
+        m_udp_fd = fd;
+    }
+
+    // telemetry 한 줄을 업링크 타깃으로 UDP 전송. 비차단 sendto — realtime 루프를 절대 막지
+    // 않는다. 반환값 무시(EAGAIN/ENETUNREACH 등 전부 조용히 drop — UDP 는 lossy 허용).
+    void WalkLabBrokerage::SendTelemetryUDP(const char* line, int len) {
+        if (m_uplink_port <= 0 || m_uplink_ip[0] == 0) return;   // 타깃 미설정.
+        EnsureUdpSocket();
+        if (m_udp_fd < 0) return;
+        struct sockaddr_in dst;
+        memset(&dst, 0, sizeof(dst));
+        dst.sin_family = AF_INET;
+        dst.sin_port = htons((unsigned short)m_uplink_port);
+        dst.sin_addr.s_addr = inet_addr(m_uplink_ip);
+        if (dst.sin_addr.s_addr == INADDR_NONE) return;   // 잘못된 IP 문자열.
+        (void)sendto(m_udp_fd, line, (size_t)len, MSG_DONTWAIT,
+                     (struct sockaddr*)&dst, sizeof(dst));
     }
 
 }  // namespace Robotis

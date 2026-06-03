@@ -476,6 +476,17 @@ public enum RobotSetupCommand {
         return "rm -f /tmp/df-walklab-ack 2>/dev/null; printf '%s\\n' '\(fullLine)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd && (\(pollLoop))"
     }
 
+    /// **텔레메트리 UDP 업링크 타깃 지정 (2026-06-03)** — Mac → robot `/tmp/df-walklab-uplink`
+    /// atomic write. 로봇 브로커리지가 이 파일을 읽어(`RefreshUplinkTarget`) 텔레메트리
+    /// `TEL …` 라인을 해당 IP:port 로 UDP push 한다(`OnboardTelemetryUDPReceiver` 가 수신).
+    ///
+    /// `ip` 는 Mac 의 로컬 IPv4(`NetworkProbe.localIPv4Addresses()` 에서 SSH host 와 동일
+    /// /24 선택) — 숫자뿐이라 shell-safe. 그래도 방어적으로 single-quote.
+    /// `walkLabRobotisSendCommand` 와 동일한 tmp+mv 원자 패턴(로봇이 부분 read 하지 않게).
+    public static func walkLabWriteUplink(ip: String, port: UInt16) -> String {
+        return "printf '%s %d\\n' '\(ip)' \(port) > /tmp/df-walklab-uplink.tmp && mv /tmp/df-walklab-uplink.tmp /tmp/df-walklab-uplink"
+    }
+
     /// **v1.11.16.2 (2026-05-19)**: cmd_id 생성 — UUID prefix 8글자 + millisecond timestamp.
     /// shell-safe ([a-zA-Z0-9_-]) 만 사용. 길이 < 32.
     public static func generateCmdId() -> String {

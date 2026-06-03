@@ -184,6 +184,19 @@ public final class ConnectionStore: ObservableObject {
     /// staleness watchdog — read 실패/끊김으로 새 샘플이 안 와도 stale 강등(codex HIGH).
     private var onboardStaleWatchdog: Task<Void, Never>?
 
+    /// **UDP 텔레메트리 push 수신기 (2026-06-03)** — robot→Mac primary 텔레메트리 경로.
+    /// SSH 폴러와 동일 `OnboardTelemetry.parse` + 동일 `ingestOnboardTelemetry` 경로 공유.
+    /// lifecycle 은 poller 와 동일하게 W3 가 소유. 고정 포트 bind 라 shell 과 무관해 재사용.
+    private var onboardUDPReceiver: OnboardTelemetryUDPReceiver?
+    /// **transport-agnostic 신선도 앵커 (2026-06-03)** — UDP/SSH 어느 경로든 robot ts_ms 가
+    /// 전진한 마지막 시각/ts. ingest 의 frozen-가드와 stale watchdog 이 이 값으로 판정해
+    /// 특정 transport(SSH)에 종속되지 않는다(UDP 健全·SSH 실패 시 오강등 방지).
+    /// (재)연결마다 nil 로 리셋 — frozen-from-start 가 live 가 되지 않도록.
+    private var lastOnboardFreshTsMs: Int64?
+    private var lastOnboardFreshAt: Date?
+    /// onboard 신선도 임계(초) — poller staleThreshold(1.5s)와 정합.
+    private let onboardStaleThreshold: TimeInterval = 1.5
+
     /// onboard e-stop / telemetry 송수신용 RemoteShell 핸들 (wiring 시점에 외부가 set).
     /// SSH e-stop 은 bus 가 아닌 SSH 측이므로 store 가 RemoteShell 에 도달할 seam 이 필요.
     /// RootView 가 strong 보유하는 `RemoteShell` 을 weak 으로 참조 (retain cycle 회피).
@@ -1583,6 +1596,10 @@ public final class ConnectionStore: ObservableObject {
         // 이전 콜백/watchdog 의 write 가 무시된다 (telemetry 루프의 bus-identity 가드와 동형).
         onboardTelemetryGeneration &+= 1
         let gen = onboardTelemetryGeneration
+        // (재)연결마다 신선도 앵커 리셋 — frozen-from-start 가 live 로 오인되지 않도록,
+        // robot 재부팅으로 ts_ms 가 되감겨도 이 start 에서 재앵커되도록.
+        lastOnboardFreshTsMs = nil
+        lastOnboardFreshAt = nil
         // shell 이 교체됐으면(또는 최초) poller 재생성 — 기존 poller 는 old shell 을 계속
         // 폴링하므로 표시 host 와 실제 source 가 갈라진다(codex). 동일 shell 이면 idempotent 재사용.
         if onboardPoller == nil || onboardPollerShell !== remoteShell {
@@ -1594,16 +1611,44 @@ public final class ConnectionStore: ObservableObject {
             guard let self, gen == self.onboardTelemetryGeneration else { return }
             self.ingestOnboardTelemetry(sample)
         }
-        // **codex HIGH fix (2026-06-02)**: ingest 는 *파싱된 샘플*이 와야 stale 강등한다.
-        // read 실패(파일 삭제/SSH 끊김)로 샘플이 아예 안 오면 telemetryMode 가 .onboard
-        // (라이브/녹색)로 고착될 수 있다. 0.5s 주기 watchdog 으로 새 샘플과 무관하게,
-        // poller.isStale 이면 .onboard → .onboardStale 로 강등(콕핏 게이트가 조종 차단).
+        // **UDP push 수신기 (2026-06-03)** — primary 텔레메트리 경로(SSH 폴러와 동일 ingest).
+        // 고정 포트라 shell 무관 — 최초만 생성, onSample 은 매 start 마다 새 gen 으로 재바인딩.
+        // onSample 은 background queue → @MainActor hop 후 ingest(폴러 콜백과 동형).
+        if onboardUDPReceiver == nil {
+            onboardUDPReceiver = OnboardTelemetryUDPReceiver()
+        }
+        onboardUDPReceiver?.onSample = { [weak self] sample in
+            Task { @MainActor in
+                guard let self, gen == self.onboardTelemetryGeneration else { return }
+                self.ingestOnboardTelemetry(sample)
+            }
+        }
+        do {
+            try onboardUDPReceiver?.start()
+        } catch {
+            // bind 실패(포트 점유/권한) → SSH 폴러가 fallback 이라 텔레메트리 유지. 다음 start 재시도.
+            onboardUDPReceiver = nil
+        }
+        // 로봇에게 "이 Mac IP:port 로 UDP 를 쏘라"고 알림 — SSH host 와 동일 /24 의 Mac IP.
+        // robot 브로커리지가 /tmp/df-walklab-uplink 를 읽어 sendto. fire-and-forget(실패해도
+        // SSH 폴러 fallback). 매칭 IP 없으면 업링크 미설정(UDP 비활성).
+        if let macIP = macIPMatchingHost(remoteShell.host) {
+            let uplinkCmd = RobotSetupCommand.walkLabWriteUplink(
+                ip: macIP, port: DFConnectionConstants.telemetryUDPPort)
+            Task { _ = await remoteShell.send(uplinkCmd, timeoutSeconds: 4) }
+        }
+        // **stale watchdog (2026-06-03 transport-agnostic)**: UDP·SSH 어느 쪽도 1.5s 동안
+        // ts 를 전진시키지 못하면 .onboard → .onboardStale 강등(콕핏 게이트가 조종 차단).
+        // 종전엔 poller.isStale(SSH 전용)만 봐서 UDP 健全·SSH 실패(무선 stall) 시 오강등했다.
         onboardStaleWatchdog?.cancel()
         onboardStaleWatchdog = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 guard let self, gen == self.onboardTelemetryGeneration else { return }
-                if (self.onboardPoller?.isStale ?? true), self.telemetryMode == .onboard {
+                let fresh = self.lastOnboardFreshAt.map {
+                    Date().timeIntervalSince($0) <= self.onboardStaleThreshold
+                } ?? false
+                if !fresh, self.telemetryMode == .onboard {
                     self.telemetryMode = .onboardStale
                 }
             }
@@ -1621,10 +1666,25 @@ public final class ConnectionStore: ObservableObject {
         onboardPoller?.stop()
         onboardPoller = nil
         onboardPollerShell = nil
+        onboardUDPReceiver?.stop()
+        onboardUDPReceiver = nil
+        lastOnboardFreshTsMs = nil
+        lastOnboardFreshAt = nil
         onboardActiveHost = nil   // codex HIGH fix: 경로 종료 시 host 표기도 비움.
         if telemetryMode == .onboard || telemetryMode == .onboardStale {
             telemetryMode = .offline
         }
+    }
+
+    /// SSH host 와 동일 /24 의 Mac 로컬 IPv4 선택 — robot UDP 업링크 타깃(같은 NIC 보장).
+    /// 유선(192.168.123.*)이면 Mac 유선 IP, 무선(192.168.0.*)이면 무선 IP. 매칭 없으면 nil →
+    /// 업링크 미설정(UDP 비활성, SSH 폴러만 동작). host 가 IPv4 4옥텟이 아니면 nil.
+    private func macIPMatchingHost(_ host: String) -> String? {
+        let h = host.trimmingCharacters(in: .whitespaces)
+        let parts = h.split(separator: ".")
+        guard parts.count == 4 else { return nil }
+        let prefix = parts.prefix(3).joined(separator: ".") + "."
+        return NetworkProbe.localIPv4Addresses().first { $0.hasPrefix(prefix) }
     }
 
     /// onboard 샘플 1개를 기존 파이프라인에 주입 — HUD + L0/L3 게이트 동작 (contract §D.3 PINNED).
@@ -1636,16 +1696,20 @@ public final class ConnectionStore: ObservableObject {
     ///   - joints 는 onboard 에 없음 → `[:]` (L4 thermal 은 telemetryMode 로 offline 판단).
     ///   - staleness 는 poller.isStale → .onboardStale, 그 외 .onboard.
     func ingestOnboardTelemetry(_ sample: OnboardTelemetry) {
-        // **false-positive fix (2026-06-02, codex MEDIUM)**: frozen(ts 미전진) 샘플은
-        // 안전게이트(L0 voltage / L3 tilt / IMU health)에 **먹이지 않는다**. 죽은 demo 의
-        // 고정 IMU 값으로 낙상감지가 "정상"으로 오판하면 위험. mode 만 강등하고 반환.
-        let stale = onboardPoller?.isStale ?? false
-        if stale {
-            // 한 번이라도 live 였다가 frozen → .onboardStale("지연"). 한 번도 live 아니면
-            // (.offline) 그대로 — frozen-from-start 는 절대 연결됨/라이브가 안 됨.
-            if telemetryMode == .onboard { telemetryMode = .onboardStale }
+        // **transport-agnostic 신선도 (2026-06-03)**: UDP/SSH 어느 경로로 들어오든 robot
+        // ts_ms 가 *전진*한 샘플만 fresh 로 본다. frozen(ts 미전진)·중복·out-of-order(더 느린
+        // transport 의 옛 datagram)는 안전게이트(L0 voltage / L3 tilt / IMU health)에 **먹이지
+        // 않는다** — 죽은 demo 의 고정 IMU 로 낙상감지가 "정상" 오판하면 위험. 강등은 watchdog 이
+        // lastOnboardFreshAt 으로 처리(여기선 drop 만). 첫 샘플은 anchor 만 잡고 live 아님
+        // (frozen-from-start 가 connected/라이브 되는 것 방지 — 종전 poller.isStale 의미 보존).
+        if let lastTs = lastOnboardFreshTsMs {
+            guard sample.tsMs > lastTs else { return }   // 미전진/역행 → drop.
+        } else {
+            lastOnboardFreshTsMs = sample.tsMs           // 첫 샘플 — 기준점만, live 아님.
             return
         }
+        lastOnboardFreshTsMs = sample.tsMs
+        lastOnboardFreshAt = Date()
         // 신선(ts 전진) — IMU/health/telemetry 갱신 + connected.
         let imu = sample.toImuRaw()
         health.recordImuSuccess(raw: imu)         // lastImuRaw set + IMU stale 카운터 clear.
