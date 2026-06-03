@@ -36,6 +36,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <signal.h>
+#include <math.h>          // 두리번 스캔 sweep (sin)
 #include <sys/stat.h>
 #include "Walking.h"        // Robot::Walking::GetInstance()
 #include "Head.h"           // Robot::Head::GetInstance()
@@ -48,6 +49,7 @@
 #include "ColorFinder.h"    // Robot::ColorFinder — HSV 볼 검출
 #include "BallTracker.h"    // Robot::BallTracker — 볼 위치 → Head::MoveTracking
 #include "Point.h"          // Robot::Point2D
+#include "Camera.h"         // Robot::Camera::WIDTH/HEIGHT (예측 시 프레임 clamp)
 #include "minIni.h"         // Robot::minIni — config 에서 공 색상(HSV) 로드 (싸커 데모와 동일)
 
 namespace Robotis {
@@ -61,8 +63,36 @@ namespace Robotis {
     const double WalkLabBrokerage::HIP_PITCH_MAX = 20.0;
 
     // 공 색상 config 경로 (2026-06-03). [Find Color] 섹션을 ColorFinder 에 로드.
-    // 절대 경로 — 데몬 cwd 무관. install-onboard 가 주황 공 기본값으로 생성한다.
+    // 절대 경로 — 데몬 cwd 무관. install-onboard 가 빨간 공 기본값으로 생성한다.
     #define BALLCOLOR_INI "/robotis/Linux/project/demo/balltrack.ini"
+
+    // 추적 평활화 상수 (2026-06-03). EMA: 검출 위치 저역통과(0=강한평활/1=평활없음).
+    // VEL_DECAY: 미검출 예측 시 속도 감쇠(overshoot 억제).
+    #define BALL_EMA  0.45
+    #define VEL_DECAY 0.85
+
+    // **검출 강건화 — 카메라 추적 방법론 적용 (2026-06-03)**
+    //  · BALL_GATE: 공간 검증 게이트(validation gate). 새 검출이 예측 위치에서 이
+    //    픽셀거리 이상 떨어지면 false-positive(다른 적색 물체/노이즈)로 보고 기각 →
+    //    그 프레임은 예측으로 coast. 프레임폭(320) 대비 0.40 → 128px. 실제 빠른 공
+    //    이동은 허용하되 화면 반대편으로의 순간 점프는 차단(헤드가 노이즈를 안 쫓음).
+    #define BALL_GATE_FRAC 0.45
+    //  · GATE_HOLD_FRAMES: 게이트는 갓 추적중(미검출 N프레임 이내)일 때만 적용. 그 이상
+    //    끊긴 뒤엔 공이 이동했을 수 있으므로 게이트를 풀어 어디서든 즉시 재획득(re-acquire).
+    #define GATE_HOLD_FRAMES 3
+    //  · LOCK_STREAK: 스캔 중 연속 일관검출 N프레임 후 추적 락-인(1프레임 specks 무시).
+    //    2프레임=66ms → 사용자 체감 "즉시"이면서 1프레임 헛검출 방지.
+    #define LOCK_STREAK 2
+    //  · SCAN_STEP: 두리번 위상 증가/프레임. 0.16 → ~1.3s/좌우왕복(30fps). 명확한 sweep.
+    #define SCAN_STEP 0.16
+
+    // **한계각 고착 탈출 (2026-06-03)** — 가장자리 오검출(코너 응시) 감지·탈출.
+    //  헤드가 한계각(LIM_PAN/LIM_TILT) 근처에서 STATIC_EPS 미만으로 거의 안 움직인 채
+    //  LIMIT_STUCK_FRAMES 연속 지속되면 고착으로 보고 재스캔(진짜 공 재탐색).
+    #define LIM_PAN  68.0     // pan 한계(±70) 바로 근처만
+    #define LIM_TILT 54.0     // tilt 상한(55) 바로 근처만
+    #define STATIC_EPS 1.5    // 프레임간 각 변화 < 1.5° = 정지로 간주
+    #define LIMIT_STUCK_FRAMES 20   // ~0.7s 고착 → 탈출
 
     // ===== SIGTERM/SIGINT 핸들러 (§B) ============================================
     // Mac e-stop 의 belt-and-suspenders 경로(`killall -TERM demo demo-pilot`) 와
@@ -222,6 +252,21 @@ namespace Robotis {
         // minIni 는 전역 namespace (ROBOTIS Framework — Robot 아님). 데모도 `minIni*` 사용.
         minIni ini(BALLCOLOR_INI);
         m_ball_finder->LoadINISettings(&ini);
+
+        // **카메라 조도(노출/게인) — config 로드·적용 (2026-06-03)**. 재빌드 없이 ini 로 튜닝.
+        // 기본값 = ROBOTIS 프레임워크/싸커 데모 baseline (gain 255, exposure 1000, manual).
+        // 종전 하드코딩(gain255/exp2300)은 과노출 → 채도 washout → 배경 적색 오검출 유발.
+        // 노출을 baseline 으로 "초기화"해 색 채도를 살려 깔끔하게 검출. AUTO 먼저(manual 고정)
+        // 후 GAIN/EXPOSURE 적용 순서 준수.
+        Robot::LinuxCamera* cam = Robot::LinuxCamera::GetInstance();
+        if (cam) {
+            int auto_exp = ini.geti("Camera", "auto_exposure", 1);   // 1 = manual
+            int gain     = ini.geti("Camera", "gain", 255);
+            int exposure = ini.geti("Camera", "exposure", 1000);
+            cam->v4l2SetControl(V4L2_CID_EXPOSURE_AUTO, auto_exp);
+            cam->v4l2SetControl(V4L2_CID_GAIN, gain);
+            cam->v4l2SetControl(V4L2_CID_EXPOSURE_ABSOLUTE, exposure);
+        }
     }
 
     void WalkLabBrokerage::ProcessBallTracking() {
@@ -230,8 +275,16 @@ namespace Robotis {
             // **싸커 데모와 동일 (2026-06-03)**: ColorFinder 기본 생성자는 hue356(빨강)이라
             // 주황 공을 못 잡는다. soccer demo 의 `ball_finder->LoadINISettings(ini)` 처럼
             // config 에서 [Find Color] 섹션(hue/sat/val/percent)을 로드한다. 파일을 재빌드
-            // 없이 편집해 hue 를 공 색에 맞춰 튜닝 가능 (다음 enable 시 반영 — 아래 재로드).
+            // 없이 편집해 hue 를 공 색에 맞춰 튜닝 가능. ReloadBallColor 가 [Camera] 조도도 함께
+            // 적용한다(노출/게인 baseline 초기화 — 과노출 washout 제거).
             ReloadBallColor();
+            // **상하 추적 개선 (2026-06-03)**: 머리 tilt 상한이 기본 40°라 공을 머리보다 높이
+            // 들면 더 못 올라가 상하 추적이 막혔다. config([Head Pan/Tilt] top_limit)로 상한을
+            // 올려 위쪽 추적 범위 확보 (프레임워크 수정 없이 LoadINISettings 로).
+            {
+                minIni hini(BALLCOLOR_INI);
+                Robot::Head::GetInstance()->LoadINISettings(&hini);
+            }
             m_tracker = new Robot::BallTracker();
             m_vision_ready = true;
             printf("[WalkLabBrokerage] ball-tracking vision init (config %s)\n", BALLCOLOR_INI);
@@ -239,22 +292,114 @@ namespace Robotis {
         Robot::LinuxCamera::GetInstance()->CaptureFrame();
         Robot::Point2D pos = m_ball_finder->GetPosition(
             Robot::LinuxCamera::GetInstance()->fbuffer->m_HSVFrame);
-        // 볼 보이면 Head::MoveTracking(offset), 안 보이면 scan/InitTracking (데모와 동일).
-        m_tracker->Process(pos);
 
-        // 검증 로그 (throttled) — /tmp/df-balltrack.log 에 볼 검출 + 헤드 각도 기록.
-        // pos.X<0 = 미검출(scan 모드), >=0 = 검출(추적 모드). Mac 이 SSH 로 tail 해 확인.
-        // 30fps 트래킹 루프에 I/O 부담 안 주게 15프레임마다(~2Hz)만 기록.
-        static int s_bt_log = 0;
-        if ((s_bt_log++ % 15) == 0) {
-            Robot::Head* h = Robot::Head::GetInstance();
-            FILE* lf = fopen("/tmp/df-balltrack.log", "a");
-            if (lf) {
-                fprintf(lf, "balltrack %s px=(%.0f,%.0f) pan=%.1f tilt=%.1f\n",
-                        (pos.X < 0 || pos.Y < 0) ? "NO_BALL" : "FOUND",
-                        pos.X, pos.Y,
-                        h ? h->GetPanAngle() : 0.0, h ? h->GetTiltAngle() : 0.0);
-                fclose(lf);
+        // **추적 품질 업그레이드 (2026-06-03) — 카메라 추적 방법론 적용**:
+        //  · 공간 검증 게이트(validation gate): 검출이 예측 위치에서 너무 멀면(다른 적색
+        //    물체/노이즈) 기각 → 헤드가 화면을 가로질러 노이즈를 쫓지 않음(끊김의 주원인).
+        //  · 스캔 락-인 hysteresis: 두리번 중 연속 LOCK_STREAK 프레임 일관검출돼야 추적
+        //    전환(1프레임 specks 무시) — 게이트가 무력한 스캔 구간 false-lock 방지.
+        //  · EMA 저역통과 평활화: Head PD 의 "제곱 D항"이 검출 노이즈를 증폭(jerk)하던
+        //    것을 억제 → 자연스럽고 끊김 없는 추적.
+        //  · 등속도 예측(Kalman 경량판): 짧은 미검출 동안 마지막 위치+(감쇠)속도로 공을
+        //    추정해 끊김 없이 계속 추적 → lock 유지.
+        //  · 긴 미검출: 두리번 스캔 — 상하+좌우, 명확하고 빠르게.
+        Robot::Head* head = Robot::Head::GetInstance();
+        const double W = (double)Robot::Camera::WIDTH;
+        const double H = (double)Robot::Camera::HEIGHT;
+        const double GATE = BALL_GATE_FRAC * W;
+
+        bool raw_found = (pos.X >= 0 && pos.Y >= 0);
+        bool found = raw_found;
+
+        // 공간 검증 게이트 — 갓 추적중(track_valid + 미검출 GATE_HOLD_FRAMES 이내)일 때만.
+        // 예측 위치에서 GATE 이상 벗어난 검출은 같은 공이 아니라고 보고 이 프레임은
+        // 미검출로 처리(coast). 단 오래 끊긴 뒤엔 게이트를 풀어(공 이동 가능) 즉시 재획득.
+        if (raw_found && m_track_valid && !m_scanning && m_noball_count <= GATE_HOLD_FRAMES) {
+            double px = m_ball_x + m_vel_x;       // 등속 예측 위치
+            double py = m_ball_y + m_vel_y;
+            double dx = pos.X - px, dy = pos.Y - py;
+            if (dx * dx + dy * dy > GATE * GATE) found = false;
+        }
+
+        // **한계각 고착 탈출** — 헤드(직전 프레임 명령 결과)가 한계각에 붙은 채 거의 정지이고
+        // **공이 프레임 중앙에 안 잡혔을 때만**. 가장자리 오검출(공+다른 적색물체 무게중심)에
+        // 고착되면 중심을 못 맞춰 공 픽셀이 가장자리에 남는다 → 탈출. 반면 공을 높이 들어 tilt 가
+        // 한계(55°)여도 공이 화면 중앙에 잡혔으면 정상 추적이므로 오발동 금지(중앙 정지 공의 상하
+        // 흔들림 버그 수정). 따라가는 공은 헤드도 움직여(non-static) 역시 발동 안 함.
+        if (head && m_track_valid && !m_scanning) {
+            double pa = head->GetPanAngle();
+            double ti = head->GetTiltAngle();
+            bool near_limit = (pa <= -LIM_PAN || pa >= LIM_PAN || ti >= LIM_TILT);
+            bool static_head = (fabs(pa - m_last_pan) < STATIC_EPS &&
+                                fabs(ti - m_last_tilt) < STATIC_EPS);
+            // 공이 화면 중앙 영역에 잡혔으면 헤드가 중심을 맞춘 것 → 고착 아님.
+            bool centered = raw_found &&
+                            (fabs(pos.X - W * 0.5) < W * 0.25) &&
+                            (fabs(pos.Y - H * 0.5) < H * 0.30);
+            m_last_pan = pa; m_last_tilt = ti;
+            if (near_limit && static_head && !centered) m_limit_stuck++;
+            else m_limit_stuck = 0;
+            if (m_limit_stuck >= LIMIT_STUCK_FRAMES) {
+                // 고착 확정 — 추적 포기하고 즉시 재스캔(진짜 공 재탐색).
+                m_limit_stuck = 0;
+                m_found_streak = 0;
+                m_track_valid = false;
+                found = false;
+                m_noball_count = NOBALL_SCAN_DELAY;   // coast 건너뛰고 바로 스캔
+            }
+        }
+
+        if (found && m_scanning) {
+            // 스캔 → 추적 전환: 연속 일관검출 hysteresis (false-lock 방지).
+            m_found_streak++;
+            if (m_found_streak >= LOCK_STREAK) {
+                if (head) head->InitTracking();
+                m_scanning = false;
+                m_ball_x = pos.X; m_ball_y = pos.Y; m_vel_x = 0.0; m_vel_y = 0.0;
+                m_track_valid = true;
+                m_noball_count = 0;
+                m_tracker->Process(Robot::Point2D(m_ball_x, m_ball_y));
+            } else {
+                // 아직 미확정 — 헤드 정지 보류(스캔 모션 멈춤), 다음 프레임 재확인.
+                m_ball_x = pos.X; m_ball_y = pos.Y; m_vel_x = 0.0; m_vel_y = 0.0;
+            }
+        } else if (found) {
+            // 정상 추적 — EMA 평활 + 속도 추정.
+            if (!m_track_valid) {
+                m_ball_x = pos.X; m_ball_y = pos.Y; m_vel_x = 0.0; m_vel_y = 0.0;
+                m_track_valid = true;
+            } else {
+                double nx = BALL_EMA * pos.X + (1.0 - BALL_EMA) * m_ball_x;
+                double ny = BALL_EMA * pos.Y + (1.0 - BALL_EMA) * m_ball_y;
+                m_vel_x = nx - m_ball_x;   // 속도 추정 (픽셀/프레임)
+                m_vel_y = ny - m_ball_y;
+                m_ball_x = nx; m_ball_y = ny;
+            }
+            m_noball_count = 0;
+            m_tracker->Process(Robot::Point2D(m_ball_x, m_ball_y));
+        } else {
+            m_found_streak = 0;
+            m_noball_count++;
+            if (m_track_valid && m_noball_count < NOBALL_SCAN_DELAY) {
+                // 등속도 예측 — 공이 갔을 위치를 추정해 끊김 없이 추적 (속도 감쇠로 overshoot 억제).
+                m_vel_x *= VEL_DECAY; m_vel_y *= VEL_DECAY;
+                m_ball_x += m_vel_x; m_ball_y += m_vel_y;
+                if (m_ball_x < 0.0) m_ball_x = 0.0; if (m_ball_x > W - 1) m_ball_x = W - 1;
+                if (m_ball_y < 0.0) m_ball_y = 0.0; if (m_ball_y > H - 1) m_ball_y = H - 1;
+                m_tracker->Process(Robot::Point2D(m_ball_x, m_ball_y));
+            } else {
+                // 오래 잃음 — 두리번 스캔. 상하좌우. 시작 시 현재 pan 에 위상 동기(점프 방지).
+                m_track_valid = false;
+                if (!m_scanning && head) {
+                    double s = head->GetPanAngle() / 55.0;
+                    if (s > 1.0) s = 1.0; if (s < -1.0) s = -1.0;
+                    m_scan_phase = asin(s);
+                    m_scanning = true;
+                }
+                m_scan_phase += SCAN_STEP;    // 명확한 두리번 (~1.3s/좌우왕복).
+                double scan_pan  = 60.0 * sin(m_scan_phase);
+                double scan_tilt = 20.0 + 24.0 * sin(m_scan_phase * 0.7);   // 상하 sweep (좌우와 다른 주기 → 자연스러운 패턴)
+                if (head) head->MoveByAngle(scan_pan, scan_tilt);
             }
         }
     }
@@ -268,6 +413,15 @@ namespace Robotis {
         m_vision_ready = false;
         m_ball_finder = 0;
         m_tracker = 0;
+        m_scan_phase = 0.0;
+        m_noball_count = 0;
+        m_scanning = false;
+        m_ball_x = 0.0; m_ball_y = 0.0;
+        m_vel_x = 0.0; m_vel_y = 0.0;
+        m_track_valid = false;
+        m_found_streak = 0;
+        m_limit_stuck = 0;
+        m_last_pan = 0.0; m_last_tilt = 0.0;
         InstallSignalHandlers();
 
         Robot::Walking* walking = Robot::Walking::GetInstance();
@@ -476,6 +630,17 @@ namespace Robotis {
         if (want_balltrack && !m_balltrack_prev && m_ball_finder) {
             ReloadBallColor();
             printf("[WalkLabBrokerage] ball color reloaded from %s\n", BALLCOLOR_INI);
+        }
+        // OFF edge — 스캔 상태 리셋 (다음 ON 깨끗이 시작) + Head 추적 PD 리셋(잔여 drift 차단).
+        // 이후 Mac head 명령(아래 게이트)이 머리를 인계받아 정지/수동 제어.
+        if (!want_balltrack && m_balltrack_prev) {
+            m_scanning = false;
+            m_noball_count = 0;
+            m_track_valid = false;   // 추적 평활/예측 상태 리셋 (다음 ON 깨끗이 시작)
+            m_found_streak = 0;
+            m_limit_stuck = 0;
+            Robot::Head* h = Robot::Head::GetInstance();
+            if (h) h->InitTracking();
         }
         m_balltrack_prev = want_balltrack;
         m_balltrack_enabled = want_balltrack;

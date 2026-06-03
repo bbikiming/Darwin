@@ -140,6 +140,41 @@ private:
 
     /// 볼 트래킹 이전 enable 상태 (false→true edge 감지 → ReloadBallColor).
     bool m_balltrack_prev;
+
+    /// 두리번 스캔 위상 (공 미검출 시 머리 sweep 정현파). enable 마다 리셋.
+    double m_scan_phase;
+
+    /// 연속 미검출 프레임 카운터. 이 값 이상이면 스캔 시작 (짧은 dropout 무시 → lock 유지).
+    int m_noball_count;
+
+    /// 현재 스캔(두리번) 중인가. 스캔→추적 전환 시 InitTracking(PD 리셋)에 사용.
+    bool m_scanning;
+
+    /// **끈끈한 추적 (2026-06-03)** — 스캔 시작 전 허용 dropout 프레임 수.
+    /// 실측: 공이 눈앞에 있어도 검출률 ~40-60% 로 깜빡임 → 종전 15(0.5s)는 잠깐 끊겨도
+    /// 두리번으로 이탈해 "못 따라옴"의 주원인. 45(~1.5s)로 늘려, 공이 있는 동안엔 검출이
+    /// 끊겨도 마지막 위치를 응시하며 lock 유지(예측 coast). 진짜 사라졌을 때만 스캔 재개.
+    static const int NOBALL_SCAN_DELAY = 45;
+
+    // 추적 평활화/예측 상태 (2026-06-03). EMA 평활 위치 + 속도 추정.
+    double m_ball_x;       ///< EMA 평활된 공 픽셀 X
+    double m_ball_y;       ///< EMA 평활된 공 픽셀 Y
+    double m_vel_x;        ///< 공 X 속도 (픽셀/프레임) — 미검출 예측에 사용
+    double m_vel_y;        ///< 공 Y 속도 (픽셀/프레임)
+    bool   m_track_valid;  ///< 유효한 추적 상태인가 (평활/예측 시드됨)
+
+    /// **검출 강건화 (2026-06-03)** — 스캔(두리번) 중 락-인 hysteresis.
+    /// 스캔 상태(m_track_valid=false)에서는 공간 게이트가 무력하므로, 연속
+    /// LOCK_STREAK 프레임 일관 검출돼야 추적으로 전환(1프레임 false-positive 무시).
+    int m_found_streak;
+
+    /// **한계각 고착 탈출 (2026-06-03)** — 헤드가 pan/tilt 한계에 붙은 채 정지(static)한
+    /// 연속 프레임. ColorFinder 가 공+다른 적색물체의 "무게중심"을 반환해 헤드가 중심을
+    /// 못 맞추는 가장자리 오검출에 고착(코너 응시 = "딴 데 봄")하는 것을 감지·탈출한다.
+    /// 추적중 따라가는 공은 헤드가 움직이므로(non-static) 오발동하지 않는다.
+    int m_limit_stuck;
+    double m_last_pan;   ///< 직전 프레임 pan (static 판정용)
+    double m_last_tilt;  ///< 직전 프레임 tilt
 };
 
 }  // namespace Robotis
