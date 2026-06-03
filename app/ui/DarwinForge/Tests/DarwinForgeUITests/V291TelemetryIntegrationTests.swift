@@ -163,9 +163,20 @@ final class V291TelemetryIntegrationTests: XCTestCase {
         await server.handleClientDisconnected(channel, reason: "userClosed")
         // **V291-11**: idle 끊김은 1.5s grace 후 performDisconnectStop 에서 emit.
         // (active command 가 아니므로 즉시 emit 되지 않음 — grace 만료를 기다린다.)
-        try await Task.sleep(nanoseconds: 1_600_000_000)
+        //
+        // **CI flaky fix**: 고정 1.6s sleep 은 grace(1.5s)와 여유가 100ms 뿐이라 CI
+        // 부하 시 Task 스케줄 지연으로 emit 전에 assert 가 실행돼 실패했다. deadline
+        // 폴링(최대 5s, 50ms 간격)으로 바꿔 grace 만료 직후 안정적으로 감지한다.
+        var discEv: RecordingHarness.Recorded?
+        let deadline = Date().addingTimeInterval(5.0)
+        while Date() < deadline {
+            if let ev = harness.events.first(where: { $0.kind == .mobilePilotDisconnected }) {
+                discEv = ev
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
 
-        let discEv = harness.events.first { $0.kind == .mobilePilotDisconnected }
         XCTAssertNotNil(discEv, "grace(1.5s) 만료 후 mobilePilotDisconnected 가 기록되어야 함")
         XCTAssertEqual(discEv?.level, .info)
         XCTAssertEqual(discEv?.actor, .system)
