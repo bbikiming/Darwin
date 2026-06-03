@@ -1644,41 +1644,87 @@ public final class ConnectionStore: ObservableObject {
         }
     }
 
-    /// `switchMode` 헬퍼 — 보행 데모 정지 후 관절 버스 연결.
+    /// `switchMode` 헬퍼 — 관절 버스(LAN/5530) 연결.
+    ///
+    /// ⚠️ **ConnectionWizard.connectLAN 과 동일 시퀀스** — 변경 시 양쪽 동기화.
+    /// (TODO: store 공통 헬퍼로 통합해 divergence 제거.)
+    ///
+    /// **버그 fix (2026-06-03)**: 종전엔 `demoStop` 직후 결과 확인 없이 `connect` 해서,
+    /// 브리지(socat 5530)가 아직 안 떴는데 연결을 시도 → "연결 오류". 마법사처럼
+    /// `startLanBridge`(데모 종료 + socat 기동 + `:5530` listen 최대 4초 대기 → `BRIDGE_OK`)
+    /// 로 포트를 연 뒤, **BRIDGE_OK 확인 후에만** bus 연결한다.
     @MainActor
     private func switchToJointEdit(remoteShell: RemoteShell) async {
-        modeSwitchPhase = .switching(to: .jointEdit, step: "보행 데모 정지…")
-        // 온보드 텔레메트리 폴러/수신기 먼저 정리 — 곧 죽을 데모를 폴링하지 않게.
-        stopOnboardTelemetry()
-        // demoStop = 데모 kill + forge-bridge(socat) 재시작 → Mac 측 모터 송출 복구.
-        let stopResult = await remoteShell.send(RobotSetupCommand.demoStop)
-        if let err = stopResult?.error {
-            modeSwitchPhase = .failed("보행 데모 정지 실패 — \(err)")
+        // LAN = 유선 직결 고정(192.168.123.1). Mac bus 가 모터 직접 구동 → Mac 키프레임 엔진.
+        let wiredHost = DFConnectionConstants.robotEthernetIP
+        let port: UInt16 = networkPort == 0 ? DFConnectionConstants.bridgePort : networkPort
+        networkPort = port
+        networkHost = wiredHost
+        remoteShell.host = wiredHost
+        connectAttemptGeneration &+= 1
+        stopOnboardTelemetry()                          // 곧 socat 으로 교체될 데모 폴링 중단.
+        walkSession?.walkingEngine = .macSparseKeyframe
+
+        modeSwitchPhase = .switching(to: .jointEdit, step: "5530 포트 여는 중…")
+        let ex = await remoteShell.send(RobotSetupCommand.startLanBridge)
+        if ex == nil || ex?.error != nil {
+            modeSwitchPhase = .failed("LAN 브리지 시작 실패 — SSH 응답 없음. 랜선·SSH/키 확인")
+            return
+        }
+        guard (ex?.result ?? "").contains("BRIDGE_OK") else {
+            modeSwitchPhase = .failed("LAN 브리지(socat) 시작 실패 — 로봇 /dev/ttyUSB0·포트 확인")
             return
         }
 
         modeSwitchPhase = .switching(to: .jointEdit, step: "관절 버스 연결…")
-        // wiredHost: 이더넷 직결 기본 IP(192.168.123.1). connect 가 bus + telemetryMode(.lan) 설정.
-        let wiredHost = DFConnectionConstants.robotEthernetIP
-        connect(endpoint: .network(host: wiredHost, port: DFConnectionConstants.bridgePort))
+        // BRIDGE_OK 확정 후에만 연결 — connect 가 bus + telemetryMode(.lan) 설정.
+        connect(endpoint: .network(host: wiredHost, port: port))
         modeSwitchPhase = .idle
     }
 
-    /// `switchMode` 헬퍼 — 버스 해제 후 보행 데모 시작 + 온보드 텔레메트리.
+    /// `switchMode` 헬퍼 — 보행(SSH 온보드) 모드 연결.
+    ///
+    /// ⚠️ **ConnectionWizard.connectSSHOnboard 와 동일 시퀀스** — 변경 시 양쪽 동기화.
+    /// (TODO: store 공통 헬퍼로 통합.)
+    ///
+    /// **fix (2026-06-03)**: 종전엔 엔진/brokering 설정과 기동 게이트가 빠져, 콕핏이 SIM 으로
+    /// 빠지거나 명령이 안 나갈 수 있었다. 마법사처럼 `walkingEngine=.robotisOnboard` +
+    /// `autoOnboardBrokering=true` 설정 후, walklab 활성 verify → 미활성이면 기동하고
+    /// **"✅ demo 실행 중" 마커 확인 후에만** 온보드 텔레메트리를 시작한다.
     @MainActor
     private func switchToWalk(remoteShell: RemoteShell) async {
-        modeSwitchPhase = .switching(to: .walk, step: "버스 해제…")
-        disconnect()
+        let host = remoteShell.host.isEmpty ? DFConnectionConstants.robotEthernetIP : remoteShell.host
+        networkHost = host
+        // 콕핏 isOnboardMode·motorGate·brokering 활성화 — 안 켜면 SIM/명령 미송출(사용자 보고).
+        walkSession?.walkingEngine = .robotisOnboard
+        walkSession?.autoOnboardBrokering = true
+        if bus != nil { disconnect() }                  // robot 측 socat→demo 교체 위해 bus 먼저 해제.
+        connectAttemptGeneration &+= 1
+        let attemptGen = connectAttemptGeneration
 
-        modeSwitchPhase = .switching(to: .walk, step: "보행 데모 시작…")
-        // walkLabRobotisStart = forge-bridge 종료(USB 해제) + walklab 데모 기동.
-        let startResult = await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
-        if let err = startResult?.error {
-            modeSwitchPhase = .failed("보행 데모 시작 실패 — \(err)")
+        modeSwitchPhase = .switching(to: .walk, step: "데모 모드 확인…")
+        let verify = await remoteShell.send(RobotSetupCommand.walkLabVerifyMode)
+        guard attemptGen == connectAttemptGeneration else { return }
+        if verify == nil || verify?.error != nil || (verify?.result ?? "").isEmpty {
+            modeSwitchPhase = .failed("SSH 응답 없음 — 호스트(\(host))·SSH 키 확인")
             return
         }
-
+        if !((verify?.result ?? "").contains("DF_WALKLAB=active")) {
+            modeSwitchPhase = .switching(to: .walk, step: "walklab 기동 — 로봇이 움직입니다(잡아주세요)")
+            let started = await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
+            guard attemptGen == connectAttemptGeneration else { return }
+            if started == nil || started?.error != nil {
+                modeSwitchPhase = .failed("온보드 demo 기동 실패 — \(started?.error ?? "응답 없음")")
+                return
+            }
+            guard (started?.result ?? "").contains("✅ demo 실행 중") else {
+                modeSwitchPhase = .failed("walklab 데몬이 안 떴습니다 — patched 바이너리·카메라·포트 확인")
+                return
+            }
+        }
+        guard attemptGen == connectAttemptGeneration else { return }
         modeSwitchPhase = .switching(to: .walk, step: "온보드 텔레메트리…")
+        // 첫 샘플 도착 시 ingestOnboardTelemetry 가 status 를 .connected 로 올린다(truth 기반).
         startOnboardTelemetry(remoteShell: remoteShell)
         modeSwitchPhase = .idle
     }
