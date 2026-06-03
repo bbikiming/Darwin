@@ -113,3 +113,6 @@ DARwIn-OP_ROBOTIS_v1.6.0/
 # `swift test --enable-code-coverage` 또는 Xcode coverage run 시 working dir 에 생성.
 *.profraw
 default.profraw
+
+# 로컬 백업 모음 (앱 번들/로봇 바이너리 — repo 에 넣지 않음)
+_backups/
