@@ -275,7 +275,7 @@ Cockpit 툴바 "🎮 컨트롤러" 버튼 → **컨트롤러 세팅 시트**(약
 | 단계 | 산출 | 수용 기준(증거) |
 |---|---|---|
 | M1 코어 로직 ✅ | 바인딩/프로파일/곡선/conflict/캘리브레이션 순수 로직 | **완료 2026-06-03** — 6 소스 + 4 테스트 파일, `swift build` 성공, **59 tests GREEN**, 스펙 리뷰 통과 |
-| M2 입력 추상화 | `CockpitControllerSource`+`Mock`+`GCControllerSource` | 가상 컨트롤러로 snapshot→cockpit 주입 검증 |
+| M2 입력 추상화 ✅ | `CockpitControllerSource`+`Mock`+`GCControllerSource` + 순수 리졸버 + 드라이버 | **완료 2026-06-04** — 6 소스 + 4 테스트, `swift build` 성공, **신규 26 tests GREEN**(전체 3186 GREEN), CockpitState 무수정 |
 | M3 안전 | 데드맨/failsafe/hold-confirm/E-Stop 잠금 | "떼면 0속도", "끊김<1초 정지" 테스트 통과 |
 | M4 UI | 바인딩 시트(다이어그램/Inspector/Listen/곡선/테스트) | 가상 컨트롤러로 라이브 하이라이트·바인딩·곡선 프리뷰 동작 |
 | M5 프로파일 | 프리셋/저장/복원/JSON I/O | 라운드트립 직렬화 테스트 |
