@@ -29,6 +29,26 @@ mkdir -p "$APP_PATH/Contents/Resources"
 cp "$BIN" "$APP_PATH/Contents/MacOS/${APP_NAME}"
 chmod +x "$APP_PATH/Contents/MacOS/${APP_NAME}"
 
+# 3a) SwiftPM 리소스 번들 복사 — **로봇 메시 / 앱 아이콘 / 워드마크가 보이려면 필수**.
+#     STLLoader·AppIcon 은 SafeResourceBundle 을 쓰는데, 이건 .app/Contents/Resources/
+#     의 <module>.bundle 만 찾고 절대 .build 경로 폴백이 없다. 종전 run-app.sh 는
+#     바이너리만 복사 → 메시·아이콘 미발견 → 로봇 안 보이고 아이콘이 코드생성 폴백으로
+#     떨어지는 회귀(2026-06-04 확인). 번들을 표준 위치(Contents/Resources)와 .app 루트
+#     (Bundle.module 의 SwiftPM dev 후보) 양쪽에 복사해 두 해석 경로 모두 충족.
+BUILD_DIR="$(dirname "$BIN")"
+shopt -s nullglob
+RES_BUNDLES=("$BUILD_DIR"/*.bundle)
+shopt -u nullglob
+if (( ${#RES_BUNDLES[@]} == 0 )); then
+    echo "⚠︎ 리소스 번들 없음: $BUILD_DIR/*.bundle — 메시/아이콘이 누락될 수 있음"
+else
+    for b in "${RES_BUNDLES[@]}"; do
+        cp -R "$b" "$APP_PATH/Contents/Resources/"
+        cp -R "$b" "$APP_PATH/"
+    done
+    echo "▶ 리소스 번들 ${#RES_BUNDLES[@]}개 복사 (메시/아이콘/워드마크)"
+fi
+
 cat > "$APP_PATH/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
