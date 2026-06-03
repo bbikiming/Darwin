@@ -3,7 +3,8 @@
 #
 # 사용법 (로봇 VNC 터미널에서):
 #   1) Mac 에서 SMB 로 이 폴더의 파일들(install-onboard.sh, WalkLabBrokerage.cpp,
-#      WalkLabBrokerage.h)을 로봇의 demo 폴더(/robotis/Linux/project/demo/)에 복사
+#      WalkLabBrokerage.h, balltrack.ini)을 로봇의 demo 폴더(/robotis/Linux/project/demo/)에 복사
+#      (balltrack.ini = 볼 트래킹 HSV 색 + 헤드 tilt 상한 + 카메라 조도. 없으면 공 검출 실패.)
 #   2) 로봇 VNC 터미널:  cd /robotis/Linux/project/demo && sudo bash install-onboard.sh
 #
 # 안전: main.cpp / Makefile 을 백업(.df-orig)하고, 멱등(이미 적용 시 skip)하며,
@@ -17,8 +18,8 @@ if [ ! -f "$DEMO/main.cpp" ] || [ ! -f "$DEMO/Makefile" ]; then
 fi
 echo "▶ demo: $DEMO"
 
-# 0) 브로커리지 소스 존재 확인
-for f in WalkLabBrokerage.cpp WalkLabBrokerage.h; do
+# 0) 브로커리지 소스 + 볼 트래킹 config 존재 확인
+for f in WalkLabBrokerage.cpp WalkLabBrokerage.h balltrack.ini; do
   if [ ! -f "$DEMO/$f" ]; then
     echo "✗ $f 없음 — Mac 에서 SMB 로 이 폴더에 복사하세요."
     exit 1
@@ -28,6 +29,21 @@ done
 # 1) 백업
 cp -p main.cpp main.cpp.df-orig 2>/dev/null || true
 cp -p Makefile Makefile.df-orig 2>/dev/null || true
+
+# 1b) balltrack.ini (볼 트래킹 HSV 색 + 헤드 tilt 상한 + 카메라 조도) 설치.
+#     WalkLabBrokerage 가 런타임에 BALLCOLOR_INI 절대경로로 읽음(ReloadBallColor).
+#     없으면 ColorFinder 기본값(공 색 불일치) + 카메라 미설정 → 볼 트래킹 실패.
+#     멱등 — 로봇에 이미 튜닝된 ini 가 있으면 보존(덮어쓰지 않음). 없을 때만 baseline 설치.
+BALLCOLOR_INI="/robotis/Linux/project/demo/balltrack.ini"
+if [ "$DEMO/balltrack.ini" -ef "$BALLCOLOR_INI" ]; then
+  echo "▶ balltrack.ini 이미 demo 경로에 위치 — 그대로 사용 ($BALLCOLOR_INI)"
+elif [ -f "$BALLCOLOR_INI" ]; then
+  echo "▶ balltrack.ini 이미 존재 — 로봇 튜닝본 보존, 복사 skip ($BALLCOLOR_INI)"
+else
+  mkdir -p "$(dirname "$BALLCOLOR_INI")"
+  cp -p "$DEMO/balltrack.ini" "$BALLCOLOR_INI"
+  echo "▶ balltrack.ini → $BALLCOLOR_INI 설치 (볼 색/조도 baseline)"
+fi
 
 # 2) include 주입 (StatusCheck.h 다음, 멱등)
 if ! grep -q 'WalkLabBrokerage.h' main.cpp; then

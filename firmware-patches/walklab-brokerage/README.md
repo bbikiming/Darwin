@@ -65,10 +65,17 @@ enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg
 # robot 측 SSH 접속 후
 cd ~/Framework/Linux/project/demo
 patch -p1 < walklab-brokerage.patch
+# 볼 트래킹 config 설치 — WalkLabBrokerage 가 런타임에 절대경로로 읽음.
+# 없으면 ColorFinder 기본값(공 색 불일치) + 카메라 미설정 → 볼 트래킹 실패.
+# 이미 튜닝본이 있으면 보존(덮어쓰지 말 것).
+cp balltrack.ini /robotis/Linux/project/demo/balltrack.ini   # = BALLCOLOR_INI
 make clean && make
 # /tmp 권한 확인 — sudo 없이 write 가능해야 함
 ls -la /tmp/df-pilot-mode 2>/dev/null || true
 ```
+
+> **권장**: 위 수동 patch 대신 `install-onboard.sh` 를 쓰면 main.cpp/Makefile patch +
+> `balltrack.ini` 설치(튜닝본 보존)를 멱등하게 처리한다. 자세한 절차는 `INTEGRATION.md`.
 
 ## 검증
 

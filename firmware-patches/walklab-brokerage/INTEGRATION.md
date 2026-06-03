@@ -15,11 +15,16 @@ scp -r firmware-patches/walklab-brokerage/ \
 # 2) robot SSH 접속
 ssh darwin@<robot-ip>
 
-# 3) 헤더 + 구현 파일을 demo 폴더에 복사
+# 3) 헤더 + 구현 파일 + 볼 트래킹 config 를 demo 폴더에 복사
 cp ~/walklab-brokerage/WalkLabBrokerage.h \
    ~/Framework/Linux/project/demo/
 cp ~/walklab-brokerage/WalkLabBrokerage.cpp \
    ~/Framework/Linux/project/demo/
+# balltrack.ini = 볼 트래킹 HSV 색 + 헤드 tilt 상한 + 카메라 조도.
+# WalkLabBrokerage 가 런타임에 절대경로 /robotis/Linux/project/demo/balltrack.ini 로 읽음.
+# 없으면 ColorFinder 기본값(공 색 불일치) + 카메라 미설정 → 볼 트래킹 실패.
+cp ~/walklab-brokerage/balltrack.ini \
+   /robotis/Linux/project/demo/    # ← BALLCOLOR_INI 절대경로. 튜닝본이 이미 있으면 보존(복사 생략).
 
 # 4) main.cpp + Makefile patch 적용
 cd ~/Framework/Linux/project/demo
