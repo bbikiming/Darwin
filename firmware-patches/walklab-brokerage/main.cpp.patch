@@ -47,7 +47,7 @@
 +    // 기본 (mode 미설정 또는 "soccer") 은 원본 흐름 유지.
 +    if (ShouldRunWalkLabBrokerage()) {
 +        printf("[main] entering WalkLabBrokerage mode\n");
-+        Robotis::WalkLabBrokerage().Run();   // 무한 루프 — SIGTERM 까지 동작
++        Robotis::WalkLabBrokerage().Run(&cm730);   // 무한 루프 — SIGTERM 까지 동작 (cm730 전달 → 실 전압/3축 IMU)
 +        return 0;
 +    }
 +

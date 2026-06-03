@@ -68,7 +68,7 @@ if ! grep -q 'DarwinForge WalkLab onboard' main.cpp; then
                 fprintf(stderr, "[df] entering WalkLab onboard brokerage\n");
                 Head::GetInstance()->m_Joint.SetEnableHeadOnly(true, true);
                 Walking::GetInstance()->m_Joint.SetEnableBodyWithoutHead(true, true);
-                Robotis::WalkLabBrokerage().Run();   // 무한 루프 — SIGTERM 까지
+                Robotis::WalkLabBrokerage().Run(&cm730);   // 무한 루프 — SIGTERM 까지 (cm730 전달 → 실 전압/3축 IMU; 무인자면 fallback=전압0)
                 return 0;
             }
         }
