@@ -384,16 +384,18 @@ public final class MobileRelayController: ObservableObject {
                                             actor: .system, data: ["source": "lockout"])
                     }
                 }
-                // V297-6 (PM Story S2.1): 동적 polling 주기 — burst/steady 전환.
-                // 세션 시작 후 첫 5초: 200ms (5Hz burst) — iOS 가 페어링 직후
-                // dxlPower/robot 상태를 빠르게 확인할 수 있도록.
-                // 5초 이후 또는 세션 없음: 1초 (1Hz steady) — CPU/배터리 절감.
+                // V297-6 (PM Story S2.1) + 텔레메트리 지연 개선: 동적 polling 주기.
+                // 활성 세션: 첫 5초 200ms(5Hz burst), 이후 250ms(4Hz) 유지 — 조종 중
+                //   iOS 화면이 1초 묵은 값이 되지 않도록(종전 5초 후 1Hz 로 떨어지던 문제).
+                // 세션 없음: 1초(1Hz steady) — CPU/배터리 절감 의도 보존.
                 let startedAt = await self?.sessionStartedAt
                 let sleepNs: UInt64
-                if let start = startedAt, Date().timeIntervalSince(start) < 5.0 {
-                    sleepNs = 200_000_000   // burst: 200ms
+                if let start = startedAt {
+                    sleepNs = Date().timeIntervalSince(start) < 5.0
+                        ? 200_000_000   // burst: 200ms (페어링 직후 5초)
+                        : 250_000_000   // active steady: 250ms (4Hz, 조종 지속)
                 } else {
-                    sleepNs = 1_000_000_000 // steady: 1s (세션 없음 포함)
+                    sleepNs = 1_000_000_000 // 세션 없음: 1s steady (배터리 절감)
                 }
                 try? await Task.sleep(nanoseconds: sleepNs)
             }

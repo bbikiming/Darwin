@@ -5,7 +5,7 @@ import SwiftUI
 /// 최신 `OnboardTelemetry`와 staleness를 노출하는 폴러.
 ///
 /// 비유: 로봇이 우편함(`/tmp/df-walklab-telemetry`)에 0.2초마다 새 엽서를 넣는다.
-/// 이 폴러는 0.5초마다 우편함을 열어 가장 최근 엽서 한 장을 꺼내 읽는다. 엽서가
+/// 이 폴러는 0.2초마다 우편함을 열어 가장 최근 엽서 한 장을 꺼내 읽는다. 엽서가
 /// 1.5초 넘게 갱신 안 되면(`isStale`) "지연" 상태로 본다 — UI가 LAN의 stale-green을
 /// 보여주지 않도록.
 ///
@@ -47,8 +47,11 @@ public final class OnboardTelemetryPoller: ObservableObject {
     /// 거짓 표시. ts_ms 가 전진했을 때만 anchor 를 옮겨 frozen 을 stale 로 판정.
     private var lastFreshTsMs: Int64?
 
+    // 기본 200ms(5Hz): 로봇이 §A.1 에서 200ms 주기로 telemetry 를 쓰므로 그에 정합.
+    // 종전 500ms 는 5Hz 송신을 2Hz 로 언더샘플 → 최대 ~500ms 묵은 값. 유선(123.1, ~1ms RTT)
+    // 에서 폴-대기 지연 절반↓. 무선 경로면 RTT 가 자연 스로틀이라 과폴링 위험 없음.
     public init(remoteShell: RemoteShell,
-                intervalMs: Int = 500,
+                intervalMs: Int = 200,
                 pollCommand: String = "cat /tmp/df-walklab-telemetry 2>/dev/null") {
         self.remoteShell = remoteShell
         self.intervalMs = max(50, intervalMs)
