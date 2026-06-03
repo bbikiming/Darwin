@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// 범용 컨트롤러 세팅 시트 (M4 코어) — 게임패드 없이 **가상 컨트롤러**로 키매핑/주입
-/// 체감. 가상 패드 입력이 `CockpitControllerDriver` 를 통해 동일 `CockpitState` 에
-/// 30Hz 주입되어 뒤편 cockpit 로봇이 실시간 반응한다.
+/// 범용 컨트롤러 세팅 시트 — DJI 매핑 시트의 3-컬럼 레이아웃/사용성을 그대로 따른
+/// 메인 UI. M1 프로파일(바인딩·튜닝·activator) + M2 추상화(리졸버·드라이버) +
+/// 가상 컨트롤러를 통합한다.
 ///
-/// 레이아웃: 헤더(프리셋·연결·conflict) / 좌 바인딩 목록 / 중앙 가상 패드 / 우 라이브 테스트.
-/// press-to-bind·곡선 에디터·캘리브레이션은 후속(M4 확장) 범위.
+/// 좌: 동작 할당 · 중앙: 게임패드 다이어그램(라이브 하이라이트·클릭-투-바인드) + 가상 입력 ·
+/// 우: Inspector(감도/반응곡선/Invert/모드 — 실제 `ControllerAxisTuning`·`ActivatorType` 에 반영).
+/// 가상 패드 입력은 드라이버 경유로 cockpit 에 30Hz 주입되어 로봇이 실시간 반응한다.
 @MainActor
 public struct CockpitControllerSettingsSheet: View {
     @ObservedObject var cockpit: CockpitState
@@ -13,185 +14,638 @@ public struct CockpitControllerSettingsSheet: View {
 
     @StateObject private var source = VirtualControllerSource()
     @State private var driver: CockpitControllerDriver?
-    @State private var preset: Preset = .xbox
 
-    /// 기본 프리셋 선택.
+    @State private var editingProfile: ControllerBindingProfile
+    @State private var viewMode: ViewMode = .device
+    @State private var selectedAction: CockpitAction = .moveForward
+    @State private var selectedBinding: ControllerBinding?
+    @State private var listening: Bool = false
+    @State private var notice: String?
+    @State private var noticeTask: Task<Void, Never>?
+
+    public enum ViewMode: String, CaseIterable, Identifiable {
+        case device = "장치", list = "목록"
+        public var id: String { rawValue }
+    }
+
     enum Preset: String, CaseIterable, Identifiable {
-        case xbox, dualSense, empty
+        case xbox = "Xbox / RG G01", dualSense = "DualSense", empty = "비어 있음"
         var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .xbox:      return "Xbox / RG G01"
-            case .dualSense: return "DualSense"
-            case .empty:     return "비어 있음"
-            }
-        }
         var profile: ControllerBindingProfile {
             switch self {
-            case .xbox:      return .xbox
+            case .xbox: return .xbox
             case .dualSense: return .dualSense
-            case .empty:     return .empty
+            case .empty: return .empty
             }
         }
     }
-
-    private var profile: ControllerBindingProfile { preset.profile }
 
     public init(cockpit: CockpitState, isPresented: Binding<Bool>) {
         self.cockpit = cockpit
         self._isPresented = isPresented
+        self._editingProfile = State(initialValue: ControllerBindingProfileStore.load())
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().overlay(Color.white.opacity(0.1))
-            HStack(alignment: .top, spacing: 14) {
-                bindingList.frame(width: 240)
-                Divider().overlay(Color.white.opacity(0.08))
-                VStack(spacing: 12) {
-                    VirtualControllerPad(source: source)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(CockpitColors.panelSolid))
-                    injectionReadout
-                }
-                ControllerLiveTestPanel(source: source, profile: profile)
-                    .frame(width: 300)
-            }
-            .padding(14)
+            topBar
+            if let notice { banner(notice) }
+            Divider()
+            if viewMode == .device { deviceColumns } else { listMode }
+            Divider()
+            footer
         }
-        .frame(width: 1040, height: 660)
-        .background(CockpitColors.backdrop)
-        .onAppear(perform: startDriver)
-        .onDisappear(perform: stopDriver)
-        .onChange(of: preset) { _, _ in driver?.profile = profile }
+        .frame(width: 1100, height: 760)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { startDriver(); syncInspector(selectedAction) }
+        .onDisappear { stopDriver(); noticeTask?.cancel() }
+        .onChange(of: editingProfile) { _, p in driver?.profile = p }
+        .onChange(of: source.snapshot) { _, snap in handleListen(snap) }
     }
 
-    // MARK: - 헤더
+    // MARK: - Top bar
 
-    private var header: some View {
+    private var topBar: some View {
         HStack(spacing: 16) {
-            Label("컨트롤러 세팅", systemImage: "gamecontroller.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
-
-            Picker("프리셋", selection: $preset) {
-                ForEach(Preset.allCases) { Text($0.label).tag($0) }
+            HStack(spacing: 8) {
+                Image(systemName: "gamecontroller.fill").font(.system(size: 14)).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("컨트롤러 매핑").font(.system(size: 14, weight: .semibold))
+                    Text("각 동작에 매핑할 컨트롤러 입력을 선택하세요.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
             }
-            .pickerStyle(.segmented)
-            .frame(width: 320)
-
-            conflictBadge
-
             Spacer()
-
-            Text("가상 컨트롤러 · 게임패드 없이 데모")
-                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
-
-            Button("닫기") { isPresented = false }
-                .keyboardShortcut(.cancelAction)
+            Picker("", selection: $viewMode) {
+                ForEach(ViewMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented).frame(width: 140)
+            Spacer()
+            HStack(spacing: 10) {
+                presetMenu
+                Button { isPresented = false } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary).frame(width: 22, height: 22)
+                        .background(Circle().fill(Color.secondary.opacity(0.12)))
+                }
+                .buttonStyle(.plain).keyboardShortcut(.escape, modifiers: []).help("닫기 (ESC)")
+            }
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.horizontal, 18).padding(.vertical, 12)
+    }
+
+    private var presetMenu: some View {
+        Menu {
+            ForEach(Preset.allCases) { preset in
+                Button {
+                    editingProfile = preset.profile
+                    syncInspector(selectedAction)
+                    showNotice("\(preset.rawValue) 프리셋을 적용했어요.")
+                } label: { Label(preset.rawValue, systemImage: "gamecontroller") }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text").font(.system(size: 10))
+                Text(editingProfile.name).font(.system(size: 11, weight: .medium))
+                    .lineLimit(1).frame(maxWidth: 140, alignment: .leading)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.10))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)))
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+    }
+
+    // MARK: - Device 3-column
+
+    private var deviceColumns: some View {
+        HStack(spacing: 0) {
+            actionColumn.frame(width: 280)
+            Divider()
+            centerColumn.frame(maxWidth: .infinity)
+            Divider()
+            inspectorColumn.frame(width: 300)
+        }
+    }
+
+    // MARK: - Left: 동작 할당
+
+    private var actionColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("동작 할당").font(.system(size: 13, weight: .semibold))
+                Image(systemName: "info.circle").font(.system(size: 10)).foregroundStyle(.secondary)
+                    .help("동작을 선택한 뒤 가운데 다이어그램의 입력을 클릭하면 매핑됩니다.")
+                Spacer()
+                conflictBadge
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(CockpitAction.Group.allCases, id: \.self) { group in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(groupTitle(group)).font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            VStack(spacing: 4) {
+                                ForEach(actions(in: group), id: \.self) { actionCard($0) }
+                            }
+                        }
+                    }
+                }.padding(.bottom, 8)
+            }
+        }
+        .padding(16)
     }
 
     private var conflictBadge: some View {
-        let conflicts = profile.conflicts()
+        let conflicts = editingProfile.conflicts()
         return Group {
             if conflicts.isEmpty {
-                Label("충돌 없음", systemImage: "checkmark.seal.fill")
-                    .foregroundStyle(CockpitColors.live)
+                Label("충돌 없음", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
             } else {
-                Label("\(conflicts.count) 충돌", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(CockpitColors.warn)
-                    .help(conflictSummary(conflicts))
+                Label("\(conflicts.count)", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).help(conflictSummary(conflicts))
             }
-        }
-        .font(.system(size: 11, weight: .medium))
+        }.font(.system(size: 10, weight: .medium))
     }
 
-    private func conflictSummary(_ conflicts: [ControllerBindingConflict]) -> String {
-        conflicts.map { c in
-            switch c {
-            case .duplicateInput(let b, let acts):
-                return "중복 입력 \(b.displayLabel): \(acts.map(\.label).joined(separator: ", "))"
-            case .safetyCriticalUnbound(let a):
-                return "안전 미할당: \(a.label)"
-            }
-        }.joined(separator: "\n")
-    }
-
-    // MARK: - 바인딩 목록
-
-    private var bindingList: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(CockpitAction.Group.allCases, id: \.self) { group in
-                    let actions = CockpitAction.allCases.filter { $0.group == group }
-                    if !actions.isEmpty {
-                        Text(group.rawValue.uppercased())
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.45))
-                        ForEach(actions, id: \.self) { bindingRow($0) }
-                    }
+    private func actionCard(_ action: CockpitAction) -> some View {
+        let isSelected = selectedAction == action
+        let binding = editingProfile.bindings[action] ?? .unbound
+        return Button {
+            selectedAction = action; syncInspector(action)
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle().fill(isSelected ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.10))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: actionIcon(action)).font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                 }
+                Text(action.label).font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                Spacer(minLength: 4)
+                bindingBadge(binding)
+                Circle().fill(binding.isUnbound ? Color.secondary.opacity(0.35) : Color.green)
+                    .frame(width: 6, height: 6)
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? Color.accentColor.opacity(0.10) : Color.secondary.opacity(0.05)))
         }
+        .buttonStyle(.plain)
     }
 
-    private func bindingRow(_ action: CockpitAction) -> some View {
-        let binding = profile.bindings[action] ?? .unbound
-        let isUnboundSafety = action.isSafetyCritical && binding.isUnbound
-        return HStack {
-            Text(action.label).font(.system(size: 11)).foregroundStyle(.white.opacity(0.85))
-            Spacer()
-            Text(binding.displayLabel)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(isUnboundSafety ? CockpitColors.danger : CockpitColors.cyan)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.04)))
+    private func bindingBadge(_ binding: ControllerBinding) -> some View {
+        Text(binding.displayLabel)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(binding.isUnbound ? Color.secondary.opacity(0.7) : .green)
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 5)
+                .fill(binding.isUnbound ? Color.secondary.opacity(0.10) : Color.green.opacity(0.12)))
     }
 
-    // MARK: - 주입 확인 (뒤편 cockpit 반응 증거)
+    // MARK: - Center: 다이어그램 + 가상 입력
+
+    private var centerColumn: some View {
+        VStack(spacing: 14) {
+            HStack {
+                Text("컨트롤러").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                listenButton
+                Circle().fill(.green).frame(width: 7, height: 7)
+                Text("가상 연결됨").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            ControllerDiagramView(
+                snapshot: source.snapshot, profile: editingProfile,
+                selectedBinding: selectedBinding,
+                onTap: { onElementTap($0) })
+            Text("아래 가상 패드로 입력 → 로봇 실시간 반응 · 다이어그램 클릭 = 선택 동작에 매핑")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+            VirtualControllerPad(source: source)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
+            injectionReadout
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+    }
+
+    private var listenButton: some View {
+        Button {
+            listening.toggle()
+            if listening { showNotice("Listen 중 — 가상 패드의 입력을 움직이면 ‘\(selectedAction.label)’ 에 매핑돼요.") }
+        } label: {
+            Label(listening ? "입력 대기중…" : "Listen", systemImage: listening ? "dot.radiowaves.left.and.right" : "scope")
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Capsule().fill(listening ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .help("선택한 동작에 press-to-bind")
+    }
 
     private var injectionReadout: some View {
         HStack(spacing: 16) {
             metric("주입 L-스틱", String(format: "%+.2f, %+.2f", cockpit.leftStick.x, cockpit.leftStick.y))
             metric("회전", String(format: "%+.2f", cockpit.rightStick.x))
             metric("명령", commandText)
-            metric("소스", cockpit.lastSource.label)
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
+        .padding(.horizontal, 14).padding(.vertical, 8)
         .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.05)))
-    }
-
-    private var commandText: String {
-        let c = cockpit.lastCommand
-        if c.isStop { return "정지" }
-        return String(format: "보행 %.0f/%.0f/%.0f", c.strideMm, c.sideMm, c.turnDeg)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.06)))
     }
 
     private func metric(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
-            Text(value).font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(CockpitColors.live)
+            Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(.green)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var commandText: String {
+        let c = cockpit.lastCommand
+        return c.isStop ? "정지" : String(format: "보행 %.0f/%.0f/%.0f", c.strideMm, c.sideMm, c.turnDeg)
+    }
+
+    // MARK: - Right: Inspector
+
+    private var inspectorColumn: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("선택된 컨트롤").font(.system(size: 13, weight: .semibold))
+                controlSummary
+                mappedActionSection
+                inputTypeSection
+                if isAxisSelected {
+                    sensitivitySection
+                    responseCurveSection
+                    invertSection
+                } else if isButtonSelected {
+                    modeSection
+                }
+                actionButtons
+            }
+            .padding(16)
+        }
+    }
+
+    private var controlSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("컨트롤").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Image(systemName: bindingIcon).font(.system(size: 12)).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(bindingPrimary).font(.system(size: 12, weight: .semibold))
+                    Text(bindingSubtitle).font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 10).padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)))
+        }
+    }
+
+    private var mappedActionSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("매핑된 동작").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            Menu {
+                ForEach(CockpitAction.Group.allCases, id: \.self) { group in
+                    Section(groupTitle(group)) {
+                        ForEach(actions(in: group), id: \.self) { a in
+                            Button {
+                                if let b = selectedBinding { apply(b, to: a); selectedAction = a }
+                            } label: {
+                                HStack { Image(systemName: actionIcon(a)); Text(a.label)
+                                    if actionForBinding == a { Spacer(); Image(systemName: "checkmark") } }
+                            }
+                        }
+                    }
+                }
+            } label: { dropdownLabel(actionForBinding?.label ?? "매핑 없음", disabled: selectedBinding == nil) }
+            .menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
+            .disabled(selectedBinding == nil)
+        }
+    }
+
+    private var inputTypeSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("입력 유형").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            dropdownLabel(inputTypeLabel, disabled: true)
+        }
+    }
+
+    private var sensitivitySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("감도").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text("0").font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                Slider(value: sensitivityBinding, in: 0...100)
+                Text("100").font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                Text("\(Int(sensitivityBinding.wrappedValue))")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .frame(width: 32, alignment: .trailing)
+            }
+        }
+    }
+
+    private var responseCurveSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("반응 곡선").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            Menu {
+                ForEach(CurvePreset.allCases) { c in
+                    Button { setExpo(c.expo) } label: {
+                        HStack { Text(c.rawValue); if curvePresetForExpo == c { Spacer(); Image(systemName: "checkmark") } }
+                    }
+                }
+            } label: { dropdownLabel(curvePresetForExpo.rawValue, disabled: false) }
+            .menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var invertSection: some View {
+        Toggle(isOn: invertBinding) { Text("축 반전 (Invert)").font(.system(size: 11)) }
+            .toggleStyle(.switch)
+    }
+
+    private var modeSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("모드 (Activator)").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            Menu {
+                ForEach(ActivatorPreset.allCases) { m in
+                    Button { setActivator(m.type) } label: {
+                        HStack { Text(m.rawValue); if activatorPreset == m { Spacer(); Image(systemName: "checkmark") } }
+                    }
+                }
+            } label: { dropdownLabel(activatorPreset.rawValue, disabled: actionForBinding == nil) }
+            .menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
+            .disabled(actionForBinding == nil)
+        }
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 8) {
+            Button {
+                if let a = actionForBinding { apply(.unbound, to: a) }
+            } label: { Text("매핑 해제").font(.system(size: 11, weight: .medium)).frame(maxWidth: .infinity).padding(.vertical, 6) }
+            .buttonStyle(.bordered)
+            .disabled(actionForBinding == nil || actionForBinding?.isSafetyCritical == true)
+
+            Button(role: .destructive) {
+                editingProfile = .xbox; syncInspector(selectedAction); showNotice("기본값(Xbox)으로 복원했어요.")
+            } label: { Text("기본값 복원").font(.system(size: 11, weight: .medium)).frame(maxWidth: .infinity).padding(.vertical, 6) }
+            .buttonStyle(.bordered).tint(.red)
+        }
+    }
+
+    private func dropdownLabel(_ text: String, disabled: Bool) -> some View {
+        HStack {
+            Text(text).font(.system(size: 12)).foregroundStyle(disabled ? .secondary : .primary).lineLimit(1)
+            Spacer()
+            Image(systemName: "chevron.up.chevron.down").font(.system(size: 9)).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(disabled ? 0.05 : 0.10))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)))
+    }
+
+    // MARK: - List mode
+
+    private var listMode: some View {
+        Form {
+            ForEach(CockpitAction.Group.allCases, id: \.self) { group in
+                Section(groupTitle(group)) {
+                    ForEach(actions(in: group), id: \.self) { action in
+                        LabeledContent(action.label) {
+                            Text((editingProfile.bindings[action] ?? .unbound).displayLabel)
+                                .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        HStack {
+            Button(role: .destructive) {
+                editingProfile = .xbox; syncInspector(selectedAction); showNotice("기본값으로 재설정했어요.")
+            } label: { Label("기본값으로 재설정", systemImage: "arrow.counterclockwise").font(.system(size: 12)) }
+            .buttonStyle(.bordered)
+            Spacer()
+            Button("취소") { isPresented = false }.buttonStyle(.bordered)
+            Button("저장") {
+                ControllerBindingProfileStore.save(editingProfile)
+                showNotice("프로파일을 저장했어요.")
+                isPresented = false
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 18).padding(.vertical, 12)
+    }
+
+    private func banner(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle.fill").foregroundStyle(.tint)
+            Text(text).font(.system(size: 11)); Spacer()
+        }
+        .padding(.horizontal, 18).padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.08))
+    }
+
+    // MARK: - Inspector 표시 헬퍼
+
+    private var isAxisSelected: Bool { if case .axis = selectedBinding { return true }; return false }
+    private var isButtonSelected: Bool { if case .button = selectedBinding { return true }; return false }
+    private var selectedAxisIndex: Int? { if case .axis(let i, _) = selectedBinding { return i }; return nil }
+    private var actionForBinding: CockpitAction? {
+        guard let b = selectedBinding else { return nil }
+        return editingProfile.bindings.first { $0.value == b }?.key
+    }
+
+    private var bindingIcon: String {
+        switch selectedBinding {
+        case .axis: return "circle.lefthalf.filled"
+        case .button: return "rectangle.fill"
+        default: return "questionmark.square.dashed"
+        }
+    }
+    private var bindingPrimary: String { selectedBinding?.displayLabel ?? "선택되지 않음" }
+    private var bindingSubtitle: String {
+        switch selectedBinding {
+        case .axis: return "아날로그 축"
+        case .button: return "디지털 버튼"
+        default: return "다이어그램에서 입력을 클릭하세요."
+        }
+    }
+    private var inputTypeLabel: String {
+        switch selectedBinding {
+        case .axis: return "축 입력 (Axis)"
+        case .button: return "버튼 (Button)"
+        default: return "—"
+        }
+    }
+
+    // 감도 ↔ sensitivity(0.1…3.0), 50 = 1.0
+    private var sensitivityBinding: Binding<Double> {
+        Binding(
+            get: { (tuningForSelected()?.sensitivity ?? 1.0) * 50.0 },
+            set: { newVal in updateTuning { $0.sensitivity = max(0.1, min(3.0, newVal / 50.0)) } })
+    }
+
+    private var invertBinding: Binding<Bool> {
+        Binding(get: { tuningForSelected()?.invert ?? false },
+                set: { newVal in updateTuning { $0.invert = newVal } })
+    }
+
+    enum CurvePreset: String, CaseIterable, Identifiable {
+        case linear = "선형", smooth = "부드러움", precise = "정밀"
+        var id: String { rawValue }
+        var expo: Double { self == .linear ? 0.0 : (self == .smooth ? 0.5 : 0.85) }
+    }
+    private var curvePresetForExpo: CurvePreset {
+        let e = tuningForSelected()?.expo ?? 0
+        if e < 0.25 { return .linear }
+        if e < 0.7 { return .smooth }
+        return .precise
+    }
+
+    enum ActivatorPreset: String, CaseIterable, Identifiable {
+        case hold = "홀드", start = "누름", toggle = "토글", longPress = "길게"
+        var id: String { rawValue }
+        var type: ActivatorType {
+            switch self {
+            case .hold: return .hold
+            case .start: return .start
+            case .toggle: return .toggle
+            case .longPress: return .longPress(thresholdMs: 500)
+            }
+        }
+    }
+    private var activatorPreset: ActivatorPreset {
+        guard let a = actionForBinding, let t = editingProfile.activators[a] else { return .hold }
+        switch t {
+        case .hold: return .hold
+        case .start: return .start
+        case .toggle: return .toggle
+        case .longPress: return .longPress
+        default: return .hold
+        }
+    }
+
+    // MARK: - 편집 동작
+
+    private func tuningForSelected() -> ControllerAxisTuning? {
+        guard let i = selectedAxisIndex else { return nil }
+        return editingProfile.axisTuning[i] ?? ControllerAxisTuning()
+    }
+
+    private func updateTuning(_ mutate: (inout ControllerAxisTuning) -> Void) {
+        guard let i = selectedAxisIndex else { return }
+        var t = editingProfile.axisTuning[i] ?? ControllerAxisTuning()
+        mutate(&t)
+        var p = editingProfile
+        p.axisTuning[i] = t
+        editingProfile = p
+    }
+
+    private func setExpo(_ expo: Double) { updateTuning { $0.expo = expo } }
+
+    private func setActivator(_ type: ActivatorType) {
+        guard let a = actionForBinding else { return }
+        var p = editingProfile
+        p.activators[a] = type
+        editingProfile = p
+    }
+
+    private func onElementTap(_ binding: ControllerBinding) {
+        selectedBinding = binding
+        // action-first: 현재 선택 동작에 즉시 매핑.
+        apply(binding, to: selectedAction)
+    }
+
+    private func apply(_ binding: ControllerBinding, to action: CockpitAction) {
+        let (next, result) = editingProfile.setting(binding, for: action)
+        switch result {
+        case .applied:
+            editingProfile = next
+        case .appliedWithSwap(let swapped):
+            editingProfile = next
+            showNotice("\(swapped.map(\.label).joined(separator: ", ")) 의 매핑을 해제하고 옮겼어요.")
+        case .rejectedSafetyUnbound(let a):
+            showNotice("‘\(a.label)’ 은 안전 동작이라 해제할 수 없어요.")
+        case .rejectedSafetyStolen(let a):
+            showNotice("‘\(a.label)’(안전)에 할당된 입력이라 가져올 수 없어요.")
+        }
+        selectedBinding = binding
+    }
+
+    private func handleListen(_ snapshot: ControllerSnapshot) {
+        guard listening, let captured = ControllerBindingCapture.detect(snapshot) else { return }
+        listening = false
+        apply(captured, to: selectedAction)
+        showNotice("‘\(selectedAction.label)’ 에 \(captured.displayLabel) 매핑됨.")
+    }
+
+    private func syncInspector(_ action: CockpitAction) {
+        selectedBinding = editingProfile.bindings[action]
+    }
+
+    private func showNotice(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            notice = nil
+        }
+    }
+
+    private func groupTitle(_ g: CockpitAction.Group) -> String {
+        switch g {
+        case .movement: return "이동 제어"
+        case .rotation: return "회전 제어"
+        case .head: return "머리 제어"
+        case .safety: return "안전 제어"
+        }
+    }
+    private func actions(in group: CockpitAction.Group) -> [CockpitAction] {
+        CockpitAction.allCases.filter { $0.group == group }
+    }
+    private func conflictSummary(_ conflicts: [ControllerBindingConflict]) -> String {
+        conflicts.map { c in
+            switch c {
+            case .duplicateInput(let b, let acts): return "중복 \(b.displayLabel): \(acts.map(\.label).joined(separator: ", "))"
+            case .safetyCriticalUnbound(let a): return "안전 미할당: \(a.label)"
+            }
+        }.joined(separator: "\n")
+    }
+    private func actionIcon(_ a: CockpitAction) -> String {
+        switch a {
+        case .moveForward: return "arrow.up"
+        case .moveBackward: return "arrow.down"
+        case .strafeLeft: return "arrow.left"
+        case .strafeRight: return "arrow.right"
+        case .turnLeft: return "arrow.counterclockwise"
+        case .turnRight: return "arrow.clockwise"
+        case .headPanLeft: return "arrowshape.left"
+        case .headPanRight: return "arrowshape.right"
+        case .headTiltUp: return "arrowshape.up"
+        case .headTiltDown: return "arrowshape.down"
+        case .ballTracking: return "scope"
+        case .emergencyStop: return "exclamationmark.octagon.fill"
+        case .recover: return "arrow.uturn.up"
         }
     }
 
     // MARK: - 드라이버 lifecycle
 
     private func startDriver() {
-        let d = CockpitControllerDriver(state: cockpit, source: source, profile: profile)
-        d.start()
-        driver = d
+        let d = CockpitControllerDriver(state: cockpit, source: source, profile: editingProfile)
+        d.start(); driver = d
     }
-
     private func stopDriver() {
-        driver?.stop()
-        driver = nil
-        source.resetAll()
-        cockpit.release()
+        driver?.stop(); driver = nil; source.resetAll(); cockpit.release()
     }
 }
