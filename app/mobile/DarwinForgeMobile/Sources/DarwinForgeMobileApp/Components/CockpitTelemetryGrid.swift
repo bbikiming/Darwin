@@ -30,6 +30,8 @@ public struct CockpitTelemetryGrid: View {
     public let history: [LatencySample]
     public let macConnected: Bool
     public let pilotStateLabel: String
+    /// 로봇 회선(②구간) 품질. nil = Mac 미전송 → 로봇 회선 셀 숨김(graceful degradation).
+    public let robotLink: RobotLinkPayload?
 
     public struct LatencySample: Identifiable {
         public let id: UUID
@@ -44,11 +46,13 @@ public struct CockpitTelemetryGrid: View {
     public init(telemetry: TelemetryStatePayload?,
                 history: [LatencySample] = [],
                 macConnected: Bool,
-                pilotStateLabel: String) {
+                pilotStateLabel: String,
+                robotLink: RobotLinkPayload? = nil) {
         self.telemetry = telemetry
         self.history = history
         self.macConnected = macConnected
         self.pilotStateLabel = pilotStateLabel
+        self.robotLink = robotLink
     }
 
     public var body: some View {
@@ -58,8 +62,62 @@ public struct CockpitTelemetryGrid: View {
                 connectivityRow
                 hardwareRow
                 performanceRow
+                if robotLink != nil {
+                    robotLinkRow
+                }
             }
         }
+    }
+
+    /// 로봇 회선(②구간 Mac↔로봇) 품질 행 — RTT/주파수/전송매체.
+    /// 모바일 latencyMs(①구간)와 별개로, 실제 로봇까지의 회선을 정직히 표시.
+    @ViewBuilder
+    private var robotLinkRow: some View {
+        if let link = robotLink {
+            HStack(alignment: .top, spacing: DS.Space.s) {
+                cell(label: "로봇회선",
+                     value: link.robotLinkRttMs.map { "\($0)ms" } ?? "—",
+                     tint: linkRttTint(link),
+                     icon: link.isWireless ? "wifi" : "cable.connector")
+                cell(label: "수신",
+                     value: link.telemetryHz.map { String(format: "%.1fHz", $0) } ?? "—",
+                     tint: linkHzTint(link),
+                     icon: "waveform.path")
+                cell(label: "전송",
+                     value: transportLabel(link.transport),
+                     tint: link.isWireless ? DS.Color.warning : DS.Color.success,
+                     icon: "arrow.left.arrow.right")
+                cell(label: "신선도",
+                     value: link.onboardStale == true ? "STALE" : "정상",
+                     tint: link.onboardStale == true ? DS.Color.danger : DS.Color.success,
+                     icon: "clock.arrow.circlepath")
+            }
+        }
+    }
+
+    private func transportLabel(_ t: String?) -> String {
+        switch t {
+        case "udp": return "UDP"
+        case "ssh-wired": return "SSH유선"
+        case "ssh-wireless": return "SSH무선"
+        case "lan": return "LAN"
+        case .some(let other): return other
+        case nil: return "—"
+        }
+    }
+
+    private func linkRttTint(_ link: RobotLinkPayload) -> Color {
+        guard let rtt = link.robotLinkRttMs else { return DS.Color.tertiaryText }
+        if rtt > 350 { return DS.Color.danger }
+        if rtt > 150 { return DS.Color.warning }
+        return DS.Color.success
+    }
+
+    private func linkHzTint(_ link: RobotLinkPayload) -> Color {
+        guard let hz = link.telemetryHz else { return DS.Color.tertiaryText }
+        if hz < 2 { return DS.Color.danger }
+        if hz < 5 { return DS.Color.warning }
+        return DS.Color.success
     }
 
     // MARK: - Sections

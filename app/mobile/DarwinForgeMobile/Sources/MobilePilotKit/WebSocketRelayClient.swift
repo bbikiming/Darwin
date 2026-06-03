@@ -289,8 +289,9 @@ public final class WebSocketRelayClient: MobileRelayClient, @unchecked Sendable 
                                                   outcome: .failed(reason: env.payload.reason,
                                                                    message: env.payload.message))))
             eventContinuation.yield(.commandFailed(env))
-        case .telemetryState, .armingProgress, .transportWarning, .watchdogStop, .logEvent,
-             .sessionWelcome, .sessionRejected, .unknown:
+        case .telemetryState, .cockpitTelemetry, .cockpitLink, .armingProgress,
+             .transportWarning, .watchdogStop, .logEvent, .sessionWelcome,
+             .sessionRejected, .unknown:
             eventContinuation.yield(inbound)
         }
     }

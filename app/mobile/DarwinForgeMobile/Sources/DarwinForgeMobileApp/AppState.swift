@@ -23,6 +23,14 @@ public final class AppState: ObservableObject {
     @Published public private(set) var pilotState: PilotState = .notPaired
     @Published public private(set) var telemetry: TelemetryStatePayload?
     @Published public private(set) var telemetryHistory: [TelemetrySample] = []
+    /// 실 robot 자세(IMU roll/pitch + balance + 자동 복구 단계). `cockpit.telemetry`
+    /// 이벤트로 갱신. Mac 이 아직 안 보내면 nil — CockpitAttitudeIndicator 가 heading
+    /// 만 표시(graceful degradation). 연결 끊김 시 nil 로 리셋.
+    @Published public private(set) var robotAttitude: RobotAttitudePayload?
+    /// 로봇 회선 품질(Mac↔로봇 ②구간 RTT/주파수/전송매체/stale). `cockpit.link` 이벤트로
+    /// 갱신. 모바일의 latencyMs 는 ①구간만 반영하므로, ②구간 실지연을 정직히 표시하기 위해
+    /// 별도로 받는다. Mac 미전송 시 nil — 종전 동작 유지. 연결 끊김 시 nil 리셋.
+    @Published public private(set) var robotLink: RobotLinkPayload?
     @Published public private(set) var transport: TransportState = .idle
     @Published public private(set) var pairedEndpoint: RelayEndpoint?
     @Published public private(set) var discovered: [RelayDiscoveryResult] = []
@@ -523,6 +531,8 @@ public final class AppState: ObservableObject {
         await relayClient.close(reason: reason)
         pairedEndpoint = nil
         telemetry = nil
+        robotAttitude = nil
+        robotLink = nil
         telemetryHistory.removeAll()
         serverCapabilities = nil
         estopVerificationStatus = nil
@@ -1113,6 +1123,8 @@ public final class AppState: ObservableObject {
         heartbeat = nil
         pairedEndpoint = nil
         telemetry = nil
+        robotAttitude = nil
+        robotLink = nil
         telemetryHistory.removeAll()
         serverCapabilities = nil
         activeWalkPreset = nil
@@ -1173,6 +1185,18 @@ public final class AppState: ObservableObject {
                 appendLog(level: .info, category: .connection,
                           message: "📡 첫 telemetry 수신 (Mac 확정 연결)")
             }
+        case .cockpitTelemetry(let env):
+            // 실 robot 자세(IMU/balance/복구). 고주파(최대 30Hz) 가능하므로 로깅하지
+            // 않고 상태만 갱신 — UI 가 @Published 로 구독.
+            robotAttitude = env.payload
+        case .cockpitLink(let env):
+            // 로봇 회선 품질(②구간). 회선이 나빠지는 전이만 로깅(스팸 방지).
+            let wasDegraded = robotLink?.isDegraded ?? false
+            robotLink = env.payload
+            if env.payload.isDegraded, !wasDegraded {
+                appendLog(level: .warning, category: .connection,
+                          message: "로봇 회선 저하 — \(robotLinkSummary(env.payload))")
+            }
         case .armingProgress(let env):
             armProgressStage = env.payload.stage
             stateMachine.apply(.armingProgress(env.payload.stage))
@@ -1210,6 +1234,22 @@ public final class AppState: ObservableObject {
             appendLog(level: .debug, category: .system,
                       message: "알 수 없는 메시지 \(head.type)")
         }
+    }
+
+    /// 로봇 회선 상태 요약 문자열 — 로그/배너용.
+    private func robotLinkSummary(_ link: RobotLinkPayload) -> String {
+        var parts: [String] = []
+        if let rtt = link.robotLinkRttMs { parts.append("\(rtt)ms") }
+        if let hz = link.telemetryHz { parts.append(String(format: "%.1fHz", hz)) }
+        if let t = link.transport { parts.append(t) }
+        if link.onboardStale == true { parts.append("stale") }
+        return parts.isEmpty ? "정보 없음" : parts.joined(separator: " · ")
+    }
+
+    /// 로봇 회선(②구간)이 조종에 부적합할 만큼 저하됐는지. UI 게이트/배너용.
+    /// Mac 이 cockpit.link 를 안 보내면(robotLink == nil) false — 종전 동작 유지.
+    public var robotLinkDegraded: Bool {
+        robotLink?.isDegraded ?? false
     }
 
     // MARK: - Computed

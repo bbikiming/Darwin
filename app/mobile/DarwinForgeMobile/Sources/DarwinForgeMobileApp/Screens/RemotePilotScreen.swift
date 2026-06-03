@@ -63,6 +63,8 @@ public struct RemotePilotScreen: View {
                 VStack(spacing: DS.Space.l) {
                     statusRailSection
                     freeformModeBanner
+                    autoRecoveryBanner
+                    robotLinkBanner
                     cockpitTelemetrySection
                     cockpitHUDSection
                     cockpitGaugeSection
@@ -178,6 +180,90 @@ public struct RemotePilotScreen: View {
         }
     }
 
+    /// 자동 낙하 복구 배너 — `cockpit.telemetry` 의 autoRecoveryPhase 가 활성일 때만.
+    /// 로봇이 넘어졌거나 일어나는 중임을 사용자에게 즉시 알리고, 그동안 조종이 잠긴다는
+    /// 맥락을 준다(Mac 측이 자동 복구 중 조종을 차단하므로).
+    @ViewBuilder
+    private var autoRecoveryBanner: some View {
+        if let attitude = state.robotAttitude, attitude.isRecovering {
+            DSCard(tone: .danger, padding: DS.Space.m) {
+                HStack(alignment: .center, spacing: DS.Space.s) {
+                    Image(systemName: "figure.fall")
+                        .foregroundStyle(DS.Color.danger)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(autoRecoveryLabel(attitude))
+                            .font(DS.Font.bodyEmphasis)
+                            .foregroundStyle(DS.Color.danger)
+                        Text("자동 일어나기 중에는 조종이 일시 정지됩니다.")
+                            .font(DS.Font.caption)
+                            .foregroundStyle(DS.Color.secondaryText)
+                    }
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .accessibilityIdentifier("remotepilot.autorecovery.banner")
+        }
+    }
+
+    private func autoRecoveryLabel(_ a: RobotAttitudePayload) -> String {
+        let dir: String
+        switch a.fallDirection {
+        case "forward": dir = "앞으로 "
+        case "backward": dir = "뒤로 "
+        default: dir = ""
+        }
+        switch a.autoRecoveryPhase {
+        case "fallen": return "\(dir)넘어짐 감지"
+        case "settling": return "안정화 대기 중"
+        case "gettingUp": return "\(dir)일어나는 중…"
+        case "failed": return "일어나기 실패 — 점검 필요"
+        default: return "자동 복구 중"
+        }
+    }
+
+    /// 로봇 회선(②구간) 저하 배너 — Mac↔로봇 SSH 무선이 느리거나 stale 일 때.
+    ///
+    /// **왜 중요한가**: 모바일 상단의 "지연 Nms"(latencyMs)는 ①구간(iPhone↔Mac)만
+    /// 반영해, SSH 무선으로 실제 로봇까지 0.7~2.5초 걸려도 화면엔 빠르게 보였다. 본
+    /// 배너가 ②구간의 진실을 알려 사용자가 "유선 전환" 같은 조치를 하도록 한다.
+    @ViewBuilder
+    private var robotLinkBanner: some View {
+        if let link = state.robotLink, link.isDegraded {
+            DSCard(tone: .danger, padding: DS.Space.m) {
+                HStack(alignment: .top, spacing: DS.Space.s) {
+                    Image(systemName: link.isWireless ? "wifi.exclamationmark" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(DS.Color.danger)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("로봇 회선이 느립니다 — 조종 반응이 지연될 수 있어요")
+                            .font(DS.Font.bodyEmphasis)
+                            .foregroundStyle(DS.Color.danger)
+                        Text(robotLinkAdvice(link))
+                            .font(DS.Font.caption)
+                            .foregroundStyle(DS.Color.secondaryText)
+                    }
+                    Spacer()
+                }
+            }
+            .accessibilityIdentifier("remotepilot.robotlink.banner")
+        }
+    }
+
+    private func robotLinkAdvice(_ link: RobotLinkPayload) -> String {
+        var bits: [String] = []
+        if let rtt = link.robotLinkRttMs { bits.append("왕복 \(rtt)ms") }
+        if let hz = link.telemetryHz { bits.append(String(format: "수신 %.1fHz", hz)) }
+        let detail = bits.isEmpty ? "" : "(\(bits.joined(separator: ", "))) "
+        if link.onboardStale == true {
+            return "\(detail)로봇 응답이 끊겼습니다. Mac 앱에서 유선 연결을 확인하세요."
+        }
+        if link.isWireless {
+            return "\(detail)Mac 앱에서 로봇을 유선(이더넷)으로 연결하면 훨씬 빨라집니다."
+        }
+        return "\(detail)잠시 후 회복되지 않으면 Mac 앱 연결을 확인하세요."
+    }
+
     // MARK: - Cockpit HUD sections (NEW)
 
     /// 텔레메트리 그리드 — Mac → iOS 의 `TelemetryStatePayload` 11 필드를 모두 시각화.
@@ -186,7 +272,8 @@ public struct RemotePilotScreen: View {
             telemetry: state.telemetry,
             history: latencyHistory,
             macConnected: macIsConnected,
-            pilotStateLabel: pilotStateKorean
+            pilotStateLabel: pilotStateKorean,
+            robotLink: state.robotLink
         )
     }
 
@@ -197,7 +284,9 @@ public struct RemotePilotScreen: View {
                 headingDeg: simulator.simHeadingDeg,
                 isWalking: !simulator.isStopped,
                 isArmed: state.pilotState.isArmed,
-                stickMagnitude: stickActive.magnitude)
+                stickMagnitude: stickActive.magnitude,
+                rollDeg: state.robotAttitude?.rollDeg,
+                pitchDeg: state.robotAttitude?.pitchDeg)
             CockpitMinimap(
                 positionMM: simulator.simPositionMM,
                 headingDeg: simulator.simHeadingDeg,

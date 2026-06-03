@@ -5,26 +5,48 @@ import SwiftUI
 /// # 표시
 ///
 /// - 외곽: 360° 컴퍼스 (N/E/S/W) — heading 으로 회전
-/// - 중앙: walking/standing/halt 상태 아이콘
-/// - 하단: heading 숫자 + walking 상태 라벨
+/// - 중앙: 실 robot IMU 인공 수평선(roll/pitch) — `rollDeg`/`pitchDeg` 가 있을 때.
+///   없으면 보행 상태 아이콘만(graceful degradation).
+/// - 하단: heading 숫자 + walking/기울기 상태 라벨
 ///
-/// Mac 의 CockpitAttitudeIndicator 는 roll/pitch (실 robot IMU) 도 표시하지만, iOS 는
-/// IMU 데이터를 받지 않으므로 (TelemetryStatePayload 에 미포함) heading + walking 상태만.
+/// # 실 IMU 연동 (cockpit.telemetry)
+///
+/// `rollDeg`/`pitchDeg` 는 Mac 의 `cockpit.telemetry` 이벤트(`RobotAttitudePayload`)에서
+/// 온다. Mac 이 아직 안 보내면 둘 다 nil — 종전처럼 heading + 보행 상태만 표시한다.
+/// Mac 이 보내기 시작하면 자동으로 인공 수평선이 살아난다(코드 변경 불요).
 public struct CockpitAttitudeIndicator: View {
 
     public let headingDeg: Double
     public let isWalking: Bool
     public let isArmed: Bool
     public let stickMagnitude: Double
+    /// 실 robot IMU roll(deg, +우측 기울임). nil = Mac 미전송.
+    public let rollDeg: Double?
+    /// 실 robot IMU pitch(deg, +전방 숙임). nil = Mac 미전송.
+    public let pitchDeg: Double?
 
     public init(headingDeg: Double,
                 isWalking: Bool,
                 isArmed: Bool,
-                stickMagnitude: Double) {
+                stickMagnitude: Double,
+                rollDeg: Double? = nil,
+                pitchDeg: Double? = nil) {
         self.headingDeg = headingDeg
         self.isWalking = isWalking
         self.isArmed = isArmed
         self.stickMagnitude = stickMagnitude
+        self.rollDeg = rollDeg
+        self.pitchDeg = pitchDeg
+    }
+
+    /// IMU 데이터 보유 여부.
+    private var hasIMU: Bool { rollDeg != nil || pitchDeg != nil }
+
+    /// |roll| 또는 |pitch| 가 임계를 넘으면 기울기 경고(넘어짐 위험).
+    private var tiltWarning: Bool {
+        let r = abs(rollDeg ?? 0)
+        let p = abs(pitchDeg ?? 0)
+        return r > 25 || p > 25
     }
 
     public var body: some View {
@@ -39,6 +61,12 @@ public struct CockpitAttitudeIndicator: View {
                         .font(.system(size: 22, weight: .bold, design: .monospaced))
                         .foregroundStyle(DS.Color.primaryText)
                         .accessibilityLabel("헤딩 \(Int(normalizedHeading))도")
+                    if hasIMU {
+                        Text(String(format: "R %+.0f°  P %+.0f°", rollDeg ?? 0, pitchDeg ?? 0))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(tiltWarning ? DS.Color.danger : DS.Color.secondaryText)
+                            .accessibilityLabel("기울기 좌우 \(Int(rollDeg ?? 0))도, 앞뒤 \(Int(pitchDeg ?? 0))도")
+                    }
                     Divider().frame(width: 60)
                     HStack(spacing: 4) {
                         Circle()
@@ -74,6 +102,11 @@ public struct CockpitAttitudeIndicator: View {
         ring.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius,
                                    width: radius * 2, height: radius * 2))
         ctx.stroke(ring, with: .color(DS.Color.divider), lineWidth: 1)
+
+        // 실 IMU 인공 수평선 — heading ring 안쪽에 그려 컴퍼스와 겹치지 않게.
+        if hasIMU {
+            drawArtificialHorizon(ctx: ctx, center: center, radius: radius - 18)
+        }
 
         // Tick marks every 30°, with N/E/S/W labels.
         let heading = headingDeg * .pi / 180.0
@@ -126,6 +159,61 @@ public struct CockpitAttitudeIndicator: View {
         ctx.fill(dot, with: .color(DS.Color.brand))
     }
 
+    /// 항공기 인공 수평선 — roll 로 수평선이 기울고, pitch 로 위아래 이동.
+    /// 원형 클립 안에 하늘(위)/땅(아래)를 그려 한눈에 기체 자세 파악.
+    private func drawArtificialHorizon(ctx: GraphicsContext, center: CGPoint, radius: CGFloat) {
+        let roll = (rollDeg ?? 0) * .pi / 180.0
+        // pitch 1° 당 픽셀 이동(원 안에 ±30° 정도 보이도록 스케일).
+        let pixelsPerDeg = radius / 35.0
+        let pitchOffset = CGFloat(pitchDeg ?? 0) * pixelsPerDeg
+
+        // 원형 클립.
+        var clip = Path()
+        clip.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius,
+                                   width: radius * 2, height: radius * 2))
+
+        ctx.drawLayer { layer in
+            layer.clip(to: clip)
+            // roll: 수평선이 기울도록 컨텍스트 회전(중심 기준).
+            layer.translateBy(x: center.x, y: center.y)
+            layer.rotate(by: .radians(-roll))
+            // pitch: 수평선을 위/아래로 이동(전방 숙임이면 수평선이 위로).
+            layer.translateBy(x: 0, y: pitchOffset)
+
+            let big = radius * 3   // 회전/이동해도 화면을 덮도록 크게.
+            // 하늘(위).
+            let sky = Path(CGRect(x: -big, y: -big, width: big * 2, height: big))
+            layer.fill(sky, with: .color(DS.Color.info.opacity(tiltWarning ? 0.30 : 0.45)))
+            // 땅(아래).
+            let ground = Path(CGRect(x: -big, y: 0, width: big * 2, height: big))
+            layer.fill(ground, with: .color(DS.Color.warning.opacity(tiltWarning ? 0.30 : 0.22)))
+            // 수평선.
+            var horizon = Path()
+            horizon.move(to: CGPoint(x: -big, y: 0))
+            horizon.addLine(to: CGPoint(x: big, y: 0))
+            layer.stroke(horizon,
+                         with: .color(tiltWarning ? DS.Color.danger : .white.opacity(0.9)),
+                         lineWidth: 1.5)
+            // pitch 눈금(±10°, ±20°).
+            for deg in [-20, -10, 10, 20] {
+                let y = -CGFloat(deg) * pixelsPerDeg
+                let w = radius * 0.35
+                var tick = Path()
+                tick.move(to: CGPoint(x: -w, y: y))
+                tick.addLine(to: CGPoint(x: w, y: y))
+                layer.stroke(tick, with: .color(.white.opacity(0.45)), lineWidth: 0.6)
+            }
+        }
+
+        // 고정 중앙 기체 마커(roll/pitch 와 무관하게 화면 고정 — 항공 HUD 표준).
+        var wing = Path()
+        wing.move(to: CGPoint(x: center.x - radius * 0.4, y: center.y))
+        wing.addLine(to: CGPoint(x: center.x - radius * 0.12, y: center.y))
+        wing.move(to: CGPoint(x: center.x + radius * 0.12, y: center.y))
+        wing.addLine(to: CGPoint(x: center.x + radius * 0.4, y: center.y))
+        ctx.stroke(wing, with: .color(tiltWarning ? DS.Color.danger : DS.Color.success), lineWidth: 2)
+    }
+
     private func cardinalLabel(deg: Int) -> String {
         switch deg {
         case 0: return "N"
@@ -144,12 +232,14 @@ public struct CockpitAttitudeIndicator: View {
     }
 
     private var stateLabel: String {
+        if tiltWarning { return "기울기 경고" }
         if !isArmed { return "잠금" }
         if isWalking || stickMagnitude > 0.1 { return "보행 중" }
         return "정지"
     }
 
     private var stateTint: Color {
+        if tiltWarning { return DS.Color.danger }
         if !isArmed { return DS.Color.tertiaryText }
         if isWalking || stickMagnitude > 0.1 { return DS.Color.success }
         return DS.Color.warning

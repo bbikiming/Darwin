@@ -455,6 +455,8 @@ public enum EventType: String, Codable, Sendable {
     case sessionWelcome   = "session.welcome"
     case sessionRejected  = "session.rejected"
     case telemetryState   = "telemetry.state"
+    case cockpitTelemetry = "cockpit.telemetry"
+    case cockpitLink      = "cockpit.link"
     case armingProgress   = "arming.progress"
     case transportWarning = "transport.warning"
     case watchdogStop     = "watchdog.stop"
@@ -589,6 +591,117 @@ public struct TelemetryStatePayload: Codable, Sendable, Equatable {
         self.lastAckAgeMs = lastAckAgeMs
         self.safety = safety
         self.uiState = uiState
+    }
+}
+
+/// **실 robot 자세 텔레메트리** — `cockpit.telemetry` 이벤트 페이로드.
+///
+/// # 비유
+///
+/// 비행기 계기판의 인공 수평선(artificial horizon) — 기체가 얼마나 기울었는지(roll),
+/// 앞뒤로 숙였는지(pitch)를 한눈에. `TelemetryStatePayload` 가 "엔진/연료 상태"라면
+/// 이건 "비행 자세"다.
+///
+/// # 왜 별도 페이로드인가
+///
+/// `TelemetryStatePayload` 는 연결/안전/하드웨어 상태(battery/temp/latency/safety)만
+/// 전달한다. Cockpit 의 **실 robot IMU(roll/pitch)·balance·자동 복구 단계**는 거기
+/// 없었다. iOS `CockpitAttitudeIndicator` 는 이 데이터를 그릴 준비가 돼 있으나 받을
+/// 채널이 없어 heading 만 표시 중이었다. 본 페이로드가 그 갭을 메운다.
+///
+/// **Mac 미지원 안전성**: Mac 서버가 아직 `cockpit.telemetry` 를 보내지 않으면 iOS 는
+/// 단순히 본 메시지를 받지 않으며, `AppState.robotAttitude` 가 nil 로 남아 종전과 동일
+/// 하게 heading 만 표시한다(graceful degradation). forward-compatible.
+///
+/// # 필드
+///
+/// - `rollDeg` / `pitchDeg`: 실 robot IMU 기울기(deg). +roll = 우측 기울임, +pitch = 전방 숙임.
+/// - `balanceState`: 자이로 보정 상태 문자열("normal"/"correcting"/... — enum 대신 String
+///   으로 받아 Mac 이 새 상태를 추가해도 iOS 가 깨지지 않게 한다).
+/// - `autoRecoveryPhase`: 자동 낙하 복구 단계("idle"/"fallen"/"settling"/"gettingUp"/...).
+/// - `fallDirection`: 낙하 방향("forward"/"backward"/nil).
+public struct RobotAttitudePayload: Codable, Sendable, Equatable {
+    public let rollDeg: Double
+    public let pitchDeg: Double
+    public let balanceState: String?
+    public let autoRecoveryPhase: String?
+    public let fallDirection: String?
+
+    public init(rollDeg: Double,
+                pitchDeg: Double,
+                balanceState: String? = nil,
+                autoRecoveryPhase: String? = nil,
+                fallDirection: String? = nil) {
+        self.rollDeg = rollDeg
+        self.pitchDeg = pitchDeg
+        self.balanceState = balanceState
+        self.autoRecoveryPhase = autoRecoveryPhase
+        self.fallDirection = fallDirection
+    }
+
+    /// 자동 복구가 진행 중인지(= idle/done 이 아닌 활성 단계).
+    public var isRecovering: Bool {
+        guard let p = autoRecoveryPhase else { return false }
+        return p != "idle" && p != "done"
+    }
+}
+
+/// **로봇 회선 품질 텔레메트리** — `cockpit.link` 이벤트 페이로드.
+///
+/// # 비유
+///
+/// 전화의 "통화 품질 막대" — 상대(로봇)와의 회선이 LTE(유선/UDP)인지 2G(SSH 무선)인지,
+/// 신호가 몇 칸인지(지연/주파수)를 보여준다. 통화 내용(명령)이 아니라 **회선 자체의 건강**.
+///
+/// # 왜 필요한가 (중대한 갭)
+///
+/// 통신은 3-hop: **iPhone ─①WS/WiFi─ Mac ─②SSH/UDP/유선─ 로봇**.
+/// 종전 모바일의 `latencyMs`(`TelemetryStatePayload`)는 ①+Mac내부 함수시간만 반영하고
+/// **②구간(Mac↔로봇)의 실지연을 숨겼다**. 그래서 SSH 무선으로 실제 0.7~2.5초 지연이
+/// 나도 화면엔 50~200ms 로 떠 사용자가 위험을 인지 못 했다. 본 페이로드가 ②구간의
+/// 진실(RTT·주파수·전송매체·stale)을 모바일로 전달해 정직한 표시와 조종 게이트를 가능케 한다.
+///
+/// **Mac 미지원 안전성**: Mac 이 안 보내면 `AppState.robotLink` 가 nil — 종전 동작 유지
+/// (graceful degradation). forward-compatible.
+///
+/// # 필드
+///
+/// - `robotLinkRttMs`: Mac↔로봇 실측 왕복 지연(ms). 유선~수ms, SSH 무선 수백ms.
+/// - `telemetryHz`: 로봇→Mac 텔레메트리 실효 수신 주파수(Hz). 9.9(UDP)/4.5(SSH무선) 등.
+/// - `transport`: 전송 매체 문자열 — "udp" / "ssh-wired" / "ssh-wireless" / "lan" (enum
+///   대신 String 으로 받아 Mac 이 새 매체를 추가해도 iOS 가 안 깨지게).
+/// - `onboardStale`: 텔레메트리가 stale(1.5s+ 미수신)로 강등됐는지.
+public struct RobotLinkPayload: Codable, Sendable, Equatable {
+    public let robotLinkRttMs: Int?
+    public let telemetryHz: Double?
+    public let transport: String?
+    public let onboardStale: Bool?
+
+    public init(robotLinkRttMs: Int? = nil,
+                telemetryHz: Double? = nil,
+                transport: String? = nil,
+                onboardStale: Bool? = nil) {
+        self.robotLinkRttMs = robotLinkRttMs
+        self.telemetryHz = telemetryHz
+        self.transport = transport
+        self.onboardStale = onboardStale
+    }
+
+    /// 무선 SSH 전송 매체인지 — "ssh-wireless" 명시 또는 transport 미상이나 RTT 가 큰 경우.
+    public var isWireless: Bool {
+        if let t = transport { return t == "ssh-wireless" }
+        return (robotLinkRttMs ?? 0) > 100
+    }
+
+    /// 회선 품질이 조종에 부적합할 만큼 나쁜지 — RTT 과대 / 주파수 과소 / stale.
+    ///
+    /// 임계(보수적): RTT > 350ms(Mac latencyGate walk 임계와 동일) 또는 텔레메트리 < 2Hz
+    /// 또는 stale. 이 값이 true 면 UI 가 "회선 느림" 경고 + 조종 주의를 표시.
+    public var isDegraded: Bool {
+        if onboardStale == true { return true }
+        if let rtt = robotLinkRttMs, rtt > 350 { return true }
+        if let hz = telemetryHz, hz < 2.0 { return true }
+        return false
     }
 }
 
@@ -811,6 +924,8 @@ public enum InboundMessage: Sendable {
     case sessionWelcome(RelayEnvelope<WelcomePayload>)
     case sessionRejected(RelayEnvelope<SessionRejectedPayload>)
     case telemetryState(RelayEnvelope<TelemetryStatePayload>)
+    case cockpitTelemetry(RelayEnvelope<RobotAttitudePayload>)
+    case cockpitLink(RelayEnvelope<RobotLinkPayload>)
     case armingProgress(RelayEnvelope<ArmingProgressPayload>)
     case transportWarning(RelayEnvelope<TransportWarningPayload>)
     case watchdogStop(RelayEnvelope<WatchdogStopPayload>)
@@ -836,6 +951,10 @@ public enum InboundDecoder {
             return .sessionRejected(try RelayCodec.decode(data, as: SessionRejectedPayload.self))
         case EventType.telemetryState.rawValue:
             return .telemetryState(try RelayCodec.decode(data, as: TelemetryStatePayload.self))
+        case EventType.cockpitTelemetry.rawValue:
+            return .cockpitTelemetry(try RelayCodec.decode(data, as: RobotAttitudePayload.self))
+        case EventType.cockpitLink.rawValue:
+            return .cockpitLink(try RelayCodec.decode(data, as: RobotLinkPayload.self))
         case EventType.armingProgress.rawValue:
             return .armingProgress(try RelayCodec.decode(data, as: ArmingProgressPayload.self))
         case EventType.transportWarning.rawValue:

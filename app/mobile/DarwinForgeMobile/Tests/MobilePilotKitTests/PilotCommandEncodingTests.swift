@@ -63,6 +63,98 @@ final class PilotCommandEncodingTests: XCTestCase {
         }
     }
 
+    func testInboundCockpitTelemetryDecodes() throws {
+        let json = """
+        {"v":1,"id":"evt_000002","type":"cockpit.telemetry","sentAt":"2026-06-03T12:00:00.000Z","payload":{"rollDeg":-3.5,"pitchDeg":12.0,"balanceState":"correcting","autoRecoveryPhase":"gettingUp","fallDirection":"forward"}}
+        """
+        let data = json.data(using: .utf8)!
+        let inbound = try InboundDecoder.decode(data)
+        switch inbound {
+        case .cockpitTelemetry(let env):
+            XCTAssertEqual(env.payload.rollDeg, -3.5, accuracy: 0.001)
+            XCTAssertEqual(env.payload.pitchDeg, 12.0, accuracy: 0.001)
+            XCTAssertEqual(env.payload.balanceState, "correcting")
+            XCTAssertEqual(env.payload.autoRecoveryPhase, "gettingUp")
+            XCTAssertEqual(env.payload.fallDirection, "forward")
+            XCTAssertTrue(env.payload.isRecovering)
+        default:
+            XCTFail("expected cockpit.telemetry, got \(inbound)")
+        }
+    }
+
+    /// forward-compat: balance/recovery 필드가 없는 최소 페이로드도 디코드돼야 한다
+    /// (Mac 이 IMU 만 보내는 단계).
+    func testInboundCockpitTelemetryMinimalDecodes() throws {
+        let json = """
+        {"v":1,"id":"evt_000003","type":"cockpit.telemetry","sentAt":"2026-06-03T12:00:01.000Z","payload":{"rollDeg":0,"pitchDeg":0}}
+        """
+        let data = json.data(using: .utf8)!
+        let inbound = try InboundDecoder.decode(data)
+        switch inbound {
+        case .cockpitTelemetry(let env):
+            XCTAssertEqual(env.payload.rollDeg, 0, accuracy: 0.001)
+            XCTAssertNil(env.payload.balanceState)
+            XCTAssertNil(env.payload.autoRecoveryPhase)
+            XCTAssertFalse(env.payload.isRecovering)
+        default:
+            XCTFail("expected cockpit.telemetry, got \(inbound)")
+        }
+    }
+
+    func testInboundCockpitLinkDecodes() throws {
+        let json = """
+        {"v":1,"id":"evt_000004","type":"cockpit.link","sentAt":"2026-06-03T12:00:02.000Z","payload":{"robotLinkRttMs":480,"telemetryHz":4.5,"transport":"ssh-wireless","onboardStale":false}}
+        """
+        let data = json.data(using: .utf8)!
+        let inbound = try InboundDecoder.decode(data)
+        switch inbound {
+        case .cockpitLink(let env):
+            XCTAssertEqual(env.payload.robotLinkRttMs, 480)
+            XCTAssertEqual(env.payload.telemetryHz, 4.5)
+            XCTAssertEqual(env.payload.transport, "ssh-wireless")
+            XCTAssertTrue(env.payload.isWireless)
+            XCTAssertTrue(env.payload.isDegraded, "RTT 480ms > 350ms → degraded")
+        default:
+            XCTFail("expected cockpit.link, got \(inbound)")
+        }
+    }
+
+    func testRobotLinkDegradedThresholds() {
+        // 양호: 유선 UDP.
+        let good = RobotLinkPayload(robotLinkRttMs: 5, telemetryHz: 9.9,
+                                    transport: "udp", onboardStale: false)
+        XCTAssertFalse(good.isDegraded)
+        XCTAssertFalse(good.isWireless)
+
+        // 저하: 저주파.
+        let lowHz = RobotLinkPayload(robotLinkRttMs: 80, telemetryHz: 1.5)
+        XCTAssertTrue(lowHz.isDegraded, "1.5Hz < 2Hz → degraded")
+
+        // 저하: stale.
+        let stale = RobotLinkPayload(onboardStale: true)
+        XCTAssertTrue(stale.isDegraded)
+
+        // 무선 추론: transport 없어도 RTT 큰 경우.
+        let wirelessByRtt = RobotLinkPayload(robotLinkRttMs: 149)
+        XCTAssertTrue(wirelessByRtt.isWireless, "RTT 149 > 100 → wireless 추론")
+    }
+
+    /// forward-compat: 빈 회선 페이로드(모든 필드 nil)도 디코드되고 안전.
+    func testInboundCockpitLinkMinimalDecodes() throws {
+        let json = """
+        {"v":1,"id":"evt_000005","type":"cockpit.link","sentAt":"2026-06-03T12:00:03.000Z","payload":{}}
+        """
+        let data = json.data(using: .utf8)!
+        let inbound = try InboundDecoder.decode(data)
+        switch inbound {
+        case .cockpitLink(let env):
+            XCTAssertNil(env.payload.robotLinkRttMs)
+            XCTAssertFalse(env.payload.isDegraded)
+        default:
+            XCTFail("expected cockpit.link, got \(inbound)")
+        }
+    }
+
     func testWalkPresetDefaults() {
         XCTAssertEqual(WalkPreset.slowForward.defaultParams.xMm, 20)
         XCTAssertEqual(WalkPreset.turnLeft.defaultParams.aDeg, 8)
