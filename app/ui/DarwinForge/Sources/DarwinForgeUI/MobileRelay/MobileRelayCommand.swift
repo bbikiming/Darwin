@@ -94,6 +94,7 @@ public enum OutboundEventType: String, Codable, Sendable {
     case sessionWelcome   = "session.welcome"
     case sessionRejected  = "session.rejected"
     case telemetryState   = "telemetry.state"
+    case cockpitTelemetry = "cockpit.telemetry"
     case armingProgress   = "arming.progress"
     case transportWarning = "transport.warning"
     case watchdogStop     = "watchdog.stop"
@@ -295,6 +296,27 @@ public struct TelemetryStatePayload: Codable, Sendable, Equatable {
         self.batteryV = batteryV; self.maxTempC = maxTempC
         self.latencyMs = latencyMs; self.lastAckAgeMs = lastAckAgeMs
         self.safety = safety; self.uiState = uiState
+    }
+}
+
+/// 실 robot 자세 텔레메트리 — `cockpit.telemetry` 이벤트 페이로드.
+/// iOS `RobotAttitudePayload`(MobilePilotKit)와 필드명·타입이 1:1 일치(JSON 키가 곧 계약).
+public struct RobotAttitudePayload: Codable, Sendable, Equatable {
+    public let rollDeg: Double          // 실 IMU roll(+우측 기울임)
+    public let pitchDeg: Double         // 실 IMU pitch(+전방 숙임)
+    public let balanceState: String?    // "normal"/"correcting"
+    public let autoRecoveryPhase: String?  // "idle"/"fallen"/"settling"/"gettingUp"/"done"/"failed"
+    public let fallDirection: String?   // "forward"/"backward"/nil
+
+    public init(rollDeg: Double, pitchDeg: Double,
+                balanceState: String? = nil,
+                autoRecoveryPhase: String? = nil,
+                fallDirection: String? = nil) {
+        self.rollDeg = rollDeg
+        self.pitchDeg = pitchDeg
+        self.balanceState = balanceState
+        self.autoRecoveryPhase = autoRecoveryPhase
+        self.fallDirection = fallDirection
     }
 }
 

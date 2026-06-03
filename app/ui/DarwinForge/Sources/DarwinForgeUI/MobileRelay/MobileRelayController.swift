@@ -155,6 +155,9 @@ public final class MobileRelayController: ObservableObject {
     /// MobileRelayBootstrap 이 rebindHooks() 시점에 swapBatteryVoltage 로 주입.
     /// nil 기본값 → ARM reject (보수 정책; 주입 전 시동 방지).
     private var batteryVoltage: @Sendable () async -> Double? = { nil }
+    /// MobileRelayBootstrap 이 rebindHooks() 시점에 swapCockpitAttitudeProvider 로 주입.
+    /// nil = 자세 미전송(하위호환: iOS 는 graceful degradation).
+    private var cockpitAttitudeProvider: (@Sendable () async -> RobotAttitudePayload?)?
     private var telemetryTask: Task<Void, Never>?
     // V297-6 (PM Story S2.1): 세션 시작 시각 — burst 모드 판정용.
     // 페어링 완료 시 nil → Date() 로 갱신, 세션 해제 시 nil 리셋.
@@ -215,6 +218,13 @@ public final class MobileRelayController: ObservableObject {
                 await start()
             }
         }
+    }
+
+    /// 자세 provider 클로저를 교체한다. pump 가 매 tick 마다 live 로 읽으므로
+    /// 서버 재시작이 불필요(배터리 클로저와 달리 server build 에 baked 되지 않음).
+    public func swapCockpitAttitudeProvider(
+        _ closure: @escaping @Sendable () async -> RobotAttitudePayload?) {
+        self.cockpitAttitudeProvider = closure
     }
 
     /// V295-2: 타임라인에 엔트리 추가 (ring buffer max 20).
@@ -346,6 +356,11 @@ public final class MobileRelayController: ObservableObject {
             while !Task.isCancelled {
                 if let server = await self?.server {
                     await server.broadcastTelemetry()
+                    // cockpit.telemetry: 자세 provider 가 주입돼 있으면 동일 주기로 전송.
+                    // provider 미주입(nil) 시 미전송 → iOS graceful degradation(하위호환).
+                    if let attitude = await self?.cockpitAttitudeProvider?() {
+                        await server.broadcastCockpitTelemetry(attitude)
+                    }
                     // P1-2 fix (truth-gap report, 2026-05-25): refresh
                     // activeIPhoneName from the server's session state so the
                     // Mac toolbar chip reflects "연결됨" reliably (not only on

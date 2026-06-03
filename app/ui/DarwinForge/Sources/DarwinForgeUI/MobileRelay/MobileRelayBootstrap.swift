@@ -241,6 +241,32 @@ public struct MobileRelayBootstrap: View {
         controller.swapBatteryVoltage {
             await MainActor.run { storeRef.lastTelemetry?.board?.voltageVolts }
         }
+
+        // cockpit.telemetry: 실 robot 자세(IMU roll/pitch)·balance·자동복구 단계 주입.
+        // WalkLabSession 은 @MainActor 격리 — MainActor.run 으로 hop 해 읽는다.
+        // session 미주입/해제 시 nil 반환 → 미전송(iOS graceful degradation).
+        nonisolated(unsafe) let sessionRef = walkSession
+        controller.swapCockpitAttitudeProvider {
+            await MainActor.run { () -> RobotAttitudePayload? in
+                guard let session = sessionRef else { return nil }
+                let (phaseStr, dir): (String, String?) = {
+                    switch session.autoRecoveryPhase {
+                    case .idle:            return ("idle", nil)
+                    case .fallen(let d):   return ("fallen", d == .forward ? "forward" : "backward")
+                    case .settling:        return ("settling", nil)
+                    case .gettingUp:       return ("gettingUp", nil)
+                    case .done:            return ("done", nil)
+                    case .failed:          return ("failed", nil)
+                    }
+                }()
+                return RobotAttitudePayload(
+                    rollDeg: session.imuRollDeg,
+                    pitchDeg: session.imuPitchDeg,
+                    balanceState: session.enableBalanceCorrection ? "correcting" : "normal",
+                    autoRecoveryPhase: phaseStr,
+                    fallDirection: dir)
+            }
+        }
     }
 }
 

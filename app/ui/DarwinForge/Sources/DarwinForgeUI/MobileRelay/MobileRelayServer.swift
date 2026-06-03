@@ -332,6 +332,15 @@ public actor MobileRelayServer {
                    to: session.channel)
     }
 
+    /// 실 robot 자세를 활성 세션에 전송. payload는 호출자(MobileRelayBootstrap)가
+    /// WalkLabSession 에서 채워 넘긴다(IMU 는 RobotSafetyPort 계약 밖이라 주입 방식).
+    public func broadcastCockpitTelemetry(_ payload: RobotAttitudePayload) async {
+        guard let session else { return }
+        await send(envelope: makeEnvelope(type: OutboundEventType.cockpitTelemetry.rawValue,
+                                          payload: payload),
+                   to: session.channel)
+    }
+
     // MARK: - Internal helpers
 
     private func acceptHello(channel: RelayClientChannel,
