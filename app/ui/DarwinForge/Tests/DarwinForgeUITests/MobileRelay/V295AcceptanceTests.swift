@@ -189,15 +189,20 @@ final class V295AcceptanceTests: XCTestCase {
 
         await server.handleClientConnected(first,
                                            handshake: helloFrame(code: "ACC005",
-                                                                  deviceName: "Primary iPhone"))
+                                                                  deviceName: "Primary iPhone",
+                                                                  deviceId: "PRIMARY_DEVICE"))
         try await Task.sleep(nanoseconds: 50_000_000)
 
         XCTAssertTrue(first.received(type: "session.welcome"),
                       "첫 iPhone 은 welcome 을 수신해야 함")
 
+        // 서로 다른 deviceId — 같은 deviceId 면 서버가 동일 기기의 재연결로 보고
+        // 세션을 넘겨준다(Wi-Fi 깜빡임 재연결 정책). 별개의 침입 기기를 모사하려면
+        // deviceId 가 달라야 single-authority 거부 경로를 탄다.
         await server.handleClientConnected(second,
                                            handshake: helloFrame(code: "ACC005",
-                                                                  deviceName: "Intruder iPhone"))
+                                                                  deviceName: "Intruder iPhone",
+                                                                  deviceId: "INTRUDER_DEVICE"))
         try await Task.sleep(nanoseconds: 50_000_000)
 
         XCTAssertTrue(second.received(type: "session.rejected"),
@@ -209,7 +214,9 @@ final class V295AcceptanceTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func helloFrame(code: String, deviceName: String = "Test iPhone") -> Data {
+    private func helloFrame(code: String,
+                            deviceName: String = "Test iPhone",
+                            deviceId: String = "TEST_ACC") -> Data {
         let envelope: [String: Any] = [
             "v": 1, "id": "cmd_hello", "type": "session.hello",
             "sentAt": Self.isoFormatter.string(from: Date()),
@@ -218,7 +225,7 @@ final class V295AcceptanceTests: XCTestCase {
                 "appVersion": "0.1.0",
                 "protocolVersion": 1,
                 "deviceName": deviceName,
-                "deviceId": "TEST_ACC",
+                "deviceId": deviceId,
                 "pairingCode": code
             ]
         ]

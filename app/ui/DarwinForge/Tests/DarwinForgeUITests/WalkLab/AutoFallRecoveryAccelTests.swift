@@ -216,8 +216,13 @@ final class AutoFallRecoveryMonitorGateTests: XCTestCase {
             "DXL 전원 OFF 시 recovery task 가 spawn 되면 안 됨")
     }
 
-    func testFallMonitorTick_cradleConfirmed_doesNotTrigger() {
-        // cradle 확인됨 (정비 스탠드) → auto get-up 절대 금지
+    func testFallMonitorTick_cradleConfirmed_stillTriggers() {
+        // **정책 변경 (2026-05-31 사용자 결정 "바닥 낙상이면 항상 일어나기")**:
+        // cradle 모드는 더 이상 auto get-up 을 원천 차단하지 않는다 (GATE 3 제거).
+        // 1차 안전 조건은 isFallenAccelSustained(명확한 바닥 낙상 가속도), 2차 안전장치는
+        // runRecovery 의 waitForSettle(자이로 정지 대기) — 스탠드를 움직이는 중이면 settle
+        // 대기로 getup 이 지연되어 안전. 따라서 명확한 낙상 가속도가 지속되면 cradle 여부와
+        // 무관하게 recovery 가 시작돼야 한다.
         let (session, store) = makeSession(bus: MockBus(), dxlPowerOn: true)
         _ = store
         session.cradleConfirmed = true
@@ -226,8 +231,8 @@ final class AutoFallRecoveryMonitorGateTests: XCTestCase {
 
         session.fallMonitorTick()
 
-        XCTAssertEqual(session.autoRecoveryPhase, .idle,
-            "cradle 확인 상태에서 fall monitor 는 recovery 를 시작해서는 안 됨")
+        XCTAssertNotEqual(session.autoRecoveryPhase, .idle,
+            "cradle 확인 상태라도 명확한 바닥 낙상이면 recovery 가 시작돼야 함 (settle 대기가 안전장치)")
     }
 
     func testFallMonitorTick_busNil_doesNotTrigger() {

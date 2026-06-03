@@ -84,4 +84,8 @@ jobs:
 
       - name: Swift test
         working-directory: app/ui/DarwinForge
-        run: swift test --parallel
+        # 직렬 실행 — 일부 테스트가 UserDefaults.standard(harness 토스트,
+        # mobileRelay.preferredHost, df.walklab.* 등 프로세스 전역 키)를 공유해
+        # --parallel 시 클래스 간 상태 오염으로 flaky. 직렬은 100% 그린.
+        # (병렬 격리는 각 테스트에 고유 UserDefaults suite 주입으로 후속 개선 가능)
+        run: swift test

@@ -22,10 +22,11 @@ final class CockpitHeadMappingTests: XCTestCase {
         }
     }
 
-    func test_head_group_has_four_actions() {
+    func test_head_group_has_five_actions() {
+        // b7c4c36 (2026-06-02): ball-tracking 헤드 모션 추가 → head 그룹 5개.
         let headActions = CockpitAction.allCases.filter { $0.group == .head }
         XCTAssertEqual(Set(headActions),
-                       [.headPanLeft, .headPanRight, .headTiltUp, .headTiltDown])
+                       [.headPanLeft, .headPanRight, .headTiltUp, .headTiltDown, .ballTracking])
     }
 
     // MARK: - profile 기반 머리 norm 합성

@@ -161,10 +161,12 @@ final class V291TelemetryIntegrationTests: XCTestCase {
 
         await server.handleClientConnected(channel, handshake: helloFrame(code: "333333"))
         await server.handleClientDisconnected(channel, reason: "userClosed")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        // **V291-11**: idle 끊김은 1.5s grace 후 performDisconnectStop 에서 emit.
+        // (active command 가 아니므로 즉시 emit 되지 않음 — grace 만료를 기다린다.)
+        try await Task.sleep(nanoseconds: 1_600_000_000)
 
         let discEv = harness.events.first { $0.kind == .mobilePilotDisconnected }
-        XCTAssertNotNil(discEv, "mobilePilotDisconnected 가 기록되어야 함")
+        XCTAssertNotNil(discEv, "grace(1.5s) 만료 후 mobilePilotDisconnected 가 기록되어야 함")
         XCTAssertEqual(discEv?.level, .info)
         XCTAssertEqual(discEv?.actor, .system)
     }

@@ -7,14 +7,23 @@ import XCTest
 final class WalkLabOnboardSchemaWarningTests: XCTestCase {
 
     private let key = WalkLabSession.onboardBalanceSchemaVerifiedKey
+    /// 테스트 격리용 고유 UserDefaults suite — `--parallel` 시 다른 클래스와의
+    /// `df.walklab.*` 키 공유 오염 방지. WalkLabSession 이 이 suite 로 영속화.
+    private var suiteName: String!
+    private var testDefaults: UserDefaults!
 
     override func setUp() async throws {
         try await super.setUp()
-        UserDefaults.standard.removeObject(forKey: key)
+        suiteName = "test.walklab.onboardschema.\(UUID().uuidString)"
+        testDefaults = UserDefaults(suiteName: suiteName)
+        WalkLabSession.testDefaultsOverride = testDefaults
     }
 
     override func tearDown() async throws {
-        UserDefaults.standard.removeObject(forKey: key)
+        WalkLabSession.testDefaultsOverride = nil
+        testDefaults.removePersistentDomain(forName: suiteName)
+        testDefaults = nil
+        suiteName = nil
         try await super.tearDown()
     }
 
@@ -73,7 +82,7 @@ final class WalkLabOnboardSchemaWarningTests: XCTestCase {
     func testVerifiedPersistedToUserDefaults() {
         let s1 = WalkLabSession()
         s1.onboardBalanceSchemaVerified = true
-        XCTAssertTrue(UserDefaults.standard.bool(forKey: key),
+        XCTAssertTrue(testDefaults.bool(forKey: key),
                       "set true → UserDefaults 에 즉시 저장")
 
         let s2 = WalkLabSession()
@@ -83,11 +92,11 @@ final class WalkLabOnboardSchemaWarningTests: XCTestCase {
 
     /// false 로 set 도 persisted.
     func testVerifiedFalsePersisted() {
-        UserDefaults.standard.set(true, forKey: key)
+        testDefaults.set(true, forKey: key)
         let s = WalkLabSession()
         XCTAssertTrue(s.onboardBalanceSchemaVerified, "초기값 true 복원")
         s.onboardBalanceSchemaVerified = false
-        XCTAssertFalse(UserDefaults.standard.bool(forKey: key),
+        XCTAssertFalse(testDefaults.bool(forKey: key),
                        "false 도 persist")
     }
 }

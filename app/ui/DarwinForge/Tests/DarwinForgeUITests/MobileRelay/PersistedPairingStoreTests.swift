@@ -4,11 +4,14 @@ import XCTest
 final class PersistedPairingStoreTests: XCTestCase {
 
     /// 각 테스트마다 격리된 UserDefaults suiteName 을 사용해 표준 defaults 를 오염시키지 않는다.
+    /// **`--parallel` fix**: suiteName 을 테스트마다 고유(UUID)하게 — 종전 고정 이름은
+    /// 6개 테스트가 같은 suite 를 동시에 removePersistentDomain/write 해 서로 오염시켰다.
     private var defaults: UserDefaults!
-    private let suiteName = "PersistedPairingStoreTests"
+    private var suiteName: String!
 
     override func setUp() {
         super.setUp()
+        suiteName = "PersistedPairingStoreTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
     }
@@ -16,6 +19,7 @@ final class PersistedPairingStoreTests: XCTestCase {
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
+        suiteName = nil
         super.tearDown()
     }
 

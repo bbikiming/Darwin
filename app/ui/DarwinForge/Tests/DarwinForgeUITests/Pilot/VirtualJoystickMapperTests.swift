@@ -66,9 +66,12 @@ final class VirtualJoystickMapperTests: XCTestCase {
     }
 
     func test_just_past_deadzone_passes_through() {
-        let cmd = VirtualJoystickMapper.map(x: 0.10, y: 0, turn: 0, speedScale: 1.0)
-        XCTAssertEqual(cmd.sideMm, 1.5, accuracy: 0.001,
-                       "0.10 stick × 15 mm = 1.5 mm — passes through")
+        // deadzone 0.05→0.10 상향 (DJI RC 중앙 drift ±0.06 잔존 후진 fix) 반영:
+        // 입력은 deadzone(0.10) 과 sideStopEpsilon(2.0mm) 를 모두 확실히 넘어야 통과.
+        // 0.20 stick × 15 mm baseline = 3.0 mm ≥ 2.0 snap → 통과.
+        let cmd = VirtualJoystickMapper.map(x: 0.20, y: 0, turn: 0, speedScale: 1.0)
+        XCTAssertEqual(cmd.sideMm, 3.0, accuracy: 0.001,
+                       "0.20 stick × 15 mm = 3.0 mm — deadzone·snap 통과")
         XCTAssertFalse(cmd.isStop)
     }
 

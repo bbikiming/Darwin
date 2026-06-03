@@ -268,7 +268,12 @@ public final class MicCheckStore: ObservableObject {
     // MARK: - 기본 부수효과 구현
 
     /// 디코드된 WAV 를 맥 임시 디렉터리에 저장하고 URL 반환.
-    public static func defaultFileWriter(_ data: Data) throws -> URL {
+    ///
+    /// **nonisolated**: `MicCheckStore` 가 `@MainActor` 라 static 메서드도 기본
+    /// main-actor 격리된다. 그러면 동기 클로저 기본인자(`init` 의 `fileWriter` 기본값)
+    /// 평가가 nonisolated 컨텍스트에서 일어나 격리 위반 컴파일 에러가 난다. 본 메서드는
+    /// 디스크 임시파일 쓰기만 하고 actor 상태를 만지지 않으므로 nonisolated 가 안전.
+    public nonisolated static func defaultFileWriter(_ data: Data) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("df_mic_check_\(UUID().uuidString).wav")
         try data.write(to: url)

@@ -890,15 +890,16 @@ public final class WalkLabSession {
     /// 이제 UserDefaults 미설정 시 true 로 초기화. 사용자가 명시 OFF 후엔 OFF 유지.
     public var monitoringExpanded: Bool = {
         let key = "df.walklab.monitoringExpanded"
-        if UserDefaults.standard.object(forKey: key) == nil {
+        let defaults = WalkLabSession.persistenceDefaults
+        if defaults.object(forKey: key) == nil {
             // 첫 실행 — default true (모든 패널 노출).
-            UserDefaults.standard.set(true, forKey: key)
+            defaults.set(true, forKey: key)
             return true
         }
-        return UserDefaults.standard.bool(forKey: key)
+        return defaults.bool(forKey: key)
     }() {
         didSet {
-            UserDefaults.standard.set(monitoringExpanded,
+            WalkLabSession.persistenceDefaults.set(monitoringExpanded,
                                       forKey: "df.walklab.monitoringExpanded")
         }
     }
@@ -2088,16 +2089,31 @@ public final class WalkLabSession {
     /// → 사용자가 매번 재확인 (annoying for known-v2 daemons). 신규: didSet 으로 UserDefaults
     /// persist. Key = "df.walklab.onboardBalanceSchemaVerified". 로드 시 자동 복원.
     public var onboardBalanceSchemaVerified: Bool = {
-        UserDefaults.standard.bool(forKey: WalkLabSession.onboardBalanceSchemaVerifiedKey)
+        WalkLabSession.persistenceDefaults.bool(forKey: WalkLabSession.onboardBalanceSchemaVerifiedKey)
     }() {
         didSet {
-            UserDefaults.standard.set(onboardBalanceSchemaVerified,
+            WalkLabSession.persistenceDefaults.set(onboardBalanceSchemaVerified,
                                        forKey: WalkLabSession.onboardBalanceSchemaVerifiedKey)
         }
     }
 
     /// 사이클 172 — UserDefaults persist key.
     public static let onboardBalanceSchemaVerifiedKey = "df.walklab.onboardBalanceSchemaVerified"
+
+    // MARK: - 영속화 store (테스트 격리용 주입점)
+
+    /// `monitoringExpanded` / `onboardBalanceSchemaVerified` 등 UI 토글의 영속화에
+    /// 사용하는 UserDefaults. 프로덕션은 `.standard`.
+    ///
+    /// **테스트 격리**: 두 프로퍼티는 인스턴스 생성 시 전역 UserDefaults 를 읽고
+    /// didSet 으로 쓴다. 여러 테스트 클래스가 `--parallel` 로 같은 키를 동시에
+    /// set/remove 하면 서로 오염돼 flaky 해진다. 테스트는 `testDefaultsOverride` 에
+    /// 고유 suite 를 주입해 프로세스 전역 `.standard` 공유를 끊는다 (프로덕션 동작 무변경).
+    nonisolated(unsafe) public static var testDefaultsOverride: UserDefaults?
+
+    nonisolated static var persistenceDefaults: UserDefaults {
+        testDefaultsOverride ?? .standard
+    }
 
     /// 사이클 164: HUD 가 표시할 active warning — currentWalkingEngineCommand 가 갱신.
     /// true = Onboard mode + balance ON + version 미확인 → 사용자가 의도와 다른 동작 가능.
