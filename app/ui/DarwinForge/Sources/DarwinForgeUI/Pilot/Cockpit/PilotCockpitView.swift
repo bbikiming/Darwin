@@ -112,6 +112,9 @@ public struct PilotCockpitView: View {
     /// realMotorEnabled 일 때만 dispatch 기록 (= 실 robot 테스트 데이터 집합).
     @State private var recorder: CockpitPilotRecorder?
 
+    /// 범용 컨트롤러 세팅 시트(M4) — 가상 컨트롤러로 키매핑/주입 체감.
+    @State private var showControllerSheet: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -130,6 +133,10 @@ public struct PilotCockpitView: View {
                 .allowsHitTesting(false)
 
             cockpitContent
+        }
+        .overlay(alignment: .topTrailing) { controllerSettingsButton }
+        .sheet(isPresented: $showControllerSheet) {
+            CockpitControllerSettingsSheet(cockpit: cockpit, isPresented: $showControllerSheet)
         }
         .focusable()
         .focused($keyboardFocused)
@@ -813,6 +820,24 @@ public struct PilotCockpitView: View {
     /// 명시한다. LAN stale 데이터를 fresh-green 으로 보이지 않게 하는 게 목적.
     private var telemetryStale: Bool {
         store.telemetryMode.shouldDesaturate
+    }
+
+    // MARK: - 컨트롤러 세팅 진입 버튼
+
+    private var controllerSettingsButton: some View {
+        Button {
+            showControllerSheet = true
+        } label: {
+            Label("컨트롤러", systemImage: "gamecontroller.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(Capsule().fill(CockpitColors.panelSolid))
+                .overlay(Capsule().stroke(CockpitColors.cyan.opacity(0.5), lineWidth: 1))
+                .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 14).padding(.trailing, 16)
+        .help("가상 컨트롤러로 키매핑·주입 체감 (게임패드 없이)")
     }
 
     // MARK: - Lifecycle
