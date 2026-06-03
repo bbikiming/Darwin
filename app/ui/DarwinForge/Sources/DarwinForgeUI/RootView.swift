@@ -286,6 +286,8 @@ public struct RootView: View {
                 HStack(spacing: DFSpace.sm2) {
                     connectionToolbarPill   // 항상 표시 (핵심 상태).
                     if !size.isCompact {
+                        // 보행 ↔ 관절편집 원클릭 전환 (SSH 도달 시 활성, 미연결 시 비활성).
+                        ConnectionModeSwitcher()
                         // regular / wide — 보조 pill 모두 표시. 텍스트는 wide 에서만.
                         batteryToolbarPill
                         temperatureToolbarPill

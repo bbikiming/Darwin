@@ -227,6 +227,17 @@ public final class ConnectionStore: ObservableObject {
     public var isRobotConnected: Bool {
         bus != nil || telemetryMode == .onboard || telemetryMode == .onboardStale
     }
+
+    // MARK: - Connection mode (보행 ↔ 관절편집 전환, 2026-06-03)
+    //
+    // 로봇은 CM730 시리얼(/dev/ttyUSB0)을 공유하는 두 상호배타 모드를 가진다(ConnectionMode
+    // 참고). 종전엔 ConnectionWizard 흐름으로만 도달 가능 + 게이트는 "연결 필요"만 표시.
+    // 신규: 파생 모드 + 원클릭 `switchMode` 코디네이터.
+
+    /// 현재 모드 — 활성 transport 상태에서 파생. `bus` / `telemetryMode` 단일 진실로 계산.
+    public var currentMode: ConnectionMode {
+        ConnectionMode.derive(busActive: bus != nil, telemetryMode: telemetryMode)
+    }
     /// 누적 통신 통계 (대시보드 카드).
     public var successCount: Int { health.successCount }
     public var failureCount: Int { health.failureCount }
@@ -1577,6 +1588,104 @@ public final class ConnectionStore: ObservableObject {
                 context: harnessContext()
             )
         }
+    }
+
+    // MARK: - Connection mode switch (보행 ↔ 관절편집 원클릭 전환, 2026-06-03)
+    //
+    // 두 모드는 같은 시리얼을 공유하므로 전환 = 한쪽 종료 + 반대쪽 기동(약 10초). 사용자가
+    // 토글 한 번으로 전체 시퀀스를 자동 실행하도록 코디네이트. 진행 단계는 `modeSwitchPhase`
+    // 로 노출 — 스위처/배너가 ProgressView + 단계 라벨 표시.
+
+    /// 모드 전환 진행 상태 (UI 표시용).
+    public enum ModeSwitchPhase: Equatable {
+        /// 전환 중 아님.
+        case idle
+        /// 전환 진행 중 — `to` 목표 모드, `step` 한국어 단계 라벨.
+        case switching(to: ConnectionMode, step: String)
+        /// 전환 실패 — 사용자에게 보여줄 짧은 한국어 사유.
+        case failed(String)
+    }
+
+    /// 현재 모드 전환 진행 상태. 초기 `.idle`.
+    @Published public private(set) var modeSwitchPhase: ModeSwitchPhase = .idle
+
+    /// **원클릭 모드 전환** — 보행 ↔ 관절편집. 한 번 호출로 반대 모드 종료 + 목표 모드 기동
+    /// 전체 시퀀스를 자동 실행한다. 진행은 `modeSwitchPhase` 로 단계별 노출.
+    ///
+    /// - `.jointEdit`: 보행 데모 정지(demoStop = 데모 kill + forge-bridge 재시작) →
+    ///   관절 버스(TCP 5530) 연결. `connect(endpoint:)` 가 bus + telemetryMode(.lan) 설정.
+    /// - `.walk`: 버스 해제(disconnect) → 보행 데모 시작(walkLabRobotisStart) →
+    ///   온보드 텔레메트리 시작.
+    ///
+    /// 안전 가드: 보행 활성(walkSession.isWalkActive) 또는 e-stop 진입 시 조용히 진행하지
+    /// 않고 `.failed` 로 안내한다(먼저 정지 요구).
+    @MainActor
+    public func switchMode(to target: ConnectionMode, remoteShell: RemoteShell) async {
+        // 동일 모드면 no-op (이미 거기) — 불필요한 시리얼 churn 방지.
+        guard target != currentMode else { return }
+        guard target == .walk || target == .jointEdit else {
+            modeSwitchPhase = .failed("이 모드로는 전환할 수 없어요.")
+            return
+        }
+        // 안전 가드 — 보행 중이거나 e-stop 진입 상태면 전환 금지.
+        // walkSession 은 weak(RootView 가 strong 보유) — 도달 가능하면 isWalkActive 로 판정.
+        if walkSession?.isWalkActive == true || emergencyStopActive {
+            modeSwitchPhase = .failed("보행 중에는 전환할 수 없어요. 먼저 정지하세요.")
+            return
+        }
+
+        switch target {
+        case .jointEdit:
+            await switchToJointEdit(remoteShell: remoteShell)
+        case .walk:
+            await switchToWalk(remoteShell: remoteShell)
+        case .offline:
+            break   // guard 에서 이미 차단.
+        }
+    }
+
+    /// `switchMode` 헬퍼 — 보행 데모 정지 후 관절 버스 연결.
+    @MainActor
+    private func switchToJointEdit(remoteShell: RemoteShell) async {
+        modeSwitchPhase = .switching(to: .jointEdit, step: "보행 데모 정지…")
+        // 온보드 텔레메트리 폴러/수신기 먼저 정리 — 곧 죽을 데모를 폴링하지 않게.
+        stopOnboardTelemetry()
+        // demoStop = 데모 kill + forge-bridge(socat) 재시작 → Mac 측 모터 송출 복구.
+        let stopResult = await remoteShell.send(RobotSetupCommand.demoStop)
+        if let err = stopResult?.error {
+            modeSwitchPhase = .failed("보행 데모 정지 실패 — \(err)")
+            return
+        }
+
+        modeSwitchPhase = .switching(to: .jointEdit, step: "관절 버스 연결…")
+        // wiredHost: 이더넷 직결 기본 IP(192.168.123.1). connect 가 bus + telemetryMode(.lan) 설정.
+        let wiredHost = DFConnectionConstants.robotEthernetIP
+        connect(endpoint: .network(host: wiredHost, port: DFConnectionConstants.bridgePort))
+        modeSwitchPhase = .idle
+    }
+
+    /// `switchMode` 헬퍼 — 버스 해제 후 보행 데모 시작 + 온보드 텔레메트리.
+    @MainActor
+    private func switchToWalk(remoteShell: RemoteShell) async {
+        modeSwitchPhase = .switching(to: .walk, step: "버스 해제…")
+        disconnect()
+
+        modeSwitchPhase = .switching(to: .walk, step: "보행 데모 시작…")
+        // walkLabRobotisStart = forge-bridge 종료(USB 해제) + walklab 데모 기동.
+        let startResult = await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
+        if let err = startResult?.error {
+            modeSwitchPhase = .failed("보행 데모 시작 실패 — \(err)")
+            return
+        }
+
+        modeSwitchPhase = .switching(to: .walk, step: "온보드 텔레메트리…")
+        startOnboardTelemetry(remoteShell: remoteShell)
+        modeSwitchPhase = .idle
+    }
+
+    /// 모드 전환 실패 메시지 해제 — 사용자가 확인/재시도 시.
+    public func clearModeSwitchPhase() {
+        if case .failed = modeSwitchPhase { modeSwitchPhase = .idle }
     }
 
     // MARK: - SSH ↔ LAN parity (2026-06-01) — onboard telemetry uplink (contract §D.3)

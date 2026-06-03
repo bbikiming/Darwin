@@ -318,13 +318,26 @@ public struct StudioView: View {
     private var leftPanel: some View {
         VStack(alignment: .leading, spacing: DFSpace.none) {
             if store.bus == nil {
-                onboardingPanel
+                // 보행 모드(로봇 연결됨)면 관절편집 전환 배너, 오프라인이면 USB 3단계 안내.
+                if store.currentMode == .walk {
+                    modeSwitchBanner
+                } else {
+                    onboardingPanel
+                }
             } else {
                 bodyMapPanel
             }
         }
         .frame(width: 220)
         .background(DFColor.elev2)
+    }
+
+    /// 보행 모드 → 관절편집 전환 유도 배너 (스튜디오는 bus 필요).
+    private var modeSwitchBanner: some View {
+        ConnectionModeBanner(
+            offlineTitle: "로봇 연결 필요",
+            offlineMessage: "스튜디오는 관절 직접 제어가 필요합니다. 우측 상단 [⚡ 자동 연결] 을 먼저 클릭하세요."
+        )
     }
 
     @ViewBuilder

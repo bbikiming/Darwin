@@ -463,15 +463,12 @@ public struct TeachModeView: View {
 
     // MARK: - Not connected
 
+    /// 미연결/보행 모드 게이트. 보행 모드면 관절편집 전환 CTA, 오프라인이면 기존 빠른 연결 안내.
     private var notConnectedPanel: some View {
-        DFEmptyState(
-            icon: "antenna.radiowaves.left.and.right.slash",
-            title: "로봇 연결 필요",
-            message: "티칭 모드는 실시간 통신이 필요합니다. 우측 상단 [⚡ 빠른 연결] 을 먼저 클릭하세요.",
-            tint: DFColor.warning
-        ) {
-            EmptyView()
-        }
+        ConnectionModeBanner(
+            offlineTitle: "로봇 연결 필요",
+            offlineMessage: "티칭 모드는 실시간 통신이 필요합니다. 우측 상단 [⚡ 빠른 연결] 을 먼저 클릭하세요."
+        )
     }
 
     // MARK: - Helpers
