@@ -63,14 +63,16 @@ def ssh_args(
     command: str,
     identity: str | None,
     timeout: int,
+    port: int = 22,
 ) -> list[str]:
     """Build the /usr/bin/ssh argument vector — pure, testable.
 
     Mirrors SSHShell.sshArguments option-for-option and order-for-order:
     BatchMode/accept-new/LogLevel/ConnectTimeout/ServerAlive first, then
     ControlMaster (only when an identity exists, i.e. ~/.ssh is guaranteed),
-    then the OpenSSH 5.9 legacy +ssh-rsa compat, then the identity, and finally
-    user@host followed by the command as the last two elements.
+    then the OpenSSH 5.9 legacy +ssh-rsa compat, the identity, the explicit
+    `-p <port>`, and finally user@host followed by the command as the last two
+    elements.
     """
     connect_timeout = min(int(timeout), 10)
     args: list[str] = [
@@ -96,6 +98,7 @@ def ssh_args(
     ]
     if identity:
         args += ["-i", identity, "-o", "IdentitiesOnly=yes"]
+    args += ["-p", str(int(port))]
     args += [f"{user}@{host}", command]
     return args
 
@@ -106,12 +109,13 @@ class SshControlClient:
     def __init__(self, cfg: dict):
         self.host = str(cfg.get("host", DEFAULT_HOST))
         self.user = str(cfg.get("user", DEFAULT_USER))
+        self.port = int(cfg.get("port", 22))
         # Resolve the identity: explicit cfg wins, else the default RSA key but
         # only if it actually exists (mirrors SSHShell.defaultOptions).
         raw_identity = cfg.get("identity_file", DEFAULT_IDENTITY)
         self.identity = self._resolve_identity(raw_identity)
         self.timeout = int(cfg.get("timeout_seconds", 6))
-        # Gait engine defaults — caller merges motion defaults into cfg.
+        # SSH/WalkLab gait defaults — owned by the [ssh] config section.
         self.period_ms = float(cfg.get("period_ms", DEFAULT_PERIOD_MS))
         self.foot_mm = float(cfg.get("foot_mm", DEFAULT_FOOT_MM))
         self.hip_deg = float(cfg.get("hip_deg", DEFAULT_HIP_DEG))
@@ -204,6 +208,7 @@ class SshControlClient:
         args = [
             "/usr/bin/ssh",
             "-o", f"ControlPath={DEFAULT_CONTROL_PATH}",
+            "-p", str(self.port),
             "-O", "exit",
             f"{self.user}@{self.host}",
         ]
@@ -271,6 +276,7 @@ class SshControlClient:
             command=command,
             identity=self.identity,
             timeout=timeout if timeout is not None else self.timeout,
+            port=self.port,
         )
         try:
             result = subprocess.run(

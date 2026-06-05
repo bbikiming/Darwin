@@ -147,7 +147,10 @@ The package script writes:
 dist/switch-pilot/darwin-switch-agent-0.1.0.tar.gz
 ```
 
-Current package size was about 27KB at last verification.
+Package size is about **1.6MB** as of 2026-06-05 (the earlier ~27KB figure was
+before the real DARwIn 3D model was added: `web/assets/darwin.glb` ~1.76MB plus
+vendored Three.js runtime). `package.sh` excludes build-only GLB-bake tooling
+(STL assembler, GLTF exporter, bake page) from the tarball.
 
 This package is intended to be "ready to install after Switchroot is ready", not proof that the Switch has already run it. The current deliverable should be described as:
 
@@ -348,11 +351,14 @@ Last local verification completed:
 - Browser-rendered cockpit had no clipped text after CSS adjustment.
 - Browser console warning/error list was empty.
 - ArrowRight moved command focus from Arm to Recover.
-- Frontend asset size was about 36KB total:
-  - `index.html`: 6716 bytes
-  - `styles.css`: 18252 bytes
-  - `app.js`: 11233 bytes
-- Package was generated at `dist/switch-pilot/darwin-switch-agent-0.1.0.tar.gz`.
+- Frontend cockpit code (index.html/styles.css/app.js/setup.*) is still tens of
+  KB; the bulk of the bundle is now the 3D runtime: `web/assets/darwin.glb`
+  (~1.76MB) + vendored Three.js (`three.module.min.js` ~655KB, GLTFLoader,
+  BufferGeometryUtils). The cockpit is fully Korean-localized with UX writing,
+  and the 3D model is an optional camera-fallback (CSS robot figure if WebGL is
+  unavailable; toggle via the setup page / localStorage `darwinNo3D`).
+- Package was generated at `dist/switch-pilot/darwin-switch-agent-0.1.0.tar.gz`
+  (~1.6MB; build-only GLB-bake tooling excluded by `package.sh`).
 
 Important qualification:
 

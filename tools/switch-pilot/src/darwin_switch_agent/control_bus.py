@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import queue
 import threading
 import time
@@ -16,6 +17,17 @@ class ControlAction:
     source: str = "cockpit"
 
 
+# Korean labels for the event log shown in the cockpit "기록" panel.
+_ACTION_LABELS = {
+    "arm": "조종 권한",
+    "stop": "정지",
+    "estop": "비상정지",
+    "recover": "복구",
+    "ping": "점검",
+}
+_SOURCE_LABELS = {"cockpit": "화면"}
+
+
 class ControlBus:
     """Thread-safe state and command bridge between agent loop and cockpit UI."""
 
@@ -29,7 +41,7 @@ class ControlBus:
             "connected": False,
             "local_ip": "127.0.0.1",
             "target": "",
-            "input_status": "No input device",
+            "input_status": "입력장치 없음",
             "deadman": False,
             "armed": False,
             "estopped": False,
@@ -44,13 +56,22 @@ class ControlBus:
             "robot_walking": False,
             "robot_fallen": 0,
             "robot_state": "unknown",
+            "watchdog_label": "—",
             "logs": [],
             "updated_at_ms": int(time.time() * 1000),
         }
 
+    def set_watchdog_label(self, label: str) -> None:
+        """Set the honest, mode-specific stop-watchdog label shown in the cockpit.
+        Set once at startup; never claim a watchdog the active path doesn't run."""
+        with self._lock:
+            self._snapshot["watchdog_label"] = label
+
     def request(self, action: str, source: str = "cockpit") -> None:
         self._actions.put(ControlAction(action=action, source=source))
-        self.log(f"{source}: {action}")
+        label = _ACTION_LABELS.get(action, action)
+        src = _SOURCE_LABELS.get(source, source)
+        self.log(f"{label} ({src})")
 
     def drain_actions(self) -> list[ControlAction]:
         actions: list[ControlAction] = []
@@ -137,8 +158,11 @@ class ControlBus:
             }
 
     def snapshot(self) -> dict[str, Any]:
+        # Deep copy so callers cannot mutate the bus's nested containers
+        # (logs list, controller/command/camera dicts) in place. The snapshot
+        # holds only JSON-like primitives, so deepcopy is cheap and total.
         with self._lock:
-            return dict(self._snapshot)
+            return copy.deepcopy(self._snapshot)
 
 
 def normalize_camera(raw: dict[str, Any]) -> dict[str, Any]:

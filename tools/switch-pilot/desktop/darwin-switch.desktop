@@ -3,5 +3,6 @@ Type=Application
 Name=Darwin Switch Cockpit
 Comment=Darwin robot controller for Switchroot Ubuntu
 Exec=/usr/local/bin/darwin-switch-cockpit
+Icon=/opt/darwin-switch-agent/web/assets/darwin-icon.png
 Terminal=false
 Categories=Utility;Robotics;

@@ -66,6 +66,17 @@ class SshArgsTests(unittest.TestCase):
         args = ssh_args("h", "u", "x", None, 99)
         self.assertIn("ConnectTimeout=10", " ".join(args))
 
+    def test_custom_port_emitted_before_target(self):
+        args = ssh_args("h", "u", "x", None, 6, port=2222)
+        self.assertIn("-p", args)
+        self.assertEqual(args[args.index("-p") + 1], "2222")
+        # user@host and command remain the last two elements.
+        self.assertEqual(args[-2:], ["u@h", "x"])
+
+    def test_default_port_22(self):
+        args = ssh_args("h", "u", "x", None, 6)
+        self.assertEqual(args[args.index("-p") + 1], "22")
+
 
 class CommandLineTests(unittest.TestCase):
     def setUp(self):
@@ -195,6 +206,25 @@ class NeverRaiseTests(unittest.TestCase):
         with mock.patch.object(scc.subprocess, "run", return_value=miss):
             client._ssh("cat /tmp/df-walklab-telemetry")
         self.assertTrue(client.connected)
+
+
+class PortRuntimeTests(unittest.TestCase):
+    def test_client_ssh_call_uses_configured_port(self):
+        client = SshControlClient({"port": 2222, "identity_file": None})
+        captured = {}
+
+        def fake_run(args, **kw):
+            captured["args"] = args
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+        with mock.patch.object(scc.subprocess, "run", side_effect=fake_run):
+            client._ssh("echo ok")
+        self.assertIn("-p", captured["args"])
+        self.assertEqual(captured["args"][captured["args"].index("-p") + 1], "2222")
+
+    def test_default_client_uses_port_22(self):
+        client = SshControlClient({"identity_file": None})
+        self.assertEqual(client.port, 22)
 
 
 if __name__ == "__main__":

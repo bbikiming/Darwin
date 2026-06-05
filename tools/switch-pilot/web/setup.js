@@ -24,7 +24,12 @@
     sshPort: document.getElementById("ssh-port"),
     sshIdentity: document.getElementById("ssh-identity"),
     cameraEnabled: document.getElementById("camera-enabled"),
+    model3dEnabled: document.getElementById("model3d-enabled"),
   };
+
+  // The 3D robot model is a client display preference (localStorage), separate
+  // from the device config POST. Reflect the current setting (default: on).
+  try { els.model3dEnabled.checked = !localStorage.getItem("darwinNo3D"); } catch (_e) {}
 
   function setStatus(text, kind) {
     statusEl.textContent = text || "";
@@ -85,7 +90,7 @@
   }
 
   function loadConfig() {
-    setStatus("Loading current settings…", "busy");
+    setStatus("현재 설정을 불러오는 중…", "busy");
     fetch("/api/config", { headers: { Accept: "application/json" } })
       .then(function (res) {
         if (!res.ok) throw new Error("HTTP " + res.status);
@@ -98,7 +103,7 @@
       .catch(function (err) {
         // Missing/unreadable config is fine on first boot — start with defaults.
         applyConfig({});
-        setStatus("Starting with defaults (" + err.message + ").", "");
+        setStatus("기본값으로 시작합니다 (" + err.message + ").", "");
       });
   }
 
@@ -107,7 +112,7 @@
     if (trimmed === "") return null;
     var num = Number(trimmed);
     if (!Number.isInteger(num) || num < 0 || num > 65535) {
-      throw new Error("Port must be a whole number 0–65535.");
+      throw new Error("포트는 0~65535 사이의 정수여야 해요.");
     }
     return num;
   }
@@ -118,7 +123,7 @@
     if (trimmed === "") return null;
     var num = Number(trimmed);
     if (!Number.isInteger(num) || num < 1 || num > 65535) {
-      throw new Error("SSH port must be a whole number 1–65535.");
+      throw new Error("SSH 포트는 1~65535 사이의 정수여야 해요.");
     }
     return num;
   }
@@ -127,13 +132,13 @@
   function buildSsh() {
     var ssh = {};
     var host = els.sshHost.value.trim();
-    if (!host) throw new Error("SSH host is required.");
-    if (/\s/.test(host)) throw new Error("SSH host cannot contain spaces.");
+    if (!host) throw new Error("SSH 호스트를 입력하세요.");
+    if (/\s/.test(host)) throw new Error("SSH 호스트에 공백을 넣을 수 없어요.");
     ssh.host = host;
 
     var user = els.sshUser.value.trim();
-    if (!user) throw new Error("SSH user is required.");
-    if (/\s/.test(user)) throw new Error("SSH user cannot contain spaces.");
+    if (!user) throw new Error("SSH 사용자를 입력하세요.");
+    if (/\s/.test(user)) throw new Error("SSH 사용자에 공백을 넣을 수 없어요.");
     ssh.user = user;
 
     var port = parseSshPort(els.sshPort.value);
@@ -157,7 +162,7 @@
       if (macPort !== null) mac.port = macPort;
       var pairing = els.macPairing.value.trim();
       if (pairing) {
-        if (!/^[0-9]+$/.test(pairing)) throw new Error("Pairing code must be digits only.");
+        if (!/^[0-9]+$/.test(pairing)) throw new Error("페어링 코드는 숫자만 입력할 수 있어요.");
         mac.pairing_code = pairing;
       }
       if (Object.keys(mac).length) payload.mac = mac;
@@ -188,8 +193,14 @@
       return;
     }
 
+    // Persist the 3D-model display preference (localStorage; read by the cockpit).
+    try {
+      if (els.model3dEnabled.checked) localStorage.removeItem("darwinNo3D");
+      else localStorage.setItem("darwinNo3D", "1");
+    } catch (_e) {}
+
     saveBtn.disabled = true;
-    setStatus("Saving…", "busy");
+    setStatus("저장 중…", "busy");
     fetch("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -202,14 +213,14 @@
       })
       .then(function (result) {
         if (!result.ok || !result.data || result.data.ok !== true) {
-          var msg = (result.data && result.data.error) || "Save failed.";
+          var msg = (result.data && result.data.error) || "저장에 실패했어요.";
           throw new Error(msg);
         }
-        setStatus("Saved. Launching cockpit…", "ok");
+        setStatus("저장했어요. 조종석을 엽니다…", "ok");
         window.location.href = "/";
       })
       .catch(function (err) {
-        setStatus(err.message || "Save failed.", "error");
+        setStatus(err.message || "저장에 실패했어요.", "error");
         saveBtn.disabled = false;
       });
   }

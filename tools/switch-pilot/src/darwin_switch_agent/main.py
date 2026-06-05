@@ -2,21 +2,22 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from .config import AgentConfig
 from .cockpit import CockpitServer
-from .control_bus import ControlBus
+from .control_bus import ControlAction, ControlBus
 from .discovery import local_ip_hint
 from .input_linux import LinuxInputReader, NullInputReader
 from .mac_relay_client import MacRelayClient
 from .mapping import MotionCommand
 from .mapping import ControllerMapper
 from .robot_udp_client import RobotUdpClient
-from .safety import SafetyState
+from .safety import SafetyEdges, SafetyState
 from .ssh_control_client import SshControlClient
 from . import systemd_notify
 
@@ -66,7 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     last_moving = False
     last_connect_attempt = 0.0
     last_watchdog = 0.0
-    watchdog_interval = 5.0  # pet well under the unit's WatchdogSec=15
+    # Follow systemd's WatchdogSec when present (pet at half the deadline);
+    # fall back to 5s outside systemd (well under the unit's WatchdogSec=15).
+    _wd_usec = os.environ.get("WATCHDOG_USEC")
+    watchdog_interval = (
+        max(1.0, int(_wd_usec) / 1_000_000 / 2) if (_wd_usec and _wd_usec.isdigit()) else 5.0
+    )
     ip_hint = local_ip_hint()
     # SSH (walklab brokerage) cadence state: amplitudes are sent on a meaningful
     # change AND as a heartbeat so the daemon's 5s stale-stop never trips while
@@ -89,7 +95,9 @@ def main(argv: list[str] | None = None) -> int:
             robot_client = RobotUdpClient(config.section("robot"))
             log.info("robot UDP target %s:%s", config.section("robot").get("host"), config.section("robot").get("port"))
         elif config.mode == "ssh":
-            ssh_client = SshControlClient({**config.section("ssh"), "motion": config.section("motion")})
+            # The [ssh] section owns the SSH/WalkLab gait defaults (period_ms,
+            # foot_mm, hip_deg) — see config.example.json.
+            ssh_client = SshControlClient(config.section("ssh"))
             log.info(
                 "ssh walklab target %s@%s",
                 config.section("ssh").get("user", "robotis"),
@@ -97,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif config.mode != "dry_run":
             log.warning("unknown mode %s; falling back to dry_run", config.mode)
+
+        # Honest, mode-specific stop-watchdog label for the cockpit (no fake 500ms).
+        bus.set_watchdog_label(watchdog_label_for(config.mode))
 
         # Cockpit + mode client are up: signal systemd readiness exactly once.
         # Type=notify keeps the unit 'activating' until this fires, so it must
@@ -106,13 +117,30 @@ def main(argv: list[str] | None = None) -> int:
         while not stop_requested:
             controller = input_reader.poll(timeout=0.01)
             raw_command = mapper.map(controller)
-            command = gate_motion(raw_command, armed=armed, estopped=estopped)
-            edges = safety.update(controller, command)
+            edges = safety.update(controller, raw_command)
 
             now = time.monotonic()
             if now - last_watchdog >= watchdog_interval:
                 systemd_notify.watchdog()
                 last_watchdog = now
+
+            # --- Safety state is settled FIRST, from BOTH cockpit actions and
+            # physical edges, BEFORE the final command is computed. This is the
+            # safety gate: a Stop/E-stop this tick can never be followed by a
+            # nonzero command in the same tick. (See settle_safety_state.)
+            actions = bus.drain_actions()
+            settlement = settle_safety_state(armed, estopped, actions, edges)
+            armed = settlement.armed
+            estopped = settlement.estopped
+            force_stop = settlement.force_stop_this_tick
+
+            # Final command — computed only after the safety state above is final.
+            command = gate_motion(raw_command, armed=armed, estopped=estopped)
+            if force_stop:
+                command = zero_motion(command)
+            if estopped or force_stop:
+                last_moving = False  # no trailing nonzero walk send this tick.
+
             if mac_client:
                 connected = bool(mac_client.connected)
             elif ssh_client:
@@ -121,41 +149,34 @@ def main(argv: list[str] | None = None) -> int:
                 connected = config.mode in {"robot_udp", "dry_run"}
             target = target_label(config)
 
-            for action in bus.drain_actions():
+            # Cockpit action side-effects only (state already settled above).
+            for action in actions:
                 if action.action == "arm":
-                    armed = True
-                    estopped = False
                     if mac_client and mac_client.connected:
-                        try_mac(log, mac_client.arm)
+                        try_control_call(log, "arm", mac_client.arm)
                     if ssh_client:
-                        try_mac(log, ssh_client.recover)
-                    bus.log("armed")
+                        try_control_call(log, "recover", ssh_client.recover)
+                    bus.log("조종 권한 켜짐")
                 elif action.action == "recover":
-                    estopped = False
-                    armed = True
                     if mac_client and mac_client.connected:
-                        try_mac(log, mac_client.recover)
+                        try_control_call(log, "recover", mac_client.recover)
                     if ssh_client:
-                        try_mac(log, ssh_client.recover)
-                    bus.log("recover")
+                        try_control_call(log, "recover", ssh_client.recover)
+                    bus.log("복구")
                 elif action.action == "stop":
                     if mac_client and mac_client.connected:
-                        try_mac(log, lambda: mac_client.stop("screen"))
+                        try_control_call(log, "stop", lambda: mac_client.stop("screen"))
                     if ssh_client:
-                        try_mac(log, ssh_client.stop)
-                    bus.log("stop")
-                    last_moving = False
+                        try_control_call(log, "stop", ssh_client.stop)
+                    bus.log("정지")
                 elif action.action == "estop":
-                    estopped = True
-                    armed = False
                     if mac_client and mac_client.connected:
-                        try_mac(log, lambda: mac_client.estop("switchScreen"))
+                        try_control_call(log, "estop", lambda: mac_client.estop("switchScreen"))
                     if ssh_client:
-                        try_mac(log, ssh_client.estop)
-                    bus.log("estop")
-                    last_moving = False
+                        try_control_call(log, "estop", ssh_client.estop)
+                    bus.log("비상정지")
                 elif action.action == "ping":
-                    bus.log(f"ping mode={config.mode} target={target}")
+                    bus.log(f"점검 모드={config.mode} 대상={target}")
 
             if now - last_status > 2.0:
                 log.info(
@@ -172,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 last_status = now
 
+            # Publish the FINAL command so the UI shows exactly what could be sent.
             bus.publish(
                 mode=config.mode,
                 connected=connected,
@@ -190,60 +212,55 @@ def main(argv: list[str] | None = None) -> int:
                         last_connect_attempt = now
                         try:
                             mac_client.connect()
-                            bus.log("Mac relay connected")
+                            bus.log("맥 릴레이 연결됨")
                         except Exception as exc:  # noqa: BLE001
-                            bus.log(f"Mac relay waiting: {exc}")
+                            bus.log(f"맥 릴레이 대기 중: {exc}")
                             log.warning("Mac relay connect failed: %s", exc)
                     continue
                 try:
                     mac_client.heartbeat("commandActive" if command.moving else "armedReady")
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Mac heartbeat failed: %s", exc)
-                    bus.log(f"Mac relay lost: {exc}")
+                    bus.log(f"맥 릴레이 끊김: {exc}")
                     mac_client.close()
                     continue
+                # Physical-edge transport side-effects (state already settled).
                 if edges.arm_pressed:
                     log.info("arm pressed")
-                    armed = True
-                    estopped = False
-                    try_mac(log, mac_client.arm)
+                    try_control_call(log, "arm", mac_client.arm)
                 if edges.estop_pressed:
                     log.warning("estop pressed")
-                    estopped = True
-                    armed = False
-                    try_mac(log, lambda: mac_client.estop("physical"))
+                    try_control_call(log, "estop", lambda: mac_client.estop("physical"))
                 if edges.stop_pressed or edges.deadman_released:
                     log.info("stop edge")
-                    try_mac(log, lambda: mac_client.stop("deadmanRelease" if edges.deadman_released else "user"))
+                    try_control_call(log, "stop", lambda: mac_client.stop("deadmanRelease" if edges.deadman_released else "user"))
                 if now - last_send >= send_interval:
-                    if command.moving or last_moving:
+                    # Never send a walk/head after Stop/E-stop in this tick.
+                    if (command.moving or last_moving) and not (estopped or force_stop):
                         try:
                             mac_client.walk(command)
                             mac_client.head(command)
                         except Exception as exc:  # noqa: BLE001
                             log.warning("Mac relay send failed: %s", exc)
-                            bus.log(f"Mac relay send failed: {exc}")
+                            bus.log(f"맥 릴레이 전송 실패: {exc}")
                             mac_client.close()
                     last_send = now
                     last_moving = command.moving
             elif config.mode == "robot_udp" and robot_client:
                 if edges.arm_pressed:
-                    armed = True
-                    estopped = False
-                    bus.log("armed")
+                    bus.log("조종 권한 켜짐")
                 if edges.estop_pressed:
-                    armed = False
-                    estopped = True
                     # Push an explicit zero datagram now; do not wait for the tick.
                     robot_client.send_stop(estop=True)
-                    bus.log("estop")
+                    bus.log("비상정지")
                 if edges.stop_pressed or edges.deadman_released:
                     # Explicit immediate zero on the stop / deadman-release edge.
                     # The robot-side receiver also runs a ~500ms staleness
                     # watchdog (see RobotUdpClient docstring) as a second leg.
                     robot_client.send_stop()
-                    bus.log("stop (deadman release)" if edges.deadman_released else "stop")
+                    bus.log("정지 (ZL 놓음)" if edges.deadman_released else "정지")
                 if now - last_send >= send_interval:
+                    # command is the final, safety-gated command (zeroed on stop/estop).
                     robot_client.send(controller, command)
                     last_send = now
             elif config.mode == "ssh" and ssh_client:
@@ -251,42 +268,40 @@ def main(argv: list[str] | None = None) -> int:
                     if now - last_connect_attempt >= 1.0:
                         last_connect_attempt = now
                         ok = ssh_client.connect()
-                        bus.log("ssh connected" if ok else "ssh waiting")
+                        bus.log("SSH 연결됨" if ok else "SSH 연결 대기 중")
                     continue
                 if edges.arm_pressed:
                     log.info("arm pressed")
-                    armed = True
-                    estopped = False
-                    try_mac(log, ssh_client.recover)
+                    try_control_call(log, "recover", ssh_client.recover)
                 if edges.estop_pressed:
                     log.warning("estop pressed")
-                    estopped = True
-                    armed = False
-                    try_mac(log, ssh_client.estop)
+                    try_control_call(log, "estop", ssh_client.estop)
                     last_estop_assert = now
                 if edges.stop_pressed or edges.deadman_released:
                     log.info("stop edge")
-                    try_mac(log, ssh_client.stop)
+                    try_control_call(log, "stop", ssh_client.stop)
                 if estopped:
                     # The estop FILE is the authoritative stop; re-assert it each
                     # heartbeat (idempotent touch) so a single dropped SSH 'touch'
-                    # on the edge cannot leave the robot un-stopped.
+                    # on the edge cannot leave the robot un-stopped. While estopped
+                    # we send NO command line — the file is the source of truth.
                     if now - last_estop_assert >= ssh_heartbeat_interval:
                         last_estop_assert = now
-                        try_mac(log, ssh_client.estop)
-                # Debounced amplitude send: on a meaningful command change OR the
-                # heartbeat, throttled by ssh_send_interval. Separate clocks; both
-                # advance on ATTEMPT so a failing link throttles, not busy-loops.
-                # last_sent_line advances only on success so a change keeps
-                # retrying (throttled) until it lands.
-                line = ssh_command_line(command)
-                changed = line != last_sent_line
-                heartbeat_due = now - last_heartbeat >= ssh_heartbeat_interval
-                if (changed or heartbeat_due) and now - last_send >= ssh_send_interval:
-                    last_send = now
-                    last_heartbeat = now
-                    if ssh_client.send(command):
-                        last_sent_line = line
+                        try_control_call(log, "estop", ssh_client.estop)
+                else:
+                    # Debounced amplitude send: on a meaningful command change OR
+                    # the heartbeat, throttled by ssh_send_interval. Separate
+                    # clocks; both advance on ATTEMPT so a failing link throttles.
+                    # last_sent_line advances only on success so a change keeps
+                    # retrying (throttled) until it lands. command is final/gated.
+                    line = ssh_command_line(command)
+                    changed = line != last_sent_line
+                    heartbeat_due = now - last_heartbeat >= ssh_heartbeat_interval
+                    if (changed or heartbeat_due) and now - last_send >= ssh_send_interval:
+                        last_send = now
+                        last_heartbeat = now
+                        if ssh_client.send(command):
+                            last_sent_line = line
                 if now - last_telemetry_poll >= telemetry_interval:
                     last_telemetry_poll = now
                     tel = ssh_client.poll_telemetry()
@@ -357,7 +372,7 @@ def start_cockpit(config: AgentConfig, bus: ControlBus, config_path: str) -> Coc
         config_path=config_path,
     )
     server.start()
-    bus.log("cockpit ready")
+    bus.log("조종석 준비됨")
     return server
 
 
@@ -370,8 +385,26 @@ def target_label(config: AgentConfig) -> str:
         return f"{robot.get('host', '192.168.0.100')}:{robot.get('port', 55310)}"
     if config.mode == "ssh":
         ssh = config.section("ssh")
-        return f"{ssh.get('user', 'robotis')}@{ssh.get('host', '192.168.123.1')}"
+        user = ssh.get("user", "robotis")
+        host = ssh.get("host", "192.168.123.1")
+        port = int(ssh.get("port", 22))
+        return f"{user}@{host}" if port == 22 else f"{user}@{host}:{port}"
     return "dry-run"
+
+
+def watchdog_label_for(mode: str) -> str:
+    """Honest stop-watchdog label per mode. Reflects what the ACTIVE control path
+    actually enforces — not a fixed number that implies a guarantee it lacks.
+      - mac_relay: the Mac MobileRelayServer enforces a ~500ms command watchdog.
+      - robot_udp: the robot-side receiver should run ~500ms, but it is not yet
+        verified to exist, so it is labelled accordingly.
+      - ssh: the onboard WalkLab daemon stops on ~5s command staleness.
+    """
+    return {
+        "mac_relay": "맥 릴레이 500ms",
+        "robot_udp": "로봇 500ms·미검증",
+        "ssh": "로봇 정지 5s",
+    }.get(mode, "—")
 
 
 def ssh_command_line(command: MotionCommand) -> str:
@@ -390,23 +423,71 @@ def ssh_command_line(command: MotionCommand) -> str:
 def gate_motion(command: MotionCommand, *, armed: bool, estopped: bool) -> MotionCommand:
     if armed and not estopped:
         return command
-    return replace(command, enabled=False, stride_mm=0.0, turn_deg=0.0, head_pan_deg=0.0, head_tilt_deg=0.0)
+    return zero_motion(command)
 
 
-def try_mac(log: logging.Logger, fn) -> None:
+def zero_motion(command: MotionCommand) -> MotionCommand:
+    """Force a command to no-motion (kept armed-state agnostic). Used as the
+    last-line safety gate when a Stop edge must suppress motion for this tick."""
+    return replace(
+        command, enabled=False, stride_mm=0.0, turn_deg=0.0,
+        head_pan_deg=0.0, head_tilt_deg=0.0,
+    )
+
+
+@dataclass(frozen=True)
+class SafetySettlement:
+    armed: bool
+    estopped: bool
+    force_stop_this_tick: bool
+
+
+def settle_safety_state(
+    armed: bool,
+    estopped: bool,
+    actions: list[ControlAction],
+    edges: SafetyEdges,
+) -> SafetySettlement:
+    """Resolve the tick's final safety state from cockpit actions AND physical
+    edges, BEFORE any motion command is computed. Safety-first: within a tick
+    E-stop dominates Arm/Recover, and Stop/deadman-release force zero motion for
+    the tick (without necessarily latching E-stop). Pure + testable.
+    """
+    arm_now = edges.arm_pressed
+    estop_now = edges.estop_pressed
+    force_stop = bool(edges.stop_pressed or edges.deadman_released)
+    for action in actions:
+        if action.action in ("arm", "recover"):
+            arm_now = True
+        elif action.action == "estop":
+            estop_now = True
+        elif action.action == "stop":
+            force_stop = True
+    if arm_now:
+        armed = True
+        estopped = False
+    if estop_now:  # applied last so E-stop wins over a same-tick Arm/Recover.
+        estopped = True
+        armed = False
+    return SafetySettlement(armed=armed, estopped=estopped, force_stop_this_tick=force_stop)
+
+
+def try_control_call(log: logging.Logger, label: str, fn) -> None:
+    """Run a transport control call (Mac relay OR SSH OR UDP); log on failure.
+    Transport-neutral — the label says which call failed during debugging."""
     try:
         fn()
     except Exception as exc:  # noqa: BLE001
-        log.warning("Mac relay command failed: %s", exc)
+        log.warning("control call '%s' failed: %s", label, exc)
 
 
 def input_status_label(reader) -> str:
     paths = getattr(reader, "device_paths", [])
     if not paths:
-        return "No input device"
+        return "입력장치 없음"
     if len(paths) == 1:
         return paths[0]
-    return f"{len(paths)} input devices"
+    return f"입력장치 {len(paths)}개"
 
 
 if __name__ == "__main__":

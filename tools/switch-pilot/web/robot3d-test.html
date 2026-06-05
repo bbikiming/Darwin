@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>Darwin 3D 모델 점검</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0e14; }
+    #stage { width: 1280px; height: 720px; }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <script type="module">
+    import { mountRobot } from "./robot3d.js";
+    mountRobot(document.getElementById("stage"), { autoRotate: false })
+      .then(() => { window.__ready = true; });
+  </script>
+</body>
+</html>

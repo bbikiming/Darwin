@@ -85,19 +85,15 @@ button {
 .switch-mark {
   width: 42px;
   height: 42px;
-  display: grid;
-  place-items: center;
   border-radius: 8px;
-  background: linear-gradient(90deg, var(--cyan) 0 48%, var(--red) 52% 100%);
+  /* DarwinForge app icon (resized copy at /assets/darwin-icon.png) so the
+     cockpit and the Mac app share one brand mark. */
+  background: #101316 center / cover no-repeat url("/assets/darwin-icon.png");
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.28);
 }
 
 .switch-mark i {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 3px solid #101316;
-  background: rgba(255,255,255,.35);
+  display: none;
 }
 
 h1,
@@ -320,7 +316,11 @@ h1 {
   min-width: 0;
   text-align: right;
   font-size: 46px;
-  line-height: .9;
+  /* line-height 1.15 so tall Korean glyphs (잠김/비상정지/신호 끊김 …) are not
+     clipped: the 46px glyph needs ~48px of box; .9 (41px) clipped, 1.0 (46px)
+     still short, so use 1.15 (~53px) with a min-height floor. */
+  line-height: 1.15;
+  min-height: 52px;
   font-weight: 880;
   white-space: nowrap;
 }
@@ -360,6 +360,23 @@ h1 {
 
 .camera-stream.is-hidden {
   opacity: 0;
+}
+
+/* Live WebGL robot model — camera fallback. Sits above the camera layer but
+   below the HUD/reticle (which come later in the DOM). Toggled inline by JS;
+   hidden by default until mounted. */
+.robot3d {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+/* Once the 3D model is mounted, drop the lightweight CSS figure so they don't
+   overlap. The marker lives on <body> (NOT on .stage-panel, whose class app.js
+   rewrites every render tick). If WebGL fails to mount, it is never added and
+   the figure stays as the fallback. */
+body.has-robot3d .robot-figure {
+  display: none;
 }
 
 .camera-vignette {

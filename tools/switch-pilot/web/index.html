@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Darwin Switch Cockpit</title>
+  <title>다윈 스위치 조종석</title>
+  <link rel="icon" type="image/png" href="/assets/darwin-icon.png">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -12,43 +13,44 @@
       <div class="title-lockup">
         <span class="switch-mark" aria-hidden="true"><i></i></span>
         <div>
-          <h1>Darwin Pilot</h1>
-          <p id="mission-caption">Runtime starting</p>
+          <h1>다윈 조종석</h1>
+          <p id="mission-caption">시동 중…</p>
         </div>
       </div>
       <div class="hud-cluster">
-        <div class="status-chip" id="link-pill"><span></span><b id="link-text">Offline</b></div>
-        <div class="status-chip mode"><b id="mode">dry_run</b></div>
+        <div class="status-chip" id="link-pill"><span></span><b id="link-text">연결 끊김</b></div>
+        <div class="status-chip mode"><b id="mode">연습</b></div>
         <div class="hud-clock" id="clock">--:--:--</div>
       </div>
     </header>
 
     <section class="playfield">
-      <aside class="joy-rail left-joy" aria-label="Left Joy-Con state">
+      <aside class="joy-rail left-joy" aria-label="왼쪽 조이콘 상태">
         <div class="rail-tag">L</div>
         <div class="stick-card">
           <div class="mini-stick" aria-hidden="true"><span id="left-mini-dot"></span></div>
-          <strong>Walk</strong>
-          <small>Stride / Turn</small>
+          <strong>보행</strong>
+          <small>전후 / 회전</small>
         </div>
         <div class="trigger-state" id="trigger-deadman">
           <label>ZL</label>
-          <b id="deadman">Open</b>
+          <b id="deadman">놓음</b>
         </div>
       </aside>
 
-      <section class="stage-panel" id="stage-panel" aria-label="Pilot state">
+      <section class="stage-panel" id="stage-panel" aria-label="조종 상태">
         <div class="mission-strip">
-          <span id="mission-kicker">STANDBY</span>
-          <strong id="mission-title">Locked</strong>
+          <span id="mission-kicker">대기</span>
+          <strong id="mission-title">잠김</strong>
         </div>
 
         <div class="robot-stage">
           <img class="camera-stream" id="camera-stream" alt="">
+          <div class="robot3d" id="robot3d" aria-hidden="true"></div>
           <div class="camera-vignette" aria-hidden="true"></div>
-          <div class="camera-hud" aria-label="Camera status">
-            <span id="camera-mode">CAMERA WAIT</span>
-            <strong id="camera-label">Robot Camera</strong>
+          <div class="camera-hud" aria-label="카메라 상태">
+            <span id="camera-mode">카메라 연결 중</span>
+            <strong id="camera-label">로봇 카메라</strong>
             <small id="camera-route">ssh-tunnel</small>
           </div>
           <div class="combat-reticle" aria-hidden="true">
@@ -69,77 +71,77 @@
 
         <div class="safety-board">
           <div class="safety-tile" id="tile-arm">
-            <label>ARM</label>
-            <strong id="armed">Locked</strong>
+            <label>조종 권한</label>
+            <strong id="armed">잠김</strong>
           </div>
           <div class="safety-tile" id="tile-estop">
-            <label>E-STOP</label>
-            <strong id="estop">Clear</strong>
+            <label>비상정지</label>
+            <strong id="estop">정상</strong>
           </div>
           <div class="safety-tile">
-            <label>WATCHDOG</label>
-            <strong id="watchdog">500 ms</strong>
+            <label>통신 감시</label>
+            <strong id="watchdog">—</strong>
           </div>
           <div class="safety-tile">
-            <label>UPDATE</label>
+            <label>갱신</label>
             <strong id="age">-- ms</strong>
           </div>
         </div>
       </section>
 
-      <aside class="joy-rail right-joy" aria-label="Right Joy-Con state">
+      <aside class="joy-rail right-joy" aria-label="오른쪽 조이콘 상태">
         <div class="rail-tag">R</div>
         <div class="stick-card">
           <div class="mini-stick" aria-hidden="true"><span id="right-mini-dot"></span></div>
-          <strong>Head</strong>
-          <small>Pan / Tilt</small>
+          <strong>머리</strong>
+          <small>좌우 / 상하</small>
         </div>
         <div class="trigger-state" id="trigger-link">
-          <label>LINK</label>
-          <b id="route-state">Offline</b>
+          <label>연결</label>
+          <b id="route-state">연결 끊김</b>
         </div>
       </aside>
     </section>
 
-    <section class="readout-grid" aria-label="Telemetry">
+    <section class="readout-grid" aria-label="상태 표시">
       <article class="readout-panel">
         <div class="panel-head">
-          <h2>Walk</h2>
-          <span>Left stick</span>
+          <h2>보행</h2>
+          <span>왼쪽 스틱</span>
         </div>
         <div class="meter-line">
-          <label>Stride</label>
+          <label>전후</label>
           <strong id="stride-num">0.0 mm</strong>
           <div class="meter" id="stride-bar"><i></i></div>
         </div>
         <div class="meter-line">
-          <label>Turn</label>
-          <strong id="turn-num">0.0 deg</strong>
+          <label>회전</label>
+          <strong id="turn-num">0.0°</strong>
           <div class="meter" id="turn-bar"><i></i></div>
         </div>
       </article>
 
       <article class="readout-panel">
         <div class="panel-head">
-          <h2>Head</h2>
-          <span>Right stick</span>
+          <h2>머리</h2>
+          <span>오른쪽 스틱</span>
         </div>
         <div class="meter-line">
-          <label>Pan</label>
-          <strong id="pan-num">0.0 deg</strong>
+          <label>좌우</label>
+          <strong id="pan-num">0.0°</strong>
           <div class="meter" id="pan-bar"><i></i></div>
         </div>
         <div class="meter-line">
-          <label>Tilt</label>
-          <strong id="tilt-num">0.0 deg</strong>
+          <label>상하</label>
+          <strong id="tilt-num">0.0°</strong>
           <div class="meter" id="tilt-bar"><i></i></div>
         </div>
       </article>
 
       <article class="readout-panel robot-panel" id="robot-panel">
         <div class="panel-head">
-          <h2>Robot</h2>
-          <span id="robot-walk-flag">Idle</span>
+          <h2>로봇</h2>
+          <span id="robot-walk-flag">정지</span>
         </div>
         <div class="robot-readout">
           <div class="robot-batt" id="robot-batt">
@@ -151,11 +153,11 @@
           </div>
           <div class="robot-flags">
             <div class="robot-flag" id="robot-pose">
-              <label>POSE</label>
+              <label>자세</label>
               <b id="robot-pose-val">--</b>
             </div>
             <div class="robot-flag" id="robot-link">
-              <label>LATENCY</label>
+              <label>지연</label>
               <b id="robot-latency">-- ms</b>
             </div>
           </div>
@@ -164,54 +166,116 @@
 
       <article class="readout-panel connection-panel" id="link-state-panel">
         <div class="panel-head">
-          <h2 id="target-type">Link</h2>
-          <span id="runtime">0s</span>
+          <h2 id="target-type">연결</h2>
+          <span id="runtime">0초</span>
         </div>
         <div class="link-status" id="link-status">
           <span class="link-dot" aria-hidden="true"></span>
-          <strong id="link-state-text">Searching</strong>
+          <strong id="link-state-text">연결 중</strong>
         </div>
-        <dl class="connection-list diag-list" aria-label="Diagnostics">
-          <div><dt>Target</dt><dd id="target">-</dd></div>
-          <div><dt>Local IP</dt><dd id="ip">-</dd></div>
-          <div><dt>Mode</dt><dd id="diag-mode">-</dd></div>
-          <div><dt>Input</dt><dd id="input-status">No device</dd></div>
+        <dl class="connection-list diag-list" aria-label="진단 정보">
+          <div><dt>대상</dt><dd id="target">-</dd></div>
+          <div><dt>내 IP</dt><dd id="ip">-</dd></div>
+          <div><dt>모드</dt><dd id="diag-mode">-</dd></div>
+          <div><dt>입력장치</dt><dd id="input-status">장치 없음</dd></div>
         </dl>
       </article>
 
       <article class="readout-panel log-panel">
         <div class="panel-head">
-          <h2>Events</h2>
+          <h2>기록</h2>
           <span id="log-count">0</span>
         </div>
         <div class="log-list" id="logs"></div>
       </article>
     </section>
 
-    <footer class="action-dock" aria-label="Commands">
+    <footer class="action-dock" aria-label="명령">
       <div class="dock-help">
-        <span>COMMAND</span>
-        <strong id="dock-focus-label">Arm</strong>
-        <small id="dock-focus-hint">Left / Right to select</small>
+        <span>명령</span>
+        <strong id="dock-focus-label">조종 시작</strong>
+        <small id="dock-focus-hint">← → 로 선택</small>
       </div>
-      <button class="dock-button arm" data-action="arm" data-label="Arm" data-hint="A confirms command authority">
-        <kbd>A</kbd><span>Arm</span>
+      <button class="dock-button arm" data-action="arm" data-label="조종 시작" data-hint="A: 조종 권한 켜기">
+        <kbd>A</kbd><span>조종 시작</span>
       </button>
-      <button class="dock-button recover" data-action="recover" data-label="Recover" data-hint="X clears a latched E-stop">
-        <kbd>X</kbd><span>Recover</span>
+      <button class="dock-button recover" data-action="recover" data-label="복구" data-hint="X: 비상정지 해제">
+        <kbd>X</kbd><span>복구</span>
       </button>
-      <button class="dock-button stop" data-action="stop" data-label="Stop" data-hint="B stops motion without latching">
-        <kbd>B</kbd><span>Stop</span>
+      <button class="dock-button stop" data-action="stop" data-label="정지" data-hint="B: 즉시 멈춤(걸리지 않음)">
+        <kbd>B</kbd><span>정지</span>
       </button>
-      <button class="dock-button ping" data-action="ping" data-label="Ping" data-hint="Y writes a diagnostic event">
-        <kbd>Y</kbd><span>Ping</span>
+      <button class="dock-button ping" data-action="ping" data-label="점검" data-hint="Y: 진단 기록 남기기">
+        <kbd>Y</kbd><span>점검</span>
       </button>
-      <button class="dock-button estop" data-action="estop" data-label="E-Stop" data-hint="+ latches immediate stop">
-        <kbd>+</kbd><span>E-Stop</span>
+      <button class="dock-button estop" data-action="estop" data-label="비상정지" data-hint="+: 즉시 비상정지 걸기">
+        <kbd>+</kbd><span>비상정지</span>
       </button>
     </footer>
   </main>
 
   <script src="/app.js"></script>
+  <script type="module">
+    // Live WebGL DARwIn model as the camera-fallback. Lazy-mounted on first use,
+    // paused whenever the real camera is live (never run WebGL + MJPEG together),
+    // and fully optional: if WebGL is unavailable, localStorage is blocked, or
+    // the GLB fails to load, the cockpit keeps the lightweight CSS robot figure.
+    // No import maps are used (vendored Three.js imports are relative). Disable
+    // explicitly via localStorage 'darwinNo3D' (set from the setup page).
+    function safeFlag(key) {
+      try { return window.localStorage && window.localStorage.getItem(key); }
+      catch (_e) { return null; }
+    }
+    function webglSupported() {
+      try {
+        const c = document.createElement("canvas");
+        return !!(window.WebGLRenderingContext &&
+          (c.getContext("webgl") || c.getContext("experimental-webgl")));
+      } catch (_e) { return false; }
+    }
+    const box = document.getElementById("robot3d");
+    const stage = document.getElementById("stage-panel");
+    if (box && !safeFlag("darwinNo3D") && webglSupported()) {
+      let ctl = null, mounting = null, failed = false, wanted = false;
+      // Mount once; pre-warmed at load so the model is ready instantly (and
+      // reliably rendered) the moment the camera is not live. Quietly keeps the
+      // CSS figure if the GLB/WebGL fails — not an error state.
+      function ensure() {
+        if (ctl || failed) return Promise.resolve(ctl);
+        if (!mounting) {
+          mounting = import("./robot3d.js")
+            .then((m) => m.mountRobot(box, { autoRotate: true }))
+            .then((c) => {
+              ctl = c;
+              // Marker on <body> (app.js rewrites .stage-panel's class every tick,
+              // so a class there would be wiped and the CSS figure would re-cover
+              // the 3D canvas). body.has-robot3d hides the figure for good.
+              document.body.classList.add("has-robot3d");
+              c.setActive(wanted && !document.hidden);
+              // Default-show the model once mounted; app.js hides it (setActive
+              // false) only when the live camera is streaming.
+              box.style.display = "block";
+              return c;
+            })
+            .catch(() => { failed = true; return null; });
+        }
+        return mounting;
+      }
+      window.__darwinRobot3D = {
+        setActive(on) {
+          wanted = on;
+          ensure().then((c) => {
+            if (!c) return;
+            c.setActive(wanted && !document.hidden);
+            box.style.display = wanted ? "block" : "none";
+          });
+        }
+      };
+      document.addEventListener("visibilitychange", () => {
+        if (ctl) ctl.setActive(wanted && !document.hidden);
+      });
+      ensure(); // pre-warm.
+    }
+  </script>
 </body>
 </html>

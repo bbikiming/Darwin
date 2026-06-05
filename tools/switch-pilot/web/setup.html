@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1280, initial-scale=1" />
   <meta name="color-scheme" content="dark" />
-  <title>Darwin Switch — First Boot Setup</title>
+  <title>다윈 스위치 — 첫 설정</title>
+  <link rel="icon" type="image/png" href="/assets/darwin-icon.png" />
   <style>
     /* Self-contained; palette mirrors styles.css. No remote fonts/libs. */
     :root {
@@ -57,7 +58,8 @@
       height: 44px;
       flex: none;
       border-radius: 8px;
-      background: linear-gradient(90deg, var(--cyan) 0 48%, var(--red) 52% 100%);
+      /* DarwinForge app icon (resized copy) — shared brand mark with the Mac app. */
+      background: #101316 center / cover no-repeat url("/assets/darwin-icon.png");
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .28);
     }
 
@@ -179,119 +181,123 @@
     <header>
       <div class="switch-mark" aria-hidden="true"></div>
       <div>
-        <h1>Darwin Switch — First Boot Setup</h1>
-        <p class="subtitle">Pick a control mode and point this console at your Mac or robot. No keyboard needed.</p>
+        <h1>다윈 스위치 — 첫 설정</h1>
+        <p class="subtitle">조종 방식을 고르고 맥 또는 로봇을 지정하세요. 키보드 없이 설정할 수 있어요.</p>
       </div>
     </header>
 
     <form id="setup-form" class="card" autocomplete="off">
       <fieldset>
-        <legend>Control mode</legend>
-        <div class="mode-row" role="radiogroup" aria-label="Control mode">
+        <legend>조종 방식</legend>
+        <div class="mode-row" role="radiogroup" aria-label="조종 방식">
           <label class="mode-option">
             <input type="radio" name="mode" value="dry_run" />
             <span>
-              <strong>Dry run</strong>
-              <span>Cockpit only. Nothing is sent to a robot.</span>
+              <strong>연습 모드</strong>
+              <span>화면만 동작해요. 로봇으로 아무것도 보내지 않아요.</span>
             </span>
           </label>
           <label class="mode-option">
             <input type="radio" name="mode" value="mac_relay" />
             <span>
-              <strong>Mac relay</strong>
-              <span>Send control through the DarwinForge Mac app.</span>
+              <strong>맥 경유</strong>
+              <span>맥의 DarwinForge 앱을 거쳐 조종해요.</span>
             </span>
           </label>
           <label class="mode-option">
             <input type="radio" name="mode" value="robot_udp" />
             <span>
-              <strong>Robot UDP</strong>
-              <span>Talk to the robot directly over the network.</span>
+              <strong>로봇 직결 (UDP)</strong>
+              <span>네트워크로 로봇에 바로 연결해요.</span>
             </span>
           </label>
           <label class="mode-option">
             <input type="radio" name="mode" value="ssh" />
             <span>
-              <strong>SSH (WalkLab)</strong>
-              <span>Pilot the robot's onboard walk daemon over SSH.</span>
+              <strong>로봇 직접 조종 (SSH)</strong>
+              <span>SSH로 로봇 내장 보행 프로그램을 직접 조종해요.</span>
             </span>
           </label>
         </div>
       </fieldset>
 
       <fieldset id="mac-section">
-        <legend>Mac connection</legend>
+        <legend>맥 연결</legend>
         <div class="grid">
           <label class="field">
-            Mac host / IP
+            맥 호스트 / IP
             <input type="text" id="mac-host" inputmode="decimal" placeholder="192.168.123.1" />
-            <span class="hint">The Mac running DarwinForge.</span>
+            <span class="hint">DarwinForge가 실행 중인 맥이에요.</span>
           </label>
           <label class="field">
-            Mac port
+            맥 포트
             <input type="number" id="mac-port" min="0" max="65535" placeholder="8770" />
           </label>
           <label class="field">
-            Pairing code
+            페어링 코드
             <input type="text" id="mac-pairing" inputmode="numeric" pattern="[0-9]*" placeholder="123456" />
-            <span class="hint">Digits shown on the Mac app.</span>
+            <span class="hint">맥 앱 화면에 표시된 숫자예요.</span>
           </label>
         </div>
       </fieldset>
 
       <fieldset id="robot-section">
-        <legend>Robot connection</legend>
+        <legend>로봇 연결</legend>
         <div class="grid">
           <label class="field">
-            Robot host / IP
+            로봇 호스트 / IP
             <input type="text" id="robot-host" inputmode="decimal" placeholder="192.168.0.100" />
           </label>
           <label class="field">
-            Robot port
+            로봇 포트
             <input type="number" id="robot-port" min="0" max="65535" placeholder="55310" />
           </label>
           <label class="field">
-            Token (optional)
-            <input type="password" id="robot-token" placeholder="leave blank if none" />
+            토큰 (선택)
+            <input type="password" id="robot-token" placeholder="없으면 비워 두세요" />
           </label>
         </div>
       </fieldset>
 
       <fieldset id="ssh-section">
-        <legend>SSH connection</legend>
+        <legend>SSH 연결</legend>
         <div class="grid">
           <label class="field">
-            Robot host / IP
+            로봇 호스트 / IP
             <input type="text" id="ssh-host" inputmode="decimal" placeholder="192.168.123.1" />
-            <span class="hint">Wired direct is fastest (192.168.123.1).</span>
+            <span class="hint">유선 직결이 가장 빨라요 (192.168.123.1).</span>
           </label>
           <label class="field">
-            SSH user
+            SSH 사용자
             <input type="text" id="ssh-user" autocapitalize="off" spellcheck="false" placeholder="robotis" />
           </label>
           <label class="field">
-            SSH port (optional)
+            SSH 포트 (선택)
             <input type="number" id="ssh-port" min="1" max="65535" placeholder="22" />
           </label>
           <label class="field">
-            Identity file (optional)
+            키 파일 (선택)
             <input type="text" id="ssh-identity" autocapitalize="off" spellcheck="false" placeholder="~/.ssh/id_rsa_darwin" />
-            <span class="hint">RSA key (OpenSSH 5.9 has no ed25519).</span>
+            <span class="hint">RSA 키 — 구형 OpenSSH 5.9는 ed25519를 지원하지 않아요.</span>
           </label>
         </div>
       </fieldset>
 
       <fieldset>
-        <legend>Camera</legend>
+        <legend>화면</legend>
         <div class="toggle-row">
           <input type="checkbox" id="camera-enabled" />
-          <label for="camera-enabled">Enable camera HUD overlay</label>
+          <label for="camera-enabled">카메라 화면 표시 켜기</label>
+        </div>
+        <div class="toggle-row">
+          <input type="checkbox" id="model3d-enabled" />
+          <label for="model3d-enabled">3D 로봇 모델 표시 (저사양이면 끄기)</label>
         </div>
       </fieldset>
 
       <div class="footer">
         <p id="status" role="status" aria-live="polite"></p>
-        <button type="submit" class="primary" id="save-btn">Save &amp; launch cockpit</button>
+        <button type="submit" class="primary" id="save-btn">저장하고 조종 시작</button>
       </div>
     </form>
   </main>

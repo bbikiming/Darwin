@@ -19,7 +19,7 @@ WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
 DEFAULT_CONFIG_PATH = "/etc/darwin-switch-agent/config.json"
 
 # Config keys whose values are nested dicts and must be merged one level deep.
-_NESTED_SECTIONS = ("mac", "robot", "camera")
+_NESTED_SECTIONS = ("mac", "robot", "camera", "ssh")
 
 
 def merge_config(existing: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
@@ -124,7 +124,17 @@ class CockpitHandler(BaseHTTPRequestHandler):
         self.control_bus.request(action)
         self._send_json({"ok": True, "action": action})
 
+    def _is_loopback(self) -> bool:
+        """True only for loopback clients. /api/config reads+writes device
+        config (incl. secrets), so it is restricted to the Switch's own kiosk
+        browser even if gui.host is ever set to 0.0.0.0."""
+        client = (self.client_address[0] if self.client_address else "")
+        return client in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
     def _handle_get_config(self) -> None:
+        if not self._is_loopback():
+            self._send_json({"ok": False, "error": "local config only"}, status=403)
+            return
         # First-boot provisioning UI reads current device config (localhost only).
         try:
             with open(self.config_path, "r", encoding="utf-8") as fp:
@@ -139,6 +149,9 @@ class CockpitHandler(BaseHTTPRequestHandler):
         self._send_json(current if isinstance(current, dict) else {})
 
     def _handle_post_config(self) -> None:
+        if not self._is_loopback():
+            self._send_json({"ok": False, "error": "local config only"}, status=403)
+            return
         payload = self._read_json_body()
         try:
             updates = validate_provisioning(payload)

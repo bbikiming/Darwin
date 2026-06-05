@@ -97,6 +97,40 @@ fi
 echo "ROOT_DIR: ${ROOT_DIR}"
 
 # =============================================================================
+# Dependency preflight — WARN (never fatal) for each missing tool, with the
+# apt package name. Lets an offline / partial image continue so the safety
+# services still install; the operator gets a clear punch-list of what to add.
+# =============================================================================
+banner "Dependency preflight"
+
+# check_dep CMD PKG WHY — warn (not fatal) when CMD is missing.
+check_dep() {
+  local cmd="$1" pkg="$2" why="$3"
+  if command -v "${cmd}" >/dev/null 2>&1; then
+    echo "  ok   : ${cmd}"
+  else
+    warn "missing '${cmd}' — apt-get install ${pkg}  (${why})"
+  fi
+}
+
+# ssh is required to reach the robot (camera tunnel + mode control).
+check_dep ssh openssh-client "robot SSH + camera tunnel"
+# autossh keeps the camera tunnel reconnecting; plain ssh is a degraded fallback.
+check_dep autossh autossh "auto-reconnecting camera tunnel"
+# evtest + joycond are how Joy-Cons surface as a usable evdev gamepad.
+check_dep evtest evtest "verify gamepad event codes (deadman/stop/estop)"
+check_dep joycond joycond "merge paired Joy-Cons into one virtual controller"
+
+# Kiosk stack: cage (Wayland) only when opted in; otherwise the X11 default.
+if [[ "${WITH_CAGE}" -eq 1 ]]; then
+  check_dep cage cage "Wayland kiosk session (verify it renders on Tegra first)"
+else
+  check_dep xinit xinit "X11 kiosk startx launcher (primary path)"
+  check_dep openbox openbox "X11 window manager for the kiosk"
+  check_dep firefox firefox "kiosk browser (native .deb/PPA; NOT snap on L4T)"
+fi
+
+# =============================================================================
 # Step 1 — Install the existing agent bundle (tools/switch-pilot/install.sh).
 # =============================================================================
 banner "Step 1/7 — Install Darwin Switch agent (switch-pilot)"
@@ -128,13 +162,15 @@ else
 fi
 
 # =============================================================================
-# Step 3 — Run the L2 seal scripts (no-sleep, autologin, ssh-harden).
+# Step 3 — Run the L2 seal scripts (time-sync, no-sleep, autologin, ssh-harden).
 # Each is idempotent and EUID-guarded; order matters: autologin creates the
-# 'darwin' user that ssh-harden then secures.
+# 'darwin' user that ssh-harden then secures. time-sync runs first so the clock
+# is correctable from the very first boot — the Switch RTC is garbage (~19y off
+# after power-off), which would otherwise break TLS, journald and time logic.
 # =============================================================================
-banner "Step 3/7 — Apply seal layer (no-sleep, autologin, ssh-harden)"
+banner "Step 3/7 — Apply seal layer (time-sync, no-sleep, autologin, ssh-harden)"
 SEAL_DIR="${ROOT_DIR}/seal"
-for s in no-sleep.sh autologin.sh ssh-harden.sh; do
+for s in time-sync.sh no-sleep.sh autologin.sh ssh-harden.sh; do
   seal_script="${SEAL_DIR}/${s}"
   if [[ ! -f "${seal_script}" ]]; then
     warn "seal script missing, skipping: ${seal_script}"
@@ -372,7 +408,9 @@ cat <<SUMMARY
 Applied (idempotent) sealing layers:
   L1 boot   : Hekate autoboot is documented in boot/hekate_ipl.ini.example
               (copy to SD /bootloader/hekate_ipl.ini yourself; keep bootwait>=3).
-  L2 seal   : no-sleep (suspend/sleep masked), autologin (darwin@tty1),
+  L2 seal   : time-sync (NTP at boot — Switch RTC is unreliable, ~19y off
+              after power-off; agent/cockpit must NOT gate on wall-clock),
+              no-sleep (suspend/sleep masked), autologin (darwin@tty1),
               ssh-harden (key-only when a key exists, else password kept).
   L2 session: X11 + openbox kiosk (PRIMARY) — getty@tty1 autologin -> startx ->
               openbox -> darwin-kiosk.sh. cage/Wayland is opt-in (--with-cage)

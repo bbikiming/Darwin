@@ -23,6 +23,22 @@ cp -a "${ROOT_DIR}/." "${STAGE}/"
 find "${STAGE}" -name "__pycache__" -type d -prune -exec rm -rf {} +
 find "${STAGE}" -name "*.pyc" -delete
 
+# Exclude build-only assets from the runtime tarball. The robot model ships
+# pre-baked as web/assets/darwin.glb, so the offline GLB-bake tooling (STL
+# assembler, GLTF exporter, bake page) and the STL→GLB bake helper are not
+# needed at install/runtime on the Switch. Runtime keeps three.module.min.js,
+# GLTFLoader.js, BufferGeometryUtils.js, robot3d.js and the GLB.
+for _build_only in \
+  web/build-glb.html \
+  web/robot3d-rig.js \
+  web/robot3d-test.html \
+  web/vendor/STLLoader.js \
+  web/vendor/GLTFExporter.js \
+  web/vendor/TextureUtils.js \
+  assets/decimate_glb.py; do
+  rm -f "${STAGE}/${_build_only}"
+done
+
 tar -C "${OUT_DIR}" -czf "${OUT_DIR}/${PKG_NAME}.tar.gz" "${PKG_NAME}"
 rm -rf "${STAGE}"
 echo "${OUT_DIR}/${PKG_NAME}.tar.gz"

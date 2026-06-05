@@ -7,6 +7,22 @@ LOCAL_PORT="${SWITCH_CAMERA_LOCAL_PORT:-18080}"
 REMOTE_PORT="${ROBOT_CAMERA_REMOTE_PORT:-8080}"
 SSH_TARGET="${ROBOT_USER}@${ROBOT_HOST}"
 
+# SSH options shared by the start-up call and the persistent tunnel.
+#
+# Keepalives let a dropped link be detected fast so autossh (or our own retry
+# loop) can reconnect instead of hanging on a dead socket.
+#
+# The robot ships OpenSSH 5.9, which a modern client refuses by default (it
+# disables the legacy ssh-rsa host-key + pubkey algorithms). Re-enabling
+# ssh-rsa with '+ssh-rsa' keeps us compatible without weakening anything else.
+SSH_COMMON_OPTS=(
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=3
+  -o ExitOnForwardFailure=yes
+  -o HostKeyAlgorithms=+ssh-rsa
+  -o PubkeyAcceptedAlgorithms=+ssh-rsa
+)
+
 REMOTE_START='
 set +e
 if command -v ss >/dev/null 2>&1; then
@@ -41,11 +57,34 @@ sudo ./camera_tutorial >/tmp/df-camera.log 2>&1 &
 '
 
 echo "Starting robot camera on ${SSH_TARGET}:${REMOTE_PORT} ..."
-ssh "${SSH_TARGET}" "${REMOTE_START}"
+# Don't let a failed camera launch (robot unreachable / build missing) abort the
+# whole script under 'set -e'. Warn and continue — the tunnel below will surface
+# the real connectivity state, and the camera may already be running.
+if ! ssh "${SSH_COMMON_OPTS[@]}" "${SSH_TARGET}" "${REMOTE_START}"; then
+  echo "WARNING: could not start camera_tutorial on the robot (unreachable or not built?)." >&2
+  echo "         Continuing to open the tunnel anyway in case the stream is already up." >&2
+fi
 
 echo "Opening SSH tunnel: http://127.0.0.1:${LOCAL_PORT}/?action=stream"
-exec ssh \
-  -o ExitOnForwardFailure=yes \
-  -N \
-  -L "127.0.0.1:${LOCAL_PORT}:127.0.0.1:${REMOTE_PORT}" \
-  "${SSH_TARGET}"
+
+# Auto-reconnect: prefer autossh (purpose-built tunnel keeper). With -M 0 we
+# disable autossh's own monitoring port and rely on SSH ServerAlive keepalives
+# (set in SSH_COMMON_OPTS) to detect a dead link and trigger a reconnect.
+# Fall back to plain ssh with the same keepalive options when autossh is absent.
+FORWARD_SPEC="127.0.0.1:${LOCAL_PORT}:127.0.0.1:${REMOTE_PORT}"
+if command -v autossh >/dev/null 2>&1; then
+  echo "(using autossh: tunnel auto-reconnects on drop)"
+  exec autossh -M 0 \
+    "${SSH_COMMON_OPTS[@]}" \
+    -N \
+    -L "${FORWARD_SPEC}" \
+    "${SSH_TARGET}"
+else
+  echo "WARNING: autossh not found; using plain ssh (no auto-reconnect on drop)." >&2
+  echo "         Install it for resilient tunnels:  sudo apt-get install autossh" >&2
+  exec ssh \
+    "${SSH_COMMON_OPTS[@]}" \
+    -N \
+    -L "${FORWARD_SPEC}" \
+    "${SSH_TARGET}"
+fi

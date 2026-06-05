@@ -1,11 +1,19 @@
+const CAMERA_RELOAD_MS = 240000; // ~4 min: recycle the MJPEG decoder (GPU/mem leak)
+const CAMERA_RETRY_BASE_MS = 3000; // first auto-retry delay after an error
+const CAMERA_RETRY_MAX_MS = 30000; // backoff cap
+
 const state = {
   last: null,
   staleAfterMs: 900,
   lastLogsKey: "",
   camera: {
-    src: "",
+    src: "",          // bare stream URL (no cache-bust) — detects URL changes
     loaded: false,
-    error: false
+    error: false,
+    reloadCounter: 0, // bumped on every (re)load; appended as &_r=<n>
+    lastReloadMs: 0,  // Date.now() of last successful-stream periodic reload
+    retryAtMs: 0,     // Date.now() of next allowed retry while in error state
+    backoffMs: 0      // current retry delay (grows 3s→6s→12s→cap 30s)
   },
   gamepad: {
     buttons: []
@@ -68,7 +76,7 @@ async function action(name) {
     });
     await refresh();
   } catch (_err) {
-    setText("mission-caption", "Cockpit command failed");
+    setText("mission-caption", "명령 전송 실패");
   } finally {
     if (button) window.setTimeout(() => button.classList.remove("pressed"), 120);
   }
@@ -84,24 +92,24 @@ async function refresh() {
   try {
     data = await fetch("/api/state", {cache: "no-store"}).then((r) => r.json());
   } catch (_err) {
-    setText("link-text", "Agent offline");
-    setText("route-state", "Offline");
+    setText("link-text", "에이전트 꺼짐");
+    setText("route-state", "연결 끊김");
     setClass($("link-pill"), "status-chip");
-    setText("mission-kicker", "WAITING");
-    setText("mission-title", "Runtime");
-    setText("mission-caption", "Waiting for local agent");
+    setText("mission-kicker", "대기");
+    setText("mission-title", "시동 중");
+    setText("mission-caption", "로컬 에이전트를 기다리는 중");
     setClass($("stage-panel"), "stage-panel warn");
     setStateClass("link-state-panel", "readout-panel connection-panel", "bad");
-    setText("link-state-text", "Agent offline");
+    setText("link-state-text", "에이전트 꺼짐");
     setStateClass("robot-batt", "robot-batt", "unknown");
     setText("battery-pct", "--%");
     setText("battery-v", "-- V");
     setBattFill(null);
     setStateClass("robot-pose", "robot-flag", "warn");
-    setText("robot-pose-val", "No data");
+    setText("robot-pose-val", "정보 없음");
     setStateClass("robot-link", "robot-flag", "warn");
     setText("robot-latency", "-- ms");
-    setText("robot-walk-flag", "Idle");
+    setText("robot-walk-flag", "정지");
     return;
   }
   state.last = data;
@@ -118,21 +126,21 @@ function render(data) {
   const moving = Boolean(data.moving);
   const sshMode = data.mode === "ssh";
   const linked = sshMode ? Boolean(data.ssh_connected) : connected;
-  const routeText = stale ? "Stale" : (linked ? (sshMode ? "SSH" : "Linked") : (sshMode ? "Searching" : "Offline"));
+  const routeText = stale ? "신호 끊김" : (linked ? (sshMode ? "SSH 연결됨" : "연결됨") : (sshMode ? "연결 중" : "연결 끊김"));
   const mission = missionState(data, stale);
   const cameraLevel = renderCamera(camera);
 
   setClass($("link-pill"), linked && !stale ? "status-chip connected" : "status-chip");
   setText("link-text", routeText);
   setText("route-state", routeText);
-  setText("mode", data.mode || "-");
-  setText("target-type", "Link");
+  setText("mode", modeLabel(data.mode));
+  setText("target-type", "연결");
   setText("target", data.target || "-");
   setText("ip", data.local_ip || "-");
-  setText("diag-mode", data.mode || "-");
+  setText("diag-mode", modeLabel(data.mode));
   setText("runtime", formatRuntime(data.uptime_sec || 0));
-  setText("input-status", data.input_status || "Unknown");
-  setText("watchdog", "500 ms");
+  setText("input-status", data.input_status || "알 수 없음");
+  setText("watchdog", data.watchdog_label || "—");
   setText("age", `${age} ms`);
 
   renderLink(data, linked, stale, sshMode);
@@ -142,19 +150,22 @@ function render(data) {
   setText("mission-title", mission.title);
   setText("mission-caption", mission.caption);
   setClass($("stage-panel"), `stage-panel ${mission.level} ${cameraLevel}`);
+  // Show the live WebGL robot whenever the real camera is not streaming; pause
+  // it when the camera is live so WebGL and MJPEG never run together.
+  if (window.__darwinRobot3D) window.__darwinRobot3D.setActive(cameraLevel !== "camera-live");
 
-  setText("armed", data.armed ? "Armed" : "Locked");
-  setText("deadman", data.deadman ? "Held" : "Open");
-  setText("estop", data.estopped ? "Active" : "Clear");
+  setText("armed", data.armed ? "준비됨" : "잠김");
+  setText("deadman", data.deadman ? "잡음" : "놓음");
+  setText("estop", data.estopped ? "작동" : "정상");
   setStateClass("tile-arm", "safety-tile", data.armed ? "good" : "warn");
   setStateClass("tile-estop", "safety-tile", data.estopped ? "bad" : "good");
   setStateClass("trigger-deadman", "trigger-state", data.deadman ? "good" : "warn");
   setStateClass("trigger-link", "trigger-state", linked && !stale ? "good" : (stale ? "bad" : "warn"));
 
   setText("stride-num", `${fixed(command.stride_mm)} mm`);
-  setText("turn-num", `${fixed(command.turn_deg)} deg`);
-  setText("pan-num", `${fixed(command.head_pan_deg)} deg`);
-  setText("tilt-num", `${fixed(command.head_tilt_deg)} deg`);
+  setText("turn-num", `${fixed(command.turn_deg)}°`);
+  setText("pan-num", `${fixed(command.head_pan_deg)}°`);
+  setText("tilt-num", `${fixed(command.head_tilt_deg)}°`);
 
   setMeter("stride-bar", Number(command.stride_mm || 0), 25);
   setMeter("turn-bar", Number(command.turn_deg || 0), 12);
@@ -177,19 +188,19 @@ function render(data) {
 // fall back to the generic relay "connected" flag so this never goes dark.
 function renderLink(data, linked, stale, sshMode) {
   let level = "bad";
-  let text = sshMode ? "Searching SSH" : "Offline";
+  let text = sshMode ? "SSH 연결 중" : "연결 끊김";
   if (linked && !stale) {
     level = "good";
-    text = sshMode ? "SSH Linked" : "Linked";
+    text = sshMode ? "SSH 연결됨" : "연결됨";
   } else if (linked && stale) {
     level = "warn";
-    text = "Stale";
+    text = "신호 끊김";
   } else if (sshMode) {
     level = "warn";
-    text = "Searching SSH";
+    text = "SSH 연결 중";
   }
   setStateClass("link-state-panel", "readout-panel connection-panel", level);
-  setText("link-state-text", `${text} · ${data.target || "no target"}`);
+  setText("link-state-text", `${text} · ${data.target || "대상 없음"}`);
 }
 
 // Robot telemetry: battery, pose (UPRIGHT/FALLEN), walking, link latency.
@@ -211,7 +222,7 @@ function renderRobot(data, stale) {
   setText("robot-latency", latency === null ? "-- ms" : `${Math.round(latency)} ms`);
 
   const walking = Boolean(data.robot_walking) && !stale;
-  setText("robot-walk-flag", walking ? "Walking" : "Idle");
+  setText("robot-walk-flag", walking ? "보행 중" : "정지");
   const flag = $("robot-walk-flag");
   const flagClass = walking ? "walking" : "";
   if (flag.className !== flagClass) flag.className = flagClass;
@@ -231,11 +242,11 @@ function batteryLevel(pct) {
 }
 
 function poseState(data, stale) {
-  if (stale) return {text: "No data", level: "warn"};
+  if (stale) return {text: "정보 없음", level: "warn"};
   const fallen = Number(data.robot_fallen || 0);
-  if (fallen > 0) return {text: "FALLEN ↟", level: "bad"};
-  if (fallen < 0) return {text: "FALLEN ↡", level: "bad"};
-  return {text: "UPRIGHT", level: "good"};
+  if (fallen > 0) return {text: "넘어짐 ↟", level: "bad"};
+  if (fallen < 0) return {text: "넘어짐 ↡", level: "bad"};
+  return {text: "정상", level: "good"};
 }
 
 function latencyLevel(latency, stale) {
@@ -251,6 +262,29 @@ function numOrNull(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+// Append/replace a cache-busting &_r=<n> so the browser tears down the old
+// MJPEG decoder and starts a fresh stream. Keeps any existing query string.
+function bustedSrc(streamUrl, counter) {
+  const base = streamUrl.split("#")[0];
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}_r=${counter}`;
+}
+
+// Build the next immutable camera state and (re)point the <img>. Used by both
+// the initial load and every reload/retry so timing fields persist correctly.
+function loadCameraStream(image, streamUrl, base) {
+  const reloadCounter = base.reloadCounter + 1;
+  state.camera = {
+    ...base,
+    src: streamUrl,
+    loaded: false,
+    error: false,
+    reloadCounter,
+    lastReloadMs: Date.now()
+  };
+  image.src = bustedSrc(streamUrl, reloadCounter);
+}
+
 function renderCamera(camera) {
   const enabled = Boolean(camera.enabled);
   const streamUrl = String(camera.stream_url || "");
@@ -264,29 +298,64 @@ function renderCamera(camera) {
   if (!enabled || !streamUrl) {
     if (state.camera.src) image.removeAttribute("src");
     setCameraImageClass(image, "is-hidden");
-    state.camera = {src: "", loaded: false, error: false};
-    setText("camera-mode", "CAMERA OFF");
+    state.camera = {
+      src: "", loaded: false, error: false,
+      reloadCounter: 0, lastReloadMs: 0, retryAtMs: 0, backoffMs: 0
+    };
+    setText("camera-mode", "카메라 꺼짐");
     return "camera-off";
   }
 
   if (state.camera.src !== streamUrl) {
-    state.camera = {src: streamUrl, loaded: false, error: false};
-    image.src = streamUrl;
+    // New URL: reset backoff and start fresh.
+    loadCameraStream(image, streamUrl, {reloadCounter: 0, retryAtMs: 0, backoffMs: 0});
   }
 
-  if (state.camera.error) {
-    setCameraImageClass(image, "is-hidden");
-    setText("camera-mode", "CAMERA LOST");
-    return "camera-error";
-  }
-  if (state.camera.loaded) {
+  if (state.camera.error) return renderCameraRetry(image, streamUrl);
+  if (state.camera.loaded) return renderCameraLive(image, streamUrl);
+
+  setCameraImageClass(image, "is-hidden");
+  setText("camera-mode", "카메라 연결 중");
+  return "camera-wait";
+}
+
+// Live stream: every ~4 min recycle the decoder via a cache-busted reload to
+// dodge the long-running MJPEG GPU/process-memory leak. No per-poll flicker.
+function renderCameraLive(image, streamUrl) {
+  const cam = state.camera;
+  if (Date.now() - cam.lastReloadMs >= CAMERA_RELOAD_MS) {
+    loadCameraStream(image, streamUrl, {
+      reloadCounter: cam.reloadCounter, retryAtMs: 0, backoffMs: 0
+    });
+    // Keep the visible frame up while the new stream warms (no blank flash).
     setCameraImageClass(image, "is-live");
-    setText("camera-mode", "CAMERA LIVE");
+    setText("camera-mode", "카메라 연결됨");
     return "camera-live";
   }
+  setCameraImageClass(image, "is-live");
+  setText("camera-mode", "카메라 연결됨");
+  return "camera-live";
+}
+
+// Error: auto-retry with growing backoff (3s→6s→12s→cap 30s) instead of a
+// permanent "CAMERA LOST" latch. Reuses the refresh loop + Date.now() — no
+// extra timers. Stays in the themed camera-error state while retrying.
+function renderCameraRetry(image, streamUrl) {
+  const cam = state.camera;
+  const now = Date.now();
+  if (cam.retryAtMs === 0) {
+    const backoffMs = cam.backoffMs > 0
+      ? Math.min(cam.backoffMs * 2, CAMERA_RETRY_MAX_MS)
+      : CAMERA_RETRY_BASE_MS;
+    state.camera = {...cam, retryAtMs: now + backoffMs, backoffMs};
+  } else if (now >= cam.retryAtMs) {
+    loadCameraStream(image, streamUrl, {
+      reloadCounter: cam.reloadCounter, retryAtMs: 0, backoffMs: cam.backoffMs
+    });
+  }
   setCameraImageClass(image, "is-hidden");
-  setText("camera-mode", "CAMERA WAIT");
-  return "camera-wait";
+  setText("camera-mode", "다시 연결 중…");
+  return "camera-error";
 }
 
 function setCameraImageClass(image, stateClass) {
@@ -296,23 +365,33 @@ function setCameraImageClass(image, stateClass) {
   if (image.style.opacity !== opacity) image.style.opacity = opacity;
 }
 
+function modeLabel(mode) {
+  switch (mode) {
+    case "ssh": return "SSH 직접";
+    case "mac_relay": return "맥 경유";
+    case "robot_udp": return "로봇 직결";
+    case "dry_run": return "연습";
+    default: return mode || "-";
+  }
+}
+
 function missionState(data, stale) {
   if (stale) {
-    return {kicker: "SIGNAL", title: "Stale", caption: "Runtime update delayed", level: "warn"};
+    return {kicker: "신호", title: "신호 끊김", caption: "응답이 지연되고 있어요", level: "warn"};
   }
   if (data.estopped) {
-    return {kicker: "SAFETY", title: "E-Stop", caption: "Motion latch is active", level: "danger"};
+    return {kicker: "안전", title: "비상정지", caption: "비상정지가 걸렸어요", level: "danger"};
   }
   if (!data.armed) {
-    return {kicker: "STANDBY", title: "Locked", caption: "Arm command authority to continue", level: "warn"};
+    return {kicker: "대기", title: "잠김", caption: "조종하려면 먼저 '조종 시작'을 누르세요", level: "warn"};
   }
   if (!data.deadman) {
-    return {kicker: "READY", title: "Hold ZL", caption: "Movement gate is open until ZL is held", level: "ready"};
+    return {kicker: "준비", title: "ZL 잡기", caption: "ZL을 잡고 있어야 움직여요", level: "ready"};
   }
   if (data.moving) {
-    return {kicker: "PILOT", title: "Moving", caption: "Walking command active", level: "motion"};
+    return {kicker: "조종", title: "이동 중", caption: "보행 명령 전송 중", level: "motion"};
   }
-  return {kicker: "PILOT", title: "Ready", caption: "Standing by for stick input", level: "ready"};
+  return {kicker: "조종", title: "준비 완료", caption: "스틱 입력을 기다리는 중", level: "ready"};
 }
 
 function setMotionVector(x, y, moving) {
@@ -332,9 +411,9 @@ function formatRuntime(seconds) {
   const total = Math.max(0, Math.floor(seconds));
   const min = Math.floor(total / 60);
   const sec = total % 60;
-  if (min < 60) return `${min}m ${sec}s`;
+  if (min < 60) return `${min}분 ${sec}초`;
   const hr = Math.floor(min / 60);
-  return `${hr}h ${min % 60}m`;
+  return `${hr}시간 ${min % 60}분`;
 }
 
 function clamp(value, min, max) {
@@ -370,7 +449,7 @@ function focusDockButton(index) {
     item.classList.toggle("selected", item === button);
   }
   setText("dock-focus-label", button.dataset.label || button.textContent.trim());
-  setText("dock-focus-hint", button.dataset.hint || "A confirms selected command");
+  setText("dock-focus-hint", button.dataset.hint || "A: 선택한 명령 실행");
   button.focus({preventScroll: true});
 }
 
@@ -383,13 +462,23 @@ for (const button of dockButtons) {
 }
 
 cameraImage.addEventListener("load", () => {
-  state.camera.loaded = true;
-  state.camera.error = false;
+  // Successful (re)load: clear error and reset the retry backoff.
+  state.camera = {
+    ...state.camera,
+    loaded: true,
+    error: false,
+    retryAtMs: 0,
+    backoffMs: 0
+  };
 });
 
 cameraImage.addEventListener("error", () => {
-  state.camera.loaded = false;
-  state.camera.error = true;
+  // Enter the auto-retry state; renderCameraRetry schedules the next attempt.
+  state.camera = {
+    ...state.camera,
+    loaded: false,
+    error: true
+  };
 });
 
 window.addEventListener("keydown", (event) => {
