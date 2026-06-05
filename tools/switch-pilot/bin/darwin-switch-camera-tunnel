@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROBOT_HOST="${ROBOT_HOST:-192.168.123.1}"
+ROBOT_USER="${ROBOT_USER:-robotis}"
+LOCAL_PORT="${SWITCH_CAMERA_LOCAL_PORT:-18080}"
+REMOTE_PORT="${ROBOT_CAMERA_REMOTE_PORT:-8080}"
+SSH_TARGET="${ROBOT_USER}@${ROBOT_HOST}"
+
+REMOTE_START='
+set +e
+if command -v ss >/dev/null 2>&1; then
+  ss -lnt 2>/dev/null | grep ":8080" >/dev/null && exit 0
+else
+  netstat -lnt 2>/dev/null | grep ":8080" >/dev/null && exit 0
+fi
+
+CAM_DIR=""
+for d in "$HOME/Framework/Linux/project/tutorial/camera" \
+         "$HOME/darwin/Linux/project/tutorial/camera" \
+         "/darwin/Linux/project/tutorial/camera" \
+         "/robotis/Linux/project/tutorial/camera"; do
+  if [ -d "$d" ]; then
+    CAM_DIR="$d"
+    break
+  fi
+done
+
+if [ -z "$CAM_DIR" ]; then
+  echo "camera tutorial directory not found" >&2
+  exit 1
+fi
+
+cd "$CAM_DIR" || exit 1
+if [ ! -x ./camera_tutorial ]; then
+  make || exit 1
+fi
+
+sudo killall camera_tutorial 2>/dev/null
+sudo ./camera_tutorial >/tmp/df-camera.log 2>&1 &
+'
+
+echo "Starting robot camera on ${SSH_TARGET}:${REMOTE_PORT} ..."
+ssh "${SSH_TARGET}" "${REMOTE_START}"
+
+echo "Opening SSH tunnel: http://127.0.0.1:${LOCAL_PORT}/?action=stream"
+exec ssh \
+  -o ExitOnForwardFailure=yes \
+  -N \
+  -L "127.0.0.1:${LOCAL_PORT}:127.0.0.1:${REMOTE_PORT}" \
+  "${SSH_TARGET}"

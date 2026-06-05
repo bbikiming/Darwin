@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Darwin Switch Cockpit
+Comment=Open the Darwin robot control cockpit in fullscreen mode
+Exec=/usr/local/bin/darwin-switch-cockpit
+Terminal=false
+X-GNOME-Autostart-enabled=true

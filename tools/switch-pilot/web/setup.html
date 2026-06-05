@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1280, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Darwin Switch — First Boot Setup</title>
+  <style>
+    /* Self-contained; palette mirrors styles.css. No remote fonts/libs. */
+    :root {
+      color-scheme: dark;
+      --bg: #111315;
+      --panel: #1a1d20;
+      --panel-2: #22262a;
+      --line: #3a4148;
+      --line-soft: #2a3035;
+      --text: #f5f7f8;
+      --muted: #b4bdc3;
+      --dim: #76828b;
+      --cyan: #00d6ee;
+      --red: #ff4a55;
+      --green: #62dc8e;
+      --amber: #ffd166;
+      --focus: #ffffff;
+      --shadow: rgba(0, 0, 0, .34);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .setup-shell {
+      width: 1280px;
+      min-height: 720px;
+      margin: 0 auto;
+      padding: 32px 40px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .switch-mark {
+      width: 44px;
+      height: 44px;
+      flex: none;
+      border-radius: 8px;
+      background: linear-gradient(90deg, var(--cyan) 0 48%, var(--red) 52% 100%);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .28);
+    }
+
+    h1 { margin: 0; font-size: 26px; font-weight: 820; line-height: 1; }
+    .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+    .card {
+      border: 1px solid var(--line-soft);
+      background: #181b1e;
+      border-radius: 10px;
+      box-shadow: 0 14px 32px var(--shadow);
+      padding: 22px 26px;
+    }
+
+    fieldset { border: 0; margin: 0; padding: 0; }
+    legend {
+      font-size: 13px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--dim);
+      padding: 0;
+      margin-bottom: 14px;
+    }
+
+    .mode-row { display: flex; gap: 14px; flex-wrap: wrap; }
+
+    .mode-option {
+      flex: 1 1 0;
+      min-width: 220px;
+      border: 2px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      padding: 16px 18px;
+      cursor: pointer;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .mode-option:hover { border-color: var(--cyan); }
+    .mode-option:has(input:checked) {
+      border-color: var(--cyan);
+      background: var(--panel-2);
+    }
+    .mode-option:has(input:focus-visible) {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .mode-option input { margin-top: 4px; width: 22px; height: 22px; accent-color: var(--cyan); }
+    .mode-option strong { display: block; font-size: 16px; }
+    .mode-option span { display: block; color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px 22px;
+      margin-top: 16px;
+    }
+
+    label.field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+    label.field .hint { color: var(--dim); font-size: 12px; }
+
+    input[type="text"],
+    input[type="number"],
+    input[type="password"] {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel);
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      min-height: 48px;
+    }
+
+    input:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+      border-color: var(--cyan);
+    }
+
+    .toggle-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+    .toggle-row input { width: 24px; height: 24px; accent-color: var(--cyan); }
+
+    .hidden { display: none !important; }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 4px;
+    }
+
+    #status { font-size: 14px; min-height: 20px; }
+    #status.error { color: var(--red); }
+    #status.ok { color: var(--green); }
+    #status.busy { color: var(--amber); }
+
+    button.primary {
+      font: inherit;
+      font-weight: 720;
+      font-size: 16px;
+      color: #08171a;
+      background: var(--cyan);
+      border: 0;
+      border-radius: 10px;
+      padding: 14px 30px;
+      min-height: 52px;
+      cursor: pointer;
+    }
+    button.primary:hover { filter: brightness(1.08); }
+    button.primary:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    button.primary:disabled { opacity: .5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <main class="setup-shell">
+    <header>
+      <div class="switch-mark" aria-hidden="true"></div>
+      <div>
+        <h1>Darwin Switch — First Boot Setup</h1>
+        <p class="subtitle">Pick a control mode and point this console at your Mac or robot. No keyboard needed.</p>
+      </div>
+    </header>
+
+    <form id="setup-form" class="card" autocomplete="off">
+      <fieldset>
+        <legend>Control mode</legend>
+        <div class="mode-row" role="radiogroup" aria-label="Control mode">
+          <label class="mode-option">
+            <input type="radio" name="mode" value="dry_run" />
+            <span>
+              <strong>Dry run</strong>
+              <span>Cockpit only. Nothing is sent to a robot.</span>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="mac_relay" />
+            <span>
+              <strong>Mac relay</strong>
+              <span>Send control through the DarwinForge Mac app.</span>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="robot_udp" />
+            <span>
+              <strong>Robot UDP</strong>
+              <span>Talk to the robot directly over the network.</span>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="ssh" />
+            <span>
+              <strong>SSH (WalkLab)</strong>
+              <span>Pilot the robot's onboard walk daemon over SSH.</span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset id="mac-section">
+        <legend>Mac connection</legend>
+        <div class="grid">
+          <label class="field">
+            Mac host / IP
+            <input type="text" id="mac-host" inputmode="decimal" placeholder="192.168.123.1" />
+            <span class="hint">The Mac running DarwinForge.</span>
+          </label>
+          <label class="field">
+            Mac port
+            <input type="number" id="mac-port" min="0" max="65535" placeholder="8770" />
+          </label>
+          <label class="field">
+            Pairing code
+            <input type="text" id="mac-pairing" inputmode="numeric" pattern="[0-9]*" placeholder="123456" />
+            <span class="hint">Digits shown on the Mac app.</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset id="robot-section">
+        <legend>Robot connection</legend>
+        <div class="grid">
+          <label class="field">
+            Robot host / IP
+            <input type="text" id="robot-host" inputmode="decimal" placeholder="192.168.0.100" />
+          </label>
+          <label class="field">
+            Robot port
+            <input type="number" id="robot-port" min="0" max="65535" placeholder="55310" />
+          </label>
+          <label class="field">
+            Token (optional)
+            <input type="password" id="robot-token" placeholder="leave blank if none" />
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset id="ssh-section">
+        <legend>SSH connection</legend>
+        <div class="grid">
+          <label class="field">
+            Robot host / IP
+            <input type="text" id="ssh-host" inputmode="decimal" placeholder="192.168.123.1" />
+            <span class="hint">Wired direct is fastest (192.168.123.1).</span>
+          </label>
+          <label class="field">
+            SSH user
+            <input type="text" id="ssh-user" autocapitalize="off" spellcheck="false" placeholder="robotis" />
+          </label>
+          <label class="field">
+            SSH port (optional)
+            <input type="number" id="ssh-port" min="1" max="65535" placeholder="22" />
+          </label>
+          <label class="field">
+            Identity file (optional)
+            <input type="text" id="ssh-identity" autocapitalize="off" spellcheck="false" placeholder="~/.ssh/id_rsa_darwin" />
+            <span class="hint">RSA key (OpenSSH 5.9 has no ed25519).</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Camera</legend>
+        <div class="toggle-row">
+          <input type="checkbox" id="camera-enabled" />
+          <label for="camera-enabled">Enable camera HUD overlay</label>
+        </div>
+      </fieldset>
+
+      <div class="footer">
+        <p id="status" role="status" aria-live="polite"></p>
+        <button type="submit" class="primary" id="save-btn">Save &amp; launch cockpit</button>
+      </div>
+    </form>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

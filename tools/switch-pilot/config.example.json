@@ -1,0 +1,79 @@
+{
+  "mode": "dry_run",
+  "device_name": "Darwin Switch",
+  "device_id": "darwin-switch-001",
+  "log_level": "INFO",
+  "gui": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8765,
+    "kiosk": true,
+    "autostart": true
+  },
+  "input": {
+    "event_globs": [
+      "/dev/input/event*"
+    ],
+    "prefer_names": [
+      "Joy-Con",
+      "Nintendo",
+      "Pro Controller"
+    ]
+  },
+  "mapping": {
+    "_comment": "Nintendo layout via hid-nintendo: A=BTN_EAST(305), B=BTN_SOUTH(304), ZL=BTN_TL2(312), ZR=BTN_TR2(313), Home=BTN_MODE(316). Codes here are an override; the agent also resolves roles at runtime against the device's real capabilities (verify with evtest).",
+    "deadzone": 0.12,
+    "deadman_key_codes": [312, 313],
+    "arm_key_codes": [305],
+    "stop_key_codes": [304],
+    "estop_key_codes": [316],
+    "left_x_abs_codes": [0],
+    "left_y_abs_codes": [1],
+    "right_x_abs_codes": [3],
+    "right_y_abs_codes": [4],
+    "invert_left_y": true,
+    "invert_right_y": true
+  },
+  "motion": {
+    "max_stride_mm": 25.0,
+    "max_turn_deg": 12.0,
+    "max_head_pan_deg": 70.0,
+    "max_head_tilt_deg": 35.0,
+    "speed_scale": 0.8,
+    "send_hz": 20
+  },
+  "camera": {
+    "enabled": true,
+    "label": "Darwin Head Camera",
+    "route": "ssh-tunnel",
+    "stream_url": "http://127.0.0.1:18080/?action=stream",
+    "snapshot_url": "http://127.0.0.1:18080/?action=snapshot"
+  },
+  "mac": {
+    "host": "127.0.0.1",
+    "port": 0,
+    "path": "/mobile-relay",
+    "pairing_code": "000000",
+    "connect_timeout_sec": 5.0,
+    "heartbeat_ms": 100,
+    "send_head": false
+  },
+  "robot": {
+    "host": "192.168.0.100",
+    "port": 55310,
+    "token": "change-me",
+    "send_hz": 20
+  },
+  "ssh": {
+    "host": "192.168.123.1",
+    "user": "robotis",
+    "port": 22,
+    "identity_file": "~/.ssh/id_rsa_darwin",
+    "period_ms": 600,
+    "foot_mm": 40,
+    "hip_deg": 13,
+    "send_hz": 5,
+    "telemetry_hz": 2,
+    "heartbeat_ms": 1000
+  }
+}

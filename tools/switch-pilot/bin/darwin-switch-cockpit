@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+URL="${DARWIN_SWITCH_COCKPIT_URL:-http://127.0.0.1:8765/}"
+
+if command -v xset >/dev/null 2>&1; then
+  xset s off || true
+  xset -dpms || true
+  xset s noblank || true
+fi
+
+if command -v gsettings >/dev/null 2>&1; then
+  gsettings set org.gnome.desktop.session idle-delay 0 >/dev/null 2>&1 || true
+  gsettings set org.gnome.desktop.screensaver lock-enabled false >/dev/null 2>&1 || true
+fi
+
+for _ in $(seq 1 60); do
+  if python3 - <<PY
+import urllib.request
+try:
+    urllib.request.urlopen("${URL}", timeout=1).read(64)
+except Exception:
+    raise SystemExit(1)
+PY
+  then
+    break
+  fi
+  sleep 1
+done
+
+if command -v firefox >/dev/null 2>&1; then
+  exec firefox --kiosk "${URL}"
+elif command -v chromium-browser >/dev/null 2>&1; then
+  exec chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble "${URL}"
+elif command -v chromium >/dev/null 2>&1; then
+  exec chromium --kiosk --no-first-run --disable-session-crashed-bubble "${URL}"
+elif command -v google-chrome >/dev/null 2>&1; then
+  exec google-chrome --kiosk --no-first-run --disable-session-crashed-bubble "${URL}"
+elif command -v xdg-open >/dev/null 2>&1; then
+  exec xdg-open "${URL}"
+else
+  echo "No browser found. Open ${URL} manually." >&2
+  sleep infinity
+fi

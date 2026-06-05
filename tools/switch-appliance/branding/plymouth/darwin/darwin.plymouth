@@ -1,0 +1,13 @@
+# Darwin Switch — Plymouth theme descriptor.
+# Sealed-appliance boot splash: shows DARWIN instead of the Ubuntu logo.
+# Installed to /usr/share/plymouth/themes/darwin/ ; activated via
+# plymouth-set-default-theme -R darwin (see ../../README.md).
+
+[Plymouth Theme]
+Name=Darwin Switch
+Description=Darwin Switch robot-control appliance boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/darwin
+ScriptFile=/usr/share/plymouth/themes/darwin/darwin.script

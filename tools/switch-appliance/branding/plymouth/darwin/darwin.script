@@ -1,0 +1,157 @@
+// Darwin Switch — Plymouth boot script.
+//
+// Goals (in order): never break boot, look like DARWIN (not Ubuntu).
+//  - Dark background fill across all monitors.
+//  - Center logo.png from the theme dir IF it exists (guarded — a missing
+//    image must never abort the splash).
+//  - A simple pulsing "DARWIN" progress feel + boot/auth message line.
+//
+// Plymouth's script language has no real exception handling, so every
+// optional asset is null-checked before use. Keep this file dependency-free.
+
+// ---------------------------------------------------------------------------
+// Palette / layout constants (Darwin dark theme).
+// ---------------------------------------------------------------------------
+bg.red   = 0.043;   // ~#0B0E14 deep slate — matches cockpit dark surface
+bg.green = 0.055;
+bg.blue  = 0.078;
+
+screen.width  = Window.GetWidth();
+screen.height = Window.GetHeight();
+screen.x      = Window.GetX();
+screen.y      = Window.GetY();
+
+// ---------------------------------------------------------------------------
+// Background: paint every monitor a flat dark color.
+// ---------------------------------------------------------------------------
+Window.SetBackgroundTopColor(bg.red, bg.green, bg.blue);
+Window.SetBackgroundBottomColor(bg.red, bg.green, bg.blue);
+
+// ---------------------------------------------------------------------------
+// Logo: optional. Image() returns null if logo.png is absent, so guard it.
+// ---------------------------------------------------------------------------
+logo.image = Image("logo.png");
+logo.sprite = NULL;
+
+if (logo.image) {
+    logo.width  = logo.image.GetWidth();
+    logo.height = logo.image.GetHeight();
+    logo.sprite = Sprite(logo.image);
+    logo.sprite.SetX(screen.x + (screen.width  - logo.width)  / 2);
+    logo.sprite.SetY(screen.y + (screen.height - logo.height) / 2 - screen.height * 0.06);
+    logo.sprite.SetZ(10);
+    logo.sprite.SetOpacity(1);
+}
+
+// Fallback baseline for positioning text when no logo is present.
+center.y = screen.y + screen.height / 2;
+
+// ---------------------------------------------------------------------------
+// Progress dots: a row of pulsing squares under the logo. Pure draw — no
+// external assets, so this always renders even when logo.png is missing.
+// ---------------------------------------------------------------------------
+dots.count   = 5;
+dots.size    = 8;
+dots.spacing = 22;
+dots.color.r = 0.30;   // muted teal-grey, brightened on pulse
+dots.color.g = 0.62;
+dots.color.b = 0.72;
+
+dots.row_width = (dots.count - 1) * dots.spacing;
+dots.base_x    = screen.x + (screen.width - dots.row_width) / 2 - dots.size / 2;
+dots.base_y    = center.y + screen.height * 0.12;
+
+dots.sprites = [];
+for (i = 0; i < dots.count; i++) {
+    sp = Sprite();   // image assigned each frame in refresh_callback
+    sp.SetX(dots.base_x + i * dots.spacing);
+    sp.SetY(dots.base_y);
+    sp.SetZ(8);
+    dots.sprites[i] = sp;
+}
+
+// ---------------------------------------------------------------------------
+// Message line: boot phase / password prompts land here.
+// ---------------------------------------------------------------------------
+message.sprite = Sprite();
+message.sprite.SetZ(12);
+
+fun draw_message(text) {
+    if (!text) {
+        message.sprite.SetImage(Image.Text("", 0, 0, 0));
+        return;
+    }
+    img = Image.Text(text, 0.80, 0.85, 0.90);
+    message.sprite.SetImage(img);
+    message.sprite.SetX(screen.x + (screen.width - img.GetWidth()) / 2);
+    message.sprite.SetY(dots.base_y + screen.height * 0.06);
+}
+
+draw_message("DARWIN");
+
+// ---------------------------------------------------------------------------
+// Animation: refresh callback pulses one dot at a time (left -> right) to
+// signal liveness. Solid-color square drawn via a 1x1 scaled sprite.
+// ---------------------------------------------------------------------------
+// Plymouth's script API has no primitive shape fill, so render a filled cell
+// from a full-block glyph. Returns an Image; callers assign it to a sprite.
+fun filled_cell(r, g, b) {
+    return Image.Text("█", r, g, b);
+}
+
+progress.tick = 0;
+
+fun refresh_callback() {
+    progress.tick++;
+    active = Math.Int(progress.tick / 6) % dots.count;
+
+    for (i = 0; i < dots.count; i++) {
+        if (i == active) {
+            r = dots.color.r + 0.45;
+            g = dots.color.g + 0.30;
+            b = dots.color.b + 0.25;
+        } else {
+            r = dots.color.r;
+            g = dots.color.g;
+            b = dots.color.b;
+        }
+        dots.sprites[i].SetImage(filled_cell(r, g, b));
+    }
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);
+
+// ---------------------------------------------------------------------------
+// Plymouth hooks: keep boot resilient. Mode/update/message all just refresh
+// the message line; nothing here can abort the boot sequence.
+// ---------------------------------------------------------------------------
+fun boot_progress_callback(duration, progress) {
+    // Reserved for a future linear bar; intentionally a no-op for robustness.
+}
+Plymouth.SetBootProgressFunction(boot_progress_callback);
+
+fun display_message_callback(text) {
+    draw_message(text);
+}
+Plymouth.SetMessageFunction(display_message_callback);
+
+fun update_status_callback(status) {
+    // Status strings (e.g. "normal") are informational only.
+}
+Plymouth.SetUpdateStatusFunction(update_status_callback);
+
+// Password prompt: show the prompt text; Plymouth handles the bullets.
+fun display_password_callback(prompt, bullets) {
+    if (prompt) {
+        draw_message(prompt);
+    } else {
+        draw_message("Enter passphrase");
+    }
+}
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+// Return to splash text when leaving a password/question prompt.
+fun display_normal_callback() {
+    draw_message("DARWIN");
+}
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
