@@ -143,6 +143,17 @@ fi
 #   StatusCheck.cpp: 'WalkLab mode (button)' marker (MODE LED + START 케이스)
 #   main.cpp       : 'WalkLab button mode' marker (switch case WALKLAB)
 # 각 단계는 grep 으로 적용 여부를 확인 — 두 번 돌려도 안전.
+#
+# 후면 버튼 모드는 표준 데모의 'ROBOPLUS' 모드 케이스를 anchor 로 삽입한다.
+# ROBOPLUS 모드가 없는 데모 변종(예: SOCCER/MOTION/VISION 만 순환하는 펌웨어)에서는
+# 버튼 기능을 통째로 건너뛰고, 자동기동 경로(/tmp/df-pilot-mode == "walklab") 만
+# 유지한다. head_tilt/WalkLabBrokerage 빌드는 그대로 진행 — 핵심 기능은 손상 없음.
+DF_BUTTON_MODE=1
+if [ ! -f StatusCheck.cpp ] || ! grep -q 'm_cur_mode == ROBOPLUS' StatusCheck.cpp; then
+  echo "⚠ ROBOPLUS 모드 없는 데모 — 후면 MODE 버튼 기능 건너뜀(자동기동 경로만 유지)."
+  DF_BUTTON_MODE=0
+fi
+if [ "$DF_BUTTON_MODE" = 1 ]; then
 
 # (a) StatusCheck.h — enum 끝에 WALKLAB 추가 (기존 인덱스 보존)
 if [ -f StatusCheck.h ] && ! grep -q 'WALKLAB,' StatusCheck.h; then
@@ -280,6 +291,8 @@ if ! grep -q 'WalkLab button mode' main.cpp; then
   [ -f StatusCheck.h.df-orig ]   && cp StatusCheck.h.df-orig   StatusCheck.h
   exit 1
 fi
+
+fi  # === end DF_BUTTON_MODE (후면 버튼 모드 — ROBOPLUS 데모에서만) ===
 
 # 4) Makefile OBJECTS 에 WalkLabBrokerage.o 추가 (멱등)
 if ! grep -q 'WalkLabBrokerage.o' Makefile; then
