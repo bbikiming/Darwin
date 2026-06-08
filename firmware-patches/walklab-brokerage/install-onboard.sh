@@ -52,7 +52,13 @@ if ! grep -q 'WalkLabBrokerage.h' main.cpp; then
   sed -i '/#include "StatusCheck.h"/a #include "WalkLabBrokerage.h"' main.cpp
 fi
 
-# 3) walklab 분기 주입 — while(1) 메인 루프 직전 (멱등)
+# 3) walklab 분기 주입 — while(1) 메인 루프 직전 (멱등 + 업데이트 재주입)
+# 기존 주입 블록(마커 사이)이 있으면 먼저 제거한다. 이렇게 하면 주입 코드(예: 느린
+# 기립 시퀀스)를 바꾼 뒤 재설치해도 옛 블록이 남지 않고 항상 최신 버전이 반영된다.
+if grep -q '=== DarwinForge WalkLab onboard brokerage' main.cpp; then
+  sed -i '/=== DarwinForge WalkLab onboard brokerage/,/=== end DarwinForge injection ===/d' main.cpp
+  echo "▶ 기존 walklab 주입 블록 제거 — 최신 버전으로 재주입."
+fi
 if ! grep -q 'DarwinForge WalkLab onboard' main.cpp; then
   cat > /tmp/df_walklab_inject.cpp <<'EOF_INJECT'
     // === DarwinForge WalkLab onboard brokerage (2026-06-07 Switch fix) ===
@@ -89,7 +95,20 @@ if ! grep -q 'DarwinForge WalkLab onboard' main.cpp; then
                 Action::GetInstance()->m_Joint.SetEnableBody(true, true);
 
                 DF_PROGRESS("walk-ready");
-                Action::GetInstance()->Start(9);
+                // DarwinForge 부팅 데모: 검증된 walkready(page 9, TIME_BASE) 궤적은 그대로
+                // 두고 header.speed 만 키워(32→96) 약 3배 천천히·안정적으로 토크를 인가하며
+                // 기립한다. Start(int,PAGE*) 는 체크섬을 검증하지 않으므로 수정 페이지를 그대로
+                // 재생할 수 있다. LoadPage 실패 시 표준 walk-ready 로 폴백.
+                {
+                    Action::PAGE dfWR;
+                    if (Action::GetInstance()->LoadPage(9, &dfWR)) {
+                        int dfSp = (int)dfWR.header.speed * 3;   // TIME_BASE: speed↑ = 느림
+                        dfWR.header.speed = (unsigned char)(dfSp > 255 ? 255 : dfSp);
+                        Action::GetInstance()->Start(9, &dfWR);
+                    } else {
+                        Action::GetInstance()->Start(9);
+                    }
+                }
                 while (Action::GetInstance()->IsRunning() == true) usleep(8000);
 
                 Head::GetInstance()->m_Joint.SetEnableHeadOnly(true, true);
@@ -247,7 +266,16 @@ if ! grep -q 'WalkLab button mode' main.cpp; then
                     MotionManager::GetInstance()->SetEnable(true);
                     Action::GetInstance()->m_Joint.SetEnableBody(true, true);
 
-                    Action::GetInstance()->Start(9);
+                    {   // 느린 안정 기립 — auto-mode 와 동일 (walkready page speed 3x)
+                        Action::PAGE dfWR;
+                        if (Action::GetInstance()->LoadPage(9, &dfWR)) {
+                            int dfSp = (int)dfWR.header.speed * 3;
+                            dfWR.header.speed = (unsigned char)(dfSp > 255 ? 255 : dfSp);
+                            Action::GetInstance()->Start(9, &dfWR);
+                        } else {
+                            Action::GetInstance()->Start(9);
+                        }
+                    }
                     while (Action::GetInstance()->IsRunning() == true) usleep(8000);
 
                     Head::GetInstance()->m_Joint.SetEnableHeadOnly(true, true);
@@ -316,6 +344,33 @@ else
   [ -f StatusCheck.h.df-orig ]   && cp StatusCheck.h.df-orig   StatusCheck.h
   [ -f StatusCheck.cpp.df-orig ] && cp StatusCheck.cpp.df-orig StatusCheck.cpp
   exit 1
+fi
+
+# 6) 부팅 walklab 자동기동 훅 (멱등) — /etc/rc.local 이 데모 실행 전에 영구 pilot-mode 를
+#    /tmp 로 복원한다. /tmp 는 재부팅 시 비워지므로 이 복원이 없으면 부팅 데모가 walklab 으로
+#    들어가지 못한다. 영구 pilot-mode 가 "walklab" 일 때만 동작 = 선택형 토글
+#    (켜기: echo walklab > ~/.config/darwinforge/pilot-mode / 끄기: 파일 삭제·다른 값).
+#    느린 안정 기립은 데모 바이너리의 walkready(page9 speed×3) 시퀀스가 처리.
+if [ -f /etc/rc.local ] && ! grep -q 'DarwinForge boot walklab' /etc/rc.local; then
+  if grep -q '/robotis/Linux/project/demo/demo' /etc/rc.local; then
+    awk '
+      /\/robotis\/Linux\/project\/demo\/demo/ && !df_done {
+        print "# === DarwinForge boot walklab === (영구 pilot-mode=walklab 이면 부팅 시 walklab 진입)"
+        print "if [ \"$(cat /home/robotis/.config/darwinforge/pilot-mode 2>/dev/null)\" = \"walklab\" ]; then"
+        print "  rm -f /tmp/df-walklab-estop"
+        print "  echo walklab > /tmp/df-pilot-mode"
+        print "  : > /tmp/df-walklab-cmd; chmod 0666 /tmp/df-walklab-cmd"
+        print "fi"
+        df_done=1
+      }
+      { print }
+    ' /etc/rc.local > /tmp/rc.local.df && cat /tmp/rc.local.df > /etc/rc.local && rm -f /tmp/rc.local.df
+    echo "▶ 부팅 walklab 훅을 /etc/rc.local 에 추가 (토글: ~/.config/darwinforge/pilot-mode)."
+  else
+    echo "⚠ /etc/rc.local 에 데모 실행 줄이 없어 부팅 walklab 훅을 건너뜀."
+  fi
+else
+  echo "▶ 부팅 walklab 훅 이미 설치됨(또는 /etc/rc.local 없음)."
 fi
 
 rm -f /tmp/df_walklab_inject.cpp
