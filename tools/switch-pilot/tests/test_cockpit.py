@@ -23,6 +23,7 @@ from pathlib import Path
 
 import darwin_switch_agent.cockpit as cockpit
 from darwin_switch_agent.cockpit import (
+    CameraFrameProxy,
     CockpitHandler,
     merge_config,
     run_preflight,
@@ -65,6 +66,45 @@ class StaticMetadataTests(unittest.TestCase):
             CockpitHandler._content_type(types.SimpleNamespace(suffix=".js", name="sw.js")),
             "text/javascript",
         )
+
+
+class FakeImageResponse:
+    def __init__(self, data: bytes):
+        self.data = data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return False
+
+    def read(self, _limit: int) -> bytes:
+        return self.data
+
+
+class CameraFrameProxyTests(unittest.TestCase):
+    def test_rate_limits_robot_snapshot_fetches_with_local_cache(self):
+        proxy = CameraFrameProxy(min_interval_sec=30.0, timeout_sec=0.1, stale_sec=30.0)
+        jpeg = b"\xff\xd8" + (b"0" * 300)
+        with mock.patch.object(cockpit, "urlopen", return_value=FakeImageResponse(jpeg)) as opened:
+            data, cached = proxy.get("http://127.0.0.1:18080/?action=snapshot")
+            data2, cached2 = proxy.get("http://127.0.0.1:18080/?action=snapshot")
+
+        self.assertEqual(data, jpeg)
+        self.assertEqual(data2, jpeg)
+        self.assertFalse(cached)
+        self.assertTrue(cached2)
+        opened.assert_called_once()
+
+    def test_retries_first_frame_once_before_reporting_unavailable(self):
+        proxy = CameraFrameProxy(min_interval_sec=0.0, timeout_sec=0.1, stale_sec=0.0)
+        jpeg = b"\xff\xd8" + (b"1" * 300)
+        with mock.patch.object(cockpit, "urlopen", side_effect=[OSError("reset"), FakeImageResponse(jpeg)]) as opened:
+            data, cached = proxy.get("http://127.0.0.1:18080/?action=snapshot")
+
+        self.assertEqual(data, jpeg)
+        self.assertFalse(cached)
+        self.assertEqual(opened.call_count, 2)
 
 
 class PreflightTests(unittest.TestCase):

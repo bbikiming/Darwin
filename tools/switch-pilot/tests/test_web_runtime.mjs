@@ -289,7 +289,7 @@ const payload = {
   assert.notEqual(context.document.getElementById("camera-mode").textContent, "카메라 신호 없음");
   assert.notEqual(context.document.getElementById("camera-service-state").textContent, "터널 포트 닫힘 :18080");
   assert.equal(context.document.getElementById("fpv-link").textContent, "SSH LOCK");
-  assert.match(context.document.getElementById("camera-stream").src, /action=snapshot/);
+  assert.match(context.document.getElementById("camera-stream").src, /api\/camera-frame\.jpg/);
 }
 
 console.log("web runtime single-flight tests OK");

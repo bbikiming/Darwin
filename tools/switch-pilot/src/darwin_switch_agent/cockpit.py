@@ -11,10 +11,12 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from .config import AgentConfig, validate_provisioning
 from .control_bus import ControlBus
@@ -46,6 +48,77 @@ _ROBOT_READY_ACTIONS = {
     "stabilize": 14.0,
     "all": 60.0,
 }
+CAMERA_FRAME_PROXY_MIN_INTERVAL_SEC = 0.22
+CAMERA_FRAME_PROXY_TIMEOUT_SEC = 0.8
+CAMERA_FRAME_PROXY_STALE_SEC = 3.0
+
+
+class CameraFrameProxy:
+    """Small single-frame cache in front of ROBOTIS camera_tutorial.
+
+    The Switch UI used to point <img> directly at `/?action=snapshot` every
+    ~110ms. On real hardware that can make camera_tutorial reset connections or
+    leave :8080 accepting sockets without delivering a JPEG. This proxy keeps
+    the browser on a local same-origin URL and rate-limits robot camera reads;
+    if one fetch fails, it can still serve the last good frame briefly instead
+    of flashing the camera panel black.
+    """
+
+    def __init__(
+        self,
+        *,
+        min_interval_sec: float = CAMERA_FRAME_PROXY_MIN_INTERVAL_SEC,
+        timeout_sec: float = CAMERA_FRAME_PROXY_TIMEOUT_SEC,
+        stale_sec: float = CAMERA_FRAME_PROXY_STALE_SEC,
+    ) -> None:
+        self.min_interval_sec = min_interval_sec
+        self.timeout_sec = timeout_sec
+        self.stale_sec = stale_sec
+        self._lock = threading.Lock()
+        self._last_url = ""
+        self._last_data = b""
+        self._last_at = 0.0
+
+    def get(self, url: str) -> tuple[bytes, bool]:
+        now = time.monotonic()
+        with self._lock:
+            if self._last_url == url and self._last_data and now - self._last_at < self.min_interval_sec:
+                return self._last_data, True
+            cached = self._last_data if self._last_url == url else b""
+            cached_age = now - self._last_at if cached else 0.0
+        try:
+            data = self._fetch_jpeg(url, attempts=1 if cached else 2)
+            with self._lock:
+                self._last_url = url
+                self._last_data = data
+                self._last_at = time.monotonic()
+            return data, False
+        except Exception:
+            if cached and cached_age <= self.stale_sec:
+                return cached, True
+            raise
+
+    def _fetch_jpeg(self, url: str, attempts: int) -> bytes:
+        last_error: Exception | None = None
+        for attempt in range(max(1, attempts)):
+            try:
+                with urlopen(url, timeout=self.timeout_sec) as fp:
+                    data = fp.read(1_500_000)
+                if not _looks_like_jpeg(data):
+                    raise OSError("camera endpoint did not return a JPEG frame")
+                return data
+            except Exception as exc:
+                last_error = exc
+                if attempt + 1 < attempts:
+                    time.sleep(0.08)
+        raise last_error or OSError("camera frame unavailable")
+
+
+def _looks_like_jpeg(data: bytes) -> bool:
+    return len(data) > 256 and data.startswith(b"\xff\xd8")
+
+
+_CAMERA_FRAME_PROXY = CameraFrameProxy()
 
 
 def merge_config(existing: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
@@ -492,6 +565,9 @@ class CockpitHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/api/state"):
             self._send_json(self.control_bus.snapshot())
             return
+        if parsed.path == "/api/camera-frame.jpg":
+            self._handle_camera_frame()
+            return
         if parsed.path == "/api/config":
             self._handle_get_config()
             return
@@ -653,6 +729,38 @@ class CockpitHandler(BaseHTTPRequestHandler):
             return
         result = run_robot_command_status(self.config_path)
         self._send_json(result, status=200 if result.get("ok") else 400)
+
+    def _handle_camera_frame(self) -> None:
+        if not self._is_loopback():
+            self.send_error(403)
+            return
+        try:
+            config = self._read_config_dict()
+        except (OSError, json.JSONDecodeError):
+            self.send_error(503, "camera config unavailable")
+            return
+        camera = config.get("camera", {})
+        camera = camera if isinstance(camera, dict) else {}
+        if not bool(camera.get("enabled", False)):
+            self.send_error(404, "camera disabled")
+            return
+        url = str(camera.get("snapshot_url") or camera.get("stream_url") or "").strip()
+        if not url:
+            self.send_error(404, "camera url missing")
+            return
+        try:
+            data, cache_hit = _CAMERA_FRAME_PROXY.get(url)
+        except Exception as exc:
+            logging.getLogger("cockpit.camera").warning("camera frame fetch failed: %s", exc)
+            self.send_error(503, "camera frame unavailable")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Darwin-Camera-Cache", "hit" if cache_hit else "miss")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _write_config(self, updates: dict[str, Any]) -> None:
         # Merge immutably into existing config, write atomically, drop marker.

@@ -1,5 +1,5 @@
 const CAMERA_RELOAD_MS = 240000; // ~4 min: recycle the MJPEG decoder (GPU/mem leak)
-const CAMERA_SNAPSHOT_REFRESH_MS = 110; // sequential ~9 fps refresh for Switch Chromium + camera_tutorial
+const CAMERA_SNAPSHOT_REFRESH_MS = 180; // local frame proxy refresh; robot reads are rate-limited server-side
 const CAMERA_FRAME_TIMEOUT_MS = 900;
 const CAMERA_RETRY_BASE_MS = 3000; // first auto-retry delay after an error
 const CAMERA_RETRY_MAX_MS = 30000; // backoff cap
@@ -11,6 +11,7 @@ const DASH_STYLE_KEY = "darwinDashStyle";
 const CONTROL_MODE_KEY = "darwinControlMode";
 const UI_THEME_KEY = "darwinUiTheme";
 const SERVICE_WORKER_URL = "/sw.js";
+const CAMERA_FRAME_PROXY_URL = "/api/camera-frame.jpg";
 
 const state = {
   last: null,
@@ -859,7 +860,7 @@ function renderCamera(camera, controlMode, runtime = {}) {
   const enabled = Boolean(camera.enabled);
   const streamUrl = String(camera.stream_url || "");
   const snapshotUrl = String(camera.snapshot_url || "");
-  const displayUrl = snapshotUrl || streamUrl;
+  const displayUrl = snapshotUrl ? CAMERA_FRAME_PROXY_URL : streamUrl;
   const label = String(camera.label || "Robot Camera");
   const route = String(camera.route || "ssh-tunnel");
   const image = $("camera-stream");
