@@ -68,7 +68,9 @@ export function buildRig(loader) {
   jobs.push(attachMesh(loader, headPan, "geo_op_neck", { originZ: 0.03 }));
   const headTilt = frame(headPan, [0, 0, 0.03], [0, 33 * D2R, 0]);
   jobs.push(attachMesh(loader, headTilt, "geo_op_head",
-    { rpy: [0, PI, PI / 2], applyDefaultZ: false }));
+    // The STL head shell points backward with the upstream visual rpy when
+    // baked through Three.js; flip yaw 180deg so the face aligns with the body.
+    { rpy: [0, PI, -PI / 2], applyDefaultZ: false }));
 
   for (const side of ["left", "right"]) {
     const yMul = side === "left" ? 1 : -1;

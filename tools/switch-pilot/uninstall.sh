@@ -7,11 +7,20 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 systemctl disable --now darwin-switch-agent 2>/dev/null || true
+systemctl disable --now darwin-switch-camera-tunnel 2>/dev/null || true
 rm -f /etc/systemd/system/darwin-switch-agent.service
+rm -f /etc/systemd/system/darwin-switch-camera-tunnel.service
 rm -f /etc/xdg/autostart/darwin-switch-cockpit.desktop
 rm -f /usr/share/applications/darwin-switch.desktop
 rm -f /usr/local/bin/darwin-switch-cockpit
 rm -f /usr/local/bin/darwin-switch-camera-tunnel
+rm -f /usr/local/bin/darwin-switch-bootstrap-os
+rm -f /usr/local/bin/darwin-switch-collect-diagnostics
+rm -f /usr/local/bin/darwin-switch-day0-acceptance
+rm -f /usr/local/bin/darwin-switch-input-check
+rm -f /usr/local/bin/darwin-switch-network-check
+rm -f /usr/local/bin/darwin-switch-preflight
+rm -f /usr/local/bin/darwin-switch-smoke-test
 systemctl daemon-reload
 rm -rf /opt/darwin-switch-agent
 

@@ -20,10 +20,11 @@ from darwin_switch_agent import ssh_control_client as scc
 from darwin_switch_agent.ssh_control_client import SshControlClient, ssh_args
 
 
-def _cmd(enabled=True, stride=12.34, turn=-5.6, pan=10.0, tilt=-3.0):
+def _cmd(enabled=True, stride=12.34, turn=-5.6, pan=10.0, tilt=-3.0, side=0.0):
     return MotionCommand(
         enabled=enabled,
         stride_mm=stride,
+        side_mm=side,
         turn_deg=turn,
         head_pan_deg=pan,
         head_tilt_deg=tilt,
@@ -91,10 +92,10 @@ class CommandLineTests(unittest.TestCase):
         # tokens[0] is the random cmd_id.
         self.assertEqual(tokens[1], "1")        # enabled
         self.assertEqual(tokens[2], "12.34")    # x = stride
-        self.assertEqual(tokens[3], "0")        # y
+        self.assertEqual(tokens[3], "0.00")     # y = side (now a real .2f float)
         self.assertEqual(tokens[4], "-5.60")    # a = turn
-        self.assertEqual(tokens[5], "600")      # period
-        self.assertEqual(tokens[6], "40")       # foot
+        self.assertEqual(tokens[5], "621")      # dynamic period
+        self.assertEqual(tokens[6], "31")       # dynamic foot
         self.assertEqual(tokens[7], "13")       # hip
         self.assertEqual(tokens[8], "1.0")      # bgain
         self.assertEqual(tokens[9], "0")        # benable
@@ -113,6 +114,24 @@ class CommandLineTests(unittest.TestCase):
     def test_disabled_command_sends_enabled_zero(self):
         line = self.client._build_line(_cmd(enabled=False))
         self.assertEqual(line.split()[1], "0")
+        self.assertEqual(line.split()[3], "0.00")
+        self.assertEqual(line.split()[5], "600")
+        self.assertEqual(line.split()[6], "40")
+
+    def test_gait_params_scale_with_input_intensity(self):
+        slow = self.client._build_line(_cmd(stride=2.0, turn=0.0)).split()
+        fast = self.client._build_line(_cmd(stride=25.0, turn=0.0)).split()
+        self.assertGreater(int(slow[5]), int(fast[5]))  # slower cadence
+        self.assertLess(int(slow[6]), int(fast[6]))     # lower foot lift
+        self.assertEqual(fast[5], "520")
+        self.assertEqual(fast[6], "40")
+
+    def test_side_motion_affects_line_and_gait_intensity(self):
+        line = self.client._build_line(_cmd(stride=0.0, side=12.0, turn=0.0)).split()
+        self.assertEqual(line[2], "0.00")
+        self.assertEqual(line[3], "12.00")
+        self.assertLess(int(line[5]), 780)
+        self.assertGreater(int(line[6]), 18)
 
 
 class RemoteCommandTests(unittest.TestCase):
@@ -148,6 +167,18 @@ class RemoteCommandTests(unittest.TestCase):
         self.assertTrue(self.client.recover())
         self.assertEqual(self.calls[-1][0], "rm -f /tmp/df-walklab-estop")
 
+    def test_connect_uses_short_connect_timeout(self):
+        client = SshControlClient({"identity_file": None, "connect_timeout_seconds": 2})
+        calls = []
+
+        def fake_ssh(command, input_data=None, timeout=None):
+            calls.append((command, timeout))
+            return _ok()
+
+        client._ssh = fake_ssh  # type: ignore[assignment]
+        self.assertTrue(client.connect())
+        self.assertEqual(calls[0], ("echo ok", 2))
+
 
 class TelemetryTests(unittest.TestCase):
     def setUp(self):
@@ -163,12 +194,16 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(tel["battery_pct"], 81)  # (12.2-10.5)/2.1*100
         self.assertTrue(tel["walking"])
         self.assertEqual(tel["fallen"], 0)
+        self.assertEqual(tel["gyro"], {"x": 500, "y": 500, "z": 500})
+        self.assertEqual(tel["accel"], {"x": 512, "y": 512, "z": 512})
 
     def test_unknown_voltage(self):
         tel = self._poll(b"TEL 1 0 0 0 0 0 0 0 0 1\n")
         self.assertIsNone(tel["voltage_v"])
         self.assertIsNone(tel["battery_pct"])
         self.assertEqual(tel["fallen"], 1)
+        self.assertEqual(tel["gyro"], {"x": 0, "y": 0, "z": 0})
+        self.assertEqual(tel["accel"], {"x": 0, "y": 0, "z": 0})
 
     def test_battery_clamped(self):
         tel = self._poll(b"TEL 1 0 0 0 0 0 0 90 0 0\n")   # 9.0V below window
@@ -177,6 +212,19 @@ class TelemetryTests(unittest.TestCase):
     def test_malformed_returns_none(self):
         self.assertIsNone(self._poll(b"garbage line\n"))
         self.assertIsNone(self._poll(b""))
+
+
+class CommandStatusTests(unittest.TestCase):
+    def test_parse_command_status(self):
+        parsed = scc._parse_command_status(
+            b"MODE=walklab\nESTOP=0\nSTAT=1780819000 68\n"
+            b"CMD=abc 1 12.50 -7.00 -3.00 621 31 13 1.0 0 2 15.00 -8.00 0\n"
+        )
+        self.assertEqual(parsed["mode"], "walklab")
+        self.assertFalse(parsed["estop"])
+        self.assertEqual(parsed["mtime"], 1780819000)
+        self.assertEqual(parsed["parsed"]["side_mm"], -7.0)
+        self.assertEqual(parsed["parsed"]["period_ms"], 621.0)
 
 
 class NeverRaiseTests(unittest.TestCase):

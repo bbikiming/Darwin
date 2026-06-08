@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import copy
+import glob
 import queue
+import socket
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .input_linux import ControllerState
 from .mapping import MotionCommand
@@ -24,6 +28,7 @@ _ACTION_LABELS = {
     "estop": "비상정지",
     "recover": "복구",
     "ping": "점검",
+    "reconnect": "재연결",
 }
 _SOURCE_LABELS = {"cockpit": "화면"}
 
@@ -53,9 +58,19 @@ class ControlBus:
             "link_latency_ms": None,
             "battery_v": None,
             "battery_pct": None,
+            "switch_battery": read_switch_battery(),
             "robot_walking": False,
             "robot_fallen": 0,
             "robot_state": "unknown",
+            "imu": {
+                "source": "none",
+                "gyro_x": None,
+                "gyro_y": None,
+                "gyro_z": None,
+                "accel_x": None,
+                "accel_y": None,
+                "accel_z": None,
+            },
             "watchdog_label": "—",
             "logs": [],
             "updated_at_ms": int(time.time() * 1000),
@@ -123,6 +138,7 @@ class ControlBus:
                     },
                     "command": {
                         "stride_mm": round(command.stride_mm, 2),
+                        "side_mm": round(command.side_mm, 2),
                         "turn_deg": round(command.turn_deg, 2),
                         "head_pan_deg": round(command.head_pan_deg, 2),
                         "head_tilt_deg": round(command.head_tilt_deg, 2),
@@ -143,7 +159,11 @@ class ControlBus:
         walking: bool,
         fallen: int,
         robot_state: str,
+        gyro: dict[str, int] | None = None,
+        accel: dict[str, int] | None = None,
     ) -> None:
+        gyro = gyro or {}
+        accel = accel or {}
         with self._lock:
             self._snapshot = {
                 **self._snapshot,
@@ -154,6 +174,15 @@ class ControlBus:
                 "robot_walking": walking,
                 "robot_fallen": fallen,
                 "robot_state": robot_state,
+                "imu": {
+                    "source": "robot",
+                    "gyro_x": gyro.get("x"),
+                    "gyro_y": gyro.get("y"),
+                    "gyro_z": gyro.get("z"),
+                    "accel_x": accel.get("x"),
+                    "accel_y": accel.get("y"),
+                    "accel_z": accel.get("z"),
+                },
                 "updated_at_ms": int(time.time() * 1000),
             }
 
@@ -162,7 +191,53 @@ class ControlBus:
         # (logs list, controller/command/camera dicts) in place. The snapshot
         # holds only JSON-like primitives, so deepcopy is cheap and total.
         with self._lock:
-            return copy.deepcopy(self._snapshot)
+            snap = copy.deepcopy(self._snapshot)
+        snap["switch_battery"] = read_switch_battery()
+        snap["camera_runtime"] = read_camera_runtime(snap.get("camera", {}))
+        return snap
+
+
+def read_switch_battery(root: str = "/sys/class/power_supply") -> dict[str, Any]:
+    supplies = sorted(glob.glob(f"{root}/*"))
+    for supply in supplies:
+        path = Path(supply)
+        if not _is_battery_supply(path):
+            continue
+        percent = _read_int(path / "capacity")
+        status = _read_text(path / "status") or "unknown"
+        charging = status.lower() in {"charging", "full"}
+        return {
+            "percent": percent,
+            "status": status,
+            "charging": charging,
+            "source": path.name,
+        }
+    return {"percent": None, "status": "unknown", "charging": False, "source": ""}
+
+
+def _is_battery_supply(path: Path) -> bool:
+    supply_type = (_read_text(path / "type") or "").lower()
+    if supply_type == "battery":
+        return True
+    name = path.name.lower()
+    return "battery" in name or "batt" in name or "max170" in name or "bq274" in name
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _read_int(path: Path) -> int | None:
+    text = _read_text(path)
+    if text is None:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 def normalize_camera(raw: dict[str, Any]) -> dict[str, Any]:
@@ -178,3 +253,35 @@ def normalize_camera(raw: dict[str, Any]) -> dict[str, Any]:
         "route": route,
         "label": label,
     }
+
+
+def read_camera_runtime(camera: dict[str, Any], timeout: float = 0.015) -> dict[str, Any]:
+    enabled = bool(camera.get("enabled", False))
+    stream_url = str(camera.get("stream_url", "")).strip()
+    snapshot_url = str(camera.get("snapshot_url", "")).strip()
+    probe_url = snapshot_url or stream_url
+    if not enabled:
+        return {"enabled": False, "status": "disabled", "local_port_open": False}
+    if not probe_url:
+        return {"enabled": True, "status": "missing_url", "local_port_open": False}
+
+    parsed = urlparse(probe_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    opened = _tcp_port_open(host, port, timeout)
+    return {
+        "enabled": True,
+        "status": "port_open" if opened else "port_closed",
+        "host": host,
+        "port": port,
+        "local_port_open": opened,
+        "url": probe_url,
+    }
+
+
+def _tcp_port_open(host: str, port: int, timeout: float) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False

@@ -116,3 +116,9 @@ default.profraw
 
 # 로컬 백업 모음 (앱 번들/로봇 바이너리 — repo 에 넣지 않음)
 _backups/
+.gstack/
+
+# 로컬 전용 작업물 (repo 에 넣지 않음)
+tmp/
+.codex-pet-runs/
+app/스토어 스크린샷/

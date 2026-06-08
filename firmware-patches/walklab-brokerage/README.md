@@ -3,6 +3,17 @@
 **Target**: ROBOTIS-OP2 `demo-pilot` binary (DarwinForge patched fork)
 **Companion**: Mac DarwinForge v1.11.5+ — `WalkingEngine.robotisOnboard` 모드
 
+> **2026-06-08 추가** — **후면 패널 버튼으로 WalkLab 모드 진입 가능**.
+> DarwinForge/Switch 연결 없이 로봇만으로:
+>   1. 부팅 후 `rc.local` 이 데모 자동 실행 (READY 상태)
+>   2. 후면 **MODE** 버튼 6회 누름 → LED `0x07`(R+G+B 모두 ON) 점등 = `WALKLAB` 모드
+>   3. 후면 **START** 버튼 → walk-ready 자세 + gyro calibration → WalkLab 진입
+>   4. 후면 **MODE** 버튼 다시 누름 → `walking->Stop()` 정중한 정지 + READY 복귀
+>
+> 자동기동(`/tmp/df-pilot-mode == "walklab"`) 경로는 **유지** — DarwinForge 원클릭
+> 트리거도 그대로 작동. 부팅 자동 연결 세팅(`/etc/rc.local`,
+> `/etc/network/interfaces`, sshd) 은 일체 건드리지 않음.
+
 ## 동기
 
 DarwinForge WalkLab 의 Mac sparse keyframe 보행 (~10Hz 등가) 은 architecture 한계로

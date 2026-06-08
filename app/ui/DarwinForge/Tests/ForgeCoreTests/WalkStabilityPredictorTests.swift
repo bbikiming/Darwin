@@ -95,10 +95,17 @@ final class WalkStabilityPredictorTests: XCTestCase {
     // MARK: - recommendedCaps coupling
 
     func testCapShrinksWhenPeriodShort() {
+        // 2026-06-08 빠른 보행 baseline — periodTier1Ms 가 460ms 로 하향됨.
+        // 450ms < 460ms 이므로 periodTier1MaxStride=35 cap 적용 (기존 25 → 35).
         let inp = WalkStabilityInput(strideMm: 30, periodMs: 450)
         let caps = WalkStabilityPredictor.recommendedCaps(inp)
-        XCTAssertLessThanOrEqual(caps.maxStrideMm, 25,
-            "주기 < 500 ms 면 stride cap 이 25 mm 이하로 줄어야 함")
+        XCTAssertLessThanOrEqual(caps.maxStrideMm, 35,
+            "주기 < 460 ms → tier1 stride cap (35 mm) 이하")
+        // 안전 하한 — 420ms 미만이면 더 엄격한 tier2(25 mm)
+        let inpFast = WalkStabilityInput(strideMm: 30, periodMs: 410)
+        let capsFast = WalkStabilityPredictor.recommendedCaps(inpFast)
+        XCTAssertLessThanOrEqual(capsFast.maxStrideMm, 25,
+            "주기 < 420 ms → tier2 stride cap (25 mm) 이하")
     }
 
     func testCapShrinksWhenBalanceLow() {
@@ -109,9 +116,12 @@ final class WalkStabilityPredictorTests: XCTestCase {
     }
 
     func testCapShrinksWhenFootHeightExtreme() {
+        // 2026-06-08 빠른 보행 baseline — footHeightLowMaxStride 25 → 35 (낮은 발 들기에서도
+        // 보다 큰 stride 허용; 빠른 보행 시 foot=48 가 default 이라 낮은 footHeight 는 예외 케이스).
+        // High side(>60) 는 그대로 25 유지 — CoM 흔들림 보호.
         let low = WalkStabilityPredictor.recommendedCaps(WalkStabilityInput(footHeightMm: 25))
         let high = WalkStabilityPredictor.recommendedCaps(WalkStabilityInput(footHeightMm: 65))
-        XCTAssertLessThanOrEqual(low.maxStrideMm, 25, "발 높이 < 30 → stride cap ≤ 25")
+        XCTAssertLessThanOrEqual(low.maxStrideMm, 35, "발 높이 < 30 → stride cap ≤ 35")
         XCTAssertLessThanOrEqual(high.maxStrideMm, 25, "발 높이 > 60 → stride cap ≤ 25")
     }
 

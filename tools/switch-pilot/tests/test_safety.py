@@ -23,6 +23,7 @@ def _cmd(moving: bool) -> MotionCommand:
     return MotionCommand(
         enabled=moving,
         stride_mm=5.0 if moving else 0.0,
+        side_mm=0.0,
         turn_deg=0.0,
         head_pan_deg=0.0,
         head_tilt_deg=0.0,

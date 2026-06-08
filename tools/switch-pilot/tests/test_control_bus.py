@@ -13,8 +13,11 @@ state in place.
 from __future__ import annotations
 
 import unittest
+import tempfile
+import socket
+from pathlib import Path
 
-from darwin_switch_agent.control_bus import ControlAction, ControlBus
+from darwin_switch_agent.control_bus import ControlAction, ControlBus, read_camera_runtime, read_switch_battery
 
 
 class ActionQueueTests(unittest.TestCase):
@@ -45,6 +48,8 @@ class TelemetryTests(unittest.TestCase):
             walking=True,
             fallen=0,
             robot_state="walking",
+            gyro={"x": 11, "y": -22, "z": 33},
+            accel={"x": 444, "y": 555, "z": 666},
         )
         snap = bus.snapshot()
         self.assertTrue(snap["ssh_connected"])
@@ -54,6 +59,9 @@ class TelemetryTests(unittest.TestCase):
         self.assertTrue(snap["robot_walking"])
         self.assertEqual(snap["robot_fallen"], 0)
         self.assertEqual(snap["robot_state"], "walking")
+        self.assertEqual(snap["imu"]["source"], "robot")
+        self.assertEqual(snap["imu"]["gyro_z"], 33)
+        self.assertEqual(snap["imu"]["accel_z"], 666)
 
     def test_default_telemetry_keys_present(self):
         snap = ControlBus().snapshot()
@@ -65,8 +73,57 @@ class TelemetryTests(unittest.TestCase):
             "robot_walking",
             "robot_fallen",
             "robot_state",
+            "imu",
+            "switch_battery",
+            "camera_runtime",
         ):
             self.assertIn(key, snap)
+
+
+class SwitchBatteryTests(unittest.TestCase):
+    def test_reads_switch_battery_from_power_supply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ac = Path(tmp) / "usb"
+            ac.mkdir()
+            (ac / "type").write_text("USB\n", encoding="utf-8")
+            batt = Path(tmp) / "max170xx_battery"
+            batt.mkdir()
+            (batt / "type").write_text("Battery\n", encoding="utf-8")
+            (batt / "capacity").write_text("73\n", encoding="utf-8")
+            (batt / "status").write_text("Charging\n", encoding="utf-8")
+
+            result = read_switch_battery(tmp)
+
+        self.assertEqual(result["percent"], 73)
+        self.assertTrue(result["charging"])
+        self.assertEqual(result["source"], "max170xx_battery")
+
+
+class CameraRuntimeTests(unittest.TestCase):
+    def test_reports_camera_port_closed(self):
+        result = read_camera_runtime(
+            {"enabled": True, "snapshot_url": "http://127.0.0.1:1/?action=snapshot"},
+            timeout=0.001,
+        )
+        self.assertEqual(result["status"], "port_closed")
+        self.assertFalse(result["local_port_open"])
+        self.assertEqual(result["port"], 1)
+
+    def test_reports_camera_port_open(self):
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = sock.getsockname()[1]
+        try:
+            result = read_camera_runtime(
+                {"enabled": True, "snapshot_url": f"http://127.0.0.1:{port}/?action=snapshot"},
+                timeout=0.05,
+            )
+        finally:
+            sock.close()
+        self.assertEqual(result["status"], "port_open")
+        self.assertTrue(result["local_port_open"])
+        self.assertEqual(result["port"], port)
 
 
 class LogRingTests(unittest.TestCase):

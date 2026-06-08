@@ -1087,6 +1087,9 @@ public struct RootView: View {
         case .strategy: StrategyView()
         case .harness:  HarnessInspectorView()
         case .mic:      MicCheckView()
+        case .switchLink:
+            SwitchRobotLinkView(remoteShell: remoteShell,
+                                macRobotHost: store.activeConnectionHost)
         }
     }
 
@@ -1300,7 +1303,7 @@ private enum Section: String, CaseIterable, Hashable {
 }
 
 private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
-    case board, joints, motion, walk, walkData, strategy, harness, mic
+    case board, joints, motion, walk, walkData, strategy, harness, mic, switchLink
     var id: String { rawValue }
 
     var label: String {
@@ -1315,6 +1318,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         // → "실시간 센서 데이터" 로 변경 (한국어 + 직관적 의미).
         case .harness:  return "실시간 센서 데이터"
         case .mic:      return "마이크 체크"
+        case .switchLink: return "스위치 연결"
         }
     }
 
@@ -1330,6 +1334,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .strategy: return "전략 FSM — 자율 보행 / 환경 인식 / 결정 트리"
         case .harness:  return "로봇 관성(IMU) · 압력 · 온도 · 보행 cycle 등의 실시간 데이터를 차트로 볼 수 있어요."
         case .mic:      return "다윈 마이크로 음성을 캡처해 맥으로 가져오고 인식되는지 확인하는 실험 도구"
+        case .switchLink: return "Nintendo Switch 조종석을 로봇에 SSH 로 연결하는 세팅 마법사 — Mac 의 로봇 채널로 Switch 공개키를 등록해요."
         }
     }
     var icon: String {
@@ -1342,6 +1347,7 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .strategy: return "brain.head.profile"
         case .harness:  return "tray.and.arrow.down"
         case .mic:      return "mic.fill"
+        case .switchLink: return "gamecontroller.fill"
         }
     }
 }

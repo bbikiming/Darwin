@@ -243,18 +243,23 @@ internal enum StabilityThresholds {
 /// 휴리스틱 — 변경 시 영향: 사용자가 가시화하는 "빨간 영역"의 크기 + 자동 클램프.
 internal enum CapsThresholds {
     /// stride 기본 권장 상한 (mm). 어떤 조건도 트리거되지 않으면 이 값 유지.
-    static let defaultMaxStrideMm: Double = 40
+    /// 2026-06-08 빠른 보행 baseline (자이로 안정 실측) — 40 → 50. Switch agent 와 일치.
+    static let defaultMaxStrideMm: Double = 50
 
     /// 주기 < periodTier1Ms → stride cap = periodTier1MaxStride.
-    static let periodTier1Ms: Double = 500
-    static let periodTier1MaxStride: Double = 25
+    /// 2026-06-08 — Switch baseline 의 min_period_ms=440 을 수용하도록 임계 하향.
+    /// 빠른 cadence(460ms) 에서도 큰 stride(35mm) 까지 허용 (이전엔 500ms 미만이면 25mm 로 강제).
+    static let periodTier1Ms: Double = 460
+    static let periodTier1MaxStride: Double = 35
     /// 주기 < periodTier2Ms → stride cap = periodTier2MaxStride (더 엄격).
-    static let periodTier2Ms: Double = 450
-    static let periodTier2MaxStride: Double = 20
+    /// 2026-06-08 — 안전 하한 임계 — 420ms 미만 = stride 25mm 로 보호.
+    static let periodTier2Ms: Double = 420
+    static let periodTier2MaxStride: Double = 25
 
     /// 발 높이 < 이 값이면 끌림 방지로 stride cap 축소.
     static let footHeightLowMm: Double = 30
-    static let footHeightLowMaxStride: Double = 25
+    /// 2026-06-08 — 빠른 보행 baseline 에서 stride 35 까지 허용 (저속 cadence 안전 마진).
+    static let footHeightLowMaxStride: Double = 35
     /// 발 높이 > 이 값이면 CoM 보호로 stride cap 축소.
     static let footHeightHighMm: Double = 60
     static let footHeightHighMaxStride: Double = 25
@@ -264,16 +269,20 @@ internal enum CapsThresholds {
     static let balanceGainLowMaxStride: Double = 22
 
     /// side 기본 권장 상한 (mm).
-    static let defaultMaxSideMm: Double = 20
+    /// 2026-06-08 빠른 보행 baseline — 20 → 26 (Switch agent 와 일치).
+    static let defaultMaxSideMm: Double = 26
     /// |stride| > 이 값이면 회전 모멘트 보호로 side cap 축소.
     static let sideStrideCouplingMm: Double = 25
     static let sideStrideCouplingMaxSide: Double = 12
     /// 주기 < 이 값이면 side cap 추가 축소.
-    static let sidePeriodMs: Double = 500
+    /// 2026-06-08 — periodTier1Ms 와 일관 — 460ms.
+    static let sidePeriodMs: Double = 460
     static let sidePeriodMaxSide: Double = 10
 
     /// turn 기본 권장 상한 (°/cycle).
-    static let defaultMaxTurnDeg: Double = 15
+    /// 2026-06-08 빠른 보행 baseline — 15 → 18 (Switch agent 와 일치). 실 클램프는
+    /// `mobileFreeformMaxTurnDeg=12` 가 먼저 적용 (관절 충돌 안전 임계).
+    static let defaultMaxTurnDeg: Double = 18
     /// |stride| > 이 값이면 turn cap 축소.
     static let turnStrideCouplingMm: Double = 25
     static let turnStrideCouplingMaxTurn: Double = 8

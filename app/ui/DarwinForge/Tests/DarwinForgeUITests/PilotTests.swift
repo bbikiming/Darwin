@@ -301,6 +301,28 @@ final class PilotTests: XCTestCase {
                       "START 버튼 시뮬레이션 — m_is_started=1 자동")
         XCTAssertTrue(cmd.contains("ResetGyroCalibration"),
                       "SOCCER 모드의 gyro calibration 재현")
+        XCTAssertTrue(cmd.contains("ROBOTIS onboard brokerage, switch fix"),
+                      "WalkLab 성공 버전 marker 를 binary 에 포함")
+    }
+
+    func testWalkLabStartRequiresSwitchFixBinary() {
+        let cmd = RobotSetupCommand.walkLabRobotisStart
+        XCTAssertTrue(cmd.contains("ROBOTIS onboard brokerage, switch fix"),
+                      "df-walklab-cmd 만 있는 구버전 demo-pilot 을 성공으로 보면 안 됨")
+        XCTAssertTrue(cmd.contains("DF_READY_START=old_walklab_patch"),
+                      "구버전 WalkLab patch 를 명확히 구분")
+        XCTAssertTrue(cmd.contains("DF_READY_START=missing_walklab_patch"),
+                      "성공 버전이 없으면 시작 거부")
+        XCTAssertTrue(cmd.contains("DF_READY_START=brokerage_ready"),
+                      "프로세스 생존이 아니라 최신 명령/ACK 검증 완료를 성공 마커로 사용")
+        XCTAssertTrue(cmd.contains("14-token 명령/ACK 검증 완료"),
+                      "성공 로그가 현재 검증된 brokerage 경로를 설명")
+        XCTAssertTrue(cmd.contains("DF_READY_START=ack_timeout"),
+                      "최신 브로커리지 ACK 실패를 명확히 구분")
+        XCTAssertTrue(cmd.contains("DF_READY_CAMERA_STOP=begin"),
+                      "WalkLab 초기화 전 camera_tutorial 을 내려 VIDIOC_S_FMT busy 를 방지")
+        XCTAssertTrue(cmd.contains("DF_READY_CAMERA=running"),
+                      "WalkLab ACK 이후 camera_tutorial 을 다시 띄워 조종+영상 동시 사용")
     }
 
     /// patched 상태 명령이 DF_PATCH=installed / DF_PATCH=missing marker 를 첫 줄로 출력.

@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALLED_ROOT="${DARWIN_SWITCH_ROOT:-/opt/darwin-switch-agent}"
+if [[ -d "${SCRIPT_ROOT}/src/darwin_switch_agent" ]]; then
+  ROOT_DIR="${SCRIPT_ROOT}"
+elif [[ -d "${INSTALLED_ROOT}/src/darwin_switch_agent" ]]; then
+  ROOT_DIR="${INSTALLED_ROOT}"
+else
+  ROOT_DIR="${SCRIPT_ROOT}"
+fi
+CONFIG_PATH="${DARWIN_SWITCH_CONFIG:-/etc/darwin-switch-agent/config.json}"
+BASE_URL="${DARWIN_SWITCH_URL:-http://127.0.0.1:8765}"
+INPUT_SECONDS=0
+STRICT=0
+SSH_PROBE=0
+COLLECT_DIAGNOSTICS=0
+LOG="${DARWIN_SWITCH_ACCEPTANCE_LOG:-${HOME:-/tmp}/darwin-switch-acceptance-$(date +%Y%m%d-%H%M%S).log}"
+
+usage() {
+  cat <<'EOF'
+Usage: darwin-switch-day0-acceptance [--installed] [--root PATH] [--config PATH] [--base-url URL] [--input-seconds N] [--ssh-probe] [--collect-diagnostics] [--strict]
+
+Run the Switch-side day-0 acceptance checklist after Darwin Switch Agent
+installation. This is read-only: it does not send robot movement commands.
+
+Recommended first hardware trial:
+  darwin-switch-day0-acceptance --input-seconds 8 --strict
+
+Use --ssh-probe only after the robot SSH target, key, and network are ready.
+EOF
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --installed)
+      ROOT_DIR="/opt/darwin-switch-agent"
+      CONFIG_PATH="/etc/darwin-switch-agent/config.json"
+      shift
+      ;;
+    --root)
+      [[ "$#" -ge 2 ]] || { echo "ERROR: --root needs a path" >&2; exit 2; }
+      ROOT_DIR="$2"
+      shift 2
+      ;;
+    --config)
+      [[ "$#" -ge 2 ]] || { echo "ERROR: --config needs a path" >&2; exit 2; }
+      CONFIG_PATH="$2"
+      shift 2
+      ;;
+    --base-url)
+      [[ "$#" -ge 2 ]] || { echo "ERROR: --base-url needs a URL" >&2; exit 2; }
+      BASE_URL="${2%/}"
+      shift 2
+      ;;
+    --input-seconds)
+      [[ "$#" -ge 2 ]] || { echo "ERROR: --input-seconds needs a number" >&2; exit 2; }
+      INPUT_SECONDS="$2"
+      shift 2
+      ;;
+    --ssh-probe)
+      SSH_PROBE=1
+      shift
+      ;;
+    --collect-diagnostics)
+      COLLECT_DIAGNOSTICS=1
+      shift
+      ;;
+    --strict)
+      STRICT=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if ! [[ "${INPUT_SECONDS}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "ERROR: --input-seconds must be a non-negative number" >&2
+  exit 2
+fi
+
+mkdir -p "$(dirname "${LOG}")"
+exec > >(tee -a "${LOG}") 2>&1
+
+overall=0
+
+tool_path() {
+  local name="$1"
+  if [[ -x "${ROOT_DIR}/bin/${name}" ]]; then
+    printf '%s\n' "${ROOT_DIR}/bin/${name}"
+  elif command -v "${name}" >/dev/null 2>&1; then
+    command -v "${name}"
+  else
+    return 1
+  fi
+}
+
+record_status() {
+  local code="$1"
+  if [[ "${code}" -ge 2 ]]; then
+    overall=2
+  elif [[ "${code}" -eq 1 && "${overall}" -lt 1 ]]; then
+    overall=1
+  fi
+}
+
+run_check() {
+  local label="$1"
+  shift
+  local code=0
+  echo ""
+  echo "== ${label} =="
+  echo "+ $*"
+  set +e
+  "$@"
+  code="$?"
+  set -e
+  case "${code}" in
+    0) echo "CHECK ${label}: GOOD" ;;
+    1) echo "CHECK ${label}: WARN" ;;
+    *) echo "CHECK ${label}: BAD (exit ${code})" ;;
+  esac
+  record_status "${code}"
+}
+
+run_missing_tool() {
+  local name="$1"
+  echo ""
+  echo "== ${name} =="
+  echo "CHECK ${name}: BAD (tool not found)"
+  overall=2
+}
+
+echo "== Darwin Switch day-0 acceptance =="
+echo "Root: ${ROOT_DIR}"
+echo "Config: ${CONFIG_PATH}"
+echo "Base URL: ${BASE_URL}"
+echo "Input capture: ${INPUT_SECONDS}s"
+echo "SSH probe: ${SSH_PROBE}"
+echo "Strict: ${STRICT}"
+echo "Log: ${LOG}"
+
+if PREFLIGHT="$(tool_path darwin-switch-preflight)"; then
+  run_check "installed preflight" "${PREFLIGHT}" --root "${ROOT_DIR}" --config "${CONFIG_PATH}" --installed --strict
+else
+  run_missing_tool "installed preflight"
+fi
+
+if SMOKE="$(tool_path darwin-switch-smoke-test)"; then
+  run_check "local cockpit smoke" "${SMOKE}" --root "${ROOT_DIR}" --config "${CONFIG_PATH}" --base-url "${BASE_URL}" --strict
+else
+  run_missing_tool "local cockpit smoke"
+fi
+
+if INPUT_CHECK="$(tool_path darwin-switch-input-check)"; then
+  input_args=(--root "${ROOT_DIR}" --config "${CONFIG_PATH}" --strict)
+  if [[ "${INPUT_SECONDS}" != "0" && "${INPUT_SECONDS}" != "0.0" ]]; then
+    input_args+=(--seconds "${INPUT_SECONDS}")
+  fi
+  run_check "controller input" "${INPUT_CHECK}" "${input_args[@]}"
+else
+  run_missing_tool "controller input"
+fi
+
+if NETWORK_CHECK="$(tool_path darwin-switch-network-check)"; then
+  network_args=(--root "${ROOT_DIR}" --config "${CONFIG_PATH}" --base-url "${BASE_URL}" --strict)
+  if [[ "${SSH_PROBE}" -eq 1 ]]; then
+    network_args+=(--ssh-probe)
+  fi
+  run_check "network and camera" "${NETWORK_CHECK}" "${network_args[@]}"
+else
+  run_missing_tool "network and camera"
+fi
+
+if NATIVE_ACCEPTANCE="$(tool_path darwin-switch-native-acceptance)"; then
+  native_args=(--config "${CONFIG_PATH}" --base-url "${BASE_URL}" --strict)
+  run_check "native cockpit and robot command" "${NATIVE_ACCEPTANCE}" "${native_args[@]}"
+else
+  run_missing_tool "native cockpit and robot command"
+fi
+
+if [[ "${overall}" -ge 2 || "${COLLECT_DIAGNOSTICS}" -eq 1 ]]; then
+  if DIAGNOSTICS="$(tool_path darwin-switch-collect-diagnostics)"; then
+    run_check "diagnostics bundle" "${DIAGNOSTICS}" --root "${ROOT_DIR}" --config "${CONFIG_PATH}"
+  else
+    echo ""
+    echo "== diagnostics bundle =="
+    echo "WARN: diagnostics tool not found"
+    [[ "${overall}" -lt 1 ]] && overall=1
+  fi
+fi
+
+echo ""
+case "${overall}" in
+  0)
+    echo "RESULT: GOOD"
+    echo "Next: open darwin-switch-cockpit and complete setup/model-check on the Switch screen."
+    ;;
+  1)
+    echo "RESULT: WARN"
+    echo "Next: review WARN items above. Use --strict for go/no-go hardware acceptance."
+    ;;
+  *)
+    echo "RESULT: BAD"
+    echo "Next: fix BAD items above. A diagnostics bundle was attempted when available."
+    ;;
+esac
+echo "Log: ${LOG}"
+
+if [[ "${overall}" -ge 2 ]]; then
+  exit 2
+fi
+if [[ "${overall}" -eq 1 && "${STRICT}" -eq 1 ]]; then
+  exit 1
+fi
+exit 0

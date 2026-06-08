@@ -459,12 +459,15 @@ extension WalkLabSession {
 }
 
 extension WalkMotionLibrary {
-    /// 회전 가속 floor — 풀스틱 회전 시 보행주기 하한 (2026-06-02 "공격적" 채택).
-    /// fastWalk 프리셋(450ms)이 이미 실기 검증된 "공식 모션 선" 안의 값.
-    public static let turnBoostMinPeriodMs: Double = 450
+    /// 회전 가속 floor — 풀스틱 회전 시 보행주기 하한.
+    /// 2026-06-08: 빠른 보행 baseline 채택(자이로 안정 실측 후) — 450ms → 420ms.
+    /// ROBOTIS Walking 안전 하한 400ms 위 마진 유지.
+    public static let turnBoostMinPeriodMs: Double = 420
     /// 회전 가속이 적용되기 시작하는 스틱 데드밴드 — 살짝 꺾은 미세 회전은 base 유지.
     public static let turnBoostDeadbandDeg: Double = 2
     /// 회전각 클램프 한계 (관절 충돌 임계). 가속은 이 각을 넘기지 않고 주기로만 한다.
+    /// **±12° 유지** — 빠른 보행 baseline 이라도 hip-yaw 관절 충돌 60° 안전선
+    /// 마진이라 늘리면 무릎/엉덩이 겹침. 회전 *속도* 는 minPeriodMs 단축으로만 올린다.
     public static let mobileFreeformMaxTurnDeg: Double = 12
 
     /// 회전 가속 (각도 불변, 주기 단축).
@@ -492,19 +495,22 @@ extension WalkMotionLibrary {
     public static func mobileFreeformClamp(_ base: AdvancedTuning) -> AdvancedTuning {
         // 회전각은 ±12° 로 고정 (관절 충돌 차단) — 속도는 주기 단축으로만 올린다.
         let turn = base.turnDeg.clamped(to: -mobileFreeformMaxTurnDeg...mobileFreeformMaxTurnDeg)
-        // 회전 가속: 스틱 회전량에 비례해 base 주기(600~850)를 floor(450)까지 단축.
-        // turn=0 이면 base 그대로 → 최저값 보존 + 직진 보행엔 영향 없음.
-        let basePeriod = base.periodMs.clamped(to: 600...850)
+        // 2026-06-08 빠른 보행 baseline (Switch agent 와 일치):
+        //   base period 440~700 (이전 600~850) — 평균 cadence 빨라짐
+        //   회전 가속 floor 420 (이전 450) — 풀스틱 회전 시 더 빠른 회전속도
+        //   turn=0 이면 base 그대로 → 직진 보행엔 가속 무영향 (선형 보장).
+        let basePeriod = base.periodMs.clamped(to: 440...700)
         let boostedPeriod = turnBoostedPeriodMs(turnDeg: turn, basePeriodMs: basePeriod)
         return AdvancedTuning(
-            strideMm: base.strideMm.clamped(to: -30...38),
-            sideMm: base.sideMm.clamped(to: -22...22),
-            // -18 → -12 보수화: 고각 회전 시 hip-yaw + cMove 가 60° 안전 임계를
-            // 넘겨 무릎·엉덩이가 겹치던 문제 방지 (cockpitTurnDeg 와 동일 한계).
+            // 2026-06-08 빠른 보행 baseline — stride 38→50, side 22→26 (ROBOTIS Walking
+            // 안전 상한 ~55 안). 자이로 안정 실측 후 채택.
+            strideMm: base.strideMm.clamped(to: -50...50),
+            sideMm: base.sideMm.clamped(to: -26...26),
             turnDeg: turn,
-            // floor 를 450 까지 허용 — turnBoostedPeriodMs 산출치를 재클램프하지 않도록.
-            periodMs: boostedPeriod.clamped(to: turnBoostMinPeriodMs...850),
-            footHeightMm: base.footHeightMm.clamped(to: 28...46),
+            // floor 420 — turnBoostedPeriodMs 산출치를 재클램프하지 않도록.
+            periodMs: boostedPeriod.clamped(to: turnBoostMinPeriodMs...700),
+            // 2026-06-08 foot 28→18 (저속 발 클리어런스), 46→48 (고속 stride 보완).
+            footHeightMm: base.footHeightMm.clamped(to: 18...48),
             balanceGain: base.balanceGain.clamped(to: 0.8...1.4),
             hipPitchOffsetDeg: base.hipPitchOffsetDeg.clamped(to: 0...20)
         )

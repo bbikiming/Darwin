@@ -280,16 +280,28 @@ final class WalkStabilityPredictorThresholdsTests: XCTestCase {
         XCTAssertEqual(knots[6].0, 900); XCTAssertEqual(knots[6].1, 0)
     }
 
-    func testCapThresholdsExactValuesAreUnchanged() {
-        XCTAssertEqual(CapsThresholds.defaultMaxStrideMm, 40)
-        XCTAssertEqual(CapsThresholds.periodTier1Ms, 500)
-        XCTAssertEqual(CapsThresholds.periodTier1MaxStride, 25)
-        XCTAssertEqual(CapsThresholds.periodTier2Ms, 450)
-        XCTAssertEqual(CapsThresholds.periodTier2MaxStride, 20)
-        XCTAssertEqual(CapsThresholds.footHeightLowMm, 30)
+    /// 회귀 가드 — 2026-06-08 빠른 보행 baseline 채택 (자이로 안정 실측 후 +30~50%).
+    /// 변경 의도: Switch agent 와 일치한 한도 + ROBOTIS Walking 안전 마진 안.
+    func testCapThresholdsExactValuesPinned() {
+        XCTAssertEqual(CapsThresholds.defaultMaxStrideMm, 50,
+                       "빠른 보행 baseline — 40 → 50 mm")
+        XCTAssertEqual(CapsThresholds.periodTier1Ms, 460,
+                       "Switch agent min_period_ms=440 수용 — 500 → 460 ms")
+        XCTAssertEqual(CapsThresholds.periodTier1MaxStride, 35,
+                       "빠른 cadence 에서도 큰 stride — 25 → 35 mm")
+        XCTAssertEqual(CapsThresholds.periodTier2Ms, 420,
+                       "안전 하한 — 450 → 420 ms")
+        XCTAssertEqual(CapsThresholds.periodTier2MaxStride, 25,
+                       "tier2 stride cap — 20 → 25 mm")
+        XCTAssertEqual(CapsThresholds.footHeightLowMm, 30,
+                       "footHeight 임계 자체는 변동 없음")
         XCTAssertEqual(CapsThresholds.footHeightHighMm, 60)
         XCTAssertEqual(CapsThresholds.balanceGainLow, 0.3)
         XCTAssertEqual(CapsThresholds.balanceGainLowMaxStride, 22)
+        XCTAssertEqual(CapsThresholds.defaultMaxSideMm, 26,
+                       "빠른 보행 baseline — 20 → 26 mm")
+        XCTAssertEqual(CapsThresholds.defaultMaxTurnDeg, 18,
+                       "빠른 보행 baseline — 15 → 18° (실 클램프는 mobileFreeformMaxTurnDeg=12 가 우선)")
     }
 
     // MARK: - piecewise 보간 자체의 monotonic 보장

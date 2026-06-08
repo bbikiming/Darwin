@@ -108,6 +108,65 @@ def _validate_ssh(section: Any) -> dict[str, Any]:
         out["port"] = port
     if "identity_file" in section:
         out["identity_file"] = _require_str(section["identity_file"], "ssh.identity_file")
+    for key in ("connect_timeout_seconds", "timeout_seconds"):
+        if key in section:
+            value = section[key]
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"ssh.{key} must be an integer")
+            if not 1 <= value <= 60:
+                raise ValueError(f"ssh.{key} must be in 1..60")
+            out[key] = value
+    for key in (
+        "send_hz",
+        "telemetry_hz",
+        "period_ms",
+        "foot_mm",
+        "min_period_ms",
+        "max_period_ms",
+        "min_foot_mm",
+        "stride_ref_mm",
+        "turn_ref_deg",
+        "hip_deg",
+        "heartbeat_ms",
+    ):
+        if key in section:
+            value = section[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"ssh.{key} must be a number")
+            if float(value) <= 0:
+                raise ValueError(f"ssh.{key} must be positive")
+            out[key] = value
+    return out
+
+
+def _validate_motion(section: Any) -> dict[str, Any]:
+    if not isinstance(section, dict):
+        raise ValueError("motion must be an object")
+    out: dict[str, Any] = {}
+    for key in (
+        "max_stride_mm",
+        "max_side_mm",
+        "max_turn_deg",
+        "max_head_pan_deg",
+        "max_head_tilt_deg",
+        "max_head_tilt_up_deg",
+        "max_head_tilt_down_deg",
+        "speed_scale",
+        "send_hz",
+        "turn_from_side_ratio",
+        "drive_curve",
+    ):
+        if key in section:
+            value = section[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"motion.{key} must be a number")
+            if float(value) < 0:
+                raise ValueError(f"motion.{key} must be non-negative")
+            out[key] = value
+    if "hold_head_position" in section:
+        if not isinstance(section["hold_head_position"], bool):
+            raise ValueError("motion.hold_head_position must be a boolean")
+        out["hold_head_position"] = section["hold_head_position"]
     return out
 
 
@@ -119,9 +178,15 @@ def _validate_camera(section: Any) -> dict[str, Any]:
         if not isinstance(section["enabled"], bool):
             raise ValueError("camera.enabled must be a boolean")
         out["enabled"] = section["enabled"]
-    for key in ("stream_url", "snapshot_url"):
+    for key in ("label", "route", "stream_url", "snapshot_url"):
         if key in section:
             out[key] = _require_str(section[key], f"camera.{key}")
+    for key in ("local_port", "remote_port"):
+        if key in section:
+            port = _require_port(section[key], f"camera.{key}")
+            if not 1 <= port <= 65535:
+                raise ValueError(f"camera.{key} must be in 1..65535")
+            out[key] = port
     return out
 
 
@@ -135,7 +200,7 @@ def validate_provisioning(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("payload must be a JSON object")
 
-    allowed = {"mode", "mac", "robot", "camera", "ssh"}
+    allowed = {"mode", "mac", "robot", "camera", "ssh", "motion"}
     unknown = set(payload) - allowed
     if unknown:
         raise ValueError(f"unknown keys: {', '.join(sorted(unknown))}")
@@ -162,4 +227,8 @@ def validate_provisioning(payload: Any) -> dict[str, Any]:
         ssh = _validate_ssh(payload["ssh"])
         if ssh:
             updates["ssh"] = ssh
+    if "motion" in payload:
+        motion = _validate_motion(payload["motion"])
+        if motion:
+            updates["motion"] = motion
     return updates

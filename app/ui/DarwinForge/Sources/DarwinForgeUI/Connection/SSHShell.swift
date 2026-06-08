@@ -57,12 +57,21 @@ public enum SSHShell {
         /// 소켓 경로(`~/.ssh/df-cm-%C`)가 필요하므로 `~/.ssh` 가 보장될 때(=RSA 키 존재)만 켠다.
         public let multiplex: Bool
 
+        /// `-i` 로 준 키만 배타적으로 offer 할지(`IdentitiesOnly=yes`). 기본 true =
+        /// 종전 동작(로봇: 지정 RSA 키만 — too-many-auth-failures 차단). **false** 면
+        /// 지정 키를 *추가로* offer 하되 ssh 기본 키/agent 키도 시도 — Switch 처럼
+        /// `id_rsa_darwin`(비표준 파일명, 자동 offer 안 됨)이 authorized 인데 사용자의
+        /// 다른 키도 살려둬야 하는 경우(2026-06-07 실측 회귀 수정).
+        public let identitiesOnly: Bool
+
         public init(identityFile: String? = nil,
                     legacyServerCompat: Bool = true,
-                    multiplex: Bool = false) {
+                    multiplex: Bool = false,
+                    identitiesOnly: Bool = true) {
             self.identityFile = identityFile
             self.legacyServerCompat = legacyServerCompat
             self.multiplex = multiplex
+            self.identitiesOnly = identitiesOnly
         }
     }
 
@@ -114,8 +123,12 @@ public enum SSHShell {
                      "-o", "HostKeyAlgorithms=+ssh-rsa"]
         }
         if let identity = options.identityFile {
-            // 지정 키만 offer (다른 키로 인한 too-many-auth-failures 차단).
-            args += ["-i", identity, "-o", "IdentitiesOnly=yes"]
+            // 지정 키를 offer. identitiesOnly=true 면 그 키만 배타적으로(로봇: too-many-
+            // auth-failures 차단). false 면 ssh 기본/agent 키도 함께 시도(Switch fallback).
+            args += ["-i", identity]
+            if options.identitiesOnly {
+                args += ["-o", "IdentitiesOnly=yes"]
+            }
         }
         args += ["\(user)@\(host)", command]
         return args

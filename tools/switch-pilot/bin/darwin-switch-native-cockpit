@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${DARWIN_SWITCH_ROOT:-/opt/darwin-switch-agent}"
+PROFILE_ROOT="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/darwin-switch-cockpit"
+LOG_DIR="${PROFILE_ROOT}/logs"
+LOG="${DARWIN_SWITCH_NATIVE_LOG:-${LOG_DIR}/native-launcher.log}"
+export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
+mkdir -p "${LOG_DIR}"
+if [[ -f "${LOG}" ]] && [[ "$(wc -c < "${LOG}" | tr -d ' ')" =~ ^[0-9]+$ ]] \
+  && [[ "$(wc -c < "${LOG}" | tr -d ' ')" -gt 1048576 ]]; then
+  mv "${LOG}" "${LOG}.1" 2>/dev/null || true
+fi
+exec >> "${LOG}" 2>&1
+
+log() {
+  printf '%s %s\n' "$(date -Iseconds 2>/dev/null || date)" "$*"
+}
+
+log "Darwin Switch native cockpit launcher starting"
+log "root=${ROOT}"
+log "log=${LOG}"
+log "display=${DISPLAY:-}"
+log "wayland_display=${WAYLAND_DISPLAY:-}"
+
+set +e
+python3 -m darwin_switch_agent.native_cockpit "$@"
+status="$?"
+set -e
+
+if [[ "${status}" -eq 0 ]]; then
+  log "native cockpit exited normally"
+  exit 0
+fi
+
+log "WARN: native cockpit failed with exit ${status}"
+if [[ "${DARWIN_SWITCH_NATIVE_NO_FALLBACK:-0}" == "1" ]]; then
+  log "fallback disabled by DARWIN_SWITCH_NATIVE_NO_FALLBACK=1"
+  exit "${status}"
+fi
+
+fallback="${DARWIN_SWITCH_WEB_FALLBACK:-/usr/local/bin/darwin-switch-cockpit}"
+if [[ -x "${fallback}" ]]; then
+  log "launching web cockpit fallback: ${fallback}"
+  exec "${fallback}"
+fi
+
+bundle_fallback="${ROOT}/bin/darwin-switch-cockpit"
+if [[ -x "${bundle_fallback}" ]]; then
+  log "launching bundled web cockpit fallback: ${bundle_fallback}"
+  exec "${bundle_fallback}"
+fi
+
+log "ERROR: no web cockpit fallback found"
+exit "${status}"

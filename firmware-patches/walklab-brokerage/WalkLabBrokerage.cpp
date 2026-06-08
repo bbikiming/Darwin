@@ -49,6 +49,7 @@
 #include "MotionStatus.h"   // Robot::MotionStatus (IMU fallback + FALLEN)
 #include "MotionManager.h"
 #include "Action.h"         // **v1.13** Robot::Action (getup 모션 player)
+#include "StatusCheck.h"    // **2026-06-08 후면 MODE 버튼 정지** — m_is_started 폴링
 // 볼 트래킹 (2026-06-02) — 온보드 자동 헤드 추적 (기본 데모와 동일 vision 파이프라인).
 #include "LinuxCamera.h"    // Robot::LinuxCamera::GetInstance() — main.cpp 가 이미 Initialize
 #include "ColorFinder.h"    // Robot::ColorFinder — HSV 볼 검출
@@ -460,6 +461,21 @@ namespace Robotis {
         long long last_tel_ms = 0;
 
         while (true) {
+            // **2026-06-08 후면 MODE 버튼 정지** — 사용자가 데모 후면 패널의 MODE
+            // 버튼을 다시 누르면 `StatusCheck::Check()` 가 m_is_started=0,
+            // m_cur_mode=READY 로 설정한다(공식 데모와 동일 패턴). 이 폴링이 그 신호를
+            // 받아 보행을 정중히 멈추고 Run() 을 빠져나가 main.cpp 의 switch case 가
+            // 자연 종료되도록 한다. e-stop flag 와 별개의 정상 종료 경로.
+            if (Robot::StatusCheck::m_is_started == 0) {
+                printf("[WalkLabBrokerage] STOP signal from MODE button — exit Run()\n");
+                walking->Stop();
+                while (walking->IsRunning()) usleep(8000);
+                walking->m_Joint.SetEnableBody(false);
+                // 헤드도 정지 + 토크 풀어 사용자가 들고 내릴 수 있게.
+                Robot::Head::GetInstance()->m_Joint.SetEnableHeadOnly(false);
+                break;
+            }
+
             // 루프 시각 1회 계산 — uplink refresh throttle + telemetry gate 공용.
             struct timespec loop_ts;
             clock_gettime(CLOCK_REALTIME, &loop_ts);
@@ -624,10 +640,13 @@ namespace Robotis {
         if (hip > HIP_PITCH_MAX) hip = HIP_PITCH_MAX;
 
         // **v1.12 (§C)** — head pan/tilt clamp + 적용. Mac 가 이미 clamp 하지만 방어.
+        // 2026-06-08 — 머리 들기(+tilt) 방향을 사용자 요청에 따라 +20도 더 허용
+        // (45 → 65). 머리 숙이기(-tilt) 는 기계적 안전 한도(-45) 유지. Switch 측
+        // max_head_tilt_up_deg=55 와 함께 적용돼 비대칭 효과 — 시야 확보 용이.
         if (head_pan < -90.0f) head_pan = -90.0f;
         if (head_pan >  90.0f) head_pan =  90.0f;
         if (head_tilt < -45.0f) head_tilt = -45.0f;
-        if (head_tilt >  45.0f) head_tilt =  45.0f;
+        if (head_tilt >  65.0f) head_tilt =  65.0f;
 
         // PERIOD_TIME 갑작스러운 변경은 cycle 중간 불안정 — 다음 cycle 부터 적용 의도지만
         // ROBOTIS Walking.cpp 은 매 8ms tick 의 m_PeriodTime 갱신 → 즉시 반영.

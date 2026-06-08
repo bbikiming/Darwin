@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
             # Final command — computed only after the safety state above is final.
             command = gate_motion(raw_command, armed=armed, estopped=estopped)
             if force_stop:
-                command = zero_motion(command)
+                command = zero_walk_motion(command)
             if estopped or force_stop:
                 last_moving = False  # no trailing nonzero walk send this tick.
 
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
                     if mac_client and mac_client.connected:
                         try_control_call(log, "stop", lambda: mac_client.stop("screen"))
                     if ssh_client:
-                        try_control_call(log, "stop", ssh_client.stop)
+                        try_control_call(log, "stop", lambda: ssh_client.send(command))
                     bus.log("정지")
                 elif action.action == "estop":
                     if mac_client and mac_client.connected:
@@ -177,16 +177,29 @@ def main(argv: list[str] | None = None) -> int:
                     bus.log("비상정지")
                 elif action.action == "ping":
                     bus.log(f"점검 모드={config.mode} 대상={target}")
+                elif action.action == "reconnect":
+                    last_connect_attempt = 0.0
+                    if mac_client:
+                        mac_client.close()
+                        bus.log("맥 릴레이 재연결 요청")
+                    elif ssh_client:
+                        ssh_client.close()
+                        bus.log("SSH 재연결 요청")
+                    elif robot_client:
+                        bus.log("UDP 경로 점검 요청")
+                    else:
+                        bus.log("연습 모드 점검")
 
             if now - last_status > 2.0:
                 log.info(
-                    "state deadman=%s lx=%.2f ly=%.2f rx=%.2f ry=%.2f stride=%.1f turn=%.1f head=(%.1f,%.1f)",
+                    "state deadman=%s lx=%.2f ly=%.2f rx=%.2f ry=%.2f stride=%.1f side=%.1f turn=%.1f head=(%.1f,%.1f)",
                     controller.deadman,
                     controller.left_x,
                     controller.left_y,
                     controller.right_x,
                     controller.right_y,
                     command.stride_mm,
+                    command.side_mm,
                     command.turn_deg,
                     command.head_pan_deg,
                     command.head_tilt_deg,
@@ -231,9 +244,9 @@ def main(argv: list[str] | None = None) -> int:
                 if edges.estop_pressed:
                     log.warning("estop pressed")
                     try_control_call(log, "estop", lambda: mac_client.estop("physical"))
-                if edges.stop_pressed or edges.deadman_released:
+                if edges.stop_pressed:
                     log.info("stop edge")
-                    try_control_call(log, "stop", lambda: mac_client.stop("deadmanRelease" if edges.deadman_released else "user"))
+                    try_control_call(log, "stop", lambda: mac_client.stop("user"))
                 if now - last_send >= send_interval:
                     # Never send a walk/head after Stop/E-stop in this tick.
                     if (command.moving or last_moving) and not (estopped or force_stop):
@@ -253,12 +266,12 @@ def main(argv: list[str] | None = None) -> int:
                     # Push an explicit zero datagram now; do not wait for the tick.
                     robot_client.send_stop(estop=True)
                     bus.log("비상정지")
-                if edges.stop_pressed or edges.deadman_released:
-                    # Explicit immediate zero on the stop / deadman-release edge.
+                if edges.stop_pressed:
+                    # Explicit immediate zero on the stop edge.
                     # The robot-side receiver also runs a ~500ms staleness
                     # watchdog (see RobotUdpClient docstring) as a second leg.
                     robot_client.send_stop()
-                    bus.log("정지 (ZL 놓음)" if edges.deadman_released else "정지")
+                    bus.log("정지")
                 if now - last_send >= send_interval:
                     # command is the final, safety-gated command (zeroed on stop/estop).
                     robot_client.send(controller, command)
@@ -277,9 +290,9 @@ def main(argv: list[str] | None = None) -> int:
                     log.warning("estop pressed")
                     try_control_call(log, "estop", ssh_client.estop)
                     last_estop_assert = now
-                if edges.stop_pressed or edges.deadman_released:
+                if edges.stop_pressed:
                     log.info("stop edge")
-                    try_control_call(log, "stop", ssh_client.stop)
+                    try_control_call(log, "stop", lambda: ssh_client.send(command))
                 if estopped:
                     # The estop FILE is the authoritative stop; re-assert it each
                     # heartbeat (idempotent touch) so a single dropped SSH 'touch'
@@ -314,6 +327,8 @@ def main(argv: list[str] | None = None) -> int:
                             walking=tel["walking"],
                             fallen=tel["fallen"],
                             robot_state="fallen" if tel["fallen"] != 0 else "upright",
+                            gyro=tel.get("gyro"),
+                            accel=tel.get("accel"),
                         )
             else:
                 time.sleep(0.02)
@@ -415,7 +430,7 @@ def ssh_command_line(command: MotionCommand) -> str:
     """
     return (
         f"{1 if command.enabled else 0} "
-        f"{command.stride_mm:.1f} {command.turn_deg:.1f} "
+        f"{command.stride_mm:.1f} {command.side_mm:.1f} {command.turn_deg:.1f} "
         f"{command.head_pan_deg:.1f} {command.head_tilt_deg:.1f}"
     )
 
@@ -423,16 +438,25 @@ def ssh_command_line(command: MotionCommand) -> str:
 def gate_motion(command: MotionCommand, *, armed: bool, estopped: bool) -> MotionCommand:
     if armed and not estopped:
         return command
-    return zero_motion(command)
+    return zero_walk_motion(command)
 
 
 def zero_motion(command: MotionCommand) -> MotionCommand:
-    """Force a command to no-motion (kept armed-state agnostic). Used as the
-    last-line safety gate when a Stop edge must suppress motion for this tick."""
+    """Force every controllable output to neutral.
+
+    Use this only for hard shutdown / e-stop style cleanup. Normal stop should
+    not recenter the head, because manual head aim is expected to
+    hold its last commanded pose.
+    """
     return replace(
-        command, enabled=False, stride_mm=0.0, turn_deg=0.0,
+        command, enabled=False, stride_mm=0.0, side_mm=0.0, turn_deg=0.0,
         head_pan_deg=0.0, head_tilt_deg=0.0,
     )
+
+
+def zero_walk_motion(command: MotionCommand) -> MotionCommand:
+    """Stop walking while preserving the held head pan/tilt command."""
+    return replace(command, enabled=False, stride_mm=0.0, side_mm=0.0, turn_deg=0.0)
 
 
 @dataclass(frozen=True)
@@ -450,12 +474,12 @@ def settle_safety_state(
 ) -> SafetySettlement:
     """Resolve the tick's final safety state from cockpit actions AND physical
     edges, BEFORE any motion command is computed. Safety-first: within a tick
-    E-stop dominates Arm/Recover, and Stop/deadman-release force zero motion for
-    the tick (without necessarily latching E-stop). Pure + testable.
+    E-stop dominates Arm/Recover, and Stop forces zero motion for the tick
+    (without necessarily latching E-stop). Pure + testable.
     """
     arm_now = edges.arm_pressed
     estop_now = edges.estop_pressed
-    force_stop = bool(edges.stop_pressed or edges.deadman_released)
+    force_stop = bool(edges.stop_pressed)
     for action in actions:
         if action.action in ("arm", "recover"):
             arm_now = True

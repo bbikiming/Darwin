@@ -799,55 +799,22 @@ public struct ConnectionWizardView: View {
     }
 
     /// 클래식 LAN(5530 bridge) 연결 — **"알아서 포트 열어서 연결"**.
-    /// 검토 지적 fix: 종전엔 socat 미실행 시 그냥 실패. 이제 SSH 로 demo 종료 + socat 자동
-    /// 기동(`startLanBridge`)으로 5530 포트를 연 뒤 bus 연결한다.
+    /// 시퀀스(데모 종료 + socat 기동 → BRIDGE_OK → bus 연결)는 `store.connectLANBridge` 가 소유한다
+    /// (모드전환 `switchToJointEdit` 와 공유 — divergence 제거). 여기선 진행/에러를 `status` 로 표시.
     /// ⚠️ demo 종료 시 로봇 토크가 풀리므로 거치/파지 상태에서 사용.
     private func connectLAN() {
-        // **LAN(5530) = 유선 직결 전용 (2026-06-02)**: 직전 SSH 세션(무선 등)의 host 를 상속하지
-        // 않고 항상 유선 IP 로 결정적 고정한다. 종전 `seedHostIfEmpty` 는 networkHost 가 비었을
-        // 때만 채워, 무선 onboard 후 LAN 으로 가면 LAN 이 무선 host(192.168.0.33)로 붙는 비결정성이
-        // 있었다. 사용자 사양: SSH=유선/무선, LAN=유선. (고급 수동 IP probe 는 별도 경로 — 무관.)
-        let wiredHost = DFConnectionConstants.robotEthernetIP
-        let port: UInt16 = store.networkPort == 0 ? 5530 : store.networkPort
-        store.networkPort = port
-        store.networkHost = wiredHost
-        remoteShell.host = wiredHost
-        // codex HIGH fix: 이 시도의 세대를 확보. ① 비동기 갭 사이 다른 경로(무선 onboard 등)로
-        // 전환되면 옛 LAN task 가 공유 networkHost 를 다시 읽어 엉뚱한 host 로 붙는 것 차단,
-        // ② onboard→LAN 전환 시 직전 onboard 12s 타임아웃이 LAN .connecting 을 덮는 것 무효화
-        // (타임아웃이 동일 카운터를 비교하므로 세대가 바뀌면 발화 안 함).
-        store.connectAttemptGeneration &+= 1
-        let attemptGen = store.connectAttemptGeneration
-        // SSH 온보드에서 전환 시 — onboard telemetry poller 정지(robot demo 가 socat 으로 교체됨).
-        store.stopOnboardTelemetry()
-        // LAN 은 Mac bus 가 모터를 직접 구동 → mac 키프레임 엔진 사용 (콕핏 isOnboardMode=false).
-        store.walkSession?.walkingEngine = .macSparseKeyframe
         store.status = .connecting("5530 포트 여는 중… (유선 직결)")
         Task { @MainActor in
-            let ex = await remoteShell.send(RobotSetupCommand.startLanBridge)
-            // codex HIGH fix: await 동안 더 새로운 연결 시도가 시작됐으면 이 task 는 무효 — 공유
-            // 상태를 건드리지 않고 즉시 반환(stale host 로 bus 연결 방지).
-            guard attemptGen == store.connectAttemptGeneration else { return }
-            let out = ex?.result ?? ""
-            let ok = out.contains("BRIDGE_OK")
-            harness.record(
-                .setupConnOneClickFired, level: .info, actor: .system,
-                data: ["trigger": AnyCodable("lan.autoBridge"),
-                       "bridge": AnyCodable(ok ? "ok" : "fail")]
-            )
-            // 리뷰 M4 fix: SSH 실패/BRIDGE_FAIL 이면 죽은 포트로 bus 연결 시도(타임아웃) 대신
-            // 명확한 사유 표시. BRIDGE_OK 일 때만 5530 bus 연결.
-            if ex == nil || ex?.error != nil {
-                store.status = .error("LAN 브리지 시작 실패 — SSH 응답 없음(\(wiredHost)). 랜선·SSH/키 확인")
-                return
+            let result = await store.connectLANBridge(remoteShell: remoteShell) { _ in
+                // 마법사는 단일 "5530 포트 여는 중…" 표시 유지 — 중간 단계 별도 표시 없음.
             }
-            if !ok {
-                store.status = .error("LAN 브리지(socat) 시작 실패 — 로봇 /dev/ttyUSB0/포트 확인")
-                return
+            switch result {
+            case .connected, .superseded:
+                // .connected: connect(endpoint:) 가 status 를 갱신. .superseded: 새 시도가 소유.
+                break
+            case .failed(let reason):
+                store.status = .error(reason)
             }
-            // codex HIGH fix: connectNetwork()(가변 networkHost 재독) 대신 캡처한 유선 endpoint 로
-            // 결정적 연결 — await 갭 동안 networkHost 가 바뀌어도 항상 유선으로 붙는다.
-            store.connect(endpoint: .network(host: wiredHost, port: port))
         }
     }
 
@@ -857,6 +824,7 @@ public struct ConnectionWizardView: View {
     ///   2) Mac telemetry poller 시작(`startOnboardTelemetry`) → telemetryMode `.onboard`
     ///      → HUD + L0/L3 안전게이트 + 콕핏 게이트가 onboard 를 live 로 인식.
     private func connectSSHOnboard() {
+        // === View 전용 검증 (마법사 전용, 보존) — 무선 IP 유효성·유선IP-무선혼동 ===
         // 무선 선택인데 IP 가 비었거나 형식 오류면 — 유선으로 silent fallback 하지 않고 명확히 막는다.
         if connectionLink == .wireless && !ConnectionWizardView.isLikelyValidHost(wifiHost) {
             store.status = .error("무선 WiFi IP 가 비었거나 형식 오류 — IP 입력 또는 [자동 탐지] (유선 연결 필요)")
@@ -870,83 +838,42 @@ public struct ConnectionWizardView: View {
         }
         // 유무선 링크 선택에 따라 호스트 확정 (유선 192.168.123.1 / 무선 wlan0 IP).
         let host = resolvedSSHHost()
-        store.networkHost = host
-        remoteShell.host = host
-        // **핵심 (2026-06-01)**: walkingEngine 을 .robotisOnboard 로 설정해야 콕핏의
-        // isOnboardMode·motorGate·bridge(텔레메트리 poller + 명령 송출)가 활성화된다.
-        // 종전: 엔진을 안 바꿔 isOnboardMode=false → motorGate "로봇 미연결" + poller 미시작
-        // → telemetryMode .offline("경로 없음") → 콕핏 조종이 SIM 으로 빠짐 (사용자 보고).
-        store.walkSession?.walkingEngine = .robotisOnboard
-        // **핵심 (GPT 검수 fix, 2026-06-01)**: 브리지 shouldSend() 가 autoOnboardBrokering
-        // 을 요구한다(기본 false). 켜지 않으면 스틱·freeform 이 accepted 돼도 SSH 명령이
-        // 한 줄도 안 나간다 → 로봇 미이동. SSH 온보드 연결 = brokering ON.
-        store.walkSession?.autoOnboardBrokering = true
-        // LAN(bus) 에서 전환 시 — bus 를 먼저 해제해야 robot 측 socat→demo 교체가 가능.
-        if store.bus != nil { store.disconnect() }
-        // codex fix: 이 시도의 세대를 확보 — 12s 타임아웃이 자기 시도에만 적용되도록.
-        store.connectAttemptGeneration &+= 1
-        let attemptGen = store.connectAttemptGeneration
         store.status = .connecting("① 데모 모드 확인 중…")
         Task { @MainActor in
-            let verify = await remoteShell.send(RobotSetupCommand.walkLabVerifyMode)
-            // codex HIGH fix: await 동안 다른 경로(LAN 등)로 전환됐으면 이 stale onboard task 는
-            // 즉시 반환 — 공유 상태/상태표시를 덮지 않는다. (각 await 경계마다 동일 가드.)
-            guard attemptGen == store.connectAttemptGeneration else { return }
-            // SSH 실패 시 명확한 에러 — 무한 "연결중" 고착 방지 (검토/사용자 보고 fix).
-            if verify == nil || verify?.error != nil || (verify?.result ?? "").isEmpty {
-                store.status = .error("SSH 온보드 연결 실패 — \(verify?.error ?? "응답 없음"). 호스트(\(remoteShell.host))·SSH 키 확인")
-                harness.record(
-                    .setupConnOneClickFired, level: .warn, actor: .system,
-                    data: ["trigger": AnyCodable("sshOnboard"), "result": AnyCodable("ssh_fail")]
-                )
-                return
-            }
-            let state = verify?.result ?? ""
-            if !state.contains("DF_WALKLAB=active") {
-                // 미실행/idle → walklab 으로 기동 (socat 정지 + demo walklab).
-                // **정직성 UX**: 이 단계에서 로봇 demo 가 재기동되며 init 자세로 움직인다 —
-                // 사용자가 잡을 수 있게 명시. (verify 가 active 면 이 단계 건너뜀 = 무동작 연결.)
-                store.status = .connecting("② walklab 전환 중 — 로봇이 init 자세로 움직입니다(잡아주세요)")
-                let started = await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
-                // codex HIGH fix: 기동 await 동안 경로 전환됐으면 stale task 반환.
-                guard attemptGen == store.connectAttemptGeneration else { return }
-                // 리뷰(codex M1) fix: 기동 명령 자체가 실패(SSH 에러)면 거짓 연결로 넘기지 않음.
-                if started == nil || started?.error != nil {
-                    store.status = .error("온보드 demo 기동 실패 — \(started?.error ?? "응답 없음")")
-                    return
-                }
-                // **codex HIGH fix (2026-06-02)**: RemoteShell.send 는 SSH 전송 실패만 error 로
-                // 표시한다. 원격 스크립트가 `exit 1`(바이너리 없음/demo 시작 실패)이어도 error==nil 로
-                // "--- exit 1 ---" 가 result 에 남을 뿐 → 종전엔 그대로 텔레메트리 폴링으로 넘어가
-                // 12s 뒤에야 막연한 에러. 성공 마커("✅ demo 실행 중")가 없으면 즉시 명확히 실패시킨다.
-                let startOut = started?.result ?? ""
-                if !startOut.contains("✅ demo 실행 중") {
-                    store.status = .error("온보드 demo 기동 실패 — walklab 데몬이 안 떴습니다(patched 바이너리/카메라/포트 확인)")
-                    return
+            // 시퀀스(verify → 기동 → ✅ 마커 → 온보드 텔레메트리)는 store.connectOnboard 가 소유
+            // (모드전환 switchToWalk 와 공유 — divergence 제거). 여기선 진행/에러를 status 로 표시.
+            let result = await store.connectOnboard(host: host, remoteShell: remoteShell) { step in
+                switch step {
+                case .verifyingMode:
+                    store.status = .connecting("① 데모 모드 확인 중…")
+                case .startingWalklab:
+                    // **정직성 UX**: 이 단계에서 로봇 demo 가 재기동되며 init 자세로 움직인다.
+                    store.status = .connecting("② walklab 전환 중 — 로봇이 init 자세로 움직입니다(잡아주세요)")
+                case .waitingTelemetry:
+                    store.status = .connecting("③ 텔레메트리 대기 중…")
+                default:
+                    break
                 }
             }
-            // codex HIGH fix: 텔레메트리 시작 직전 마지막 가드 — 전환됐으면 poller 안 띄운다.
-            guard attemptGen == store.connectAttemptGeneration else { return }
-            // Mac 측 텔레메트리 업링크 시작 — 첫 샘플 도착 시 ingestOnboardTelemetry 가
-            // status 를 .connected 로 올린다(truth 기반). 리뷰(codex M1) fix: 여기서 eager
-            // markOnboardConnected 를 호출하지 않는다 → 텔레메트리가 실제로 흘러야 "연결됨".
-            store.startOnboardTelemetry(remoteShell: remoteShell)
-            store.status = .connecting("③ 텔레메트리 대기 중…")
-            harness.record(
-                .setupConnOneClickFired, level: .info, actor: .system,
-                data: ["trigger": AnyCodable("sshOnboard"),
-                       "verify": AnyCodable(state.contains("active") ? "active" : "started")]
-            )
-            // 연결 타임아웃 — 12s 내 텔레메트리(연결됨)가 안 흐르면 "연결 중" 고착 대신 명확한
-            // 에러. (demo 가 walklab 으로 안 떴거나 기동 실패한 경우.)
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 12_000_000_000)
-                // codex MEDIUM fix: 세대가 바뀌었으면(=새 연결 시도/해제 발생) 이 타임아웃은 무효.
-                guard attemptGen == store.connectAttemptGeneration else { return }
-                if case .connecting = store.status {
-                    store.stopOnboardTelemetry()
-                    store.status = .error("온보드 텔레메트리 없음 — demo 가 walklab 으로 기동 안 됨(카메라/포트 충돌 가능). 다시 연결 시도")
+            switch result {
+            case .connected:
+                // === 12s 연결 타임아웃 (마법사 전용 UX, 보존) ===
+                // 텔레메트리(연결됨)가 안 흐르면 "연결 중" 고착 대신 명확한 에러.
+                // result 가 .connected 면 시퀀스 도중 세대 전진이 없었으므로 현재 세대가 곧 그 시도.
+                let attemptGen = store.connectAttemptGeneration
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 12_000_000_000)
+                    // 세대가 바뀌었으면(=새 연결 시도/해제) 이 타임아웃은 무효.
+                    guard attemptGen == store.connectAttemptGeneration else { return }
+                    if case .connecting = store.status {
+                        store.stopOnboardTelemetry()
+                        store.status = .error("온보드 텔레메트리 없음 — demo 가 walklab 으로 기동 안 됨(카메라/포트 충돌 가능). 다시 연결 시도")
+                    }
                 }
+            case .failed(let reason):
+                store.status = .error(reason)
+            case .superseded:
+                break   // 새 시도가 status 를 소유 — 건드리지 않음.
             }
         }
     }

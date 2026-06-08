@@ -95,7 +95,13 @@ public enum RobotSetupCommand {
     ///   - `GET /?action=snapshot` 단일 JPEG, `GET /?action=stream` MJPEG stream.
     public static let cameraTutorialStart: String = #"""
     set +e
-    sudo killall camera_tutorial demo vision_demo 2>/dev/null
+    MODE=$(cat /tmp/df-pilot-mode 2>/dev/null | tr -d '\r\n')
+    if [ "$MODE" = "walklab" ] && (pgrep -x demo >/dev/null 2>&1 || pgrep -x demo-pilot >/dev/null 2>&1); then
+      echo "WalkLab 조종 데모 유지 — camera_tutorial 만 재시작"
+      sudo killall camera_tutorial vision_demo 2>/dev/null
+    else
+      sudo killall camera_tutorial demo vision_demo 2>/dev/null
+    fi
 
     CAM_DIR=""
     for d in "$HOME/Framework/Linux/project/tutorial/camera" \
@@ -159,7 +165,7 @@ public enum RobotSetupCommand {
     """#
 
     public static let cameraTutorialStop: String =
-        "sudo killall camera_tutorial demo vision_demo 2>/dev/null && echo stopped || echo camera demo not running"
+        "sudo killall camera_tutorial vision_demo 2>/dev/null && echo stopped || echo camera tutorial not running"
 
     // MARK: - ROBOTIS demo 제어 (Sprint 18 — Pilot 모드 통합)
     //
@@ -312,66 +318,138 @@ public enum RobotSetupCommand {
     /// **robot-side patch 필요** (이번 PR 범위 밖):
     /// - `df-pilot-mode == "walklab"` 분기 추가
     /// - `/tmp/df-walklab-cmd` 5Hz polling → `Walking::GetInstance()->X/Y/A_MOVE_AMPLITUDE` set
-    /// - polling 식: `sscanf(line, "%d %f %f %f %f %f", &en, &x, &y, &a, &p, &f)`
-    /// - 미patch 시: `demo-pilot` 가 default SOCCER 모드로 시작 → ball tracker 동작
+    /// - polling 식: 최신 성공 버전은 `cmd_id enabled x y a period foot hip balance head ball_track`
+    ///   14-token 형식까지 parse 하고, `/tmp/df-walklab-ack` 에 cmd_id 를 echo.
+    /// - 미patch/구patch 시: 시작 거부. `df-walklab-cmd` 문자열만 있는 2026-06-01 구버전은
+    ///   ACK/head 는 동작해도 다리 보행 초기화가 빠질 수 있어 성공 버전으로 보지 않는다.
     public static let walkLabRobotisStart: String = #"""
     set +e
+    camera_port_open() {
+      if command -v ss >/dev/null 2>&1; then
+        ss -lnt 2>/dev/null | grep -q ':8080'
+      else
+        netstat -lnt 2>/dev/null | grep -q ':8080'
+      fi
+    }
+    stop_camera_stream() {
+      echo "DF_READY_CAMERA_STOP=begin"
+      sudo killall camera_tutorial vision_demo 2>/dev/null || killall camera_tutorial vision_demo 2>/dev/null || true
+      for i in $(seq 1 20); do
+        pgrep -x camera_tutorial >/dev/null 2>&1 || pgrep -x vision_demo >/dev/null 2>&1 || break
+        sleep 0.1
+      done
+      if pgrep -x camera_tutorial >/dev/null 2>&1 || pgrep -x vision_demo >/dev/null 2>&1; then
+        echo "DF_READY_CAMERA_STOP=warn_still_running"
+        pgrep -af 'camera_tutorial|vision_demo' 2>/dev/null
+      else
+        echo "DF_READY_CAMERA_STOP=ok"
+      fi
+    }
+    start_camera_stream() {
+      CAM_DIR=""
+      for d in "$HOME/Framework/Linux/project/tutorial/camera" \
+               "$HOME/darwin/Linux/project/tutorial/camera" \
+               "/darwin/Linux/project/tutorial/camera" \
+               "/robotis/Linux/project/tutorial/camera"; do
+        if [ -d "$d" ]; then CAM_DIR="$d"; break; fi
+      done
+      if [ -z "$CAM_DIR" ]; then
+        echo "DF_READY_CAMERA=missing"
+        echo "camera tutorial directory not found"
+        return 0
+      fi
+      cd "$CAM_DIR" || { echo "DF_READY_CAMERA=bad_dir"; return 0; }
+      if [ ! -x ./camera_tutorial ]; then
+        echo "DF_READY_CAMERA=build"
+        make >/tmp/df-camera-build.log 2>&1 || {
+          echo "DF_READY_CAMERA=build_failed"
+          tail -30 /tmp/df-camera-build.log 2>/dev/null
+          return 0
+        }
+      fi
+      if camera_port_open; then
+        echo "DF_READY_CAMERA=already_running"
+        return 0
+      fi
+      if sudo -n true 2>/dev/null; then
+        nohup sudo -n ./camera_tutorial >/tmp/df-camera.log 2>&1 &
+      else
+        nohup ./camera_tutorial >/tmp/df-camera.log 2>&1 &
+      fi
+      for i in $(seq 1 10); do
+        camera_port_open && { echo "DF_READY_CAMERA=running"; return 0; }
+        sleep 0.2
+      done
+      echo "DF_READY_CAMERA=start_failed"
+      tail -40 /tmp/df-camera.log 2>/dev/null
+      return 0
+    }
     # === DarwinForge SSH parity (2026-06-01) — 시작 시 항상 re-arm ===
     # §B REMOVER: 새 start 는 잔여 e-stop flag 를 제거해 다시 보행 가능 상태로.
     rm -f /tmp/df-walklab-estop 2>/dev/null
     echo "▶ forge-bridge 종료 (USB bus 해제)"
     sudo killall socat 2>/dev/null
     sleep 0.3
+    echo "▶ 카메라 스트림 임시 종료 (WalkLab 초기화 충돌 방지)"
+    stop_camera_stream
 
-    echo "▶ ROBOTIS demo binary 탐색 (patched 우선)"
+    echo "▶ ROBOTIS demo binary 탐색 (switch-fix WalkLab patched 우선)"
     BIN=""
     PATCHED=0
-    # 1) 별도 demo-pilot 바이너리 우선.
+    OLD_PATCH=""
+    # 1) 별도 demo-pilot 바이너리 우선, 단 성공 버전 marker 가 있어야 한다.
     for d in "$HOME/Framework/Linux/project/demo/demo-pilot" \
              "$HOME/darwin/Linux/project/demo/demo-pilot" \
              "/darwin/Linux/project/demo/demo-pilot" \
              "/robotis/Linux/project/demo/demo-pilot"; do
-      if [ -x "$d" ]; then BIN="$d"; break; fi
+      if [ -x "$d" ]; then
+        if grep -qa "ROBOTIS onboard brokerage, switch fix" "$d" 2>/dev/null; then BIN="$d"; PATCHED=1; break; fi
+        if grep -qa "df-walklab-cmd" "$d" 2>/dev/null; then OLD_PATCH="$d"; fi
+      fi
     done
-    # 2) 없으면 demo (이 로봇은 demo 자체에 brokerage 를 in-place patch — 내용으로 판정).
+    # 2) 없으면 demo (이 로봇은 demo 자체에 성공 버전을 in-place patch 했을 수 있음).
     if [ -z "$BIN" ]; then
       for d in "$HOME/Framework/Linux/project/demo/demo" \
                "$HOME/darwin/Linux/project/demo/demo" \
                "/darwin/Linux/project/demo/demo" \
                "/robotis/Linux/project/demo/demo"; do
-        if [ -x "$d" ]; then BIN="$d"; break; fi
+        if [ -x "$d" ]; then
+          if grep -qa "ROBOTIS onboard brokerage, switch fix" "$d" 2>/dev/null; then BIN="$d"; PATCHED=1; break; fi
+          if [ -z "$OLD_PATCH" ] && grep -qa "df-walklab-cmd" "$d" 2>/dev/null; then OLD_PATCH="$d"; fi
+        fi
       done
     fi
     if [ -z "$BIN" ]; then
-      echo "demo / demo-pilot binary not found"
-      exit 1
-    fi
-    # **codex HIGH fix (2026-06-02)**: PATCHED 여부는 **파일명이 아니라 바이너리 내용**으로만 판정.
-    # 종전: demo-pilot 라는 이름이면 무조건 PATCHED=1 → brokerage 패치 안 된 demo-pilot 도
-    # walklab 으로 오인(거짓 "활성"). df-walklab-cmd 문자열 포함 = brokerage 패치 확정.
-    if grep -qa "df-walklab-cmd" "$BIN" 2>/dev/null; then PATCHED=1; fi
-
-    if [ "$PATCHED" = "1" ]; then
-      echo "   patched binary 사용: $BIN"
-      # §D.4 (리뷰 codex H3 fix): 영구 walklab 표식은 **patched 확정 후에만** 기록.
-      # 종전: 시작부에서 무조건 기록 → 원본 demo 폴백 시에도 표식이 남아 verify 가 false-active.
-      mkdir -p ~/.config/darwinforge 2>/dev/null
-      echo walklab > ~/.config/darwinforge/pilot-mode 2>/dev/null
-      echo "walklab" > /tmp/df-pilot-mode
-      : > /tmp/df-walklab-cmd
-      chmod 0666 /tmp/df-walklab-cmd 2>/dev/null
-      echo "▶ /tmp/df-pilot-mode = walklab"
-    else
-      echo "   ⚠️  원본 demo 사용 (patched 아님): $BIN — SOCCER 기본 모드"
-      echo "   robot-side patch 적용 후 재시도 권장"
+      if [ -n "$OLD_PATCH" ]; then
+        echo "DF_READY_START=old_walklab_patch"
+        echo "old_demo_binary=$OLD_PATCH"
+        echo "구버전 WalkLab patch 감지 — switch fix 성공 버전으로 demo 재빌드가 필요합니다."
+        exit 4
+      fi
+      echo "DF_READY_START=missing_walklab_patch"
+      echo "switch fix WalkLab demo / demo-pilot binary not found"
       rm -f /tmp/df-pilot-mode ~/.config/darwinforge/pilot-mode 2>/dev/null
+      exit 4
     fi
+    echo "   switch-fix patched binary 사용: $BIN"
+    mkdir -p ~/.config/darwinforge 2>/dev/null
+    echo walklab > ~/.config/darwinforge/pilot-mode 2>/dev/null
+    echo "walklab" > /tmp/df-pilot-mode
+    : > /tmp/df-walklab-cmd
+    chmod 0666 /tmp/df-walklab-cmd 2>/dev/null
+    echo "▶ /tmp/df-pilot-mode = walklab"
 
     echo "▶ 이전 데모 종료 + 카메라/장치 해제 대기"
     sudo killall demo demo-pilot walk_demo action_editor 2>/dev/null
     # **fix (2026-06-02)**: 이전 demo 가 카메라(/dev/video0)를 쥔 채라 0.3s 로는 해제 전에
     # 새 demo 가 떠 "VIDIOC_S_FMT busy" 로 크래시했다. 프로세스 종료 + 카메라 해제까지 대기.
     for i in $(seq 1 20); do pgrep -x demo >/dev/null 2>&1 || pgrep -x demo-pilot >/dev/null 2>&1 || break; sleep 0.2; done
+    if pgrep -x demo >/dev/null 2>&1 || pgrep -x demo-pilot >/dev/null 2>&1; then
+      echo "DF_READY_START=old_process_still_running"
+      echo "기존 demo/demo-pilot 이 종료되지 않았습니다. sudo 권한/NOPASSWD 또는 프로세스 상태를 확인하세요."
+      pgrep -af 'demo|demo-pilot' 2>/dev/null
+      exit 5
+    fi
     sleep 1.5
 
     echo "▶ demo 시작 → $BIN"
@@ -382,19 +460,53 @@ public enum RobotSetupCommand {
     sleep 1
 
     PROC=$(pgrep -x "$(basename "$BIN")" 2>/dev/null)
-    if [ -n "$PROC" ]; then
-      echo "✅ demo 실행 중 (pid $PROC)"
-      if [ "$PATCHED" = "1" ]; then
-        echo "   WalkLab brokerage 활성 — Mac 측에서 x/y/a 명령 송출"
-      else
-        echo "   ⚠️  patched binary 없음 — SOCCER 기본 모드 동작"
-      fi
-      tail -10 /tmp/df-demo.log 2>/dev/null
-    else
+    if [ -z "$PROC" ]; then
       echo "✗ demo 시작 실패"
       tail -30 /tmp/df-demo.log 2>/dev/null
       exit 1
     fi
+    echo "✅ demo 실행 중 (pid $PROC)"
+
+    echo "▶ WalkLab active 단계 확인"
+    STAGE=""
+    for i in $(seq 1 60); do
+      STAGE=$(head -1 /tmp/df-pilot-progress 2>/dev/null | tr -d '\r\n')
+      [ "$STAGE" = "walklab-active" ] && break
+      sleep 0.2
+    done
+    if [ "$STAGE" != "walklab-active" ]; then
+      echo "DF_READY_START=progress_timeout"
+      echo "walklab-active 단계에 도달하지 못했습니다. stage=${STAGE:-none}"
+      tail -40 /tmp/df-demo.log 2>/dev/null
+      exit 5
+    fi
+
+    echo "▶ 최신 14-token 명령/ACK 계약 확인"
+    CMD_ID="dfstart_$(date +%s)"
+    rm -f /tmp/df-walklab-ack 2>/dev/null
+    printf '%s\n' "$CMD_ID 0 0.00 0.00 0.00 600 40 13.00 1.00 0 2 0.00 0.00 0" > /tmp/df-walklab-cmd.tmp &&
+      mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd
+    ACK=""
+    for i in $(seq 1 40); do
+      if grep -qF "$CMD_ID" /tmp/df-walklab-ack 2>/dev/null; then
+        ACK=$(cat /tmp/df-walklab-ack 2>/dev/null)
+        break
+      fi
+      sleep 0.05
+    done
+    if [ -z "$ACK" ]; then
+      echo "DF_READY_START=ack_timeout"
+      echo "최신 WalkLab brokerage ACK를 받지 못했습니다. 구버전 demo 이거나 brokerage loop 미동작입니다."
+      tail -40 /tmp/df-demo.log 2>/dev/null
+      exit 5
+    fi
+
+    echo "DF_READY_START=brokerage_ready"
+    echo "   WalkLab switch-fix brokerage 활성 — 14-token 명령/ACK 검증 완료"
+    echo "   ack: $ACK"
+    tail -10 /tmp/df-demo.log 2>/dev/null
+    echo "▶ 카메라 스트림 재시작 (조종 + 실시간 영상 동시 사용)"
+    start_camera_stream
     """#
 
     /// **WalkLab Onboard mode 종료 명령** — demo-pilot 정지 + 명령 파일 정리 +
@@ -709,7 +821,7 @@ public enum RobotSetupCommand {
                 // page 9 / 자이로 캘리브레이션) — 그 뒤 브로커리지 무한 루프가 SOCCER 메인
                 // 루프를 대체한다. 이 분기는 `WalkLabBrokerage.h` 가 build 시 main.cpp 에
                 // include 되어 있어야 한다(demoBuildPatched 가 주입).
-                fprintf(stderr, "[df-pilot] auto-mode: walklab (ROBOTIS onboard brokerage)\n");
+                fprintf(stderr, "[df-pilot] auto-mode: walklab (ROBOTIS onboard brokerage, switch fix)\n");
                 DF_PROGRESS("walklab-init");
                 cm730.WriteByte(CM730::P_LED_PANNEL, 0x05, NULL);
                 LinuxActionScript::PlayMP3((char*)"../../../Data/mp3/Autonomous soccer mode.mp3");
@@ -738,7 +850,7 @@ public enum RobotSetupCommand {
                 DF_PROGRESS("walklab-active");
                 unlink("/tmp/df-pilot-mode");
                 fprintf(stderr, "[df-pilot] entering WalkLabBrokerage.Run()\n");
-                Robotis::WalkLabBrokerage().Run();   // 무한 루프 — SIGTERM 까지. SOCCER 루프 우회.
+                Robotis::WalkLabBrokerage().Run(&cm730);   // 무한 루프 — SIGTERM 까지. SOCCER 루프 우회.
                 return 0;                            // 도달 불가(Run 무한). 방어적.
             }
 

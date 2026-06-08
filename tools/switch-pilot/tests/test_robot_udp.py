@@ -89,6 +89,7 @@ class SendTests(unittest.TestCase):
         cmd = MotionCommand(
             enabled=True,
             stride_mm=10.0,
+            side_mm=0.0,
             turn_deg=0.0,
             head_pan_deg=0.0,
             head_tilt_deg=0.0,
@@ -103,6 +104,7 @@ class SendTests(unittest.TestCase):
         cmd = MotionCommand(
             enabled=False,
             stride_mm=0.0,
+            side_mm=0.0,
             turn_deg=0.0,
             head_pan_deg=0.0,
             head_tilt_deg=0.0,

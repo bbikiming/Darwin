@@ -1644,57 +1644,97 @@ public final class ConnectionStore: ObservableObject {
         }
     }
 
-    /// `switchMode` 헬퍼 — 관절 버스(LAN/5530) 연결.
+    // MARK: - 공유 연결 핸드셰이크 (마법사 ↔ 모드전환 공통)
+    //
+    // 종전엔 LAN/온보드 연결 시퀀스가 ConnectionWizard(connectLAN/connectSSHOnboard)와
+    // 여기(switchToJointEdit/switchToWalk)에 **복제**돼 있었다 — 한쪽만 고치면 어긋나
+    // "관절편집 전환 연결 오류"(2026-06-03)의 근본 원인. 이제 단일 메서드로 통합하고
+    // 양쪽이 호출만 한다. 진행 표시(status vs modeSwitchPhase)·View 전용 검증·12s 타임아웃
+    // 같은 호출자 고유 UX 는 클로저/호출부에 남긴다.
+
+    /// 공유 핸드셰이크 진행 단계 — 호출자가 자기 UI(`status` / `modeSwitchPhase`)로 매핑.
+    public enum ConnectStep: Equatable {
+        case openingBridge      // LAN: 5530 포트 여는 중
+        case connectingBus      // LAN: 관절 버스 연결
+        case verifyingMode      // 온보드: 데모 모드 확인
+        case startingWalklab    // 온보드: walklab 기동(로봇이 움직임)
+        case waitingTelemetry   // 온보드: 텔레메트리 대기
+    }
+
+    /// 공유 핸드셰이크 결과.
+    public enum ConnectSequenceResult: Equatable {
+        /// 성공. LAN: bus 연결 완료. 온보드: 텔레메트리 poller 시작(첫 샘플 대기).
+        case connected
+        /// 실패 — 사용자에게 보여줄 한국어 사유.
+        case failed(String)
+        /// await 갭 동안 더 새로운 연결 시도가 시작됨 — 호출자는 공유 status 를 건드리지 말 것.
+        case superseded
+    }
+
+    /// **공통 LAN 브리지 연결 시퀀스** — `ConnectionWizard.connectLAN` 과 `switchToJointEdit` 가 공유.
     ///
-    /// ⚠️ **ConnectionWizard.connectLAN 과 동일 시퀀스** — 변경 시 양쪽 동기화.
-    /// (TODO: store 공통 헬퍼로 통합해 divergence 제거.)
-    ///
-    /// **버그 fix (2026-06-03)**: 종전엔 `demoStop` 직후 결과 확인 없이 `connect` 해서,
-    /// 브리지(socat 5530)가 아직 안 떴는데 연결을 시도 → "연결 오류". 마법사처럼
-    /// `startLanBridge`(데모 종료 + socat 기동 + `:5530` listen 최대 4초 대기 → `BRIDGE_OK`)
-    /// 로 포트를 연 뒤, **BRIDGE_OK 확인 후에만** bus 연결한다.
+    /// `startLanBridge`(데모 종료 + socat 기동 + `:5530` listen 최대 4초 대기 → `BRIDGE_OK`)로
+    /// 포트를 연 뒤 **BRIDGE_OK 확인 후에만** bus 연결한다(`connect` 가 bus + telemetryMode(.lan)
+    /// 설정). 진행은 `onStep` 으로 통지하고, 결과 처리(에러 표시 등)는 호출자 몫.
+    /// ⚠️ demo 종료 시 로봇 토크가 풀리므로 거치/파지 상태에서 사용.
     @MainActor
-    private func switchToJointEdit(remoteShell: RemoteShell) async {
-        // LAN = 유선 직결 고정(192.168.123.1). Mac bus 가 모터 직접 구동 → Mac 키프레임 엔진.
+    func connectLANBridge(
+        remoteShell: RemoteShell,
+        onStep: (ConnectStep) -> Void
+    ) async -> ConnectSequenceResult {
+        // LAN(5530) = 유선 직결 고정(192.168.123.1) — 직전 SSH 세션(무선 등) host 상속 안 함.
+        // Mac bus 가 모터 직접 구동 → Mac 키프레임 엔진.
         let wiredHost = DFConnectionConstants.robotEthernetIP
         let port: UInt16 = networkPort == 0 ? DFConnectionConstants.bridgePort : networkPort
         networkPort = port
         networkHost = wiredHost
         remoteShell.host = wiredHost
+        // 이 시도의 세대 확보 — await 갭 사이 다른 경로로 전환되면 stale task 가 공유 상태를
+        // 덮지 않도록(아래 가드), onboard→LAN 전환 시 직전 onboard 12s 타임아웃 무효화.
         connectAttemptGeneration &+= 1
+        let attemptGen = connectAttemptGeneration
         stopOnboardTelemetry()                          // 곧 socat 으로 교체될 데모 폴링 중단.
         walkSession?.walkingEngine = .macSparseKeyframe
 
-        modeSwitchPhase = .switching(to: .jointEdit, step: "5530 포트 여는 중…")
+        onStep(.openingBridge)
         let ex = await remoteShell.send(RobotSetupCommand.startLanBridge)
+        // await 동안 더 새로운 시도가 시작됐으면 stale — 공유 상태/표시 건드리지 않고 반환.
+        guard attemptGen == connectAttemptGeneration else { return .superseded }
+        let out = ex?.result ?? ""
+        let ok = out.contains("BRIDGE_OK")
+        harness.record(
+            .setupConnOneClickFired, level: .info, actor: .system,
+            data: ["trigger": AnyCodable("lan.autoBridge"),
+                   "bridge": AnyCodable(ok ? "ok" : "fail")]
+        )
+        // SSH 실패/BRIDGE_FAIL 이면 죽은 포트로 bus 연결(타임아웃) 대신 명확한 사유.
         if ex == nil || ex?.error != nil {
-            modeSwitchPhase = .failed("LAN 브리지 시작 실패 — SSH 응답 없음. 랜선·SSH/키 확인")
-            return
+            return .failed("LAN 브리지 시작 실패 — SSH 응답 없음(\(wiredHost)). 랜선·SSH/키 확인")
         }
-        guard (ex?.result ?? "").contains("BRIDGE_OK") else {
-            modeSwitchPhase = .failed("LAN 브리지(socat) 시작 실패 — 로봇 /dev/ttyUSB0·포트 확인")
-            return
+        guard ok else {
+            return .failed("LAN 브리지(socat) 시작 실패 — 로봇 /dev/ttyUSB0·포트 확인")
         }
-
-        modeSwitchPhase = .switching(to: .jointEdit, step: "관절 버스 연결…")
-        // BRIDGE_OK 확정 후에만 연결 — connect 가 bus + telemetryMode(.lan) 설정.
+        onStep(.connectingBus)
+        // BRIDGE_OK 확정 후에만 연결 — 캡처한 유선 endpoint 로 결정적 연결.
         connect(endpoint: .network(host: wiredHost, port: port))
-        modeSwitchPhase = .idle
+        return .connected
     }
 
-    /// `switchMode` 헬퍼 — 보행(SSH 온보드) 모드 연결.
+    /// **공통 온보드(SSH) 연결 시퀀스** — `ConnectionWizard.connectSSHOnboard` 와 `switchToWalk` 가 공유.
     ///
-    /// ⚠️ **ConnectionWizard.connectSSHOnboard 와 동일 시퀀스** — 변경 시 양쪽 동기화.
-    /// (TODO: store 공통 헬퍼로 통합.)
-    ///
-    /// **fix (2026-06-03)**: 종전엔 엔진/brokering 설정과 기동 게이트가 빠져, 콕핏이 SIM 으로
-    /// 빠지거나 명령이 안 나갈 수 있었다. 마법사처럼 `walkingEngine=.robotisOnboard` +
-    /// `autoOnboardBrokering=true` 설정 후, walklab 활성 verify → 미활성이면 기동하고
-    /// **"✅ demo 실행 중" 마커 확인 후에만** 온보드 텔레메트리를 시작한다.
+    /// `host` 는 호출자가 확정해 전달(마법사: 유무선 `resolvedSSHHost` / 모드전환: 현재 shell host).
+    /// walklab 모드 verify → 미활성이면 기동(`walkLabRobotisStart`,
+    /// **"DF_READY_START=brokerage_ready" 마커 확인**)
+    /// → 온보드 텔레메트리 시작. 성공 후 첫 샘플 도착 시 `ingestOnboardTelemetry` 가 status 를
+    /// `.connected` 로 올린다(truth 기반 — 여기서 eager 연결 표시 안 함). 진행은 `onStep` 통지.
     @MainActor
-    private func switchToWalk(remoteShell: RemoteShell) async {
-        let host = remoteShell.host.isEmpty ? DFConnectionConstants.robotEthernetIP : remoteShell.host
+    func connectOnboard(
+        host: String,
+        remoteShell: RemoteShell,
+        onStep: (ConnectStep) -> Void
+    ) async -> ConnectSequenceResult {
         networkHost = host
+        remoteShell.host = host
         // 콕핏 isOnboardMode·motorGate·brokering 활성화 — 안 켜면 SIM/명령 미송출(사용자 보고).
         walkSession?.walkingEngine = .robotisOnboard
         walkSession?.autoOnboardBrokering = true
@@ -1702,31 +1742,107 @@ public final class ConnectionStore: ObservableObject {
         connectAttemptGeneration &+= 1
         let attemptGen = connectAttemptGeneration
 
-        modeSwitchPhase = .switching(to: .walk, step: "데모 모드 확인…")
+        onStep(.verifyingMode)
         let verify = await remoteShell.send(RobotSetupCommand.walkLabVerifyMode)
-        guard attemptGen == connectAttemptGeneration else { return }
+        guard attemptGen == connectAttemptGeneration else { return .superseded }
+        // SSH 실패 시 명확한 에러 — 무한 "연결중" 고착 방지.
         if verify == nil || verify?.error != nil || (verify?.result ?? "").isEmpty {
-            modeSwitchPhase = .failed("SSH 응답 없음 — 호스트(\(host))·SSH 키 확인")
-            return
+            harness.record(
+                .setupConnOneClickFired, level: .warn, actor: .system,
+                data: ["trigger": AnyCodable("sshOnboard"), "result": AnyCodable("ssh_fail")]
+            )
+            return .failed("SSH 온보드 연결 실패 — \(verify?.error ?? "응답 없음"). 호스트(\(host))·SSH 키 확인")
         }
-        if !((verify?.result ?? "").contains("DF_WALKLAB=active")) {
-            modeSwitchPhase = .switching(to: .walk, step: "walklab 기동 — 로봇이 움직입니다(잡아주세요)")
+        let state = verify?.result ?? ""
+        if !state.contains("DF_WALKLAB=active") {
+            // 미실행/idle → walklab 으로 기동(socat 정지 + demo walklab). 로봇이 init 자세로 움직임.
+            onStep(.startingWalklab)
             let started = await remoteShell.send(RobotSetupCommand.walkLabRobotisStart)
-            guard attemptGen == connectAttemptGeneration else { return }
+            guard attemptGen == connectAttemptGeneration else { return .superseded }
+            // 기동 명령 자체가 SSH 에러면 거짓 연결로 넘기지 않음.
             if started == nil || started?.error != nil {
-                modeSwitchPhase = .failed("온보드 demo 기동 실패 — \(started?.error ?? "응답 없음")")
-                return
+                return .failed("온보드 demo 기동 실패 — \(started?.error ?? "응답 없음")")
             }
-            guard (started?.result ?? "").contains("✅ demo 실행 중") else {
-                modeSwitchPhase = .failed("walklab 데몬이 안 떴습니다 — patched 바이너리·카메라·포트 확인")
-                return
+            // RemoteShell.send 는 SSH 전송 실패만 error — 원격이 exit 1 이어도 error==nil.
+            // 최신 성공 마커는 프로세스 생존이 아니라 walklab-active + 14-token ACK 검증 완료다.
+            let startOutput = started?.result ?? ""
+            if !startOutput.contains("DF_READY_START=brokerage_ready") {
+                if startOutput.contains("DF_READY_START=old_walklab_patch") {
+                    return .failed("온보드 demo가 구버전 WalkLab patch입니다 — switch-fix brokerage로 재빌드가 필요합니다.")
+                }
+                if startOutput.contains("DF_READY_START=ack_timeout") {
+                    return .failed("WalkLab 시작은 됐지만 최신 명령/ACK 검증 실패 — 브로커리지 루프 또는 demo 바이너리 버전 확인")
+                }
+                if startOutput.contains("DF_READY_START=progress_timeout") {
+                    return .failed("WalkLab active 단계 진입 실패 — 로봇 초기화/카메라/모터 상태 확인")
+                }
+                if startOutput.contains("DF_READY_START=old_process_still_running") {
+                    return .failed("기존 demo가 종료되지 않아 새 WalkLab을 시작하지 못했습니다 — 로봇에서 demo 프로세스 정리 필요")
+                }
+                return .failed("온보드 demo 기동 실패 — 최신 WalkLab brokerage 준비 마커가 없습니다.")
             }
         }
-        guard attemptGen == connectAttemptGeneration else { return }
-        modeSwitchPhase = .switching(to: .walk, step: "온보드 텔레메트리…")
-        // 첫 샘플 도착 시 ingestOnboardTelemetry 가 status 를 .connected 로 올린다(truth 기반).
+        // 텔레메트리 시작 직전 마지막 가드 — 전환됐으면 poller 안 띄운다.
+        guard attemptGen == connectAttemptGeneration else { return .superseded }
         startOnboardTelemetry(remoteShell: remoteShell)
-        modeSwitchPhase = .idle
+        harness.record(
+            .setupConnOneClickFired, level: .info, actor: .system,
+            data: ["trigger": AnyCodable("sshOnboard"),
+                   "verify": AnyCodable(state.contains("active") ? "active" : "started")]
+        )
+        onStep(.waitingTelemetry)
+        return .connected
+    }
+
+    /// `switchMode` 헬퍼 — 관절 버스(LAN/5530) 연결. 공통 `connectLANBridge` 를 호출하고
+    /// 진행/결과를 `modeSwitchPhase` 로 매핑한다.
+    @MainActor
+    private func switchToJointEdit(remoteShell: RemoteShell) async {
+        let result = await connectLANBridge(remoteShell: remoteShell) { [weak self] step in
+            switch step {
+            case .openingBridge:
+                self?.modeSwitchPhase = .switching(to: .jointEdit, step: "5530 포트 여는 중…")
+            case .connectingBus:
+                self?.modeSwitchPhase = .switching(to: .jointEdit, step: "관절 버스 연결…")
+            default:
+                break
+            }
+        }
+        switch result {
+        case .connected:
+            modeSwitchPhase = .idle
+        case .failed(let reason):
+            modeSwitchPhase = .failed(reason)
+        case .superseded:
+            break   // 새 시도가 phase 를 소유 — 건드리지 않음.
+        }
+    }
+
+    /// `switchMode` 헬퍼 — 보행(SSH 온보드) 모드 연결. 공통 `connectOnboard` 를 호출하고
+    /// 진행/결과를 `modeSwitchPhase` 로 매핑한다. host 는 현재 shell host(없으면 유선 직결).
+    @MainActor
+    private func switchToWalk(remoteShell: RemoteShell) async {
+        let host = remoteShell.host.isEmpty ? DFConnectionConstants.robotEthernetIP : remoteShell.host
+        let result = await connectOnboard(host: host, remoteShell: remoteShell) { [weak self] step in
+            switch step {
+            case .verifyingMode:
+                self?.modeSwitchPhase = .switching(to: .walk, step: "데모 모드 확인…")
+            case .startingWalklab:
+                self?.modeSwitchPhase = .switching(to: .walk, step: "walklab 기동 — 로봇이 움직입니다(잡아주세요)")
+            case .waitingTelemetry:
+                self?.modeSwitchPhase = .switching(to: .walk, step: "온보드 텔레메트리…")
+            default:
+                break
+            }
+        }
+        switch result {
+        case .connected:
+            modeSwitchPhase = .idle
+        case .failed(let reason):
+            modeSwitchPhase = .failed(reason)
+        case .superseded:
+            break
+        }
     }
 
     /// 모드 전환 실패 메시지 해제 — 사용자가 확인/재시도 시.

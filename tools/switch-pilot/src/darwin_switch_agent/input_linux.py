@@ -18,6 +18,8 @@ EV_ABS = 0x03
 # (304) — the opposite of an Xbox layout. ZL/ZR are the shoulder triggers.
 BTN_SOUTH = 0x130  # 304  physical B (Nintendo)
 BTN_EAST = 0x131  # 305  physical A (Nintendo)
+BTN_TL = 0x136  # 310  L
+BTN_TR = 0x137  # 311  R
 BTN_TL2 = 0x138  # 312  ZL
 BTN_TR2 = 0x139  # 313  ZR
 BTN_SELECT = 0x13A  # 314  Minus
@@ -149,6 +151,63 @@ def _prefer_rank(name: str, prefer_names: Iterable[str]) -> int:
     return len(tuple(prefer_names)) + 10
 
 
+def inspect_input_profiles(input_config: dict, log: logging.Logger | None = None) -> list[DeviceProfile]:
+    """Inspect configured /dev/input/event* nodes without registering them.
+
+    Shared by the live controller reader and the read-only field input checker
+    so both tools see identical device names/capabilities.
+    """
+    patterns = input_config.get("event_globs", ["/dev/input/event*"])
+    paths: list[str] = []
+    for pattern in patterns:
+        paths.extend(sorted(glob.glob(str(pattern))))
+    profiles: list[DeviceProfile] = []
+    for path in paths:
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except PermissionError:
+            if log:
+                log.warning("permission denied for %s; run as root or add the input group", path)
+            continue
+        except OSError as exc:
+            if log:
+                log.debug("skipping input device %s: %s", path, exc)
+            continue
+        try:
+            profiles.append(
+                DeviceProfile(
+                    path=path,
+                    name=_read_name(fd),
+                    keys=_read_codes(fd, EV_KEY, KEY_COUNT),
+                    axes=_read_codes(fd, EV_ABS, ABS_COUNT),
+                )
+            )
+        finally:
+            os.close(fd)
+    return profiles
+
+
+def select_controller_profile(
+    profiles: Iterable[DeviceProfile],
+    prefer_names: Iterable[str] = DEFAULT_PREFER_NAMES,
+) -> DeviceProfile | None:
+    controllers = [p for p in profiles if p.is_controller and not p.is_imu]
+    if not controllers:
+        return None
+    return min(controllers, key=lambda p: (_prefer_rank(p.name, prefer_names), p.path))
+
+
+def resolve_role_codes(profile: DeviceProfile, mapping_config: dict) -> dict[str, set[int]]:
+    """Resolve controller role codes against the device's actual keys."""
+    roles: dict[str, set[int]] = {}
+    for role, defaults in DEFAULT_ROLE_CODES.items():
+        cfg = {int(v) for v in mapping_config.get(role, [])}
+        wanted = cfg or set(defaults)
+        present = {c for c in wanted if not profile.keys or c in profile.keys}
+        roles[role] = present or set(defaults)
+    return roles
+
+
 class LinuxInputReader:
     """Small Linux input_event reader with no third-party dependencies.
 
@@ -197,44 +256,18 @@ class LinuxInputReader:
     def _open_devices(self) -> None:
         prefer = list(self.input_config.get("prefer_names", DEFAULT_PREFER_NAMES)) or list(DEFAULT_PREFER_NAMES)
         profiles = self._inspect_candidates()
-        controllers = [p for p in profiles if p.is_controller and not p.is_imu]
         skipped = [p for p in profiles if p.is_imu]
         for p in skipped:
             self.log.info("excluding IMU/non-stick device %s (%s)", p.path, p.name)
-        if not controllers:
+        chosen = select_controller_profile(profiles, prefer)
+        if not chosen:
             self.log.warning("no controller-like input device found; agent will see no input")
             return
-        chosen = min(controllers, key=lambda p: (_prefer_rank(p.name, prefer), p.path))
         self._register(chosen)
         self._resolve_roles(chosen)
 
     def _inspect_candidates(self) -> list[DeviceProfile]:
-        patterns = self.input_config.get("event_globs", ["/dev/input/event*"])
-        paths: list[str] = []
-        for pattern in patterns:
-            paths.extend(sorted(glob.glob(str(pattern))))
-        profiles: list[DeviceProfile] = []
-        for path in paths:
-            try:
-                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
-            except PermissionError:
-                self.log.warning("permission denied for %s; run as root or add the input group", path)
-                continue
-            except OSError as exc:
-                self.log.debug("skipping input device %s: %s", path, exc)
-                continue
-            try:
-                profiles.append(
-                    DeviceProfile(
-                        path=path,
-                        name=_read_name(fd),
-                        keys=_read_codes(fd, EV_KEY, KEY_COUNT),
-                        axes=_read_codes(fd, EV_ABS, ABS_COUNT),
-                    )
-                )
-            finally:
-                os.close(fd)
-        return profiles
+        return inspect_input_profiles(self.input_config, self.log)
 
     def _register(self, profile: DeviceProfile) -> None:
         try:
@@ -253,11 +286,7 @@ class LinuxInputReader:
         Config-supplied codes win (operator override); otherwise the Nintendo
         defaults are used, filtered to the device's real capability set.
         """
-        for role, defaults in DEFAULT_ROLE_CODES.items():
-            cfg = {int(v) for v in self.mapping_config.get(role, [])}
-            wanted = cfg or set(defaults)
-            present = {c for c in wanted if not profile.keys or c in profile.keys}
-            self.role_codes[role] = present or set(defaults)
+        self.role_codes = resolve_role_codes(profile, self.mapping_config)
         self.log.info(
             "resolved roles deadman=%s arm=%s stop=%s estop=%s",
             sorted(self.role_codes["deadman_key_codes"]),
@@ -315,7 +344,10 @@ class LinuxInputReader:
             elif code in self._codes("left_y_abs_codes"):
                 self.state.left_y = -normalized if self._bool("invert_left_y", True) else normalized
             elif code in self._codes("right_x_abs_codes"):
-                self.state.right_x = normalized
+                # 2026-06-08 — 헤드 pan 좌우가 반대로 동작한다는 사용자 보고에 따라
+                # invert_right_x 옵션 추가(default False — 기존 동작 보존). config 에서
+                # 켜면 실로봇 헤드가 의도와 같은 방향으로 회전.
+                self.state.right_x = -normalized if self._bool("invert_right_x", False) else normalized
             elif code in self._codes("right_y_abs_codes"):
                 self.state.right_y = -normalized if self._bool("invert_right_y", True) else normalized
 

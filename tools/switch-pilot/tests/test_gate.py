@@ -7,7 +7,8 @@ Run (no pytest needed):
 gate_motion is the final guard before a command is sent to the robot. Only an
 armed AND not-estopped command may pass through unchanged; in every other state
 (not armed, estopped, or both) the gate must force enabled=False and zero all
-motion amplitudes. Head aim is also zeroed by the gate.
+walking amplitudes. Head aim is preserved so a deadman release or normal stop
+does not recenter the robot's head.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ def _cmd():
     return MotionCommand(
         enabled=True,
         stride_mm=20.0,
+        side_mm=6.0,
         turn_deg=8.0,
         head_pan_deg=30.0,
         head_tilt_deg=-15.0,
@@ -32,9 +34,10 @@ def _cmd():
 def _assert_zeroed(test, cmd):
     test.assertFalse(cmd.enabled)
     test.assertEqual(cmd.stride_mm, 0.0)
+    test.assertEqual(cmd.side_mm, 0.0)
     test.assertEqual(cmd.turn_deg, 0.0)
-    test.assertEqual(cmd.head_pan_deg, 0.0)
-    test.assertEqual(cmd.head_tilt_deg, 0.0)
+    test.assertEqual(cmd.head_pan_deg, 30.0)
+    test.assertEqual(cmd.head_tilt_deg, -15.0)
 
 
 class GateTests(unittest.TestCase):

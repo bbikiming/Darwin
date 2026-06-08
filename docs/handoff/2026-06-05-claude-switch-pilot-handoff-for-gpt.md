@@ -71,18 +71,24 @@ Two trees under `tools/`:
     **3D model toggle** via `localStorage darwinNo3D`).
   - `robot3d.js` — RUNTIME: loads ONE `assets/darwin.glb` via `GLTFLoader` (vendored,
     relative imports), camera-fallback only, FPS/DPR capped, paused when camera live.
-  - `assets/darwin.glb` (~0.54MB, decimated), `assets/darwin-icon.png` (DarwinForge copy).
+    Also exposes optional `cameraView` + `lighting: "inspection"` for build-only QA.
+    Runtime activation now forces resize + immediate render so the cockpit does
+    not show a blank canvas after mounting from a hidden state.
+  - `model-check.html` — RUNTIME: installed on Switch; opens at
+    `http://127.0.0.1:8765/model-check.html` and measures real browser WebGL
+    frame timing against the 30fps cap (`충분`/`주의`/`불충분`).
+  - `assets/darwin.glb` (~0.73MB, decimated + vertex normals), `assets/darwin-icon.png` (DarwinForge copy).
   - `vendor/` — RUNTIME: `three.module.min.js`, `GLTFLoader.js`, `BufferGeometryUtils.js`.
     BUILD-ONLY (pruned from package/install): `STLLoader.js`, `GLTFExporter.js`, `TextureUtils.js`.
   - BUILD-ONLY pages: `robot3d-rig.js` (STL→assembly rig), `build-glb.html` (bake),
-    `robot3d-test.html` (on-device GPU check).
+    `robot3d-test.html` (four-view model QA; pruned from package/install).
 - `tests/` — 11 files, **100 tests** (mapping, gate, safety, safety_settlement, config,
   cockpit incl. loopback, control_bus, robot_udp, input_roles, ssh_control_client).
 - `install.sh` (prunes build-only from the install), `uninstall.sh`, `package.sh` (prunes
-  build-only; tarball ~0.59MB), `bin/darwin-switch-cockpit` (kiosk launcher), 
+  build-only; tarball ~0.76MB), `bin/darwin-switch-cockpit` (kiosk launcher),
   `bin/darwin-switch-camera-tunnel` (autossh), `systemd/darwin-switch-agent.service`
   (`Type=notify`, `WatchdogSec=15`), `desktop/*.desktop` (Icon set), `config.example.json`,
-  `assets/decimate_glb.py` (build-only).
+  `assets/decimate_glb.py` and `assets/add_glb_normals.py` (build-only).
 
 ### `tools/switch-appliance/` — L1–L4 sealing layer (SD-card Linux only)
 - `boot/hekate_ipl.ini.example` — autoboot, **bootwait>=3, VOL- escape** (VOL- opens the
@@ -141,7 +147,15 @@ The cockpit ships ONE decimated `web/assets/darwin.glb`. To regenerate it:
 3. Decimate: `python3 -m venv venv && venv/bin/pip install trimesh fast-simplification`,
    then `venv/bin/python tools/switch-pilot/assets/decimate_glb.py
    web/assets/darwin.glb web/assets/darwin.glb 0.3` (keep ~30% faces).
-Result confirmed renders identically; 101k→30k faces, 4.9MB STL → 0.54MB GLB.
+4. Add normals: `python3 tools/switch-pilot/assets/add_glb_normals.py
+   tools/switch-pilot/web/assets/darwin.glb tools/switch-pilot/web/assets/darwin.glb`.
+   This appends `NORMAL` attributes to all 21 primitives without changing geometry.
+5. Head orientation fix: `geo_op_head` uses `rpy: [0, PI, -PI / 2]` in
+   `web/robot3d-rig.js`. The previous `+PI / 2` bake made the head shell face
+   backward in the Switch cockpit GLB. The already-baked GLB was patched at
+   head node 59 / mesh 0 with the same yaw correction.
+Result confirmed by GLB parsing; 101k→30k faces, 4.9MB STL → 0.73MB GLB
+with POSITION + NORMAL + INDICES.
 
 Note: headless Chrome with `--virtual-time-budget` cannot reliably screenshot the live
 WebGL frame in the full cockpit (it fast-forwards the clock before the render flushes).
@@ -155,15 +169,26 @@ Verify the model with a REAL browser window + `screencapture`, or `web/robot3d-t
 PYTHONPATH=tools/switch-pilot/src python3 -m unittest discover -s tools/switch-pilot/tests
 # -> 100 tests OK
 python3 -m compileall -q tools/switch-pilot/src tools/switch-pilot/tests   # OK
-node --check tools/switch-pilot/web/app.js tools/switch-pilot/web/setup.js \
-  tools/switch-pilot/web/robot3d.js tools/switch-pilot/web/robot3d-rig.js   # OK
-bash -n tools/switch-pilot/install.sh tools/switch-pilot/package.sh \
+python3 -m py_compile tools/switch-pilot/assets/add_glb_normals.py          # OK
+printf '%s\n' tools/switch-pilot/web/app.js tools/switch-pilot/web/setup.js \
+  tools/switch-pilot/web/robot3d.js tools/switch-pilot/web/robot3d-rig.js \
+  | xargs -n1 node --check                                                  # OK
+printf '%s\n' tools/switch-pilot/install.sh tools/switch-pilot/package.sh \
   tools/switch-pilot/uninstall.sh tools/switch-appliance/apply-appliance.sh \
-  tools/switch-appliance/seal/time-sync.sh   # OK
+  tools/switch-appliance/seal/time-sync.sh | xargs -n1 bash -n              # OK
 # Real cockpit (real server + real browser): GLB model renders in the stage, DarwinForge
 # icon shows, Korean UI, honest watchdog label, /api/config loopback-guarded.
 PYTHONPATH=tools/switch-pilot/src python3 -m darwin_switch_agent.main \
   --config tools/switch-pilot/config.example.json   # cockpit at http://127.0.0.1:8765/
+# GLB parse check after normal injection:
+# file 750,396 bytes; JSON 23,960; BIN 726,408; 21 primitives; 15,123 vertices;
+# 30,288 triangles; attributes POSITION + NORMAL; no textures/images.
+# Chrome GPU headless robot3d-test render captured nonblank image with the head
+# face/camera holes aligned forward.
+# Four-view model QA screenshot saved at docs/assets/darwin-model-qa-4view.png.
+# Cockpit dry-run screenshot with control UI + active 3D model saved at
+# docs/assets/darwin-cockpit-control-with-model.png.
+# Runtime model-check page screenshot saved at docs/assets/darwin-model-check-runtime.png.
 ```
 
 ---
@@ -177,7 +202,9 @@ P0 — physical bring-up (blocked on RCM jig). Follow
 3. `apply-appliance.sh` on device; confirm X11 kiosk auto-boots to the cockpit; test recovery (VOL-).
 4. Mac relay E2E (Arm/heartbeat/stop/estop/walk); then SSH walklab control with the robot RAISED / torque-off.
 5. Camera tunnel (`darwin-switch-camera-tunnel`, autossh) + MJPEG longevity.
-6. Real-GPU 3D test (`robot3d-test.html`); decide cage vs X11; decimate further or disable 3D if the Tegra GPU struggles (toggle already exists).
+6. Real-GPU 3D test (`http://127.0.0.1:8765/model-check.html` on the Switch);
+   decide cage vs X11; decimate further or disable 3D if the Tegra GPU struggles
+   (toggle already exists).
 
 P1/P2 — pre-hardware still possible:
 - robot_udp robot-side receiver (firmware-patches) + ~500ms watchdog BEFORE enabling real UDP.

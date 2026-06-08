@@ -30,15 +30,53 @@ class AcceptTests(unittest.TestCase):
             {
                 "mac": {"host": "10.0.0.5", "port": 8765, "pairing_code": "1234"},
                 "robot": {"host": "192.168.0.100", "port": 55310, "token": "abc"},
-                "camera": {"enabled": True, "stream_url": "http://cam/stream"},
+                "camera": {
+                    "enabled": True,
+                    "label": "Darwin Head Camera",
+                    "route": "ssh-tunnel",
+                    "stream_url": "http://cam/stream",
+                    "snapshot_url": "http://cam/snapshot",
+                    "local_port": 18080,
+                    "remote_port": 8080,
+                },
             }
         )
         self.assertEqual(out["mac"]["pairing_code"], "1234")
         self.assertEqual(out["robot"]["port"], 55310)
         self.assertTrue(out["camera"]["enabled"])
+        self.assertEqual(out["camera"]["local_port"], 18080)
+        self.assertEqual(out["camera"]["remote_port"], 8080)
 
     def test_empty_payload_returns_empty_updates(self):
         self.assertEqual(validate_provisioning({}), {})
+
+    def test_accepts_motion_partial_update(self):
+        out = validate_provisioning(
+            {
+                "motion": {
+                    "max_stride_mm": 18,
+                    "max_side_mm": 10,
+                    "turn_from_side_ratio": 0.35,
+                    "hold_head_position": True,
+                }
+            }
+        )
+        self.assertEqual(out["motion"]["max_side_mm"], 10)
+        self.assertTrue(out["motion"]["hold_head_position"])
+
+    def test_accepts_asymmetric_head_tilt(self):
+        # mapping.py 가 소비하는 비대칭 틸트 키를 provisioning 검증기가 보존해야 한다.
+        # (웹 setup → cockpit → validate_provisioning 경로에서 떨어지면 안 됨)
+        out = validate_provisioning(
+            {
+                "motion": {
+                    "max_head_tilt_up_deg": 55.0,
+                    "max_head_tilt_down_deg": 35.0,
+                }
+            }
+        )
+        self.assertEqual(out["motion"]["max_head_tilt_up_deg"], 55.0)
+        self.assertEqual(out["motion"]["max_head_tilt_down_deg"], 35.0)
 
     def test_returns_new_dict_not_input(self):
         payload = {"mode": "ssh"}
@@ -68,6 +106,14 @@ class RejectTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_provisioning({"ssh": {"port": 0}})
 
+    def test_rejects_camera_port_zero(self):
+        with self.assertRaises(ValueError):
+            validate_provisioning({"camera": {"local_port": 0}})
+
+    def test_rejects_camera_port_out_of_range(self):
+        with self.assertRaises(ValueError):
+            validate_provisioning({"camera": {"remote_port": 70000}})
+
     def test_rejects_non_dict_payload(self):
         for bad in ([], "x", 5, None):
             with self.assertRaises(ValueError):
@@ -76,6 +122,10 @@ class RejectTests(unittest.TestCase):
     def test_rejects_non_dict_section(self):
         with self.assertRaises(ValueError):
             validate_provisioning({"ssh": "not-an-object"})
+
+    def test_rejects_negative_motion_value(self):
+        with self.assertRaises(ValueError):
+            validate_provisioning({"motion": {"max_side_mm": -1}})
 
     def test_rejects_non_digit_pairing_code(self):
         with self.assertRaises(ValueError):

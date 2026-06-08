@@ -55,6 +55,20 @@ final class SSHShellArgumentsTests: XCTestCase {
                       "지정 키만 쓰도록 IdentitiesOnly 필요 (다른 키 offer 방지)")
     }
 
+    func testIdentityOfferedWithoutIdentitiesOnlyAllowsFallback() {
+        // 2026-06-07 실측 회귀: Switch 는 id_rsa_darwin 을 offer 하되 다른 키도 fallback.
+        let key = "/Users/x/.ssh/id_rsa_darwin"
+        let args = SSHShell.sshArguments(
+            host: "h", user: "u", command: "c",
+            connectTimeoutSeconds: 5,
+            options: SSHShell.SSHOptions(identityFile: key, legacyServerCompat: false,
+                                         multiplex: false, identitiesOnly: false))
+        guard let i = args.firstIndex(of: "-i") else { return XCTFail("-i 옵션 없음") }
+        XCTAssertEqual(args[args.index(after: i)], key, "키는 여전히 offer")
+        XCTAssertFalse(args.contains("IdentitiesOnly=yes"),
+                       "identitiesOnly=false 면 기본/agent 키 fallback 허용")
+    }
+
     func testNoIdentityFileOmitsDashI() {
         let args = SSHShell.sshArguments(
             host: "h", user: "u", command: "c",

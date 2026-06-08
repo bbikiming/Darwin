@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BOOTSTRAP="${ROOT_DIR}/bin/darwin-switch-bootstrap-os"
+DIAGNOSTICS="${ROOT_DIR}/bin/darwin-switch-collect-diagnostics"
+PREFLIGHT="${ROOT_DIR}/bin/darwin-switch-preflight"
+SMOKE_TEST="${ROOT_DIR}/bin/darwin-switch-smoke-test"
+ACCEPTANCE="${ROOT_DIR}/bin/darwin-switch-day0-acceptance"
+INSTALLER="${ROOT_DIR}/install.sh"
+NO_AUTORUN="${DARWIN_SWITCH_NO_AUTORUN:-0}"
+
+collect_on_error() {
+  local line="$1"
+  local code="$2"
+  local collected=0
+  local installed_diagnostics=""
+  echo "" >&2
+  echo "ERROR: one-pass install failed at line ${line} (exit ${code})." >&2
+  if [[ -x "${DIAGNOSTICS}" ]]; then
+    echo "Collecting source diagnostics..." >&2
+    "${DIAGNOSTICS}" --root "${ROOT_DIR}" --config "${ROOT_DIR}/config.example.json" || true
+    collected=1
+  fi
+  if command -v darwin-switch-collect-diagnostics >/dev/null 2>&1; then
+    installed_diagnostics="$(command -v darwin-switch-collect-diagnostics)"
+    if [[ "${installed_diagnostics}" != "${DIAGNOSTICS}" ]]; then
+      echo "Collecting installed diagnostics..." >&2
+      "${installed_diagnostics}" || true
+      collected=1
+    fi
+  fi
+  if [[ "${collected}" -eq 0 ]]; then
+    if command -v darwin-switch-collect-diagnostics >/dev/null 2>&1; then
+      echo "Collecting installed diagnostics..." >&2
+      darwin-switch-collect-diagnostics || true
+    else
+      echo "Diagnostics helper is unavailable." >&2
+    fi
+  fi
+}
+
+trap 'code=$?; collect_on_error "$LINENO" "$code"; exit "$code"' ERR
+
+if [[ ! -x "${BOOTSTRAP}" ]]; then
+  echo "ERROR: missing executable OS bootstrap: ${BOOTSTRAP}" >&2
+  exit 2
+fi
+
+if [[ ! -x "${DIAGNOSTICS}" ]]; then
+  echo "ERROR: missing executable diagnostics helper: ${DIAGNOSTICS}" >&2
+  exit 2
+fi
+
+if [[ ! -x "${PREFLIGHT}" ]]; then
+  echo "ERROR: missing executable preflight wrapper: ${PREFLIGHT}" >&2
+  exit 2
+fi
+
+if [[ ! -x "${SMOKE_TEST}" ]]; then
+  echo "ERROR: missing executable smoke test: ${SMOKE_TEST}" >&2
+  exit 2
+fi
+
+if [[ ! -x "${ACCEPTANCE}" ]]; then
+  echo "ERROR: missing executable day-0 acceptance helper: ${ACCEPTANCE}" >&2
+  exit 2
+fi
+
+if [[ ! -x "${INSTALLER}" ]]; then
+  echo "ERROR: missing executable installer: ${INSTALLER}" >&2
+  exit 2
+fi
+
+if ! command -v sudo >/dev/null 2>&1; then
+  echo "ERROR: sudo not found. Switchroot Ubuntu admin account is required." >&2
+  exit 2
+fi
+
+echo "== Darwin Switch one-pass install =="
+echo "Bundle: ${ROOT_DIR}"
+echo ""
+
+echo "== 1/6 OS bootstrap =="
+"${BOOTSTRAP}" --if-needed
+echo ""
+
+echo "== 2/6 Source bundle preflight =="
+"${PREFLIGHT}" --root "${ROOT_DIR}" --config "${ROOT_DIR}/config.example.json"
+echo ""
+
+echo "== 3/6 Install runtime =="
+sudo DARWIN_SWITCH_NO_AUTORUN="${NO_AUTORUN}" "${INSTALLER}"
+echo ""
+
+if [[ "${NO_AUTORUN}" == "1" || "${NO_AUTORUN}" == "true" ]]; then
+  echo "== 4/6 Skip automatic service start =="
+  echo "DARWIN_SWITCH_NO_AUTORUN=${NO_AUTORUN}; darwin-switch-agent.service was installed but not enabled or started."
+  echo ""
+
+  echo "== 5/6 Manual-start install check =="
+  /usr/local/bin/darwin-switch-preflight \
+    --root /opt/darwin-switch-agent \
+    --config /etc/darwin-switch-agent/config.json
+  echo ""
+
+  echo "== 6/6 Manual launch commands =="
+  echo "Start agent when ready: sudo systemctl start darwin-switch-agent"
+  echo "Enable boot autostart later: sudo systemctl enable --now darwin-switch-agent"
+  echo "Open cockpit manually: darwin-switch-cockpit"
+else
+  echo "== 4/6 Start agent service =="
+  sudo systemctl enable --now darwin-switch-agent
+  echo ""
+
+  echo "== 5/6 Installed runtime preflight =="
+  /usr/local/bin/darwin-switch-preflight --installed
+  echo ""
+
+  echo "== 6/6 Local smoke test =="
+  /usr/local/bin/darwin-switch-smoke-test --installed
+fi
+
+echo ""
+echo "== Input device report =="
+/usr/local/bin/darwin-switch-input-check || true
+
+echo ""
+echo "== Network / camera report =="
+/usr/local/bin/darwin-switch-network-check || true
+
+echo ""
+echo "Done."
+echo "Open cockpit: darwin-switch-cockpit"
+echo "Logs: journalctl -u darwin-switch-agent -f"
+echo "Smoke: darwin-switch-smoke-test --installed"
+echo "Input: darwin-switch-input-check --seconds 8"
+echo "Network: darwin-switch-network-check"
+echo "Acceptance: darwin-switch-day0-acceptance --input-seconds 8 --strict"

@@ -95,21 +95,23 @@ final class MobileFreeformWalkMapperTests: XCTestCase {
     // MARK: - Safety clamp — robot never sees out-of-range amplitudes
 
     func test_mapper_clamps_into_safe_range() {
+        // 2026-06-08 빠른 보행 baseline — stride 38→50, side 22→26 (자이로 안정 후 채택).
+        // turnDeg 는 관절 충돌 임계로 ±12° 유지.
         let tuning = MobileFreeformWalkMapper.tuning(
             from: makePayload(xMm: 100, yMm: 100, aDeg: 100),
             speedScale: 1.5)
-        XCTAssertLessThanOrEqual(tuning.strideMm, 38)
-        XCTAssertLessThanOrEqual(tuning.sideMm,   22)
-        XCTAssertLessThanOrEqual(tuning.turnDeg,  12)   // 18 → 12 보수화
+        XCTAssertLessThanOrEqual(tuning.strideMm, 50)
+        XCTAssertLessThanOrEqual(tuning.sideMm,   26)
+        XCTAssertLessThanOrEqual(tuning.turnDeg,  12)   // 관절 충돌 안전 임계 — 유지
     }
 
     func test_mapper_clamps_negative_range_too() {
         let tuning = MobileFreeformWalkMapper.tuning(
             from: makePayload(xMm: -100, yMm: -100, aDeg: -100),
             speedScale: 1.5)
-        XCTAssertGreaterThanOrEqual(tuning.strideMm, -30)
-        XCTAssertGreaterThanOrEqual(tuning.sideMm,   -22)
-        XCTAssertGreaterThanOrEqual(tuning.turnDeg,  -12)   // -18 → -12 보수화
+        XCTAssertGreaterThanOrEqual(tuning.strideMm, -50)
+        XCTAssertGreaterThanOrEqual(tuning.sideMm,   -26)
+        XCTAssertGreaterThanOrEqual(tuning.turnDeg,  -12)   // 관절 충돌 안전 임계 — 유지
     }
 
     // MARK: - JSON wire format
