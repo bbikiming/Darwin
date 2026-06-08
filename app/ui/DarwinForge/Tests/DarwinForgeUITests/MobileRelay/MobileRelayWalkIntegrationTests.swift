@@ -56,8 +56,9 @@ final class MobileRelayWalkIntegrationTests: XCTestCase {
                                   hipPitchDeg: 13, speedScale: 1.5)
         let tuning = MobileFreeformWalkMapper.tuning(from: payload,
                                                      speedScale: payload.speedScale ?? 1.0)
-        XCTAssertEqual(tuning.strideMm, 38, accuracy: 0.001)
-        XCTAssertEqual(tuning.sideMm, 22, accuracy: 0.001)
+        // 2026-06-08 빠른보행 baseline: stride clamp 38→50, side 22→26 (Switch agent 정합).
+        XCTAssertEqual(tuning.strideMm, 50, accuracy: 0.001)
+        XCTAssertEqual(tuning.sideMm, 26, accuracy: 0.001)
         // turn clamp 18 → 12 보수화 (다리 충돌 방지, 모든 조종 경로 공통).
         XCTAssertEqual(tuning.turnDeg, 12, accuracy: 0.001)
     }

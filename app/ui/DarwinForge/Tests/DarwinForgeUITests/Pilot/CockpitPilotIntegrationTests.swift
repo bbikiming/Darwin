@@ -235,10 +235,10 @@ final class CockpitPilotIntegrationTests: XCTestCase {
                        "freeform tuning → strideMm 전파 (게이트 전 write)")
         XCTAssertEqual(session.sideMm, 5, accuracy: 0.001)
         XCTAssertEqual(session.turnDeg, 3, accuracy: 0.001)
-        // **회전 가속 (2026-06-02)**: mobileFreeformClamp 가 |turnDeg| 에 비례해 주기를
-        // 단축한다. turnDeg=3 (데드밴드 2 초과) → base 650 에서 약간 가속.
-        // t=(3-2)/(12-2)=0.1 → 650 + (450-650)*0.1 = 630. 직진(turn=0)이면 650 유지.
-        XCTAssertEqual(session.customPeriodMs, 630, accuracy: 0.001,
+        // **회전 가속 (2026-06-08 빠른보행 baseline)**: mobileFreeformClamp 가 |turnDeg| 에
+        // 비례해 주기를 단축한다. turnDeg=3 (데드밴드 2 초과) → base 650 에서 약간 가속.
+        // floor 420 채택 후: t=(3-2)/(12-2)=0.1 → 650 + (420-650)*0.1 = 627. 직진(turn=0)이면 650 유지.
+        XCTAssertEqual(session.customPeriodMs, 627, accuracy: 0.001,
                        "freeform 이 period 전파 + 회전량(3°)만큼 주기 단축(가속)")
         XCTAssertTrue(session.advanced,
                       "freeform tuning 이 advanced=true 활성 (customPeriodMs effective)")
@@ -248,15 +248,15 @@ final class CockpitPilotIntegrationTests: XCTestCase {
         // freeform 은 mobileFreeformClamp 적용 — 과도 입력 saturate.
         freeform(WalkingCommand(strideMm: 999, sideMm: 999, turnDeg: 999),
                  periodMs: 100)
-        XCTAssertLessThanOrEqual(session.strideMm, 38, "stride freeform clamp 38")
-        XCTAssertLessThanOrEqual(session.sideMm, 22, "side freeform clamp 22")
+        XCTAssertLessThanOrEqual(session.strideMm, 50, "stride freeform clamp 50 (빠른보행 baseline)")
+        XCTAssertLessThanOrEqual(session.sideMm, 26, "side freeform clamp 26 (빠른보행 baseline)")
         XCTAssertLessThanOrEqual(session.turnDeg, 12, "turn freeform clamp 12 (충돌 방지)")
-        // **회전 가속 (2026-06-02)**: 풀 회전(turnDeg 999→12) 시 주기 floor 가 600→450 으로
-        // 단축된다(각도 불변, 속도만 ↑). 직진만이면 floor 600 유지.
-        XCTAssertGreaterThanOrEqual(session.customPeriodMs, 450,
-                                    "회전 가속 floor 450 (풀 회전 시)")
-        XCTAssertLessThanOrEqual(session.customPeriodMs, 850,
-                                 "period 상한 850")
+        // **회전 가속 (2026-06-08 빠른보행 baseline)**: 풀 회전(turnDeg 999→12) 시 주기 floor 가
+        // 440→420 으로 단축된다(각도 불변, 속도만 ↑). 직진만이면 base period 유지.
+        XCTAssertGreaterThanOrEqual(session.customPeriodMs, 420,
+                                    "회전 가속 floor 420 (풀 회전 시)")
+        XCTAssertLessThanOrEqual(session.customPeriodMs, 700,
+                                 "period 상한 700 (빠른보행 baseline)")
     }
 
     func test_K16_freeform_continuous_update_no_restart() {
@@ -289,8 +289,9 @@ final class CockpitPilotIntegrationTests: XCTestCase {
 
     func test_K18_freeform_throttle_only_change_propagates() {
         // 무중단 경로의 핵심: stick 고정 + throttle 만 변경 → period 즉시 반영.
-        freeform(WalkingCommand(strideMm: 30, sideMm: 0, turnDeg: 0), periodMs: 850)
-        XCTAssertEqual(session.customPeriodMs, 850, accuracy: 0.001)
+        // 빠른보행 baseline 의 period 상한 700 안에서 검증 (850 입력은 700 으로 saturate).
+        freeform(WalkingCommand(strideMm: 30, sideMm: 0, turnDeg: 0), periodMs: 700)
+        XCTAssertEqual(session.customPeriodMs, 700, accuracy: 0.001)
         // 같은 stride, throttle 만 빠르게 (period 600).
         freeform(WalkingCommand(strideMm: 30, sideMm: 0, turnDeg: 0), periodMs: 600)
         XCTAssertEqual(session.customPeriodMs, 600, accuracy: 0.001,
@@ -359,9 +360,9 @@ final class CockpitPilotIntegrationTests: XCTestCase {
 
     @MainActor
     func test_K24_backward_speed_gauge_honest_clamp() {
-        // **냉정 점검 fix**: 후진 full (-38) 시 게이지가 freeform clamp (-30) 반영.
-        // integrate() 가 30Hz timer 안에서 갱신하므로 직접 공식으로 검증.
-        // mapper 후진 full → strideMm -38, freeform clamp → -30.
+        // **빠른보행 baseline (2026-06-08)**: 후진 full (-38) 은 freeform clamp(-50..50)
+        // 안이라 그대로 통과 → 게이지도 -38 사용. integrate() 가 30Hz timer 안에서 갱신
+        // 하므로 직접 공식으로 검증. mapper 후진 full → strideMm -38, freeform clamp → -38.
         let mapped = VirtualJoystickMapper.map(
             x: 0, y: 1.0, turn: 0, speedScale: 1.0,
             strideMmMax: VirtualJoystickMapper.cockpitStrideMm,
@@ -374,8 +375,8 @@ final class CockpitPilotIntegrationTests: XCTestCase {
                 strideMm: mapped.strideMm, sideMm: 0, turnDeg: 0,
                 periodMs: 600, footHeightMm: 35, balanceGain: 1.0,
                 hipPitchOffsetDeg: 13.0))
-        XCTAssertEqual(clamped.strideMm, -30, accuracy: 0.5,
-                       "freeform clamp 후진 = -30 (실 motor 값) — 게이지도 이 값 사용")
+        XCTAssertEqual(clamped.strideMm, -38, accuracy: 0.5,
+                       "freeform clamp 후진 = -38 (50 한도 이내 통과) — 게이지도 이 값 사용")
     }
 
     // MARK: - 회전 가속 (각도 불변, 주기 단축) — 2026-06-02
@@ -400,14 +401,14 @@ final class CockpitPilotIntegrationTests: XCTestCase {
     }
 
     func test_K26_turnBoost_full_stick_hits_fast_floor() {
-        // 최고속 ↑: 풀스틱(±12°)에서 주기 floor 450ms (fastWalk 검증치)까지 단축.
-        XCTAssertEqual(freeformPeriod(turnDeg: 12), 450, accuracy: 0.01,
-                       "풀 좌회전 → 450ms (약 +55%)")
-        XCTAssertEqual(freeformPeriod(turnDeg: -12), 450, accuracy: 0.01,
-                       "풀 우회전 → 450ms (대칭)")
-        // 클램프 초과 입력도 450 floor 로 saturate (각도는 ±12 로 별도 고정).
-        XCTAssertEqual(freeformPeriod(turnDeg: 30), 450, accuracy: 0.01,
-                       "과도 입력도 floor 450ms saturate")
+        // 최고속 ↑: 풀스틱(±12°)에서 주기 floor 420ms (2026-06-08 빠른보행 baseline)까지 단축.
+        XCTAssertEqual(freeformPeriod(turnDeg: 12), 420, accuracy: 0.01,
+                       "풀 좌회전 → 420ms (base 700 기준 약 +67%)")
+        XCTAssertEqual(freeformPeriod(turnDeg: -12), 420, accuracy: 0.01,
+                       "풀 우회전 → 420ms (대칭)")
+        // 클램프 초과 입력도 420 floor 로 saturate (각도는 ±12 로 별도 고정).
+        XCTAssertEqual(freeformPeriod(turnDeg: 30), 420, accuracy: 0.01,
+                       "과도 입력도 floor 420ms saturate")
     }
 
     func test_K27_turnBoost_is_monotonic_between_min_and_max() {
