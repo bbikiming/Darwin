@@ -49,6 +49,20 @@ else
     echo "▶ 리소스 번들 ${#RES_BUNDLES[@]}개 복사 (메시/아이콘/워드마크)"
 fi
 
+# 3a-2) Switch 에이전트 패키지 임베드 (R2 — 앱 내 자동배포 카드용).
+#       package.sh 산출 tarball 을 Contents/Resources 에 두면 "에이전트 자동 배포" 가
+#       Bundle.main 에서 찾아 scp 한다. 실패해도 실행은 계속.
+SWITCH_PKG_SCRIPT="$ROOT/tools/switch-pilot/package.sh"
+if [[ -f "$SWITCH_PKG_SCRIPT" ]]; then
+    rm -f "$APP_PATH/Contents/Resources/"darwin-switch-agent-*.tar.gz
+    if SWITCH_TARBALL="$(bash "$SWITCH_PKG_SCRIPT" | tail -n1)" && [[ -f "$SWITCH_TARBALL" ]]; then
+        cp "$SWITCH_TARBALL" "$APP_PATH/Contents/Resources/"
+        echo "▶ Switch 에이전트 패키지 임베드: $(basename "$SWITCH_TARBALL")"
+    else
+        echo "⚠︎ package.sh 실패 — 에이전트 자동배포 카드가 '패키지 없음' 표시"
+    fi
+fi
+
 cat > "$APP_PATH/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"

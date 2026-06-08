@@ -134,6 +134,97 @@ public enum SSHShell {
         return args
     }
 
+    /// `/usr/bin/scp` subprocess 인자 배열 — 순수 함수(테스트 가능).
+    /// source(로컬) 와 destination(`user@host:remote`) 은 항상 마지막 2개 요소(순서 보장).
+    ///
+    /// SSH 와 동일 연결 옵션(BatchMode/accept-new/legacy/identity)을 공유하되,
+    /// ControlMaster 멀티플렉싱은 쓰지 않는다(scp 단발 전송 — 소켓 재사용 이득 없음).
+    public static func scpArguments(localPath: String,
+                                    remotePath: String,
+                                    host: String,
+                                    user: String,
+                                    connectTimeoutSeconds: Int,
+                                    options: SSHOptions) -> [String] {
+        var args: [String] = [
+            "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "LogLevel=ERROR",
+            "-o", "ConnectTimeout=\(connectTimeoutSeconds)",
+        ]
+        if options.legacyServerCompat {
+            args += ["-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
+                     "-o", "HostKeyAlgorithms=+ssh-rsa"]
+        }
+        if let identity = options.identityFile {
+            args += ["-i", identity]
+            if options.identitiesOnly {
+                args += ["-o", "IdentitiesOnly=yes"]
+            }
+        }
+        args += [localPath, "\(user)@\(host):\(remotePath)"]
+        return args
+    }
+
+    /// `scp` 로 로컬 파일을 원격으로 복사 — key 인증 가정 (BatchMode=yes).
+    /// timeout watchdog 는 `run` 과 동일 패턴.
+    public static func copyFile(localPath: String,
+                                remotePath: String,
+                                host: String,
+                                user: String = "robotis",
+                                timeoutSeconds: TimeInterval = 60,
+                                options: SSHOptions = SSHShell.defaultOptions()) async throws -> Result {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Result, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let started = Date()
+                let task = Process()
+                task.launchPath = "/usr/bin/scp"
+                task.arguments = scpArguments(
+                    localPath: localPath, remotePath: remotePath,
+                    host: host, user: user,
+                    connectTimeoutSeconds: Int(min(timeoutSeconds, 10)),
+                    options: options
+                )
+                let outPipe = Pipe()
+                let errPipe = Pipe()
+                task.standardOutput = outPipe
+                task.standardError = errPipe
+                do {
+                    try task.run()
+                } catch {
+                    cont.resume(throwing: SSHError.spawnFailed(error.localizedDescription))
+                    return
+                }
+                let timedOut = SSHTimeoutFlag()
+                let timer = DispatchWorkItem {
+                    if task.isRunning { timedOut.set(); task.terminate() }
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds,
+                                                  execute: timer)
+                task.waitUntilExit()
+                timer.cancel()
+                if timedOut.get() {
+                    cont.resume(throwing: SSHError.timeout)
+                    return
+                }
+                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                let stdout = String(data: outData, encoding: .utf8) ?? ""
+                let stderr = String(data: errData, encoding: .utf8) ?? ""
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                if task.terminationStatus == 255 &&
+                   (stderr.contains("Permission denied") || stderr.contains("publickey")) {
+                    cont.resume(throwing: SSHError.keyAuthRequired)
+                    return
+                }
+                cont.resume(returning: Result(
+                    stdout: stdout, stderr: stderr,
+                    exitCode: task.terminationStatus,
+                    elapsedMs: elapsed
+                ))
+            }
+        }
+    }
+
     /// SSH 가능 여부 — port 22 reachable + BatchMode 로 즉시 응답.
     /// `true` 면 SSHShell.run 사용 가능. `false` 면 SMB fallback 권장.
     public static func isReachable(host: String, user: String = "robotis",
@@ -148,11 +239,16 @@ public enum SSHShell {
 
     /// SSH 로 명령 실행 — key 인증 가정 (BatchMode=yes).
     /// password 가 필요하면 즉시 실패 → SSHError.keyAuthRequired.
+    ///
+    /// - Parameter stdin: 원격 명령의 표준입력으로 흘려보낼 문자열(옵션). `sudo -S` 가
+    ///   비밀번호를 읽는 용도 — **명령행에 비번을 넣지 않기 위한** 안전 경로. 호출자가
+    ///   비번을 detail/로그에 남기지 않을 책임을 진다(이 함수는 stdin 데이터를 보관하지 않음).
     public static func run(command: String,
                            host: String,
                            user: String = "robotis",
                            timeoutSeconds: TimeInterval = 30,
-                           options: SSHOptions = SSHShell.defaultOptions()) async throws -> Result {
+                           options: SSHOptions = SSHShell.defaultOptions(),
+                           stdin: String? = nil) async throws -> Result {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Result, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 let started = Date()
@@ -174,11 +270,19 @@ public enum SSHShell {
                 let errPipe = Pipe()
                 task.standardOutput = outPipe
                 task.standardError = errPipe
+                // sudo -S 비번 등 원격 stdin 주입 — TTY 없는 ssh 도 원격 명령 stdin 으로 전달.
+                let inPipe: Pipe? = (stdin != nil) ? Pipe() : nil
+                if let inPipe { task.standardInput = inPipe }
                 do {
                     try task.run()
                 } catch {
                     cont.resume(throwing: SSHError.spawnFailed(error.localizedDescription))
                     return
+                }
+                if let inPipe, let data = stdin?.data(using: .utf8) {
+                    // 비번을 한 줄로 써 보내고 EOF — sudo -S 가 첫 줄을 읽는다. 데이터는 보관 안 함.
+                    inPipe.fileHandleForWriting.write(data)
+                    try? inPipe.fileHandleForWriting.close()
                 }
                 // Timeout watchdog. **codex HIGH fix (2026-06-02)**: 종전엔 terminate 만 하고
                 // 비정상 종료 Result 를 그대로 반환 → caller(RemoteShell.send)가 성공으로 오인,

@@ -166,6 +166,24 @@ for bundle in "DarwinForge_DarwinForgeUI.bundle" "DarwinForge_DarwinForgeApp.bun
     fi
 done
 
+# ===== Step 3b: Switch 에이전트 패키지 임베드 (R2 — 앱 내 자동배포) =====
+# tools/switch-pilot/package.sh 산출 tarball 을 Contents/Resources 에 임베드 →
+# 앱의 "에이전트 자동 배포" 카드가 Bundle.main 에서 찾아 scp 한다. codesign(Step 5)
+# 전에 넣어야 봉인에 포함된다. 패키징 실패해도 앱 빌드는 계속(카드가 "패키지 없음" 표시).
+echo "▶ Step 3b: Switch 에이전트 패키지 임베드"
+SWITCH_PKG_SCRIPT="$REPO_ROOT/tools/switch-pilot/package.sh"
+if [ -f "$SWITCH_PKG_SCRIPT" ]; then
+    rm -f "$APP_BUNDLE/Contents/Resources/"darwin-switch-agent-*.tar.gz
+    if SWITCH_TARBALL="$(bash "$SWITCH_PKG_SCRIPT" | tail -n1)" && [ -f "$SWITCH_TARBALL" ]; then
+        cp "$SWITCH_TARBALL" "$APP_BUNDLE/Contents/Resources/"
+        echo "  ✓ 에이전트 패키지: $(basename "$SWITCH_TARBALL")"
+    else
+        echo "  ⚠️ package.sh 실패 — 에이전트 자동배포 카드가 '패키지 없음' 표시 (앱 빌드는 계속)" >&2
+    fi
+else
+    echo "  ⚠️ $SWITCH_PKG_SCRIPT 없음 — 에이전트 패키지 임베드 생략" >&2
+fi
+
 # ===== Step 4: AppIcon.icns 생성 =====
 echo "▶ Step 4: AppIcon.icns 생성"
 ICON_PNG="$REPO_ROOT/app/icon/AppIcon.png"

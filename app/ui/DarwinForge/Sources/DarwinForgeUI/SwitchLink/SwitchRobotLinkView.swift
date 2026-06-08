@@ -11,15 +11,19 @@ public struct SwitchRobotLinkView: View {
 
     @StateObject private var session: SwitchRobotLinkSession
     @ObservedObject private var robotShell: RemoteShell
+    /// R2 — 앱 내 스위치 에이전트 자동 배포(package→scp→install→재시작→검증).
+    @StateObject private var deploy: SwitchAgentDeploySession
 
     @State private var copyToast: String?
     @State private var expanded: Set<String> = []
+    /// Switch sudo 비밀번호(SecureField) — 배포 후 즉시 비움. 저장/로그하지 않음.
+    @State private var sudoPassword: String = ""
 
     /// RootView 가 `remoteShell`(로봇 채널)과 Mac 이 보는 로봇 host 를 주입.
     public init(remoteShell: RemoteShell, macRobotHost: String) {
         _robotShell = ObservedObject(wrappedValue: remoteShell)
         let host = macRobotHost.isEmpty ? remoteShell.host : macRobotHost
-        _session = StateObject(wrappedValue: SwitchRobotLinkSession(
+        let linkSession = SwitchRobotLinkSession(
             macRobotHost: host,
             macRobotUser: remoteShell.username,
             robotRun: { [weak remoteShell] cmd in
@@ -27,7 +31,14 @@ public struct SwitchRobotLinkView: View {
                 guard let ex = await remoteShell.send(cmd, timeoutSeconds: 20) else { return nil }
                 if let err = ex.error { return (false, err) }
                 return (true, ex.result ?? "")
-            }))
+            })
+        _session = StateObject(wrappedValue: linkSession)
+        // 배포 effect 는 호출 시점의 switchHost/User 를 라이브로 읽는다(사용자 편집 반영).
+        _deploy = StateObject(wrappedValue: SwitchAgentDeploySession(
+            effects: SwitchAgentDeployBundle.liveEffects(switchTarget: { [linkSession] in
+                (linkSession.switchHost.trimmingCharacters(in: .whitespaces),
+                 linkSession.switchUser.trimmingCharacters(in: .whitespaces))
+            })))
     }
 
     public var body: some View {
@@ -44,6 +55,7 @@ public struct SwitchRobotLinkView: View {
                     targetsCard
                     if robotShell.activeChannel != .ssh { robotChannelWarning }
                     launchModesCard
+                    SwitchAgentDeploymentCard(deploy: deploy, sudoPassword: $sudoPassword)
                     advancedWizardDisclosure
                     liveStateCard
                     cmdDiagnosticCard
