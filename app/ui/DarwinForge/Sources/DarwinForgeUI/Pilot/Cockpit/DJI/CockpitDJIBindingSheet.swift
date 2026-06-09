@@ -44,7 +44,16 @@ public struct CockpitDJIBindingSheet: View {
     @Binding var profile: DJIBindingProfile
     @ObservedObject var watcher: DJIVirtualJoystickWatcher
 
+    /// 통합 「컨트롤러 연결」 시트에 박혀 렌더될 때 true — 외곽 frame/타이틀/닫기는
+    /// 컨테이너가 제공하고 본 시트는 슬림 pane 툴바(viewMode·profile)만 그린다.
+    private let embedded: Bool
+
+    /// 통합 시트가 미저장 편집 여부를 감지하도록 보고하는 binding (없으면 무시).
+    private let dirtyBinding: Binding<Bool>?
+
     @State private var editingProfile: DJIBindingProfile
+    /// 마지막으로 저장(또는 로드)된 프로파일 — editingProfile 과 다르면 dirty.
+    @State private var savedBaseline: DJIBindingProfile
     @State private var listeningAction: CockpitAction?
     @State private var swapNotice: String?
     @State private var swapNoticeTask: Task<Void, Never>?
@@ -82,11 +91,16 @@ public struct CockpitDJIBindingSheet: View {
 
     public init(isPresented: Binding<Bool>,
                 profile: Binding<DJIBindingProfile>,
-                watcher: DJIVirtualJoystickWatcher) {
+                watcher: DJIVirtualJoystickWatcher,
+                embedded: Bool = false,
+                dirty: Binding<Bool>? = nil) {
         self._isPresented = isPresented
         self._profile = profile
         self._editingProfile = State(initialValue: profile.wrappedValue)
+        self._savedBaseline = State(initialValue: profile.wrappedValue)
         self.watcher = watcher
+        self.embedded = embedded
+        self.dirtyBinding = dirty
     }
 
     public var body: some View {
@@ -100,7 +114,9 @@ public struct CockpitDJIBindingSheet: View {
             Divider()
             footer
         }
-        .frame(width: 1100, height: 760)
+        // embedded: 컨테이너가 준 공간을 채움 · standalone: HIG Preferences large 고정 크기.
+        .frame(maxWidth: embedded ? .infinity : nil, maxHeight: embedded ? .infinity : nil)
+        .frame(width: embedded ? nil : 1100, height: embedded ? nil : 760)
         .background(Color(nsColor: .windowBackgroundColor))
         .onReceive(watcher.$lastReport) { report in
             guard let report, let action = listeningAction else { return }
@@ -118,6 +134,9 @@ public struct CockpitDJIBindingSheet: View {
             watcher.resumeStreaming()
             swapNoticeTask?.cancel()
         }
+        .onChange(of: editingProfile) { _, p in
+            dirtyBinding?.wrappedValue = (p != savedBaseline)
+        }
         .accessibilityIdentifier("cockpit.dji.bindings.sheet")
     }
 
@@ -125,21 +144,25 @@ public struct CockpitDJIBindingSheet: View {
 
     private var topBar: some View {
         HStack(spacing: 16) {
-            // Left: icon + title
-            HStack(spacing: 8) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("DJI 조종기 매핑")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("각 동작에 매핑할 컨트롤러 입력을 선택하세요.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+            if embedded {
+                Spacer()
+            } else {
+                // Left: icon + title
+                HStack(spacing: 8) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("DJI 조종기 매핑")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("각 동작에 매핑할 컨트롤러 입력을 선택하세요.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 }
-            }
 
-            Spacer()
+                Spacer()
+            }
 
             // Center: view mode picker (장치/목록)
             Picker("", selection: $viewMode) {
@@ -156,23 +179,25 @@ public struct CockpitDJIBindingSheet: View {
             // Right: profile dropdown + close
             HStack(spacing: 10) {
                 profileMenu
-                Button {
-                    isPresented = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
-                        .background(
-                            Circle().fill(Color.secondary.opacity(0.12)))
+                if !embedded {
+                    Button {
+                        isPresented = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(
+                                Circle().fill(Color.secondary.opacity(0.12)))
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .help("닫기 (ESC)")
                 }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
-                .help("닫기 (ESC)")
             }
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.vertical, embedded ? 8 : 12)
     }
 
     /// 프로파일 선택 dropdown — 현재는 단일 프로파일이라 표시만. multi-profile 도입
@@ -779,6 +804,8 @@ public struct CockpitDJIBindingSheet: View {
             Button("저장") {
                 profile = editingProfile
                 DJIBindingProfileStore.save(editingProfile)
+                savedBaseline = editingProfile
+                dirtyBinding?.wrappedValue = false
                 isPresented = false
             }
             .keyboardShortcut(.defaultAction)

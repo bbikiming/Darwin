@@ -1,3 +1,4 @@
+import AppKit
 import ForgeCore
 import SwiftUI
 
@@ -112,8 +113,18 @@ public struct PilotCockpitView: View {
     /// realMotorEnabled 일 때만 dispatch 기록 (= 실 robot 테스트 데이터 집합).
     @State private var recorder: CockpitPilotRecorder?
 
-    /// 범용 컨트롤러 세팅 시트(M4) — 가상 컨트롤러로 키매핑/주입 체감.
+    /// 통합 「컨트롤러 연결」 시트 — 게임패드 + DJI RC 연결·매핑을 한 곳에서.
     @State private var showControllerSheet: Bool = false
+
+    /// **DJI RC 라이브 경로 소유권 이전** — 종전 `CockpitDJIPanel` 이 watcher 를
+    /// 소유했으나, 패널을 통합 시트로 합치면서 본 view 가 소유한다. 시트 개폐와
+    /// 무관하게 살아 있어 실 RC 조종이 유지된다. (게임패드 watcher 와 동일 패턴:
+    /// @State 옵셔널 + setup/teardown 수명주기.)
+    #if canImport(IOKit)
+    @State private var djiWatcher: DJIVirtualJoystickWatcher?
+    #endif
+    /// 현재 적용 중인 DJI 바인딩 프로파일 — 통합 시트가 편집·저장하면 watcher 에 반영.
+    @State private var djiProfile: DJIBindingProfile = DJIBindingProfileStore.load()
 
     public init() {}
 
@@ -135,9 +146,10 @@ public struct PilotCockpitView: View {
             cockpitContent
         }
         .overlay(alignment: .topTrailing) { controllerSettingsButton }
-        .sheet(isPresented: $showControllerSheet) {
-            CockpitControllerSettingsSheet(cockpit: cockpit, isPresented: $showControllerSheet)
-        }
+        // 통합 컨트롤러 설정은 **독립 윈도우**로 띄운다 (.sheet 아님). .sheet 는 앱 메인
+        // 창 크기를 절대 넘을 수 없어 작은 창(~1000×665)에선 1200×820 콘텐츠가 구조적으로
+        // 잘렸다. 독립 윈도우는 화면 기준으로 크기·중앙배치가 자유 → 잘림 원천 차단.
+        // 윈도우 open/close 는 showControllerSheet onChange 에서 수행.
         .focusable()
         .focused($keyboardFocused)
         .onAppear { setup() }
@@ -169,6 +181,25 @@ public struct PilotCockpitView: View {
         // 온보드 자동 헤드 추적 on/off. (콕핏 화면 토글과 동일 상태 공유.)
         .onChange(of: cockpit.ballTrackingToggleAt) { _, newValue in
             if newValue != nil { session.ballTrackingEnabled.toggle() }
+        }
+        // 통합 시트에서 DJI 프로파일을 저장하면 라이브 watcher 에 즉시 반영.
+        .onChange(of: djiProfile) { _, newProfile in
+            #if canImport(IOKit)
+            djiWatcher?.applyBindingProfile(newProfile)
+            #endif
+        }
+        // 매핑 창이 열려 있는 동안 NSEvent 키보드 모니터 정지(키업 추적) + 입력 zero —
+        // 단축키 비활성과 함께 콕핏 키보드 경로를 완전히 차단한다. 닫으면 복구.
+        // 독립 매핑 윈도우의 open/close 도 여기서 일원화.
+        .onChange(of: showControllerSheet) { _, open in
+            if open {
+                keyboardMonitor?.stop()
+                cockpit.release()
+                openControllerWindow()
+            } else {
+                keyboardMonitor?.start()
+                closeControllerWindow()
+            }
         }
         .onChange(of: realMotorEnabled) { _, on in
             // **#1 (2026-05-31)**: 콕핏/조종 시뮬에서 실 모터 ON → WalkLab ARM 없이 **즉시**
@@ -225,10 +256,13 @@ public struct PilotCockpitView: View {
         //     OS auto-repeat (hold) 잡음. apply 발사 + 250ms timer fallback.
         //   - CockpitKeyboardMonitor (NSEvent): keyUp 정확 release. monitor 가 어떤
         //     이유로 fail 해도 keyboardShortcut + timer 가 동작 보장.
+        // 컨트롤러 연결 모달이 열려 있는 동안 콕핏 단축키(WASD/QE/Space/R) 비활성 —
+        // 매핑 편집 중 키 입력이 로봇을 움직이거나 E-STOP 시키는 안전 사고 방지.
         .background(CockpitKeyboardHotkeys(
             cockpit: cockpit,
             onEmergency: { cockpitEmergencyStop() },
-            onRecover: { cockpitRecover() }))
+            onRecover: { cockpitRecover() })
+            .disabled(showControllerSheet))
         // SSH↔LAN parity (2026-06-01): 콕핏은 WalkLabView 와 별개 최상위 화면이라
         // 자체 onboard bridge 가 필요. 이 invisible bridge 가 onboard 명령 전송 + 텔레메트리
         // 업링크 lifecycle(remoteShellRef/poller) + walklab 모드 검증을 소유한다.
@@ -305,7 +339,10 @@ public struct PilotCockpitView: View {
                             robotConnected: store.isRobotConnected,
                             armed: isArmed,
                             dxlPowerOn: store.isDxlPowerOn)
-                        CockpitDJIPanel(cockpit: cockpit)
+                        CockpitControllerStatusCard(
+                            cockpit: cockpit,
+                            djiStreaming: djiStreamingNow,
+                            onOpenSettings: { showControllerSheet = true })
                         CockpitKeyboardOverlayCompact(cockpit: cockpit)
                         CockpitAttitudeIndicator(
                             rollDeg: currentIMURoll,
@@ -429,7 +466,10 @@ public struct PilotCockpitView: View {
                     robotConnected: store.isRobotConnected,
                     armed: isArmed,
                     dxlPowerOn: store.isDxlPowerOn)
-                CockpitDJIPanel(cockpit: cockpit)
+                CockpitControllerStatusCard(
+                    cockpit: cockpit,
+                    djiStreaming: djiStreamingNow,
+                    onOpenSettings: { showControllerSheet = true })
                 CockpitKeyboardOverlayCompact(cockpit: cockpit)
             }
         }
@@ -588,7 +628,11 @@ public struct PilotCockpitView: View {
                 robotConnected: store.isRobotConnected,
                 armed: isArmed,
                 dxlPowerOn: store.isDxlPowerOn)
-            CockpitDJIPanel(cockpit: cockpit)
+            CockpitControllerStatusCard(
+                cockpit: cockpit,
+                djiStreaming: djiStreamingNow,
+                onOpenSettings: { showControllerSheet = true })
+                .frame(maxWidth: 260)
             Spacer()
             CockpitAttitudeIndicator(
                 rollDeg: currentIMURoll,
@@ -828,7 +872,7 @@ public struct PilotCockpitView: View {
         Button {
             showControllerSheet = true
         } label: {
-            Label("컨트롤러", systemImage: "gamecontroller.fill")
+            Label("컨트롤러 연결", systemImage: "gamecontroller.fill")
                 .font(.system(size: 12, weight: .semibold))
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .background(Capsule().fill(CockpitColors.panelSolid))
@@ -837,8 +881,92 @@ public struct PilotCockpitView: View {
         }
         .buttonStyle(.plain)
         .padding(.top, 14).padding(.trailing, 16)
-        .help("가상 컨트롤러로 키매핑·주입 체감 (게임패드 없이)")
+        .help("게임패드·DJI 조종기 연결과 키 매핑을 한 곳에서")
     }
+
+    /// 통합 「컨트롤러 연결」 패널 (본연 1100×760) — IOKit 가용 시 DJI watcher 주입,
+    /// 아니면 게임패드 전용 폴백. (watcher 는 setup() 에서 생성되어 진입 시 non-nil.)
+    @ViewBuilder
+    private var controllerConnectionSheet: some View {
+        #if canImport(IOKit)
+        if let djiWatcher {
+            CockpitControllerConnectionSheet(
+                cockpit: cockpit,
+                isPresented: $showControllerSheet,
+                djiProfile: $djiProfile,
+                djiWatcher: djiWatcher)
+        } else {
+            CockpitControllerSettingsSheet(cockpit: cockpit, isPresented: $showControllerSheet)
+        }
+        #else
+        CockpitControllerConnectionSheet(
+            cockpit: cockpit,
+            isPresented: $showControllerSheet,
+            djiProfile: $djiProfile)
+        #endif
+    }
+
+    /// 좌측 상태 카드용 — DJI HID 라이브 스트리밍 여부.
+    private var djiStreamingNow: Bool {
+        #if canImport(IOKit)
+        djiWatcher?.isStreaming ?? false
+        #else
+        false
+        #endif
+    }
+
+    // MARK: - 독립 매핑 윈도우 (잘림 원천 차단)
+
+    /// 「컨트롤러 연결」 매핑 화면을 담는 독립 NSWindow. .sheet 는 앱 메인 창보다 클 수
+    /// 없어 작은 창에선 콘텐츠가 구조적으로 잘렸다 — 독립 윈도우는 **화면(스크린)** 기준
+    /// 으로 크기를 잡고 OS 가 중앙 배치하므로 어떤 메인 창 크기에서도 잘리지 않는다.
+    @State private var mappingWindow: NSWindow?
+    /// 타이틀바 빨간 닫기 버튼 → showControllerSheet 동기화용 observer 토큰.
+    @State private var mappingWindowCloseToken: NSObjectProtocol?
+
+    private func openControllerWindow() {
+        if let win = mappingWindow {
+            win.makeKeyAndOrderFront(nil)
+            return
+        }
+        // 상태바가 @EnvironmentObject store 를 읽으므로 새 윈도우 트리에 명시 주입.
+        let root = controllerConnectionSheet.environmentObject(store)
+        let host = NSHostingController(rootView: AnyView(root))
+        let win = NSWindow(contentViewController: host)
+        win.title = "컨트롤러 연결"
+        win.styleMask = [.titled, .closable, .resizable]
+        win.contentMinSize = NSSize(width: 980, height: 620)
+        win.isReleasedWhenClosed = false
+        // 본연 크기를 기본으로 하되, 화면(visibleFrame)보다 크면 화면에 맞춰 줄인다.
+        let natural = CockpitControllerConnectionSheet.naturalSize
+        let screen = NSScreen.main?.visibleFrame.size
+            ?? CGSize(width: natural.width + 80, height: natural.height + 80)
+        win.setContentSize(NSSize(width: min(natural.width, screen.width - 40),
+                                  height: min(natural.height, screen.height - 40)))
+        win.center()
+        // 빨간 닫기 버튼으로 닫혀도 콕핏 상태(키보드 복구 등)가 동기화되도록.
+        mappingWindowCloseToken = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: win, queue: .main
+        ) { _ in
+            Task { @MainActor in
+                if showControllerSheet { showControllerSheet = false }
+            }
+        }
+        win.makeKeyAndOrderFront(nil)
+        mappingWindow = win
+    }
+
+    private func closeControllerWindow() {
+        guard let win = mappingWindow else { return }
+        if let token = mappingWindowCloseToken {
+            NotificationCenter.default.removeObserver(token)
+        }
+        mappingWindowCloseToken = nil
+        mappingWindow = nil
+        win.contentViewController = nil   // SwiftUI onDisappear(스트리밍 재개 등) 보장.
+        win.close()
+    }
+
 
     // MARK: - Lifecycle
 
@@ -846,6 +974,14 @@ public struct PilotCockpitView: View {
         let w = CockpitGameControllerWatcher(state: cockpit)
         w.start()
         watcher = w
+        // **DJI RC 라이브 경로** — 종전 CockpitDJIPanel 의 책임을 본 view 로 이전.
+        // 통합 시트 개폐와 무관하게 살아 있어 실 RC 조종이 끊기지 않는다.
+        #if canImport(IOKit)
+        let dw = DJIVirtualJoystickWatcher(cockpit: cockpit)
+        dw.start()
+        dw.applyBindingProfile(djiProfile)
+        djiWatcher = dw
+        #endif
         // **방법론 (Unity InputManager keyDown/keyUp)**: NSEvent local monitor
         // 로 정확한 hold/release 추적. SwiftUI keyboardShortcut (keyDown 1회) 의
         // 한계를 우회.
@@ -858,8 +994,15 @@ public struct PilotCockpitView: View {
     }
 
     private func teardown() {
+        // 콕핏 화면을 떠나면 매핑 윈도우도 닫는다 (cockpit/watcher 참조 정리).
+        closeControllerWindow()
+        showControllerSheet = false
         watcher?.stop()
         watcher = nil
+        #if canImport(IOKit)
+        djiWatcher?.stop()
+        djiWatcher = nil
+        #endif
         keyboardMonitor?.stop()
         keyboardMonitor = nil
         cockpit.stopSimulation()

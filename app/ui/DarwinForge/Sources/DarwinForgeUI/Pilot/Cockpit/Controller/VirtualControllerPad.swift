@@ -76,12 +76,16 @@ struct VirtualControllerPad: View {
     // MARK: - 버튼
 
     private var buttonRow: some View {
+        // X/Y/B 는 cockpit 이 실제 소비하는 동작(볼트랙/복구/E-STOP)이라 라벨이 곧 기능.
+        // LB/RB(버튼4/5)는 데드맨·터보 modifier 로 *설정*되지만, cockpit 주입 경로가
+        // 아직 소비하지 않고 마우스 가상 패드로는 hold+drag 동시 입력이 불가하므로,
+        // 거짓 기능명 대신 정직하게 입력명(버튼4/5)으로 표기한다. (Listen 캡처엔 그대로 동작.)
         HStack(spacing: 10) {
-            padButton("LB\n데드맨", index: 4, tint: CockpitColors.live)
+            padButton("LB\n버튼4", index: 4, tint: CockpitColors.live)
             padButton("X\n볼트랙", index: 2, tint: CockpitColors.cyan)
             padButton("Y\n복구", index: 3, tint: CockpitColors.warn)
             padButton("B\nE-STOP", index: 1, tint: CockpitColors.danger)
-            padButton("RB\n터보", index: 5, tint: .white.opacity(0.6))
+            padButton("RB\n버튼5", index: 5, tint: .white.opacity(0.6))
         }
     }
 

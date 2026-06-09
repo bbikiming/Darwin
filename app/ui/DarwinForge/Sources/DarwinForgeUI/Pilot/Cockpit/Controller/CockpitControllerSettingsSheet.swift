@@ -12,16 +12,42 @@ public struct CockpitControllerSettingsSheet: View {
     @ObservedObject var cockpit: CockpitState
     @Binding var isPresented: Bool
 
+    /// 통합 「컨트롤러 연결」 시트에 박혀 렌더될 때 true — 외곽 frame/타이틀/닫기는
+    /// 컨테이너가 제공하므로 본 시트는 슬림 pane 툴바(viewMode·preset)만 그린다.
+    private let embedded: Bool
+
+    /// 통합 시트가 미저장 편집 여부를 감지하도록 보고하는 binding (없으면 무시).
+    private let dirtyBinding: Binding<Bool>?
+
     @StateObject private var source = VirtualControllerSource()
     @State private var driver: CockpitControllerDriver?
 
     @State private var editingProfile: ControllerBindingProfile
+    /// 마지막으로 저장(또는 로드)된 프로파일 — editingProfile 과 다르면 dirty.
+    @State private var savedBaseline: ControllerBindingProfile
     @State private var viewMode: ViewMode = .device
     @State private var selectedAction: CockpitAction = .moveForward
     @State private var selectedBinding: ControllerBinding?
     @State private var listening: Bool = false
     @State private var notice: String?
     @State private var noticeTask: Task<Void, Never>?
+    /// 좌측 액션 목록 검색어 + 필터 (PRD §7.6).
+    @State private var searchText: String = ""
+    @State private var actionFilter: ActionFilter = .all
+
+    enum ActionFilter: String, CaseIterable, Identifiable {
+        case all = "전체", mapped = "매핑됨", unmapped = "미설정", conflict = "충돌", safety = "안전"
+        var id: String { rawValue }
+        var systemImage: String {
+            switch self {
+            case .all: return "line.3.horizontal.decrease.circle"
+            case .mapped: return "checkmark.circle"
+            case .unmapped: return "circle.dashed"
+            case .conflict: return "exclamationmark.triangle"
+            case .safety: return "exclamationmark.octagon"
+            }
+        }
+    }
 
     public enum ViewMode: String, CaseIterable, Identifiable {
         case device = "장치", list = "목록"
@@ -40,10 +66,17 @@ public struct CockpitControllerSettingsSheet: View {
         }
     }
 
-    public init(cockpit: CockpitState, isPresented: Binding<Bool>) {
+    public init(cockpit: CockpitState,
+                isPresented: Binding<Bool>,
+                embedded: Bool = false,
+                dirty: Binding<Bool>? = nil) {
         self.cockpit = cockpit
         self._isPresented = isPresented
-        self._editingProfile = State(initialValue: ControllerBindingProfileStore.load())
+        self.embedded = embedded
+        self.dirtyBinding = dirty
+        let loaded = ControllerBindingProfileStore.load()
+        self._editingProfile = State(initialValue: loaded)
+        self._savedBaseline = State(initialValue: loaded)
     }
 
     public var body: some View {
@@ -55,11 +88,16 @@ public struct CockpitControllerSettingsSheet: View {
             Divider()
             footer
         }
-        .frame(width: 1100, height: 760)
+        // embedded: 컨테이너가 준 공간을 채움 · standalone: HIG Preferences large 고정 크기.
+        .frame(maxWidth: embedded ? .infinity : nil, maxHeight: embedded ? .infinity : nil)
+        .frame(width: embedded ? nil : 1100, height: embedded ? nil : 760)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { startDriver(); syncInspector(selectedAction) }
         .onDisappear { stopDriver(); noticeTask?.cancel() }
-        .onChange(of: editingProfile) { _, p in driver?.profile = p }
+        .onChange(of: editingProfile) { _, p in
+            driver?.profile = p
+            dirtyBinding?.wrappedValue = (p != savedBaseline)
+        }
         .onChange(of: source.snapshot) { _, snap in handleListen(snap) }
     }
 
@@ -67,15 +105,19 @@ public struct CockpitControllerSettingsSheet: View {
 
     private var topBar: some View {
         HStack(spacing: 16) {
-            HStack(spacing: 8) {
-                Image(systemName: "gamecontroller.fill").font(.system(size: 14)).foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("컨트롤러 매핑").font(.system(size: 14, weight: .semibold))
-                    Text("각 동작에 매핑할 컨트롤러 입력을 선택하세요.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
+            if embedded {
+                Spacer()
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "gamecontroller.fill").font(.system(size: 14)).foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("컨트롤러 매핑").font(.system(size: 14, weight: .semibold))
+                        Text("각 동작에 매핑할 컨트롤러 입력을 선택하세요.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
+                Spacer()
             }
-            Spacer()
             Picker("", selection: $viewMode) {
                 ForEach(ViewMode.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -83,15 +125,17 @@ public struct CockpitControllerSettingsSheet: View {
             Spacer()
             HStack(spacing: 10) {
                 presetMenu
-                Button { isPresented = false } label: {
-                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary).frame(width: 22, height: 22)
-                        .background(Circle().fill(Color.secondary.opacity(0.12)))
+                if !embedded {
+                    Button { isPresented = false } label: {
+                        Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary).frame(width: 22, height: 22)
+                            .background(Circle().fill(Color.secondary.opacity(0.12)))
+                    }
+                    .buttonStyle(.plain).keyboardShortcut(.escape, modifiers: []).help("닫기 (ESC)")
                 }
-                .buttonStyle(.plain).keyboardShortcut(.escape, modifiers: []).help("닫기 (ESC)")
             }
         }
-        .padding(.horizontal, 18).padding(.vertical, 12)
+        .padding(.horizontal, 18).padding(.vertical, embedded ? 8 : 12)
     }
 
     private var presetMenu: some View {
@@ -132,7 +176,7 @@ public struct CockpitControllerSettingsSheet: View {
     // MARK: - Left: 동작 할당
 
     private var actionColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Text("동작 할당").font(.system(size: 13, weight: .semibold))
                 Image(systemName: "info.circle").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -140,14 +184,21 @@ public struct CockpitControllerSettingsSheet: View {
                 Spacer()
                 conflictBadge
             }
+            searchFilterBar
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(CockpitAction.Group.allCases, id: \.self) { group in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(groupTitle(group)).font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.secondary)
-                            VStack(spacing: 4) {
-                                ForEach(actions(in: group), id: \.self) { actionCard($0) }
+                    let groups = CockpitAction.Group.allCases.filter { !filteredActions(in: $0).isEmpty }
+                    if groups.isEmpty {
+                        Text("결과 없음").font(.system(size: 11)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity).padding(.top, 24)
+                    } else {
+                        ForEach(groups, id: \.self) { group in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(groupTitle(group)).font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                VStack(spacing: 4) {
+                                    ForEach(filteredActions(in: group), id: \.self) { actionCard($0) }
+                                }
                             }
                         }
                     }
@@ -155,6 +206,34 @@ public struct CockpitControllerSettingsSheet: View {
             }
         }
         .padding(16)
+    }
+
+    private var searchFilterBar: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
+                TextField("동작 검색", text: $searchText)
+                    .textFieldStyle(.plain).font(.system(size: 12))
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 9).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.10)))
+            HStack(spacing: 5) {
+                ForEach(ActionFilter.allCases) { f in
+                    Button { actionFilter = f } label: {
+                        Text(f.rawValue).font(.system(size: 10, weight: .medium))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Capsule().fill(actionFilter == f
+                                ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.10)))
+                            .foregroundStyle(actionFilter == f ? Color.accentColor : Color.secondary)
+                    }.buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     private var conflictBadge: some View {
@@ -213,18 +292,25 @@ public struct CockpitControllerSettingsSheet: View {
                 Spacer()
                 listenButton
                 Circle().fill(.green).frame(width: 7, height: 7)
-                Text("가상 연결됨").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("가상 패드").font(.system(size: 10)).foregroundStyle(.secondary)
             }
-            ControllerDiagramView(
-                snapshot: source.snapshot, profile: editingProfile,
-                selectedBinding: selectedBinding,
-                onTap: { onElementTap($0) })
-            Text("아래 가상 패드로 입력 → 로봇 실시간 반응 · 다이어그램 클릭 = 선택 동작에 매핑")
-                .font(.system(size: 10)).foregroundStyle(.secondary)
-            VirtualControllerPad(source: source)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
-            injectionReadout
-            Spacer(minLength: 0)
+            // 다이어그램+가상패드는 세로로 길어 작은 화면에선 내부 스크롤 — 어떤 창
+            // 높이에서도 콘텐츠가 잘리는 대신 스크롤된다 (헤더 행은 고정).
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 14) {
+                    RGG01ControllerVisual(
+                        snapshot: source.snapshot, profile: editingProfile,
+                        selectedBinding: selectedBinding,
+                        onTap: { onElementTap($0) })
+                    Text("아래 가상 패드로 입력 → 로봇 실시간 반응 · 다이어그램 클릭 = 선택 동작에 매핑")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                    VirtualControllerPad(source: source)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
+                    injectionReadout
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 8)
+            }
         }
         .padding(16)
     }
@@ -277,6 +363,7 @@ public struct CockpitControllerSettingsSheet: View {
                 inputTypeSection
                 if isAxisSelected {
                     sensitivitySection
+                    deadzoneSection
                     responseCurveSection
                     invertSection
                 } else if isButtonSelected {
@@ -344,6 +431,19 @@ public struct CockpitControllerSettingsSheet: View {
                 Text("\(Int(sensitivityBinding.wrappedValue))")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .frame(width: 32, alignment: .trailing)
+            }
+        }
+    }
+
+    private var deadzoneSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("데드존 (Deadzone)").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text("0%").font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                Slider(value: deadzoneBinding, in: 0...40)
+                Text("\(Int(deadzoneBinding.wrappedValue))%")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .frame(width: 36, alignment: .trailing)
             }
         }
     }
@@ -436,11 +536,7 @@ public struct CockpitControllerSettingsSheet: View {
             .buttonStyle(.bordered)
             Spacer()
             Button("취소") { isPresented = false }.buttonStyle(.bordered)
-            Button("저장") {
-                ControllerBindingProfileStore.save(editingProfile)
-                showNotice("프로파일을 저장했어요.")
-                isPresented = false
-            }
+            Button("저장") { attemptSave() }
             .buttonStyle(.borderedProminent)
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
@@ -498,6 +594,13 @@ public struct CockpitControllerSettingsSheet: View {
     private var invertBinding: Binding<Bool> {
         Binding(get: { tuningForSelected()?.invert ?? false },
                 set: { newVal in updateTuning { $0.invert = newVal } })
+    }
+
+    /// 데드존 ↔ innerDeadzone(0…0.4). % 표기. `shaped()` 가 실제로 사용 → 입력에 반영됨.
+    private var deadzoneBinding: Binding<Double> {
+        Binding(
+            get: { (tuningForSelected()?.innerDeadzone ?? ControllerAxisTuning.defaultInnerDeadzone) * 100.0 },
+            set: { newVal in updateTuning { $0.innerDeadzone = max(0, min(0.4, newVal / 100.0)) } })
     }
 
     enum CurvePreset: String, CaseIterable, Identifiable {
@@ -593,6 +696,27 @@ public struct CockpitControllerSettingsSheet: View {
         selectedBinding = editingProfile.bindings[action]
     }
 
+    /// 저장 시도 — 안전 검증(E-STOP 필수) + 충돌 없음 통과해야 저장 (PRD §12.2/§19.1).
+    /// 실제 게이트: 미통과 시 저장하지 않고 사유를 안내한다 (보여주기용 아님).
+    private func attemptSave() {
+        if (editingProfile.bindings[.emergencyStop] ?? .unbound).isUnbound {
+            actionFilter = .safety
+            showNotice("⚠️ 긴급 정지(E-STOP)가 비어 있어 저장할 수 없습니다. 안전 동작을 먼저 매핑하세요.")
+            return
+        }
+        let conflicts = editingProfile.conflicts()
+        if !conflicts.isEmpty {
+            actionFilter = .conflict
+            showNotice("⚠️ 입력 충돌 \(conflicts.count)건을 해결해야 저장됩니다.")
+            return
+        }
+        ControllerBindingProfileStore.save(editingProfile)
+        savedBaseline = editingProfile
+        dirtyBinding?.wrappedValue = false
+        showNotice("프로파일을 저장했어요.")
+        isPresented = false
+    }
+
     private func showNotice(_ text: String) {
         notice = text
         noticeTask?.cancel()
@@ -612,6 +736,33 @@ public struct CockpitControllerSettingsSheet: View {
     }
     private func actions(in group: CockpitAction.Group) -> [CockpitAction] {
         CockpitAction.allCases.filter { $0.group == group }
+    }
+
+    /// 검색어 + 필터 적용 (PRD §7.6). 그룹·동작명·매핑값·안전여부·충돌여부로 거른다.
+    private func filteredActions(in group: CockpitAction.Group) -> [CockpitAction] {
+        let conflictSet = Set(editingProfile.conflicts().flatMap { c -> [CockpitAction] in
+            switch c {
+            case .duplicateInput(_, let acts): return acts
+            case .safetyCriticalUnbound(let a): return [a]
+            }
+        })
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return CockpitAction.allCases.filter { a in
+            guard a.group == group else { return false }
+            let binding = editingProfile.bindings[a] ?? .unbound
+            switch actionFilter {
+            case .all: break
+            case .mapped:   if binding.isUnbound { return false }
+            case .unmapped: if !binding.isUnbound { return false }
+            case .conflict: if !conflictSet.contains(a) { return false }
+            case .safety:   if !a.isSafetyCritical { return false }
+            }
+            if !q.isEmpty {
+                let hay = "\(a.label) \(groupTitle(group)) \(binding.displayLabel)".lowercased()
+                if !hay.contains(q) { return false }
+            }
+            return true
+        }
     }
     private func conflictSummary(_ conflicts: [ControllerBindingConflict]) -> String {
         conflicts.map { c in
