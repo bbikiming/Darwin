@@ -4,6 +4,8 @@ import Foundation
 
 /// UserDefaults 저장 키. 버전 접미사로 마이그레이션 관리.
 private let kControllerBindingProfileKey = "cockpit.controller.binding.profile.v1"
+/// 슬롯 모음 저장 키 (설계 §E). v1 키는 활성 슬롯과 항상 동기화해 하위 호환 유지.
+private let kControllerProfileSlotsKey = "cockpit.controller.binding.profiles.v2"
 
 // MARK: - ControllerBindingProfileStore
 
@@ -38,6 +40,33 @@ public enum ControllerBindingProfileStore {
     /// 저장된 프로파일을 삭제 (다음 load 시 기본 프리셋 반환).
     public static func reset(_ defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: kControllerBindingProfileKey)
+    }
+
+    // MARK: - 슬롯 (v2)
+
+    /// 슬롯 모음 로드. v2 가 없으면 v1 단일 프로파일을 슬롯 0 으로 마이그레이션,
+    /// 둘 다 없으면 기본(Xbox 1개).
+    public static func loadSlots(_ defaults: UserDefaults = .standard) -> ControllerProfileSlots {
+        if let data = defaults.data(forKey: kControllerProfileSlotsKey),
+           let slots = try? JSONDecoder().decode(ControllerProfileSlots.self, from: data) {
+            return slots
+        }
+        if let data = defaults.data(forKey: kControllerBindingProfileKey),
+           let legacy = try? JSONDecoder().decode(ControllerBindingProfile.self, from: data) {
+            return ControllerProfileSlots(profiles: [legacy], activeIndex: 0)
+        }
+        return .default
+    }
+
+    /// 슬롯 모음 저장 — v1 키도 활성 슬롯으로 동기화해 기존 `load()` 경로
+    /// (드라이버 등)가 항상 활성 프로파일을 본다.
+    public static func saveSlots(
+        _ slots: ControllerProfileSlots,
+        into defaults: UserDefaults = .standard
+    ) {
+        guard let data = try? JSONEncoder().encode(slots) else { return }
+        defaults.set(data, forKey: kControllerProfileSlotsKey)
+        save(slots.active, into: defaults)
     }
 
     // MARK: - JSON import / export (PROF-03)
