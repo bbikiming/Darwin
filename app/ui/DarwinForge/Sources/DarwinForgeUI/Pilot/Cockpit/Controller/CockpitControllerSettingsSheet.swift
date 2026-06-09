@@ -31,6 +31,10 @@ public struct CockpitControllerSettingsSheet: View {
     @State private var listening: Bool = false
     @State private var notice: String?
     @State private var noticeTask: Task<Void, Never>?
+    /// 실패드 입력 → 컨트롤 선택 (Steam Input 패턴) — 엣지 추적.
+    @State private var pressTracker = PressToSelectTracker()
+    /// 직전 바인딩 변경의 실행취소 스냅샷 — 토스트의 「실행취소」가 복원.
+    @State private var undoProfile: ControllerBindingProfile?
     /// 좌측 액션 목록 검색어 + 필터 (PRD §7.6).
     @State private var searchText: String = ""
     @State private var actionFilter: ActionFilter = .all
@@ -98,7 +102,9 @@ public struct CockpitControllerSettingsSheet: View {
             driver?.profile = p
             dirtyBinding?.wrappedValue = (p != savedBaseline)
         }
-        .onChange(of: source.snapshot) { _, snap in handleListen(snap) }
+        .onChange(of: source.snapshot) { _, snap in
+            if listening { handleListen(snap) } else { handlePressToSelect(snap) }
+        }
     }
 
     // MARK: - Top bar
@@ -298,11 +304,17 @@ public struct CockpitControllerSettingsSheet: View {
             // 높이에서도 콘텐츠가 잘리는 대신 스크롤된다 (헤더 행은 고정).
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 14) {
-                    RGG01ControllerVisual(
-                        snapshot: source.snapshot, profile: editingProfile,
-                        selectedBinding: selectedBinding,
-                        onTap: { onElementTap($0) })
-                    Text("아래 가상 패드로 입력 → 로봇 실시간 반응 · 다이어그램 클릭 = 선택 동작에 매핑")
+                    ZStack {
+                        RGG01ControllerVisual(
+                            snapshot: source.snapshot, profile: editingProfile,
+                            selectedBinding: selectedBinding,
+                            onTap: { onElementTap($0) })
+                        ControllerCalloutOverlay(
+                            snapshot: source.snapshot, profile: editingProfile,
+                            selectedBinding: selectedBinding,
+                            onSelect: { selectedBinding = $0 })
+                    }
+                    Text("입력을 누르면 해당 컨트롤이 선택 · 다이어그램 클릭 = 선택 동작에 매핑 · 라벨 탭 = 선택만")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                     VirtualControllerPad(source: source)
                         .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
@@ -545,9 +557,16 @@ public struct CockpitControllerSettingsSheet: View {
     private func banner(_ text: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "info.circle.fill").foregroundStyle(.tint)
-            Text(text).font(.system(size: 11)); Spacer()
+            Text(text).font(.system(size: 11))
+            Spacer()
+            if undoProfile != nil {
+                Button("실행취소") { performUndo() }
+                    .font(.system(size: 11, weight: .medium))
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .accessibilityIdentifier("cockpit.controller.binding.undo")
+            }
         }
-        .padding(.horizontal, 18).padding(.vertical, 8)
+        .padding(.horizontal, 18).padding(.vertical, 6)
         .background(Color.accentColor.opacity(0.08))
     }
 
@@ -670,26 +689,33 @@ public struct CockpitControllerSettingsSheet: View {
     }
 
     private func apply(_ binding: ControllerBinding, to action: CockpitAction) {
+        let previous = editingProfile
         let (next, result) = editingProfile.setting(binding, for: action)
-        switch result {
-        case .applied:
-            editingProfile = next
-        case .appliedWithSwap(let swapped):
-            editingProfile = next
-            showNotice("\(swapped.map(\.label).joined(separator: ", ")) 의 매핑을 해제하고 옮겼어요.")
-        case .rejectedSafetyUnbound(let a):
-            showNotice("‘\(a.label)’ 은 안전 동작이라 해제할 수 없어요.")
-        case .rejectedSafetyStolen(let a):
-            showNotice("‘\(a.label)’(안전)에 할당된 입력이라 가져올 수 없어요.")
-        }
+        if BindingChangeFeedback.isUndoable(result) { editingProfile = next }
+        showNotice(BindingChangeFeedback.message(action: action, binding: binding, result: result),
+                   undo: BindingChangeFeedback.isUndoable(result) ? previous : nil)
         selectedBinding = binding
+    }
+
+    private func performUndo() {
+        guard let previous = undoProfile else { return }
+        editingProfile = previous
+        undoProfile = nil
+        syncInspector(selectedAction)
+        showNotice("직전 매핑 변경을 되돌렸어요.")
+    }
+
+    private func handlePressToSelect(_ snapshot: ControllerSnapshot) {
+        let (next, selection) = pressTracker.updated(with: snapshot)
+        pressTracker = next
+        if let selection { selectedBinding = selection }
     }
 
     private func handleListen(_ snapshot: ControllerSnapshot) {
         guard listening, let captured = ControllerBindingCapture.detect(snapshot) else { return }
         listening = false
+        // apply() 가 "{입력} ← {동작}" 토스트 + 실행취소를 띄운다.
         apply(captured, to: selectedAction)
-        showNotice("‘\(selectedAction.label)’ 에 \(captured.displayLabel) 매핑됨.")
     }
 
     private func syncInspector(_ action: CockpitAction) {
@@ -717,12 +743,16 @@ public struct CockpitControllerSettingsSheet: View {
         isPresented = false
     }
 
-    private func showNotice(_ text: String) {
+    private func showNotice(_ text: String, undo: ControllerBindingProfile? = nil) {
         notice = text
+        undoProfile = undo
         noticeTask?.cancel()
+        // undo 가 걸린 토스트는 누를 시간을 더 준다.
+        let duration: UInt64 = undo == nil ? 2_600_000_000 : 5_000_000_000
         noticeTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            try? await Task.sleep(nanoseconds: duration)
             notice = nil
+            undoProfile = nil
         }
     }
 
