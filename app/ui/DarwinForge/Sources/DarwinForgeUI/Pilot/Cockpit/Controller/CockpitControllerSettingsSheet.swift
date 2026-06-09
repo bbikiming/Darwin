@@ -39,37 +39,6 @@ public struct CockpitControllerSettingsSheet: View {
     @State private var searchText: String = ""
     @State private var actionFilter: ActionFilter = .all
 
-    enum ActionFilter: String, CaseIterable, Identifiable {
-        case all = "전체", mapped = "매핑됨", unmapped = "미설정", conflict = "충돌", safety = "안전"
-        var id: String { rawValue }
-        var systemImage: String {
-            switch self {
-            case .all: return "line.3.horizontal.decrease.circle"
-            case .mapped: return "checkmark.circle"
-            case .unmapped: return "circle.dashed"
-            case .conflict: return "exclamationmark.triangle"
-            case .safety: return "exclamationmark.octagon"
-            }
-        }
-    }
-
-    public enum ViewMode: String, CaseIterable, Identifiable {
-        case device = "장치", list = "목록"
-        public var id: String { rawValue }
-    }
-
-    enum Preset: String, CaseIterable, Identifiable {
-        case xbox = "Xbox / RG G01", dualSense = "DualSense", empty = "비어 있음"
-        var id: String { rawValue }
-        var profile: ControllerBindingProfile {
-            switch self {
-            case .xbox: return .xbox
-            case .dualSense: return .dualSense
-            case .empty: return .empty
-            }
-        }
-    }
-
     public init(cockpit: CockpitState,
                 isPresented: Binding<Bool>,
                 embedded: Bool = false,
@@ -88,7 +57,13 @@ public struct CockpitControllerSettingsSheet: View {
             topBar
             if let notice { banner(notice) }
             Divider()
-            if viewMode == .device { deviceColumns } else { listMode }
+            switch viewMode {
+            case .device: deviceColumns
+            case .list: listMode
+            case .tester:
+                ControllerTesterPane(source: source, cockpit: cockpit,
+                                     profile: editingProfile, selectedBinding: $selectedBinding)
+            }
             Divider()
             footer
         }
@@ -127,7 +102,7 @@ public struct CockpitControllerSettingsSheet: View {
             Picker("", selection: $viewMode) {
                 ForEach(ViewMode.allCases) { Text($0.rawValue).tag($0) }
             }
-            .pickerStyle(.segmented).frame(width: 140)
+            .pickerStyle(.segmented).frame(width: 210)
             Spacer()
             HStack(spacing: 10) {
                 presetMenu
@@ -318,7 +293,7 @@ public struct CockpitControllerSettingsSheet: View {
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                     VirtualControllerPad(source: source)
                         .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
-                    injectionReadout
+                    CockpitInjectionReadout(cockpit: cockpit)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 8)
@@ -341,29 +316,6 @@ public struct CockpitControllerSettingsSheet: View {
         .help("선택한 동작에 press-to-bind")
     }
 
-    private var injectionReadout: some View {
-        HStack(spacing: 16) {
-            metric("주입 L-스틱", String(format: "%+.2f, %+.2f", cockpit.leftStick.x, cockpit.leftStick.y))
-            metric("회전", String(format: "%+.2f", cockpit.rightStick.x))
-            metric("명령", commandText)
-        }
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.06)))
-    }
-
-    private func metric(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
-            Text(value).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(.green)
-        }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var commandText: String {
-        let c = cockpit.lastCommand
-        return c.isStop ? "정지" : String(format: "보행 %.0f/%.0f/%.0f", c.strideMm, c.sideMm, c.turnDeg)
-    }
-
     // MARK: - Right: Inspector
 
     private var inspectorColumn: some View {
@@ -377,6 +329,9 @@ public struct CockpitControllerSettingsSheet: View {
                     sensitivitySection
                     deadzoneSection
                     responseCurveSection
+                    AxisResponseCurveView(
+                        tuning: tuningForSelected() ?? ControllerAxisTuning(),
+                        rawValue: selectedAxisIndex.map { source.snapshot.axis($0) } ?? 0)
                     invertSection
                 } else if isButtonSelected {
                     modeSection
@@ -546,12 +501,41 @@ public struct CockpitControllerSettingsSheet: View {
                 editingProfile = .xbox; syncInspector(selectedAction); showNotice("기본값으로 재설정했어요.")
             } label: { Label("기본값으로 재설정", systemImage: "arrow.counterclockwise").font(.system(size: 12)) }
             .buttonStyle(.bordered)
+            validationRail
             Spacer()
             Button("취소") { isPresented = false }.buttonStyle(.bordered)
             Button("저장") { attemptSave() }
             .buttonStyle(.borderedProminent)
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
+    }
+
+    /// 검증 레일 (설계 §D) — 저장 게이트 상태를 항상 표시. 충돌 시 클릭하면
+    /// 해당 충돌 지점으로 이동(필터 전환 + 컨트롤 선택).
+    private var validationRail: some View {
+        let summary = BindingValidationSummary.from(editingProfile)
+        return Button {
+            guard !summary.isValid else { return }
+            viewMode = .device
+            actionFilter = summary.focusBinding == nil ? .safety : .conflict
+            if let binding = summary.focusBinding { selectedBinding = binding }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: summary.isValid ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                Text(summary.headline).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                if !summary.isValid {
+                    Text("클릭해 이동").font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Capsule().fill(summary.isValid
+                ? Color.green.opacity(0.12) : Color.orange.opacity(0.16)))
+            .foregroundStyle(summary.isValid ? Color.green : Color.orange)
+        }
+        .buttonStyle(.plain)
+        .help(summary.isValid ? "저장 가능 상태입니다." : "이 문제를 해결해야 저장됩니다.")
+        .accessibilityIdentifier("cockpit.controller.validation.rail")
     }
 
     private func banner(_ text: String) -> some View {
@@ -622,11 +606,6 @@ public struct CockpitControllerSettingsSheet: View {
             set: { newVal in updateTuning { $0.innerDeadzone = max(0, min(0.4, newVal / 100.0)) } })
     }
 
-    enum CurvePreset: String, CaseIterable, Identifiable {
-        case linear = "선형", smooth = "부드러움", precise = "정밀"
-        var id: String { rawValue }
-        var expo: Double { self == .linear ? 0.0 : (self == .smooth ? 0.5 : 0.85) }
-    }
     private var curvePresetForExpo: CurvePreset {
         let e = tuningForSelected()?.expo ?? 0
         if e < 0.25 { return .linear }
@@ -634,18 +613,6 @@ public struct CockpitControllerSettingsSheet: View {
         return .precise
     }
 
-    enum ActivatorPreset: String, CaseIterable, Identifiable {
-        case hold = "홀드", start = "누름", toggle = "토글", longPress = "길게"
-        var id: String { rawValue }
-        var type: ActivatorType {
-            switch self {
-            case .hold: return .hold
-            case .start: return .start
-            case .toggle: return .toggle
-            case .longPress: return .longPress(thresholdMs: 500)
-            }
-        }
-    }
     private var activatorPreset: ActivatorPreset {
         guard let a = actionForBinding, let t = editingProfile.activators[a] else { return .hold }
         switch t {
@@ -756,18 +723,6 @@ public struct CockpitControllerSettingsSheet: View {
         }
     }
 
-    private func groupTitle(_ g: CockpitAction.Group) -> String {
-        switch g {
-        case .movement: return "이동 제어"
-        case .rotation: return "회전 제어"
-        case .head: return "머리 제어"
-        case .safety: return "안전 제어"
-        }
-    }
-    private func actions(in group: CockpitAction.Group) -> [CockpitAction] {
-        CockpitAction.allCases.filter { $0.group == group }
-    }
-
     /// 검색어 + 필터 적용 (PRD §7.6). 그룹·동작명·매핑값·안전여부·충돌여부로 거른다.
     private func filteredActions(in group: CockpitAction.Group) -> [CockpitAction] {
         let conflictSet = Set(editingProfile.conflicts().flatMap { c -> [CockpitAction] in
@@ -794,32 +749,6 @@ public struct CockpitControllerSettingsSheet: View {
             return true
         }
     }
-    private func conflictSummary(_ conflicts: [ControllerBindingConflict]) -> String {
-        conflicts.map { c in
-            switch c {
-            case .duplicateInput(let b, let acts): return "중복 \(b.displayLabel): \(acts.map(\.label).joined(separator: ", "))"
-            case .safetyCriticalUnbound(let a): return "안전 미할당: \(a.label)"
-            }
-        }.joined(separator: "\n")
-    }
-    private func actionIcon(_ a: CockpitAction) -> String {
-        switch a {
-        case .moveForward: return "arrow.up"
-        case .moveBackward: return "arrow.down"
-        case .strafeLeft: return "arrow.left"
-        case .strafeRight: return "arrow.right"
-        case .turnLeft: return "arrow.counterclockwise"
-        case .turnRight: return "arrow.clockwise"
-        case .headPanLeft: return "arrowshape.left"
-        case .headPanRight: return "arrowshape.right"
-        case .headTiltUp: return "arrowshape.up"
-        case .headTiltDown: return "arrowshape.down"
-        case .ballTracking: return "scope"
-        case .emergencyStop: return "exclamationmark.octagon.fill"
-        case .recover: return "arrow.uturn.up"
-        }
-    }
-
     // MARK: - 드라이버 lifecycle
 
     private func startDriver() {
