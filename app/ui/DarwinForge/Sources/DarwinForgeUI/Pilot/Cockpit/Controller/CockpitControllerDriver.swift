@@ -5,10 +5,14 @@ import Foundation
 /// 일반화 — 소스(GC/HID/Mock)·프로파일과 무관하게 동일 주입 경로.
 ///
 /// 30Hz 폴링으로 매 프레임 스냅샷을 의미 출력으로 변환 후 cockpit 에 주입한다.
-/// 이동/머리는 연속값, 안전·토글 버튼은 **rising-edge** 로 1회 발화(hold spam 차단).
+/// 이동/머리는 연속값, 버튼 액션은 activator 모드(hold/start/toggle/longPress)에
+/// 따라 발화한다 (M3 — 프로파일의 activator/데드맨/터보를 실제 소비).
 ///
-/// 데드맨 enable-hold / 끊김 failsafe / activator 통합은 **M3 범위** — 여기선
-/// 연결 변화 콜백 훅만 두고 즉시 주입한다.
+/// # 안전 (PRD §13)
+/// - **E-STOP 은 activator·데드맨과 무관** — 설정과 관계없이 누름 rising-edge 에
+///   즉시 발화한다. longPress 등으로 지연되면 안 된다.
+/// - 데드맨(enabled + 버튼 지정)은 이동/회전만 게이트 — 복구/머리는 항상 동작.
+/// - 터보는 이동/회전 × `ControllerDriveModifiers.turboScale`, ±1 클램프.
 @MainActor
 public final class CockpitControllerDriver {
 
@@ -16,14 +20,22 @@ public final class CockpitControllerDriver {
     private let source: CockpitControllerSource
 
     /// 활성 바인딩 프로파일 — 런타임 교체 가능(프리셋 전환).
-    public var profile: ControllerBindingProfile
+    /// 교체 시 activator 상태를 초기화해 잔존 토글/홀드 상태를 막는다.
+    public var profile: ControllerBindingProfile {
+        didSet {
+            activatorStates = [:]
+            previousActive = [:]
+        }
+    }
 
     private var pollTimer: Timer?
 
-    // 버튼 edge-trigger 직전 상태.
+    /// E-STOP rising-edge 직전 상태 (activator 미적용 — 안전 우선).
     private var prevEmergency = false
-    private var prevRecover   = false
-    private var prevBall      = false
+
+    /// 액션별 activator 상태머신 (recover/ballTracking 등).
+    private var activatorStates: [CockpitAction: ActivatorState] = [:]
+    private var previousActive: [CockpitAction: Bool] = [:]
 
     public init(
         state: CockpitState,
@@ -70,36 +82,67 @@ public final class CockpitControllerDriver {
 
     /// 결정론적 주입 — 외부 스냅샷을 즉시 cockpit 에 반영(단위테스트 진입점).
     public func inject(_ snapshot: ControllerSnapshot) {
+        inject(snapshot, nowMs: Self.monotonicNowMs())
+    }
+
+    /// 시각 주입 버전 — activator(longPress 등) 시간 계산을 테스트에서 결정론적으로.
+    public func inject(_ snapshot: ControllerSnapshot, nowMs: Int) {
         guard let state else { return }
         let resolved = ControllerInputResolver.resolve(snapshot, profile: profile)
 
-        // 이동: ResolvedControllerInput 이미 apply 관례(−전진/+우/+우회전).
-        state.apply(leftX: resolved.leftX, leftY: resolved.leftY,
-                    turn: resolved.turn, from: .gamepad)
-        // 머리: rate 모드 — 보행과 독립.
+        // 이동/회전: 데드맨 게이트 + 터보 스케일 적용 후 주입.
+        let drive = ControllerDriveModifiers.modifiedDrive(
+            leftX: resolved.leftX, leftY: resolved.leftY, turn: resolved.turn,
+            deadmanSatisfied: ControllerDriveModifiers.deadmanSatisfied(
+                profile: profile, snapshot: snapshot),
+            turboHeld: ControllerDriveModifiers.isTurboHeld(
+                profile: profile, snapshot: snapshot)
+        )
+        state.apply(leftX: drive.leftX, leftY: drive.leftY,
+                    turn: drive.turn, from: .gamepad)
+        // 머리: rate 모드 — 보행·데드맨과 독립.
         state.applyHead(panNorm: resolved.headPan, tiltNorm: resolved.headTilt)
 
-        // 안전/토글 버튼 rising-edge.
-        fireOnRisingEdge(resolved.emergencyStop, prev: &prevEmergency) {
-            state.triggerEmergency()
-        }
-        fireOnRisingEdge(resolved.recover, prev: &prevRecover) {
+        // E-STOP — 안전 최우선: activator/데드맨 무시, rising-edge 즉시 발화.
+        if resolved.emergencyStop && !prevEmergency { state.triggerEmergency() }
+        prevEmergency = resolved.emergencyStop
+
+        // 복구/볼트랙 — 프로파일 activator 모드 소비 (기본 .start = 누름 1회).
+        stepActivator(.recover, pressed: resolved.recover, nowMs: nowMs) {
             state.triggerRecovery()
         }
-        fireOnRisingEdge(resolved.ballTracking, prev: &prevBall) {
+        stepActivator(.ballTracking, pressed: resolved.ballTracking, nowMs: nowMs) {
             state.triggerBallTrackingToggle()
         }
     }
 
     // MARK: - 내부
 
-    private func fireOnRisingEdge(_ current: Bool, prev: inout Bool, _ action: () -> Void) {
-        if current && !prev { action() }
-        prev = current
+    /// 액션의 activator 상태머신을 한 프레임 전이하고, 발화 정책 충족 시 `trigger`.
+    private func stepActivator(
+        _ action: CockpitAction,
+        pressed: Bool,
+        nowMs: Int,
+        _ trigger: () -> Void
+    ) {
+        let type = profile.activators[action] ?? .start
+        let prev = activatorStates[action] ?? .idle
+        let prevActive = previousActive[action] ?? false
+        let (next, isActive, fired) = prev.updated(pressed: pressed, nowMs: nowMs, type: type)
+        activatorStates[action] = next
+        previousActive[action] = isActive
+        if type.firesEvent(previousActive: prevActive, isActive: isActive, fired: fired) {
+            trigger()
+        }
     }
 
     private func handleConnectionChange(_ connected: Bool) {
         state?.setController(name: connected ? source.displayName : nil)
         // M3: 끊김 시 failsafe(profile.failsafe) 적용 예정.
+    }
+
+    /// 단조 증가 시각(ms) — 벽시계 변경에 영향받지 않음.
+    private static func monotonicNowMs() -> Int {
+        Int(DispatchTime.now().uptimeNanoseconds / 1_000_000)
     }
 }

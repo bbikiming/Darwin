@@ -48,7 +48,9 @@ final class VirtualControllerSourceTests: XCTestCase {
         let s = VirtualControllerSource()
         let driver = CockpitControllerDriver(state: state, source: s, profile: .xbox)
         // LS Y 위(전진) — 가상 패드가 axis 1 을 음수로.
+        // .xbox 는 deadmanEnabled=true(버튼4=LB) — 데드맨 홀드(래치)를 함께 입력.
         s.setAxis(1, -0.8)
+        s.setButton(4, true)
         driver.tick()
         XCTAssertLessThan(state.leftStick.y, 0.0, "가상 패드 전진 → cockpit 주입")
         XCTAssertEqual(state.lastSource, .gamepad)

@@ -391,10 +391,20 @@ public struct CockpitControllerSettingsSheet: View {
                         HStack { Text(m.rawValue); if activatorPreset == m { Spacer(); Image(systemName: "checkmark") } }
                     }
                 }
-            } label: { dropdownLabel(activatorPreset.rawValue, disabled: actionForBinding == nil) }
+            } label: { dropdownLabel(activatorPreset.rawValue, disabled: activatorLocked) }
             .menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
-            .disabled(actionForBinding == nil)
+            .disabled(activatorLocked)
+            if actionForBinding == .emergencyStop {
+                Text("E-STOP 은 안전상 누름 즉시 발화 — 모드 변경 불가")
+                    .font(.system(size: 9)).foregroundStyle(.secondary)
+            }
         }
+    }
+
+    /// E-STOP 은 드라이버가 activator 를 무시하고 rising-edge 즉시 발화하므로
+    /// 설정 자체를 잠가 거짓 UI 를 막는다.
+    private var activatorLocked: Bool {
+        actionForBinding == nil || actionForBinding == .emergencyStop
     }
 
     private var actionButtons: some View {

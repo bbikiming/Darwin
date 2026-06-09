@@ -19,6 +19,25 @@ public enum ActivatorType: Codable, Hashable, Sendable {
     case double(windowMs: Int)
 }
 
+public extension ActivatorType {
+    /// 1회성 트리거 액션(E-STOP/복구/볼트랙 등)을 이 프레임에 발화할지 결정하는
+    /// 순수 정책 — `ActivatorState.updated()` 의 출력을 트리거 이벤트로 번역한다.
+    ///
+    /// - hold:   active rising edge 에 1회 (누름당 1회, 홀드 spam 차단).
+    /// - toggle: active 가 플립될 때마다 1회 (ON/OFF 모두 — 토글형 액션과 정합).
+    /// - start/release/longPress/double: 상태머신의 `fired` 그대로.
+    func firesEvent(previousActive: Bool, isActive: Bool, fired: Bool) -> Bool {
+        switch self {
+        case .hold:
+            return isActive && !previousActive
+        case .toggle:
+            return isActive != previousActive
+        case .start, .release, .longPress, .double:
+            return fired
+        }
+    }
+}
+
 /// 순수 상태 — `updated(pressed:nowMs:type:)` 를 호출할 때마다 **새 값을 반환**.
 /// mutation 없음. 내부에 타이머·DispatchQueue 없음.
 public struct ActivatorState: Equatable {

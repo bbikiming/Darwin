@@ -75,12 +75,17 @@
 - 저장 키 `cockpit.controller.binding.profile.v1` → 슬롯 배열로 확장 필요
   (v2 마이그레이션, 기존 v1은 슬롯 0으로 흡수).
 
-### F. 정직성 부채 해소 (병행)
+### F. 정직성 부채 해소 (완료 — 2026-06-10)
 
-- M3로 미뤄둔 activator/데드맨/터보의 **드라이버 소비**가 들어오기 전까지, 해당
-  설정 UI에는 "표시 전용 — 주행 미적용" 배지를 유지한다(현 라벨 정책과 일관).
-- `CockpitControllerDriver.tick()`에 `ActivatorState.updated()` 상태머신 통합이
-  들어오면 배지 제거.
+- `CockpitControllerDriver` 가 activator/데드맨/터보를 **실제 소비**한다:
+  - 복구/볼트랙은 `ActivatorState.updated()` + `ActivatorType.firesEvent()` 발화
+    정책(hold=rising 1회, toggle=플립마다, start/longPress=fired) 적용.
+  - **E-STOP 은 activator·데드맨 무시** — 누름 rising-edge 즉시 발화(안전 우선).
+    설정 시트의 모드(Activator) 메뉴도 E-STOP 선택 시 잠금.
+  - 데드맨(enabled + 버튼 지정)은 이동/회전만 0 게이트. 버튼 미지정이면 게이트 안 함.
+  - 터보 홀드 시 이동/회전 × `ControllerDriveModifiers.turboScale`(1.3), ±1 클램프.
+- 배지/정직 라벨 정리: 가상 패드 LB/RB 가 "버튼4/5" → "데드맨"/"터보" 기능명으로
+  복귀. 마우스 hold+drag 불가 문제는 LB/RB 를 래치(클릭 토글)로 해소.
 
 ## 단계별 적용 (HARD-GATE: 구현 전 본 설계 승인 필요)
 
@@ -89,7 +94,7 @@
 | P1 | 콜아웃 레이어 + 눌러서 선택 + 토스트/undo | RGG01ControllerVisual, CockpitControllerSettingsSheet | 중 |
 | P2 | 테스터 모드 + 응답 곡선 + 검증 레일 | SettingsSheet, 신규 AxisResponseCurveView | 중 |
 | P3 | 프로파일 슬롯 (저장소 v2) | ControllerBindingProfileStore | 소 |
-| 병행 | activator/데드맨 드라이버 소비 | CockpitControllerDriver | 중 |
+| 병행 | activator/데드맨 드라이버 소비 ✅ | CockpitControllerDriver, ControllerDriveModifiers | 중 |
 
 테스트: 각 단계 순수 로직(역인덱스, undo 스냅샷, 곡선 정형값)은 기존
 `DarwinForgeUITests` 패턴으로 단위 테스트 우선 작성. Swift 테스트는 직렬 실행.
