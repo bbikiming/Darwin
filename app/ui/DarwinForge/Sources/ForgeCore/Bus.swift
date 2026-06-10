@@ -458,6 +458,26 @@ public final class Bus: @unchecked Sendable {
         try locked { try checkForgeReturn(fc_joint_set_moving_speed(self.raw(), joint.rawValue, speed)) }
     }
 
+    /// 다중 관절 moving speed 동시 설정 (SYNC_WRITE 1패킷, L5 2026-06-11).
+    /// 보행 prologue 의 관절별 개별 write 20회(+status 왕복)를 1패킷으로.
+    /// SYNC_WRITE 는 status packet 없음 — transport 실패만 throw.
+    public func setMovingSpeeds(_ joints: [JointID], speed: UInt16) throws {
+        guard !joints.isEmpty else { return }
+        try locked {
+            let ids: [UInt8] = joints.map { $0.rawValue }
+            try ids.withUnsafeBufferPointer { idsBuf in
+                try checkForgeReturn(
+                    fc_joint_set_moving_speeds_many(
+                        self.raw(),
+                        idsBuf.baseAddress,
+                        UInt(joints.count),
+                        speed
+                    )
+                )
+            }
+        }
+    }
+
     public func setPGain(_ joint: JointID, value: UInt8) throws {
         try locked { try checkForgeReturn(fc_joint_set_p_gain(self.raw(), joint.rawValue, value)) }
     }

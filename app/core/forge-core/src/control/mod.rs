@@ -106,6 +106,27 @@ impl<'a, P: SerialPort> JointController<'a, P> {
         self.bus.sync_write(mx28_register::P_GAIN, 1, &entries)
     }
 
+    /// 다중 관절 moving speed — 한 패킷 SYNC_WRITE (L5, 2026-06-11).
+    ///
+    /// 보행 prologue 의 관절별 개별 write 20회(+status 왕복)를 1패킷으로 대체.
+    /// SYNC_WRITE 는 broadcast 라 status 응답 없음 — transport 실패만 감지.
+    pub fn set_moving_speeds_many(&mut self, joints: &[JointId], speed: u16) -> Result<()> {
+        let entries: Vec<SyncWriteEntry> = joints
+            .iter()
+            .filter_map(|j| {
+                self.wire(*j).map(|id| SyncWriteEntry {
+                    id,
+                    data: speed.to_le_bytes().to_vec(),
+                })
+            })
+            .collect();
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.bus
+            .sync_write(mx28_register::MOVING_SPEED, 2, &entries)
+    }
+
     /// 한 관절 goal position. 한계 강제로 clamp.
     pub fn set_position(&mut self, joint: JointId, raw: u16) -> Result<u16> {
         let Some(id) = self.wire(joint) else {
@@ -143,36 +164,39 @@ impl<'a, P: SerialPort> JointController<'a, P> {
         Ok(clamped_out)
     }
 
-    /// 한 관절 현재 상태 (per-joint READ).
+    /// 한 관절 현재 상태 — 단일 burst READ (J12, 2026-06-11).
+    ///
+    /// 종전 3회 READ (GOAL 2B + PRESENT 8B + TORQUE 1B) 를 addr 24..43 연속 구간
+    /// 단일 20B READ 로 통합 — 왕복 1/3, FTDI latency timer 양자화도 3회→1회.
+    /// MX-28 control table 에서 TORQUE_ENABLE(24)..PRESENT_TEMPERATURE(43) 은 연속.
+    /// 락 보유 시간도 1/3 로 줄어 보행 중 E-stop 의 최악 대기에 순기여.
     ///
     /// 다중 관절 동시 read는 추후 BULK_READ로 확장 (Sprint 5 walk loop에서).
     pub fn read_state(&mut self, joint: JointId) -> Result<JointState> {
         let id = self
             .wire(joint)
             .ok_or_else(|| crate::error::Error::Other(format!("joint {:?} not mapped", joint)))?;
-        // Goal Position (30..31)
-        let g = self.bus.read(id, mx28_register::GOAL_POSITION, 2)?;
-        let goal_position = u16::from_le_bytes([g[0], g[1]]);
-        // Present Position..Temperature (36..43, 8 bytes)
-        let p = self.bus.read(id, mx28_register::PRESENT_POSITION, 8)?;
-        let present_position = u16::from_le_bytes([p[0], p[1]]);
-        let present_speed = u16::from_le_bytes([p[2], p[3]]);
-        let present_load = u16::from_le_bytes([p[4], p[5]]);
-        let present_voltage = p[6];
-        let present_temperature = p[7];
-        // Torque Enable (24, 1 byte)
-        let t = self.bus.read(id, mx28_register::TORQUE_ENABLE, 1)?;
-        let torque_enabled = t[0] != 0;
-
+        // addr 24..=43 (20B): [0]=TORQUE_ENABLE, [1]=LED, [2..6]=gains/reserved,
+        // [6,7]=GOAL_POSITION, [8,9]=MOVING_SPEED, [10,11]=TORQUE_LIMIT,
+        // [12,13]=PRESENT_POSITION, [14,15]=PRESENT_SPEED, [16,17]=PRESENT_LOAD,
+        // [18]=PRESENT_VOLTAGE, [19]=PRESENT_TEMPERATURE.
+        let b = self.bus.read(id, mx28_register::TORQUE_ENABLE, 20)?;
+        if b.len() < 20 {
+            return Err(Error::Other(format!(
+                "read_state: short payload {} < 20 bytes (joint {:?})",
+                b.len(),
+                joint
+            )));
+        }
         Ok(JointState {
             id: joint,
-            goal_position,
-            present_position,
-            present_speed,
-            present_load,
-            present_voltage,
-            present_temperature,
-            torque_enabled,
+            goal_position: u16::from_le_bytes([b[6], b[7]]),
+            present_position: u16::from_le_bytes([b[12], b[13]]),
+            present_speed: u16::from_le_bytes([b[14], b[15]]),
+            present_load: u16::from_le_bytes([b[16], b[17]]),
+            present_voltage: b[18],
+            present_temperature: b[19],
+            torque_enabled: b[0] != 0,
         })
     }
 
@@ -380,20 +404,25 @@ mod tests {
     }
 
     #[test]
-    fn read_state_assembles_from_three_reads() {
+    fn read_state_uses_single_burst_read() {
         let mut bus = Bus::new(LoopbackBus::default());
         let port = bus.port_mut();
-        // goal_position = 2048 (0x0800 LE → 0x00 0x08)
-        port.queue_read(&status_bytes(19, 0, &[0x00, 0x08]));
-        // present_position..temperature (8 bytes):
-        //   pos=2050, speed=0, load=10, voltage=118, temp=35
-        port.queue_read(&status_bytes(
-            19,
-            0,
-            &[0x02, 0x08, 0x00, 0x00, 0x0A, 0x00, 118, 35],
-        ));
-        // torque_enable = 1
-        port.queue_read(&status_bytes(19, 0, &[1]));
+        // J12: addr 24..43 단일 20B burst. payload 구성:
+        //   [0]=torque 1, [1]=LED, [2..6]=gains/reserved,
+        //   [6,7]=goal 2048, [8,9]=moving_speed, [10,11]=torque_limit,
+        //   [12,13]=present 2050, [14,15]=speed 0, [16,17]=load 10,
+        //   [18]=voltage 118, [19]=temp 35.
+        let payload: [u8; 20] = [
+            1, 0, 0, 0, 32, 0, // torque, led, d/i/p gain, reserved
+            0x00, 0x08, // goal = 2048
+            0x00, 0x01, // moving_speed = 256
+            0xFF, 0x03, // torque_limit = 1023
+            0x02, 0x08, // present = 2050
+            0x00, 0x00, // speed = 0
+            0x0A, 0x00, // load = 10
+            118, 35, // voltage, temp
+        ];
+        port.queue_read(&status_bytes(19, 0, &payload));
 
         let mut jc = JointController::new(&mut bus);
         let s = jc.read_state(JointId::HeadPan).unwrap();
@@ -405,5 +434,52 @@ mod tests {
         assert_eq!(s.present_voltage, 118);
         assert_eq!(s.present_temperature, 35);
         assert!(s.torque_enabled);
+
+        // 요청 패킷이 READ_DATA addr=24, len=20 단일 트랜잭션인지 검증.
+        let w = bus.port_mut().written.clone();
+        // FF FF ID LEN 0x02 ADDR READLEN CSUM — 8 bytes, 1 transaction only.
+        assert_eq!(w.len(), 8, "burst read 는 단일 READ_DATA 패킷");
+        assert_eq!(w[4], 0x02, "instruction = READ_DATA");
+        assert_eq!(w[5], mx28_register::TORQUE_ENABLE, "addr = 24");
+        assert_eq!(w[6], 20, "length = 20");
+    }
+
+    #[test]
+    fn read_state_rejects_short_payload() {
+        let mut bus = Bus::new(LoopbackBus::default());
+        // 20B 미만 payload — clone 펌웨어 방어.
+        bus.port_mut().queue_read(&status_bytes(19, 0, &[1, 0, 0]));
+        let mut jc = JointController::new(&mut bus);
+        let err = jc.read_state(JointId::HeadPan).unwrap_err();
+        assert!(
+            err.to_string().contains("short payload"),
+            "expected short payload error, got {}",
+            err
+        );
+    }
+
+    #[test]
+    fn set_moving_speeds_many_uses_sync_write() {
+        let mut bus = Bus::new(LoopbackBus::default());
+        let mut jc = JointController::new(&mut bus);
+        jc.set_moving_speeds_many(&[JointId::HeadPan, JointId::HeadTilt], 256)
+            .unwrap();
+        let w = bus.port_mut().written.clone();
+        // SYNC_WRITE: FF FF FE LEN 0x83 ADDR LENGTH (ID DATA)+
+        assert_eq!(w[2], 0xFE, "broadcast id");
+        assert_eq!(w[4], 0x83, "instruction = SYNC_WRITE");
+        assert_eq!(w[5], mx28_register::MOVING_SPEED, "addr = 32");
+        assert_eq!(w[6], 2, "per-joint data length = 2");
+        // entries: (19, 00 01), (20, 00 01) — speed 256 LE.
+        assert_eq!(&w[7..10], &[19, 0x00, 0x01]);
+        assert_eq!(&w[10..13], &[20, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn set_moving_speeds_many_empty_is_noop() {
+        let mut bus = Bus::new(LoopbackBus::default());
+        let mut jc = JointController::new(&mut bus);
+        jc.set_moving_speeds_many(&[], 256).unwrap();
+        assert!(bus.port_mut().written.is_empty(), "빈 입력 → 패킷 없음");
     }
 }

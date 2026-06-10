@@ -2812,6 +2812,13 @@ public final class WalkLabSession {
     /// 같은 joint 가 연속 N step fail 시 abort (Set count 가 1 이라도 hardware fault 의심).
     public static let perJointConsecutiveFailureLimit: Int = 5
 
+    /// **L5 (2026-06-11)** — SYNC_WRITE 전환 후 per-servo liveness 프로브 한계.
+    /// SYNC_WRITE 는 broadcast 라 죽은 서보가 transport 오류를 내지 않는다 — 대신
+    /// step 마다 하체 관절 1개를 라운드로빈 PING 으로 점검한다. 같은 관절이 연속
+    /// 2회 프로브 실패하면 hardware fault 로 간주해 보행 중단. (12관절 로테이션
+    /// 기준 단일 결함 감지 ≈ 24 step ≈ 2-3s — IMU fast-poll 이 낙상은 더 빨리 잡음.)
+    public static let livenessProbeFailureLimit: Int = 2
+
     /// 10x review Major #1: per-joint consecutive failure counter — `runContinuousWalk` /
     /// `runWalkCycle` 의 local var. instance var X (static func 라 mutate 불가, concurrency
     /// 안전성 위해). 단일 joint 5회 연속 fail 시 cycle abort.

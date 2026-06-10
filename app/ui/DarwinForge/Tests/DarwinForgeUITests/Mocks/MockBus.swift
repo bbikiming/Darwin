@@ -56,6 +56,11 @@ public final class MockBus: BusInterface, @unchecked Sendable {
     public var failNextReadState: Bool = false
     public var failNextBoardSnapshot: Bool = false
     public var failNextPing: Bool = false
+
+    // MARK: - Failure injection (지속 — 명시 해제 전까지 유지)
+
+    /// L5 liveness 프로브 테스트용 — ping 을 상시 실패시킨다 (auto-reset 없음).
+    public var alwaysFailPing: Bool = false
     public var failNextScan: Bool = false
     public var failNextReadFsrLeft: Bool = false
     public var failNextReadFsrRight: Bool = false
@@ -76,6 +81,7 @@ public final class MockBus: BusInterface, @unchecked Sendable {
     // MARK: - Bus discovery / health
 
     public func ping(id: UInt8) throws {
+        if alwaysFailPing { throw ForgeError.timeout }
         if failNextPing {
             failNextPing = false
             throw ForgeError.timeout

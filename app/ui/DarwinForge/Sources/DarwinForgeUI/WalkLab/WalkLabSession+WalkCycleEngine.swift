@@ -68,19 +68,23 @@ extension WalkLabSession {
         var stepsExecuted = 0
         // v1.8 (10x review Major #1): per-joint consecutive failure counter (local, static-safe).
         var perJointFailsLocal: [JointID: Int] = [:]
+        // **L5 (2026-06-11)**: liveness 프로브 상태 — SYNC_WRITE 는 죽은 서보가 오류를
+        // 안 내므로 step 마다 하체 관절 1개 라운드로빈 PING. 연속 실패 카운터는
+        // 배치 write 성공과 무관한 별도 dict (write 성공이 프로브 실패를 지우면 안 됨).
+        var probeFailsLocal: [JointID: Int] = [:]
+        var probeIndex = 0
+        let probeJoints = lowerBodyJoints.sorted { $0.rawValue < $1.rawValue }
 
-        // 1. moving speed 설정 (1회).
+        // 1. moving speed 설정 (1회) — L5: 관절별 개별 write 20회 → SYNC_WRITE 1패킷.
         let cycleSpeed: UInt16 = 256
-        for joint in JointID.allCases {
-            do { try bus.setMovingSpeed(joint, speed: cycleSpeed) }
-            catch {
-                speedFailures += 1
-                // v1.11.2 (사용자 review P2-A): setMovingSpeed 실패도 callback.
-                if let cb = onBusWriteFailure {
-                    Task { @MainActor in cb() }
-                }
-                sampleError = "\(joint.name) 목표 속도 전송: \(error.localizedDescription)"
+        do { try bus.setMovingSpeeds(JointID.allCases, speed: cycleSpeed) }
+        catch {
+            speedFailures += 1
+            // v1.11.2 (사용자 review P2-A): setMovingSpeed 실패도 callback.
+            if let cb = onBusWriteFailure {
+                Task { @MainActor in cb() }
             }
+            sampleError = "목표 속도 일괄 전송: \(error.localizedDescription)"
         }
 
         var previous: RobotPose = .walkReady
@@ -91,6 +95,11 @@ extension WalkLabSession {
         var cancelledMidStep = false
 
         // 한 step 송출 helper — closure 캡처 X (concurrency 안전).
+        //
+        // **L5 (2026-06-11) SYNC_WRITE 전환**: 종전 관절별 개별 setPosition(+status
+        // 왕복, TCP step당 12회 ≈ 36-72ms)을 setPositions 1패킷으로. per-joint status
+        // 가 사라지므로 (a) transport 실패는 배치 내 하체 관절 전체 실패로 보수적
+        // 매핑, (b) 죽은 서보 감지는 step 말미 liveness PING 라운드로빈으로 대체.
         func sendStep(_ step: MotionStep, previousIn: RobotPose) async -> RobotPose {
             let rawTarget = step.toPose()
             // **Stage 4b (v1.1 fall prevention, 2026-05-16)**: IMU 기반 corrector
@@ -106,27 +115,22 @@ extension WalkLabSession {
             if let onPose {
                 await onPose(target)
             }
-            // v1.8 setPosition 1회 retry + 10x review Major #1: per-joint consecutive counter.
-            // Set count >= 3 (서로 다른 joint 3개 fail) 또는 단일 joint 5회 연속 fail.
             // **v1.11.22.1 (Codex new HIGH)**: step entry 시 hard-stop check —
-            // emergencyStop 진행 중이면 step 내부 setPosition 전체 skip (torque OFF 후
+            // emergencyStop 진행 중이면 step 송출 전체 skip (torque OFF 후
             // joint write race 차단).
             if await isHardStopped() { return previousIn }
             let changed = target.changedJoints(from: previousIn)
-            for joint in changed {
-                // **v1.11.22.1**: 각 joint write 직전 cheap Task.isCancelled check —
-                // e-stop 타이밍에 남은 joint write 진행 차단.
-                if Task.isCancelled { break }
-                let rawVal = UInt16(clamping: target.raw(joint))
+            if !changed.isEmpty && !Task.isCancelled {
+                let targets = changed.map { ($0, UInt16(clamping: target.raw($0))) }
                 var lastErr: Error?
                 for attempt in 0..<2 {
                     do {
                         // V288-2: robotPort 경유 → dxlPower gate 자동 강제.
-                        // 마치 공식 매표소 통과 — gate 없는 뒷문(bus.setPosition) 폐쇄.
                         if let port = robotPort {
-                            _ = try await port.writeJointPosition(joint, raw: rawVal)
+                            try await port.writeJointPositions(
+                                Dictionary(uniqueKeysWithValues: targets))
                         } else {
-                            _ = try bus.setPosition(joint, raw: rawVal)
+                            try bus.setPositions(targets)
                         }
                         lastErr = nil
                         break
@@ -148,20 +152,41 @@ extension WalkLabSession {
                     if let cb = onBusWriteFailure {
                         Task { @MainActor in cb() }
                     }
-                    sampleError = "\(joint.name) 목표 위치 전송: \(err.localizedDescription)"
-                    if lowerBodyJoints.contains(joint) {
+                    sampleError = "step 일괄 위치 전송 (\(changed.count)관절): \(err.localizedDescription)"
+                    // 보수적 매핑: 배치 transport 실패 = 배치 내 하체 관절 전체 실패.
+                    for joint in changed where lowerBodyJoints.contains(joint) {
                         lowerBodyPositionFails.insert(joint)
+                        perJointFailsLocal[joint, default: 0] += 1
                     }
-                    perJointFailsLocal[joint, default: 0] += 1
                 } else {
-                    // 성공 시 해당 joint counter reset (one-off transient 흡수).
-                    perJointFailsLocal[joint] = 0
+                    // 성공 시 batch 관절 counter reset (one-off transient 흡수).
+                    for joint in changed { perJointFailsLocal[joint] = 0 }
+                }
+            }
+            // **L5 liveness 프로브** — bus 직결 경로 전용 (robotPort mock 경로 제외).
+            // SYNC_WRITE 무응답을 보상: step 마다 하체 관절 1개 PING (~1ms).
+            if robotPort == nil, !probeJoints.isEmpty, !Task.isCancelled,
+               !(await isHardStopped()) {
+                let probe = probeJoints[probeIndex % probeJoints.count]
+                probeIndex += 1
+                do {
+                    try bus.ping(id: probe.rawValue)
+                    probeFailsLocal[probe] = 0
+                } catch {
+                    probeFailsLocal[probe, default: 0] += 1
+                    lowerBodyPositionFails.insert(probe)
+                    sampleError = "\(probe.name) liveness 무응답: \(error.localizedDescription)"
                 }
             }
             let totalMs = max(80, step.playMs + step.pauseMs)
             let ns = UInt64(totalMs) * 1_000_000
             try? await Task.sleep(nanoseconds: ns)
             return target
+        }
+
+        // liveness 프로브 연속 실패 → hardware fault 판정 helper.
+        func probeFault() -> Bool {
+            probeFailsLocal.contains { $0.value >= Self.livenessProbeFailureLimit }
         }
 
         // 2. Entry — walkReady → phase[0] (1회만).
@@ -177,7 +202,8 @@ extension WalkLabSession {
                 endReason = .lowerBodyWriteFailure
                 break entryLoop
             }
-            if perJointFailsLocal.contains(where: { lowerBodyJoints.contains($0.key) && $0.value >= Self.perJointConsecutiveFailureLimit }) {
+            if perJointFailsLocal.contains(where: { lowerBodyJoints.contains($0.key) && $0.value >= Self.perJointConsecutiveFailureLimit })
+                || probeFault() {
                 endReason = .lowerBodyWriteFailure
                 break entryLoop
             }
@@ -201,9 +227,11 @@ extension WalkLabSession {
                         endReason = .lowerBodyWriteFailure
                         break cycleLoop
                     }
-                    // v1.8 Major #1: 단일 joint 5회 연속 fail → 진짜 hardware fault 의심.
-                    if perJointFailsLocal.contains(where: { lowerBodyJoints.contains($0.key) && $0.value >= Self.perJointConsecutiveFailureLimit }) {
-                        sampleError = "단일 모터 \(Self.perJointConsecutiveFailureLimit)회 연속 응답 없음 — hardware 확인"
+                    // v1.8 Major #1: 단일 joint 연속 fail → 진짜 hardware fault 의심.
+                    // L5: liveness 프로브 연속 실패도 동일 판정 (SYNC_WRITE 무응답 보상).
+                    if perJointFailsLocal.contains(where: { lowerBodyJoints.contains($0.key) && $0.value >= Self.perJointConsecutiveFailureLimit })
+                        || probeFault() {
+                        sampleError = sampleError ?? "단일 모터 연속 응답 없음 — hardware 확인"
                         endReason = .lowerBodyWriteFailure
                         break cycleLoop
                     }
@@ -245,28 +273,29 @@ extension WalkLabSession {
             if let onPose {
                 await onPose(target)
             }
+            // L5: exit phase 도 SYNC_WRITE 1패킷 — gate 보호 일관성 유지 (robotPort 경유).
             let changedFinal = target.changedJoints(from: previous)
-            for joint in changedFinal {
-                let rawVal = UInt16(clamping: target.raw(joint))
+            if !changedFinal.isEmpty {
+                let targets = changedFinal.map { ($0, UInt16(clamping: target.raw($0))) }
                 do {
-                    // V288-2: exit phase 도 robotPort 경유 — gate 보호 일관성 유지.
                     if let port = robotPort {
-                        _ = try await port.writeJointPosition(joint, raw: rawVal)
+                        try await port.writeJointPositions(
+                            Dictionary(uniqueKeysWithValues: targets))
                     } else {
-                        _ = try bus.setPosition(joint, raw: rawVal)
+                        try bus.setPositions(targets)
                     }
                 } catch let portErr as RobotPortError where portErr == .dxlPowerOff {
                     await robotPort?.emergencyStop()
                     positionFailures += 1
                     if let cb = onBusWriteFailure { Task { @MainActor in cb() } }
-                    sampleError = "\(joint.name) 복귀쓰기(dxlPowerOff): \(portErr.localizedDescription)"
+                    sampleError = "복귀 일괄쓰기(dxlPowerOff): \(portErr.localizedDescription)"
                 } catch {
                     positionFailures += 1
                     // v1.11.1 MEDIUM-5: bus write 실패 누적 callback.
                     if let cb = onBusWriteFailure {
                         Task { @MainActor in cb() }
                     }
-                    sampleError = "\(joint.name) 복귀쓰기: \(error.localizedDescription)"
+                    sampleError = "복귀 일괄쓰기 (\(changedFinal.count)관절): \(error.localizedDescription)"
                 }
             }
             // Exit 의 playMs 동안 모터가 walkReady 도달하도록 대기.
@@ -321,19 +350,22 @@ extension WalkLabSession {
         var sampleError: String? = nil
         var stepsExecuted = 0
         var perJointFailsLocal: [JointID: Int] = [:]
+        // L5 (2026-06-11): liveness 프로브 — runContinuousWalk 와 동일 (SYNC_WRITE 보상).
+        var probeFailsLocal: [JointID: Int] = [:]
+        var probeIndex = 0
+        let probeJoints = lowerBodyJoints.sorted { $0.rawValue < $1.rawValue }
 
         // 1. cycle 시작 — moving speed 1회 설정. RoboPlus 기본 32 ≈ 60 rpm 의 4배 — 빠른 보행 대응.
+        // L5: 관절별 개별 write 20회 → SYNC_WRITE 1패킷.
         let cycleSpeed: UInt16 = 256
-        for joint in JointID.allCases {
-            do { try bus.setMovingSpeed(joint, speed: cycleSpeed) }
-            catch {
-                speedFailures += 1
-                // v1.11.2 (사용자 review P2-A): setMovingSpeed 실패도 callback.
-                if let cb = onBusWriteFailure {
-                    Task { @MainActor in cb() }
-                }
-                sampleError = "\(joint.name) 목표 속도 전송: \(error.localizedDescription)"
+        do { try bus.setMovingSpeeds(JointID.allCases, speed: cycleSpeed) }
+        catch {
+            speedFailures += 1
+            // v1.11.2 (사용자 review P2-A): setMovingSpeed 실패도 callback.
+            if let cb = onBusWriteFailure {
+                Task { @MainActor in cb() }
             }
+            sampleError = "목표 속도 일괄 전송: \(error.localizedDescription)"
         }
 
         // 2. step loop. walkReady 가 항상 prev — 변경된 관절만 차분 송출.
@@ -369,19 +401,20 @@ extension WalkLabSession {
                     cancelledMidStep = true
                     break
                 }
+                // L5 (2026-06-11): 관절별 개별 write → SYNC_WRITE 1패킷.
+                // transport 실패는 배치 내 하체 관절 전체 실패로 보수적 매핑.
                 let changed = target.changedJoints(from: previous)
-                for joint in changed {
-                    // **v1.11.22.1**: 각 joint write 직전 cheap cancel check.
-                    if Task.isCancelled { break }
-                    let rawVal = UInt16(clamping: target.raw(joint))
+                if !changed.isEmpty && !Task.isCancelled {
+                    let targets = changed.map { ($0, UInt16(clamping: target.raw($0))) }
                     var lastErr: Error?
                     for attempt in 0..<2 {
                         do {
                             // V288-2: robotPort 경유 → dxlPower gate 자동 강제.
                             if let port = robotPort {
-                                _ = try await port.writeJointPosition(joint, raw: rawVal)
+                                try await port.writeJointPositions(
+                                    Dictionary(uniqueKeysWithValues: targets))
                             } else {
-                                _ = try bus.setPosition(joint, raw: rawVal)
+                                try bus.setPositions(targets)
                             }
                             lastErr = nil
                             break
@@ -402,13 +435,27 @@ extension WalkLabSession {
                         if let cb = onBusWriteFailure {
                             Task { @MainActor in cb() }
                         }
-                        sampleError = "\(joint.name) 목표 위치 전송: \(err.localizedDescription)"
-                        if lowerBodyJoints.contains(joint) {
+                        sampleError = "step 일괄 위치 전송 (\(changed.count)관절): \(err.localizedDescription)"
+                        for joint in changed where lowerBodyJoints.contains(joint) {
                             lowerBodyPositionFails.insert(joint)
+                            perJointFailsLocal[joint, default: 0] += 1
                         }
-                        perJointFailsLocal[joint, default: 0] += 1
                     } else {
-                        perJointFailsLocal[joint] = 0
+                        for joint in changed { perJointFailsLocal[joint] = 0 }
+                    }
+                }
+                // L5 liveness 프로브 — bus 직결 경로 전용 (runContinuousWalk 와 동일).
+                if robotPort == nil, !probeJoints.isEmpty, !Task.isCancelled,
+                   !(await isHardStopped()) {
+                    let probe = probeJoints[probeIndex % probeJoints.count]
+                    probeIndex += 1
+                    do {
+                        try bus.ping(id: probe.rawValue)
+                        probeFailsLocal[probe] = 0
+                    } catch {
+                        probeFailsLocal[probe, default: 0] += 1
+                        lowerBodyPositionFails.insert(probe)
+                        sampleError = "\(probe.name) liveness 무응답: \(error.localizedDescription)"
                     }
                 }
                 previous = target
@@ -418,9 +465,11 @@ extension WalkLabSession {
                     endReason = .lowerBodyWriteFailure
                     break cycleLoop
                 }
-                // v1.8 Major #1: 단일 joint 5회 연속 fail → hardware fault 의심.
-                if perJointFailsLocal.contains(where: { lowerBodyJoints.contains($0.key) && $0.value >= Self.perJointConsecutiveFailureLimit }) {
-                    sampleError = "단일 모터 \(Self.perJointConsecutiveFailureLimit)회 연속 응답 없음 — hardware 확인"
+                // v1.8 Major #1: 단일 joint 연속 fail → hardware fault 의심.
+                // L5: liveness 프로브 연속 실패도 동일 판정.
+                if perJointFailsLocal.contains(where: { lowerBodyJoints.contains($0.key) && $0.value >= Self.perJointConsecutiveFailureLimit })
+                    || probeFailsLocal.contains(where: { $0.value >= Self.livenessProbeFailureLimit }) {
+                    sampleError = sampleError ?? "단일 모터 연속 응답 없음 — hardware 확인"
                     endReason = .lowerBodyWriteFailure
                     break cycleLoop
                 }
@@ -458,28 +507,29 @@ extension WalkLabSession {
         if let onPose {
             await onPose(walkReady)
         }
+        // L5: walkReady 복귀도 SYNC_WRITE 1패킷 — gate 보호 일관성 유지 (robotPort 경유).
         let changedFinal = walkReady.changedJoints(from: previous)
-        for joint in changedFinal {
-            let rawVal = UInt16(clamping: walkReady.raw(joint))
+        if !changedFinal.isEmpty {
+            let targets = changedFinal.map { ($0, UInt16(clamping: walkReady.raw($0))) }
             do {
-                // V288-2: walkReady 복귀 write 도 robotPort 경유 — gate 보호 일관성 유지.
                 if let port = robotPort {
-                    _ = try await port.writeJointPosition(joint, raw: rawVal)
+                    try await port.writeJointPositions(
+                        Dictionary(uniqueKeysWithValues: targets))
                 } else {
-                    _ = try bus.setPosition(joint, raw: rawVal)
+                    try bus.setPositions(targets)
                 }
             } catch let portErr as RobotPortError where portErr == .dxlPowerOff {
                 await robotPort?.emergencyStop()
                 positionFailures += 1
                 if let cb = onBusWriteFailure { Task { @MainActor in cb() } }
-                sampleError = "\(joint.name) 복귀쓰기(dxlPowerOff): \(portErr.localizedDescription)"
+                sampleError = "복귀 일괄쓰기(dxlPowerOff): \(portErr.localizedDescription)"
             } catch {
                 positionFailures += 1
                 // v1.11.1 MEDIUM-5: bus write 실패 누적 callback.
                 if let cb = onBusWriteFailure {
                     Task { @MainActor in cb() }
                 }
-                sampleError = "\(joint.name) 복귀쓰기: \(error.localizedDescription)"
+                sampleError = "복귀 일괄쓰기 (\(changedFinal.count)관절): \(error.localizedDescription)"
             }
         }
 

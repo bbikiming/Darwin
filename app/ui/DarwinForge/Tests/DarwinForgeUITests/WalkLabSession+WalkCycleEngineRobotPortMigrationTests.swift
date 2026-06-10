@@ -75,8 +75,9 @@ final class WalkLabSessionWalkCycleEngineRobotPortMigrationTests: XCTestCase {
             robotPort: port
         )
 
-        XCTAssertGreaterThan(port.writeCount, 0,
-            "robotPort.writeJointPosition 이 최소 1회 이상 호출돼야 함")
+        // L5 (2026-06-11): SYNC_WRITE 전환 — per-joint write 대신 배치 1회.
+        XCTAssertGreaterThan(port.batchWriteCount, 0,
+            "robotPort.writeJointPositions (배치) 가 최소 1회 이상 호출돼야 함")
     }
 
     /// dxlPower OFF 시 writeJointPosition throw → positionWriteFailures 증가.
@@ -122,8 +123,9 @@ final class WalkLabSessionWalkCycleEngineRobotPortMigrationTests: XCTestCase {
             robotPort: port
         )
 
-        XCTAssertGreaterThan(port.writeCount, 0,
-            "runContinuousWalk: robotPort.writeJointPosition 최소 1회 이상 호출")
+        // L5 (2026-06-11): SYNC_WRITE 전환 — per-joint write 대신 배치 1회.
+        XCTAssertGreaterThan(port.batchWriteCount, 0,
+            "runContinuousWalk: robotPort.writeJointPositions (배치) 최소 1회 이상 호출")
     }
 
     /// dxlPower OFF 시 positionWriteFailures 증가 + emergencyStop 호출.

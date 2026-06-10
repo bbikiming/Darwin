@@ -46,6 +46,12 @@ public protocol BusInterface: AnyObject, Sendable {
     func setPositions(_ targets: [(JointID, UInt16)]) throws
 
     func setMovingSpeed(_ joint: JointID, speed: UInt16) throws
+
+    /// 다중 관절 moving speed 동시 write (SYNC_WRITE 1패킷, L5 2026-06-11).
+    /// per-joint 응답 없음 — transport error 만 throw.
+    /// 구현하지 않는 mock 은 extension default (per-joint 루프) 사용.
+    func setMovingSpeeds(_ joints: [JointID], speed: UInt16) throws
+
     func setPGain(_ joint: JointID, value: UInt8) throws
 
     // MARK: - Joint read
@@ -77,6 +83,14 @@ extension BusInterface {
     public func setPositions(_ targets: [(JointID, UInt16)]) throws {
         for (joint, raw) in targets {
             _ = try setPosition(joint, raw: raw)
+        }
+    }
+
+    /// `setMovingSpeeds` 기본 구현 — per-joint 루프 fallback.
+    /// Real `Bus` 는 자체 구현에서 SYNC_WRITE 1패킷 사용.
+    public func setMovingSpeeds(_ joints: [JointID], speed: UInt16) throws {
+        for joint in joints {
+            try setMovingSpeed(joint, speed: speed)
         }
     }
 }
