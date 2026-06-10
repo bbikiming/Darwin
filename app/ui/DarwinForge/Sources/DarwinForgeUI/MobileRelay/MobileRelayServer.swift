@@ -651,8 +651,14 @@ public actor MobileRelayServer {
         // V297-9 CRITICAL-1: E-stop 진입 즉시 safety epoch 증가 — 진행 중인 ARM 등이
         // await 후 깨어나면 stale 분류돼 staleCommand 로 실패. 자동 복구 분기 차단.
         bumpSafetyEpoch()
-        // V297-4: E-stop 도 accepted 선발사. iOS UI 가 "정지 처리 중" 즉시 표시 가능.
-        await sendCommandAccepted(commandId: env.id)
+        // **S3 (2026-06-11) — E-STOP 즉시발화 불변식 복원**: 종전엔 `accepted` 송신을
+        // await 한 *뒤에야* torque-off 를 호출 → TCP 송신 버퍼 포화 시 정지가 네트워크에
+        // 인질이 됐다. 이제 accepted 는 fire-and-forget Task 로 분리해 torque-off 가
+        // 첫 실행 라인이 되게 한다. MobileRelayServer 는 actor 이므로 이 Task 는
+        // 아래 `port.emergencyStop` 의 첫 await suspension 사이에 직렬 실행돼
+        // iOS "정지 처리 중" 즉시 표시 UX 는 유지된다(순서 보장만 해제).
+        let acceptedId = env.id
+        Task { [weak self] in await self?.sendCommandAccepted(commandId: acceptedId) }
         // E-stop has priority: ack as soon as the safety chain reports done.
         do {
             let latency = try await port.emergencyStop(reason: env.payload.reason)
