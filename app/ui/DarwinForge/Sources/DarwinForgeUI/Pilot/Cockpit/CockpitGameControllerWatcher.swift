@@ -44,15 +44,16 @@ public final class CockpitGameControllerWatcher {
             Task { @MainActor in
                 if let c = note.object as? GCController, c === self?.bound {
                     self?.bind(nil)
+                    // S2: 끊김 failsafe — stale 스틱 명령 즉시 zero (로봇 보행 정지).
+                    self?.state?.inputSourceLost()
                 }
             }
         })
 
-        let timer = Timer.scheduledTimer(withTimeInterval: pollInterval,
-                                          repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollOnce() }
+        // L3: .common 모드 — 트래킹 중에도 게임패드 폴 + B 버튼 E-STOP 감지 지속.
+        pollTimer = CockpitTimers.repeating(pollInterval) { [weak self] in
+            self?.pollOnce()
         }
-        pollTimer = timer
     }
 
     public func stop() {

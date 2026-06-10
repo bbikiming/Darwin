@@ -58,11 +58,10 @@ public final class CockpitControllerDriver {
         source.start()
         state?.setController(name: source.displayName)
 
-        let timer = Timer.scheduledTimer(withTimeInterval: pollInterval,
-                                         repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+        // L3: .common 모드 — 트래킹 중에도 입력 폴 + E-STOP 에지 감지 지속.
+        pollTimer = CockpitTimers.repeating(pollInterval) { [weak self] in
+            self?.tick()
         }
-        pollTimer = timer
     }
 
     public func stop() {
@@ -138,7 +137,15 @@ public final class CockpitControllerDriver {
 
     private func handleConnectionChange(_ connected: Bool) {
         state?.setController(name: connected ? source.displayName : nil)
-        // M3: 끊김 시 failsafe(profile.failsafe) 적용 예정.
+        guard !connected else { return }
+        // **S2 (2026-06-11)**: 끊김 failsafe 집행. profile.failsafe 의 모든 케이스
+        // (freeze/sit/safeStop)는 "즉시 정지"를 공통 전제로 한다 — 우선 stick zero 주입으로
+        // stale 보행을 끊는다(sit/safeStop 의 추가 모션은 후속). activator/터보 상태도
+        // 잔존 토글이 남지 않도록 초기화. E-STOP 이 아니라 토크는 유지.
+        prevEmergency = false
+        activatorStates = [:]
+        previousActive = [:]
+        state?.inputSourceLost()
     }
 
     /// 단조 증가 시각(ms) — 벽시계 변경에 영향받지 않음.

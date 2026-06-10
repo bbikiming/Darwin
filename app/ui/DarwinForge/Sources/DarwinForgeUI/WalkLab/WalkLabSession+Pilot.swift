@@ -105,7 +105,7 @@ extension WalkLabSession {
     /// # 동작
     ///
     /// 1. `pilotApplyAmplitude(cmd)` 호출 (emergency 가드 + amplitude write).
-    /// 2. `periodMs` clamp (600..850 — WalkLab freeform 범위) 후 write.
+    /// 2. `periodMs` clamp (440..700 — `mobileFreeformPeriodRange`) 후 write.
     /// 3. caller 가 `pilotSyncEngine()` 호출하면 cadence + amplitude 모두 motor 로
     ///    송출. 시뮬 (`CockpitWalkAnimator`) 도 같은 periodMs 사용 → digital twin.
     ///
@@ -115,8 +115,10 @@ extension WalkLabSession {
                                                periodMs: Double) -> Bool {
         let accepted = pilotApplyAmplitude(cmd)
         guard accepted else { return false }
-        // WalkLab freeform clamp 의 600..850 ms 범위. 그 밖이면 saturate.
-        let clamped = max(600.0, min(850.0, periodMs))
+        // J3 (2026-06-11): freeform 경로(mobileFreeformClamp)와 동일 범위(440..700)로
+        // 통일 — 종전 600..850 은 콕핏 freeform 경로와 어긋나 같은 throttle 이 경로별로
+        // 다른 cadence 를 내던 불일치(J3/J16)였다. 단일 상수원 사용.
+        let clamped = periodMs.clamped(to: WalkMotionLibrary.mobileFreeformPeriodRange)
         // pilotApplyAmplitude 가 advanced=true 자동 활성 → customPeriodMs 가
         // effective. WalkLab 의 advanced slider 와 동일 경로.
         self.customPeriodMs = clamped

@@ -156,9 +156,9 @@ public final class CockpitDJIController: ObservableObject {
         status = .mockActive
         mockStartedAt = Date()
         mockTimer?.invalidate()
-        mockTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0,
-                                         repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tickMock() }
+        // L3: .common 모드 — mock 데모도 입력 경로(apply(.djiRC))라 트래킹 중 동결 방지.
+        mockTimer = CockpitTimers.repeating(1.0 / 30.0) { [weak self] in
+            self?.tickMock()
         }
     }
 

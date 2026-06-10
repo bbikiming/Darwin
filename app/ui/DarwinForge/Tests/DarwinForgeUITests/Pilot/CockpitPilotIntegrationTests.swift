@@ -23,7 +23,7 @@ import ForgeCore
 /// CockpitState.setSpeedScale(throttle)  →  cockpit.periodMs (derive)
 ///   →  session.pilotApplyAmplitudeWithPeriod(cmd, periodMs: cockpit.periodMs)
 ///     →  session.pilotApplyAmplitude(cmd)        [strideMm/sideMm/turnDeg + advanced=true]
-///     →  session.customPeriodMs = clamp(periodMs, 600...850)
+///     →  session.customPeriodMs = clamp(periodMs, 440...700)  // J3 (2026-06-11)
 ///   →  session.effectivePeriodMs == customPeriodMs (advanced=true 이므로)
 /// ```
 ///
@@ -73,17 +73,17 @@ final class CockpitPilotIntegrationTests: XCTestCase {
     }
 
     func test_K02_period_clamp_below_floor() {
-        // 600 미만 → 600 으로 saturate (WalkLab freeform clamp).
+        // J3: 440 미만 → 440 으로 saturate (mobileFreeformPeriodRange).
         dispatch(WalkingCommand(strideMm: 20, sideMm: 0, turnDeg: 0), periodMs: 400)
-        XCTAssertEqual(session.customPeriodMs, 600, accuracy: 0.001,
-                       "400ms → 600ms floor clamp")
+        XCTAssertEqual(session.customPeriodMs, 440, accuracy: 0.001,
+                       "400ms → 440ms floor clamp")
     }
 
     func test_K03_period_clamp_above_ceiling() {
-        // 850 초과 → 850 으로 saturate.
+        // J3: 700 초과 → 700 으로 saturate.
         dispatch(WalkingCommand(strideMm: 20, sideMm: 0, turnDeg: 0), periodMs: 1000)
-        XCTAssertEqual(session.customPeriodMs, 850, accuracy: 0.001,
-                       "1000ms → 850ms ceiling clamp")
+        XCTAssertEqual(session.customPeriodMs, 700, accuracy: 0.001,
+                       "1000ms → 700ms ceiling clamp")
     }
 
     func test_K04_amplitude_propagates_to_session_sliders() {
@@ -158,15 +158,15 @@ final class CockpitPilotIntegrationTests: XCTestCase {
     func test_K10_full_chain_throttle_max_to_session_period() {
         // 사용자가 cockpit throttle 슬라이더를 1.5 (빠름) 로.
         cockpit.setSpeedScale(1.5)
-        XCTAssertEqual(cockpit.periodMs, 600, accuracy: 0.001,
-                       "throttle 1.5 → cockpit.periodMs 600")
+        XCTAssertEqual(cockpit.periodMs, 440, accuracy: 0.001,
+                       "throttle 1.5 → cockpit.periodMs 440 (J3)")
         // cockpit 이 stick 입력 → lastCommand.
         cockpit.apply(leftX: 0, leftY: -1.0, turn: 0, from: .keyboard)
         // PilotCockpitView.dispatchRealMotorIfAllowed 가 하는 호출 재현.
         dispatch(cockpit.lastCommand, periodMs: cockpit.periodMs)
         // session 의 motor cadence 가 throttle 을 반영.
-        XCTAssertEqual(session.customPeriodMs, 600, accuracy: 0.001,
-                       "cockpit throttle → session motor cadence 600ms")
+        XCTAssertEqual(session.customPeriodMs, 440, accuracy: 0.001,
+                       "cockpit throttle → session motor cadence 440ms")
         // ROBOTIS Walking 속도 공식 검증: stride × 2000 / period.
         let expectedSpeed = session.strideMm * 2000.0 / session.customPeriodMs
         XCTAssertGreaterThan(expectedSpeed, 100,
@@ -175,12 +175,12 @@ final class CockpitPilotIntegrationTests: XCTestCase {
 
     func test_K11_full_chain_throttle_min_slower_motor() {
         cockpit.setSpeedScale(0.5)
-        XCTAssertEqual(cockpit.periodMs, 850, accuracy: 0.001,
-                       "throttle 0.5 → cockpit.periodMs 850")
+        XCTAssertEqual(cockpit.periodMs, 700, accuracy: 0.001,
+                       "throttle 0.5 → cockpit.periodMs 700 (J3)")
         cockpit.apply(leftX: 0, leftY: -1.0, turn: 0, from: .keyboard)
         dispatch(cockpit.lastCommand, periodMs: cockpit.periodMs)
-        XCTAssertEqual(session.customPeriodMs, 850, accuracy: 0.001,
-                       "cockpit throttle min → session motor cadence 850ms (느림)")
+        XCTAssertEqual(session.customPeriodMs, 700, accuracy: 0.001,
+                       "cockpit throttle min → session motor cadence 700ms (느림)")
     }
 
     func test_K12_variable_speed_same_stride_different_period() {
@@ -198,7 +198,7 @@ final class CockpitPilotIntegrationTests: XCTestCase {
 
         XCTAssertGreaterThan(speedFast, speedSlow,
                              "같은 보폭이라도 throttle 높으면 빠름 (cadence 차이)")
-        XCTAssertEqual(speedFast / speedSlow, 850.0 / 600.0, accuracy: 0.01,
+        XCTAssertEqual(speedFast / speedSlow, 700.0 / 440.0, accuracy: 0.01,
                        "속도 비 = period 역비 (ROBOTIS 공식)")
     }
 

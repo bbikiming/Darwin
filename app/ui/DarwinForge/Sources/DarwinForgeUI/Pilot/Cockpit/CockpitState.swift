@@ -31,8 +31,9 @@ public final class CockpitState: ObservableObject {
     @Published public var speedScale: Double = 1.0
 
     /// **ROBOTIS Walking PERIOD_TIME (cadence)** — 한 보행 사이클 (좌발+우발) 의
-    /// 시간 (ms). throttle slider (`speedScale`) 가 본 값을 derive: 0.5 → 850 (느
-    /// 림), 1.5 → 600 (빠름). WalkLab freeform clamp 의 600..850 범위 안.
+    /// 시간 (ms). throttle slider (`speedScale`) 가 본 값을 derive: 0.5 → 700 (느
+    /// 림), 1.5 → 440 (빠름). 실모터 clamp `WalkMotionLibrary.mobileFreeformPeriodRange`
+    /// (440..700)와 정합 (J3, 2026-06-11) — 종전 600..850 은 dead zone 유발이었다.
     ///
     /// # ROBOTIS Walking 의 속도 공식
     ///
@@ -192,11 +193,10 @@ public final class CockpitState: ObservableObject {
     public func startSimulation() {
         guard integratorTimer == nil else { return }
         lastIntegrationAt = Date()
-        let t = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0,
-                                     repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.integrate() }
+        // L3: .common 모드 등록 — 메뉴/리사이즈 트래킹 중에도 30Hz 적분 지속(stale 보행 방지).
+        integratorTimer = CockpitTimers.repeating(1.0 / 30.0) { [weak self] in
+            self?.integrate()
         }
-        integratorTimer = t
     }
 
     /// CockpitView disappear 시 호출 — timer 정리.
@@ -477,10 +477,14 @@ public final class CockpitState: ObservableObject {
     public func setSpeedScale(_ scale: Double) {
         let clamped = min(max(0.5, scale), 1.5)
         speedScale = clamped
-        // **방법론 (ROBOTIS Walking)**: throttle → cadence. periodMs 를 derive.
-        // Linear 매핑: 0.5 → 850 (느림), 1.0 → 725 (보통), 1.5 → 600 (빠름).
-        // WalkLab freeform clamp 의 [600, 850] 범위 안.
-        periodMs = 850.0 - 250.0 * (clamped - 0.5)
+        // **J3 (2026-06-11) — 실모터 clamp 와 정합**: throttle → cadence(periodMs) derive.
+        // 종전 850→600 매핑은 실모터 `mobileFreeformClamp`(440~700)와 어긋나 throttle
+        // 하반부가 700 으로 포화(dead zone)되고 빠른 구간(440~600)은 도달 불가였다.
+        // 이제 단일 상수원 `WalkMotionLibrary.mobileFreeformPeriodRange`(440~700)에 맞춰
+        // 0.5 → 700(느림), 1.0 → 570(보통), 1.5 → 440(빠름). 화면 animator·속도 게이지·
+        // 실모터가 동일 periodMs 를 쓰므로 "화면=게이지=실모터" 불변식 보존.
+        let pr = WalkMotionLibrary.mobileFreeformPeriodRange
+        periodMs = pr.upperBound - (pr.upperBound - pr.lowerBound) * (clamped - 0.5)
         // Re-derive command — Cockpit max baseline 명시 (38/22/18).
         lastCommand = VirtualJoystickMapper.map(
             x: leftStick.x, y: leftStick.y, turn: rightStick.x,
@@ -532,6 +536,16 @@ public final class CockpitState: ObservableObject {
         for timer in heldKeyTimers.values { timer.cancel() }
         heldKeyTimers.removeAll()
         heldKeys.removeAll()
+    }
+
+    /// **S2 disconnect failsafe (2026-06-11)**: 입력 소스(게임패드/DJI)가 끊겼을 때 호출.
+    /// 마지막 비-zero 스틱 명령이 stale 로 잔존해 로봇이 계속 보행하는 것을 막는다.
+    /// 이동·머리 명령을 즉시 zero 로 — 기존 디스패치 체인(motorCommand → onChange)을
+    /// 그대로 타므로 실모터가 stop 으로 수렴하고, 후속 auto-disarm dwell 이 자연 발동한다.
+    /// E-STOP 과 달리 토크는 유지(끊김 ≠ 비상) — 단순 정지 후 재연결 시 즉시 재개 가능.
+    public func inputSourceLost() {
+        apply(leftX: 0, leftY: 0, turn: 0, from: lastSource)
+        applyHead(panNorm: 0, tiltNorm: 0)
     }
 
     /// 키보드 hotkey 가 fire 했을 때 호출. 활성 키를 0.25 초 동안 표시 (hold 동작

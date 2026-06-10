@@ -292,14 +292,15 @@ final class CockpitMotionParityTests: XCTestCase {
         s.setSpeedScale(1.5)
         XCTAssertEqual(s.lastCommand.strideMm, strideAtBase, accuracy: 0.01,
                        "speedScale 변경은 amplitude 영향 없음 (stick magnitude only)")
-        XCTAssertEqual(s.periodMs, 600, accuracy: 0.01,
-                       "speedScale 1.5 → periodMs 600 (빠름)")
+        // J3 (2026-06-11): 실모터 clamp(440~700)와 정합 — 종전 600/850/725.
+        XCTAssertEqual(s.periodMs, 440, accuracy: 0.01,
+                       "speedScale 1.5 → periodMs 440 (빠름)")
         s.setSpeedScale(0.5)
-        XCTAssertEqual(s.periodMs, 850, accuracy: 0.01,
-                       "speedScale 0.5 → periodMs 850 (느림)")
+        XCTAssertEqual(s.periodMs, 700, accuracy: 0.01,
+                       "speedScale 0.5 → periodMs 700 (느림)")
         s.setSpeedScale(1.0)
-        XCTAssertEqual(s.periodMs, 725, accuracy: 0.01,
-                       "speedScale 1.0 → periodMs 725 (중간)")
+        XCTAssertEqual(s.periodMs, 570, accuracy: 0.01,
+                       "speedScale 1.0 → periodMs 570 (중간)")
     }
 
     // MARK: - Group G: ROBOTIS Walking 속도 공식 (10 scenarios)
@@ -360,13 +361,13 @@ final class CockpitMotionParityTests: XCTestCase {
     @MainActor
     func test_42_period_clamped_to_walklab_freeform_range() {
         let s = CockpitState()
-        // Throttle 의 범위 (0.5~1.5) 가 periodMs (600..850) 로 정확 매핑.
+        // J3 (2026-06-11): Throttle (0.5~1.5) → periodMs (440..700) 정확 매핑.
         s.setSpeedScale(0.5)
-        XCTAssertGreaterThanOrEqual(s.periodMs, 600)
-        XCTAssertLessThanOrEqual(s.periodMs, 850)
+        XCTAssertGreaterThanOrEqual(s.periodMs, 440)
+        XCTAssertLessThanOrEqual(s.periodMs, 700)
         s.setSpeedScale(1.5)
-        XCTAssertGreaterThanOrEqual(s.periodMs, 600)
-        XCTAssertLessThanOrEqual(s.periodMs, 850)
+        XCTAssertGreaterThanOrEqual(s.periodMs, 440)
+        XCTAssertLessThanOrEqual(s.periodMs, 700)
     }
 
     func test_43_walklab_freeform_clamp_includes_cockpit_range() {
@@ -487,69 +488,64 @@ final class CockpitMotionParityTests: XCTestCase {
 
     @MainActor
     func test_52_stick_quarter_throttle_min() {
-        // stick 0.25 + throttle 0.5 (period 850)
-        // strideMm = 0.25 × 38 = 9.5 mm/step (after deadzone)
-        // speed = 9.5 × 2000/850 = 22.35 mm/s
+        // J3: stick 0.25 + throttle 0.5 (period 700)
+        // strideMm = 0.25 × 38 = 9.5 mm/step; speed = 9.5 × 2000/700 = 27.14 mm/s
         let s = CockpitState()
         s.setSpeedScale(0.5)
         s.apply(leftX: 0, leftY: -0.25, turn: 0, from: .keyboard)
-        let expected = 0.25 * 38.0 * 2000.0 / 850.0
+        let expected = 0.25 * 38.0 * 2000.0 / 700.0
         let actual = s.lastCommand.strideMm * 2000.0 / s.periodMs
         XCTAssertEqual(actual, expected, accuracy: 0.5,
-                       "stick 0.25 + min throttle → ~22.4 mm/s")
+                       "stick 0.25 + min throttle → ~27.1 mm/s")
     }
 
     @MainActor
     func test_53_stick_half_throttle_unit() {
-        // stick 0.5 + throttle 1.0 (period 725)
-        // strideMm = 0.5 × 38 = 19 mm/step
-        // speed = 19 × 2000/725 = 52.41 mm/s
+        // J3: stick 0.5 + throttle 1.0 (period 570)
+        // strideMm = 0.5 × 38 = 19 mm/step; speed = 19 × 2000/570 = 66.67 mm/s
         let s = CockpitState()
         s.setSpeedScale(1.0)
         s.apply(leftX: 0, leftY: -0.5, turn: 0, from: .keyboard)
-        let expected = 0.5 * 38.0 * 2000.0 / 725.0
+        let expected = 0.5 * 38.0 * 2000.0 / 570.0
         let actual = s.lastCommand.strideMm * 2000.0 / s.periodMs
         XCTAssertEqual(actual, expected, accuracy: 0.5,
-                       "stick 0.5 + mid throttle → ~52.4 mm/s")
+                       "stick 0.5 + mid throttle → ~66.7 mm/s")
     }
 
     @MainActor
     func test_54_stick_three_quarter_throttle_max() {
-        // stick 0.75 + throttle 1.5 (period 600)
-        // strideMm = 0.75 × 38 = 28.5 mm/step
-        // speed = 28.5 × 2000/600 = 95.0 mm/s
+        // J3: stick 0.75 + throttle 1.5 (period 440)
+        // strideMm = 0.75 × 38 = 28.5 mm/step; speed = 28.5 × 2000/440 = 129.5 mm/s
         let s = CockpitState()
         s.setSpeedScale(1.5)
         s.apply(leftX: 0, leftY: -0.75, turn: 0, from: .keyboard)
-        let expected = 0.75 * 38.0 * 2000.0 / 600.0
+        let expected = 0.75 * 38.0 * 2000.0 / 440.0
         let actual = s.lastCommand.strideMm * 2000.0 / s.periodMs
         XCTAssertEqual(actual, expected, accuracy: 0.5,
-                       "stick 0.75 + max throttle → ~95 mm/s")
+                       "stick 0.75 + max throttle → ~129.5 mm/s")
     }
 
     @MainActor
     func test_55_stick_max_throttle_max_robotis_safety_limit() {
-        // stick 1.0 + throttle 1.5 (period 600) — ROBOTIS 안전 한계 max speed
-        // strideMm = 38 (cockpit baseline max)
-        // speed = 38 × 2000/600 = 126.67 mm/s
+        // J3: stick 1.0 + throttle 1.5 (period 440) — WalkLab freeform 과 동일 범위.
+        // strideMm = 38 (cockpit baseline max); speed = 38 × 2000/440 = 172.73 mm/s
         let s = CockpitState()
         s.setSpeedScale(1.5)
         s.apply(leftX: 0, leftY: -1.0, turn: 0, from: .keyboard)
         let speed = s.lastCommand.strideMm * 2000.0 / s.periodMs
-        XCTAssertEqual(speed, 126.667, accuracy: 1.0,
-                       "stick max + throttle max → ROBOTIS 안전 한계 126.7 mm/s")
+        XCTAssertEqual(speed, 172.727, accuracy: 1.0,
+                       "stick max + throttle max → 172.7 mm/s (clamp 전체 범위)")
     }
 
     @MainActor
     func test_56_stick_max_throttle_min() {
-        // stick 1.0 + throttle 0.5 (period 850)
-        // speed = 38 × 2000/850 = 89.41 mm/s
+        // J3: stick 1.0 + throttle 0.5 (period 700); speed = 38 × 2000/700 = 108.57 mm/s
         let s = CockpitState()
         s.setSpeedScale(0.5)
         s.apply(leftX: 0, leftY: -1.0, turn: 0, from: .keyboard)
         let speed = s.lastCommand.strideMm * 2000.0 / s.periodMs
-        XCTAssertEqual(speed, 89.412, accuracy: 1.0,
-                       "stick max + throttle min → 89.4 mm/s")
+        XCTAssertEqual(speed, 108.571, accuracy: 1.0,
+                       "stick max + throttle min → 108.6 mm/s")
     }
 
     @MainActor
@@ -575,8 +571,8 @@ final class CockpitMotionParityTests: XCTestCase {
         s.setSpeedScale(1.5)
         let speedFast = s.lastCommand.strideMm * 2000.0 / s.periodMs
         let ratio = speedFast / speedSlow
-        XCTAssertEqual(ratio, 850.0 / 600.0, accuracy: 0.01,
-                       "Throttle 0.5 → 1.5 → speed ratio = 850/600 = 1.417")
+        XCTAssertEqual(ratio, 700.0 / 440.0, accuracy: 0.01,
+                       "Throttle 0.5 → 1.5 → speed ratio = 700/440 = 1.591")
     }
 
     @MainActor
@@ -586,8 +582,8 @@ final class CockpitMotionParityTests: XCTestCase {
         s.setSpeedScale(1.5)
         s.apply(leftX: 1.0, leftY: 0, turn: 0, from: .keyboard)
         let speed = s.lastCommand.sideMm * 2000.0 / s.periodMs
-        XCTAssertEqual(speed, 22.0 * 2000.0 / 600.0, accuracy: 1.0,
-                       "Side max + throttle max = 73.3 mm/s")
+        XCTAssertEqual(speed, 22.0 * 2000.0 / 440.0, accuracy: 1.0,
+                       "Side max + throttle max = 100 mm/s")
     }
 
     @MainActor
@@ -597,8 +593,8 @@ final class CockpitMotionParityTests: XCTestCase {
         s.setSpeedScale(1.5)
         s.apply(leftX: 0, leftY: 0, turn: 1.0, from: .keyboard)
         let speed = s.lastCommand.turnDeg * 2000.0 / s.periodMs
-        XCTAssertEqual(speed, 12.0 * 2000.0 / 600.0, accuracy: 1.0,
-                       "Turn max + throttle max = 40 deg/s")
+        XCTAssertEqual(speed, 12.0 * 2000.0 / 440.0, accuracy: 1.0,
+                       "Turn max + throttle max = 54.5 deg/s")
     }
 
     // MARK: - Group J: 자이로 보정 + 가변속도 일관성 (5 scenarios)

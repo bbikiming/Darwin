@@ -470,6 +470,14 @@ extension WalkMotionLibrary {
     /// 마진이라 늘리면 무릎/엉덩이 겹침. 회전 *속도* 는 minPeriodMs 단축으로만 올린다.
     public static let mobileFreeformMaxTurnDeg: Double = 12
 
+    /// **J3 (2026-06-11)**: freeform 직진 보행의 유효 period 범위 (단일 상수원).
+    /// `mobileFreeformClamp` 의 base period clamp 와 콕핏 throttle→periodMs derive 가
+    /// 이 동일 범위를 공유해야 한다. 종전엔 콕핏이 600~850 을 만들어 클램프(440~700)와
+    /// 어긋나 ① throttle 하반부가 700 으로 포화(dead zone), ② 빠른 구간 440~600 도달
+    /// 불가였다. lowerBound=느림(throttle 0.5), upperBound 아님에 주의 — period 는 빠를수록
+    /// 작다. 즉 throttle↑ → period 는 700→440 으로 *감소*.
+    public static let mobileFreeformPeriodRange: ClosedRange<Double> = 440...700
+
     /// 회전 가속 (각도 불변, 주기 단축).
     ///
     /// 회전 속도 = |turnDeg| ÷ periodMs. turnDeg(=hip-yaw 관절각)을 키우면 60° 안전선을
@@ -499,7 +507,7 @@ extension WalkMotionLibrary {
         //   base period 440~700 (이전 600~850) — 평균 cadence 빨라짐
         //   회전 가속 floor 420 (이전 450) — 풀스틱 회전 시 더 빠른 회전속도
         //   turn=0 이면 base 그대로 → 직진 보행엔 가속 무영향 (선형 보장).
-        let basePeriod = base.periodMs.clamped(to: 440...700)
+        let basePeriod = base.periodMs.clamped(to: mobileFreeformPeriodRange)
         let boostedPeriod = turnBoostedPeriodMs(turnDeg: turn, basePeriodMs: basePeriod)
         return AdvancedTuning(
             // 2026-06-08 빠른 보행 baseline — stride 38→50, side 22→26 (ROBOTIS Walking

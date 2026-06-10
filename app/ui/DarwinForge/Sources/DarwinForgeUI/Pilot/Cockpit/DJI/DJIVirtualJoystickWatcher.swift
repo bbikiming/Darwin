@@ -71,6 +71,8 @@ public final class DJIVirtualJoystickWatcher: ObservableObject {
             self.connectedName = nil
             self.isStreaming = false
             self.cockpit?.setController(name: nil)
+            // S2: 끊김 failsafe — stale 스틱 명령 즉시 zero (로봇 보행 정지).
+            self.cockpit?.inputSourceLost()
         }
         resolved.onReport = { [weak self] report in
             self?.handle(report: report)

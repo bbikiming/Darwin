@@ -182,6 +182,19 @@ public struct PilotCockpitView: View {
         .onChange(of: cockpit.ballTrackingToggleAt) { _, newValue in
             if newValue != nil { session.ballTrackingEnabled.toggle() }
         }
+        // **컨트롤러 E-STOP/복구 배선 (S1, 2026-06-11)** — 게임패드·DJI·드라이버가
+        // `triggerEmergency()` 로 set 하는 `emergencyAt` 의 단일 소비자. 종전엔 소비자가
+        // 0개라 컨트롤러 E-STOP 이 HUD flash 만 내고 하드웨어 정지를 못 했다(critical).
+        // 모든 입력원(버튼·키·게임패드·DJI)이 이제 emergencyAt/recoveryAt 단일 진입점으로
+        // 수렴 → 여기서 hardware torque-off 체인 호출. `cockpitEmergencyStop()` 은
+        // triggerEmergency 를 재호출하지 않으므로(아래 정의 참조) 재진입 루프 없음.
+        // 디바운스/스로틀 없음 — E-STOP 즉시발화 불변식 보존.
+        .onChange(of: cockpit.emergencyAt) { _, newValue in
+            if newValue != nil { cockpitEmergencyStop() }
+        }
+        .onChange(of: cockpit.recoveryAt) { _, newValue in
+            if newValue != nil { cockpitRecover() }
+        }
         // 통합 시트에서 DJI 프로파일을 저장하면 라이브 watcher 에 즉시 반영.
         .onChange(of: djiProfile) { _, newProfile in
             #if canImport(IOKit)
@@ -260,8 +273,8 @@ public struct PilotCockpitView: View {
         // 매핑 편집 중 키 입력이 로봇을 움직이거나 E-STOP 시키는 안전 사고 방지.
         .background(CockpitKeyboardHotkeys(
             cockpit: cockpit,
-            onEmergency: { cockpitEmergencyStop() },
-            onRecover: { cockpitRecover() })
+            onEmergency: { cockpit.triggerEmergency() },
+            onRecover: { cockpit.triggerRecovery() })
             .disabled(showControllerSheet))
         // SSH↔LAN parity (2026-06-01): 콕핏은 WalkLabView 와 별개 최상위 화면이라
         // 자체 onboard bridge 가 필요. 이 invisible bridge 가 onboard 명령 전송 + 텔레메트리
@@ -525,7 +538,7 @@ public struct PilotCockpitView: View {
                                  systemImage: "exclamationmark.octagon.fill",
                                  tint: CockpitColors.danger,
                                  width: bw, height: bh) {
-                        cockpitEmergencyStop()
+                        cockpit.triggerEmergency()
                     }
                     .accessibilityIdentifier("cockpit.estop")
                 }
@@ -536,7 +549,7 @@ public struct PilotCockpitView: View {
                              systemImage: "arrow.clockwise.circle.fill",
                              tint: CockpitColors.live,
                              width: bw, height: bh) {
-                    cockpitRecover()
+                    cockpit.triggerRecovery()
                 }
                 .accessibilityIdentifier("cockpit.recover")
             }
@@ -660,7 +673,7 @@ public struct PilotCockpitView: View {
                     safetyButton(title: "E-STOP",
                                  systemImage: "exclamationmark.octagon.fill",
                                  tint: CockpitColors.danger) {
-                        cockpitEmergencyStop()
+                        cockpit.triggerEmergency()
                     }
                     .accessibilityIdentifier("cockpit.estop")
                 }
@@ -678,7 +691,7 @@ public struct PilotCockpitView: View {
                     safetyButton(title: "RECOVER",
                                  systemImage: "arrow.clockwise.circle.fill",
                                  tint: CockpitColors.live) {
-                        cockpitRecover()
+                        cockpit.triggerRecovery()
                     }
                     .accessibilityIdentifier("cockpit.recover")
                 }
@@ -1067,8 +1080,11 @@ public struct PilotCockpitView: View {
     ///
     /// 본 helper 는 `session.emergencyStop` (hardware torque-off 체인) 을 즉시 호출
     /// + autoDisarm dwell 취소 + 로컬 cockpit state reset 까지 한 곳에서 처리.
+    /// **S1 (2026-06-11)**: 모든 입력원이 `cockpit.triggerEmergency()` → `emergencyAt`
+    /// onChange 를 거쳐 이 함수로 수렴한다. 따라서 여기서 `triggerEmergency()` 를 다시
+    /// 호출하면 onChange 재발화로 무한루프가 된다 — 절대 호출하지 않는다. HUD flash 는
+    /// emergencyAt 변경 자체가 구동한다.
     private func cockpitEmergencyStop() {
-        cockpit.triggerEmergency()      // HUD flash
         cockpit.release()               // stick / heldKeys zero
         autoDisarmTask?.cancel()        // dwell timer 무효화 (emergency 가 우선)
         autoDisarmTask = nil
@@ -1078,8 +1094,9 @@ public struct PilotCockpitView: View {
     }
 
     /// E-STOP 후 복구 — cockpit HUD + session emergency 모드 해제.
+    /// **S1 (2026-06-11)**: `recoveryAt` onChange 의 단일 소비자. `triggerRecovery()` 를
+    /// 재호출하지 않는다(무한루프 방지) — recoveryAt 변경은 진입점이 이미 수행.
     private func cockpitRecover() {
-        cockpit.triggerRecovery()
         if session.pilotIsEmergency {
             session.pilotEmergencyExit()
         }
