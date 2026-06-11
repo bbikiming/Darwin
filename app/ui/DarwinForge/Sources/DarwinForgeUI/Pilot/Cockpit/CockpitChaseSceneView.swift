@@ -304,35 +304,12 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
             floor.firstMaterial = mat
             parent.addChildNode(SCNNode(geometry: floor))
 
-            // Grid lines.
-            let half = 14
-            let step: Float = 0.5
-            for i in -half...half {
-                let v = Float(i) * step
-                let mat = SCNMaterial()
-                mat.diffuse.contents = NSColor(calibratedRed: 0.20,
-                                               green: 0.70,
-                                               blue: 0.55,
-                                               alpha: i.isMultiple(of: 2) ? 0.45 : 0.18)
-                mat.emission.contents = mat.diffuse.contents
-                mat.lightingModel = .constant
-
-                let xLine = SCNCylinder(radius: 0.003,
-                                        height: CGFloat(step * Float(half * 2)))
-                xLine.firstMaterial = mat
-                let xn = SCNNode(geometry: xLine)
-                xn.position = SCNVector3(v, 0.002, 0)
-                xn.eulerAngles = SCNVector3(CGFloat.pi / 2, 0, 0)
-                parent.addChildNode(xn)
-
-                let zLine = SCNCylinder(radius: 0.003,
-                                        height: CGFloat(step * Float(half * 2)))
-                zLine.firstMaterial = mat
-                let zn = SCNNode(geometry: zLine)
-                zn.position = SCNVector3(0, 0.002, v)
-                zn.eulerAngles = SCNVector3(0, 0, CGFloat.pi / 2)
-                parent.addChildNode(zn)
-            }
+            // **W2 (2026-06-11)**: 58-node 실린더 그리드 → 단일 셰이더 AA 그리드(teal)로
+            // 교체(draw call -57, 거리 무관 일정 픽셀폭). 그리드는 월드 원점 고정 plane,
+            // 로봇·카메라가 +Z 로 이동하므로 라인이 스크롤하는 FPV 모션 큐는 보존된다
+            // (fade 12m 라 ±20m plane 경계는 보이지 않음). Cockpit 스펙 그리드 단일 소스.
+            parent.addChildNode(
+                GridFloorMaterial.makeGridNode(style: SceneEnvironmentSpec.spec(for: .cockpit).grid))
             return parent
         }
     }

@@ -31,6 +31,8 @@ public struct RobotScene3D: NSViewRepresentable {
     /// default 0 — 종전 호출처는 변경 X.
     public let imuRollDeg: Double
     public let imuPitchDeg: Double
+    /// **W2**: 화면별 3D 환경 프리셋(조명·IBL tint·바닥·그리드·소품). 화면당 고정.
+    public let preset: ScenePreset
 
     public init(pose: RobotPose,
                 footTrace: [SIMD3<Double>] = [],
@@ -39,7 +41,8 @@ public struct RobotScene3D: NSViewRepresentable {
                 onMeshFallback: ((Bool) -> Void)? = nil,
                 cameraController: CameraController? = nil,
                 imuRollDeg: Double = 0,
-                imuPitchDeg: Double = 0) {
+                imuPitchDeg: Double = 0,
+                preset: ScenePreset = .studio) {
         self.pose = pose
         self.footTrace = footTrace
         self.highlight = highlight
@@ -48,6 +51,7 @@ public struct RobotScene3D: NSViewRepresentable {
         self.cameraController = cameraController
         self.imuRollDeg = imuRollDeg
         self.imuPitchDeg = imuPitchDeg
+        self.preset = preset
     }
 
     public func makeNSView(context: Context) -> InteractiveSceneView {
@@ -90,7 +94,7 @@ public struct RobotScene3D: NSViewRepresentable {
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(preset: preset)
     }
 }
 
@@ -103,8 +107,9 @@ public extension RobotScene3D {
     static func renderImage(pose: RobotPose,
                             size: CGSize = CGSize(width: 1024, height: 768),
                             highlight: JointID? = nil,
-                            cameraOverride: SCNVector3? = nil) -> NSImage? {
-        let coord = Coordinator()
+                            cameraOverride: SCNVector3? = nil,
+                            preset: ScenePreset = .studio) -> NSImage? {
+        let coord = Coordinator(preset: preset)
         coord.applyPose(pose)
         coord.applyHighlightPublic(highlight)
 
@@ -129,10 +134,12 @@ public extension RobotScene3D {
                          to url: URL,
                          size: CGSize = CGSize(width: 1024, height: 768),
                          highlight: JointID? = nil,
-                         cameraOverride: SCNVector3? = nil) -> Bool {
+                         cameraOverride: SCNVector3? = nil,
+                         preset: ScenePreset = .studio) -> Bool {
         guard let img = renderImage(pose: pose, size: size,
                                     highlight: highlight,
-                                    cameraOverride: cameraOverride),
+                                    cameraOverride: cameraOverride,
+                                    preset: preset),
               let tiff = img.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiff),
               let png = bitmap.representation(using: .png, properties: [:]) else {

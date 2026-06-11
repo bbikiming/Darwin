@@ -94,7 +94,8 @@ public struct TeachModeView: View {
             RobotScene3D(pose: capture.livePose,
                          footTrace: [],
                          showAxes: true,
-                         cameraController: camera)
+                         cameraController: camera,
+                         preset: .teach)
                 .background(LinearGradient(
                     colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                     startPoint: .top, endPoint: .bottom))

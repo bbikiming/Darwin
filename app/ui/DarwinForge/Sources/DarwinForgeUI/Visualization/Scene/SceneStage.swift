@@ -12,40 +12,24 @@ import SwiftUI
 enum SceneStage {
 
     // ───────────────────────────────────────────────────────────────────────
-    // 조명 상수 (PBR) — **W1**: IBL 이 base 를 깔아주므로 Blinn 시절 강도와 의미가
-    // 다르다. fill/ambient 삭제(IBL 소프트박스 패치가 대체, PBR+ambient 는 워시아웃
-    // 원인), key 상향 + rim 신규. 노출 가드는 SceneExposureTests.
+    // 조명 **구조** 상수 — 전 preset 공용. (강도·색·바닥·그리드 등 화면별 값은
+    // **W2** 에서 `SceneEnvironmentSpec`(SceneEnvironment.swift)으로 이관. 여기엔
+    // shadow 파라미터·광원 위치처럼 무드와 무관한 구조값만 남긴다.)
     // ───────────────────────────────────────────────────────────────────────
 
-    /// Key directional — warm, 그림자 캐스터.
-    static let keyIntensity: CGFloat = 550
-    static let keyColor = NSColor(calibratedRed: 1.00, green: 0.98, blue: 0.95, alpha: 1.0)
+    /// Key directional — 그림자 캐스터(위치·shadow 는 공용, 강도·색은 spec).
     static let keyPosition = SCNVector3(0.6, 2.3, -2.0)
     static let keyShadowRadius: CGFloat = 7
     static let keyShadowSampleCount = 8
     static let keyShadowMapSize = CGSize(width: 1024, height: 1024)
     static let keyShadowColor = NSColor(white: 0, alpha: 0.5)
 
-    /// Rim directional — 흰 쉘 윤곽을 배경에서 분리. 그림자 없음.
-    static let rimIntensity: CGFloat = 180
+    /// Rim directional — 흰 쉘 윤곽을 배경에서 분리. 그림자 없음. 색은 공용(쿨 화이트).
     static let rimColor = NSColor(calibratedRed: 0.85, green: 0.90, blue: 1.00, alpha: 1.0)
     static let rimPosition = SCNVector3(0, 2.0, 2.2)
 
-    /// IBL 강도(화면별 0.55–1.0 은 W2, W1 기본 studio 1.0).
-    static let iblIntensity: CGFloat = 1.0
-
     /// 조명이 바라보는 robot 허리 높이.
     static let lightLookAt = SCNVector3(0, 0.30, 0)
-
-    // ───────────────────────────────────────────────────────────────────────
-    // 바닥/그리드 상수.
-    // ───────────────────────────────────────────────────────────────────────
-
-    static let floorAlbedo = NSColor(white: 0.10, alpha: 1.0)
-    static let floorRoughness: CGFloat = 0.85
-    static let gridColor = NSColor(white: 0.18, alpha: 1.0)
-    static let gridHalf = 0.85
-    static let gridStep = 0.10
 
     // MARK: - 조명 rig + IBL
 
@@ -60,20 +44,23 @@ enum SceneStage {
     /// key + rim 조명을 scene root 에 부착하고 절차적 IBL 을 환경맵으로 주입.
     /// **W1**: lightingEnvironment(IBL)와 background 는 독립이므로 background(clear)는
     /// SwiftUI 그라디언트가 계속 담당.
+    /// **W2**: 강도·색·IBL tint 는 화면별 `SceneEnvironmentSpec` 이 소유.
+    /// shadow/position 같은 구조 상수는 전 preset 공용으로 이 파일에 유지.
     @discardableResult
-    static func installLighting(into scene: SCNScene) -> (key: SCNLight, rim: SCNLight) {
+    static func installLighting(into scene: SCNScene,
+                                spec: SceneEnvironmentSpec) -> (key: SCNLight, rim: SCNLight) {
         let root = scene.rootNode
 
         let key = SCNLight()
         key.type = .directional
-        key.intensity = keyIntensity
+        key.intensity = spec.keyIntensity
         key.castsShadow = true
         key.shadowRadius = keyShadowRadius
         key.shadowSampleCount = keyShadowSampleCount
         key.shadowMode = .deferred
         key.shadowMapSize = keyShadowMapSize
         key.shadowColor = keyShadowColor
-        key.color = keyColor
+        key.color = spec.keyColor
         let keyNode = SCNNode()
         keyNode.light = key
         keyNode.position = keyPosition
@@ -82,7 +69,7 @@ enum SceneStage {
 
         let rim = SCNLight()
         rim.type = .directional
-        rim.intensity = rimIntensity
+        rim.intensity = spec.rimIntensity
         rim.color = rimColor
         rim.castsShadow = false
         let rimNode = SCNNode()
@@ -91,9 +78,9 @@ enum SceneStage {
         rimNode.look(at: lightLookAt)
         root.addChildNode(rimNode)
 
-        // 절차적 IBL — PBR 머티리얼의 base 광량 + 금속 형태감.
-        scene.lightingEnvironment.contents = ProceduralEnvironmentMap.studio
-        scene.lightingEnvironment.intensity = iblIntensity
+        // 절차적 IBL — PBR 머티리얼의 base 광량 + 금속 형태감. preset tint 소비.
+        scene.lightingEnvironment.contents = ProceduralEnvironmentMap.image(for: spec)
+        scene.lightingEnvironment.intensity = spec.iblIntensity
 
         return (key, rim)
     }
@@ -113,39 +100,124 @@ enum SceneStage {
     // MARK: - 바닥
 
     /// PBR 바닥 — IBL-only 조명에서 검게 죽지 않도록 physicallyBased. 반사는 IBL 로만.
-    static func makeFloor() -> SCNNode {
+    /// **W2**: albedo·roughness 는 preset 스펙이 소유.
+    static func makeFloor(spec: SceneEnvironmentSpec) -> SCNNode {
         let ground = SCNFloor()
         ground.reflectivity = 0
-        ground.firstMaterial = RigMaterials.pbr(diffuse: floorAlbedo,
+        ground.firstMaterial = RigMaterials.pbr(diffuse: spec.floorAlbedo,
                                                 metalness: 0.0,
-                                                roughness: floorRoughness)
+                                                roughness: spec.floorRoughness)
         return SCNNode(geometry: ground)
     }
 
-    // MARK: - 그리드
+    // MARK: - 그리드 (W2: GridFloorMaterial 셰이더로 이관, 레거시는 거기 legacyGrid 로 보존)
 
-    static func makeGrid() -> SCNNode {
+    // MARK: - 소품 (W2 props)
+
+    /// preset 의 props 를 단일 그룹 노드로 빌드. originAxes 는 기존 axesNode 가 담당하므로 제외.
+    static func makeProps(spec: SceneEnvironmentSpec) -> SCNNode {
         let group = SCNNode()
-        let half = gridHalf
-        let step = gridStep
-        let mat = SCNMaterial()
-        mat.diffuse.contents = gridColor
-        mat.lightingModel = .constant
-        for i in stride(from: -half, through: half, by: step) {
-            let xLine = SCNCylinder(radius: 0.0012, height: CGFloat(half * 2))
-            xLine.firstMaterial = mat
-            let nx = SCNNode(geometry: xLine)
-            nx.position = SCNVector3(0, 0.0006, CGFloat(i))
-            nx.eulerAngles = SCNVector3(0, 0, CGFloat.pi / 2)
-            group.addChildNode(nx)
-
-            let zLine = SCNCylinder(radius: 0.0012, height: CGFloat(half * 2))
-            zLine.firstMaterial = mat
-            let nz = SCNNode(geometry: zLine)
-            nz.position = SCNVector3(CGFloat(i), 0.0006, 0)
-            group.addChildNode(nz)
+        group.name = "sceneProps"
+        for prop in spec.props {
+            switch prop {
+            case .originAxes:        break  // axesNode 가 별도 담당.
+            case .distanceMarks:     group.addChildNode(makeDistanceMarks())
+            case .startLine:         group.addChildNode(makeStartLine())
+            case .workMat:           group.addChildNode(makeWorkMat())
+            case .stageSpot:         group.addChildNode(makeStageSpot())
+            }
         }
         return group
+    }
+
+    /// WalkLab 진행축(전방 = -Z) 0.5m 간격 거리 마킹 8개. `SCNText` 금지 →
+    /// NSImage 로 사전 렌더한 텍스트 텍스처를 입힌 plane(폴리곤/alloc 최소).
+    private static func makeDistanceMarks() -> SCNNode {
+        let group = SCNNode()
+        group.name = "distanceMarks"
+        for i in 1...8 {
+            let meters = Double(i) * 0.5
+            let label = String(format: "%.1fm", meters)
+            guard let tex = textTexture(label) else { continue }
+            let plane = SCNPlane(width: 0.16, height: 0.08)
+            let mat = SCNMaterial()
+            mat.diffuse.contents = tex
+            mat.lightingModel = .constant
+            mat.isDoubleSided = true
+            mat.blendMode = .alpha
+            plane.firstMaterial = mat
+            let node = SCNNode(geometry: plane)
+            node.eulerAngles = SCNVector3(-CGFloat.pi / 2, 0, 0)  // 바닥에 눕힘.
+            node.position = SCNVector3(0.32, 0.002, -CGFloat(meters))  // 진행축 옆.
+            node.castsShadow = false
+            group.addChildNode(node)
+        }
+        return group
+    }
+
+    private static func makeStartLine() -> SCNNode {
+        let box = SCNBox(width: 1.2, height: 0.004, length: 0.02, chamferRadius: 0)
+        let mat = SCNMaterial()
+        mat.diffuse.contents = NSColor(calibratedRed: 0.30, green: 0.95, blue: 0.55, alpha: 1)
+        mat.emission.contents = NSColor(calibratedRed: 0.20, green: 0.70, blue: 0.40, alpha: 1)
+        mat.lightingModel = .constant
+        box.firstMaterial = mat
+        let node = SCNNode(geometry: box)
+        node.position = SCNVector3(0, 0.002, 0)
+        node.castsShadow = false
+        node.name = "startLine"
+        return node
+    }
+
+    private static func makeWorkMat() -> SCNNode {
+        let plane = SCNPlane(width: 0.6, height: 0.6)
+        plane.cornerRadius = 0.04
+        let mat = SCNMaterial()
+        mat.diffuse.contents = NSColor(calibratedWhite: 0.16, alpha: 1)
+        mat.roughness.contents = 0.95
+        mat.metalness.contents = 0.0
+        mat.lightingModel = .physicallyBased
+        plane.firstMaterial = mat
+        let node = SCNNode(geometry: plane)
+        node.eulerAngles = SCNVector3(-CGFloat.pi / 2, 0, 0)
+        node.position = SCNVector3(0, 0.0008, 0)
+        node.castsShadow = false
+        node.name = "workMat"
+        return node
+    }
+
+    private static func makeStageSpot() -> SCNNode {
+        let spot = SCNLight()
+        spot.type = .spot
+        spot.intensity = 300
+        spot.spotInnerAngle = 25
+        spot.spotOuterAngle = 50
+        spot.castsShadow = false   // 그림자 패스는 key 1개만 유지(perf).
+        spot.color = NSColor(calibratedRed: 1.0, green: 0.98, blue: 0.94, alpha: 1)
+        let node = SCNNode()
+        node.light = spot
+        node.position = SCNVector3(0, 2.5, 0.5)
+        node.look(at: lightLookAt)
+        node.name = "stageSpot"
+        return node
+    }
+
+    /// 짧은 라벨을 투명 배경 텍스처(NSImage)로 1회 렌더. 거리 마킹 텍스트용.
+    private static func textTexture(_ text: String) -> NSImage? {
+        let size = NSSize(width: 128, height: 64)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 34, weight: .semibold),
+            .foregroundColor: NSColor(calibratedWhite: 0.85, alpha: 0.9),
+            .paragraphStyle: style
+        ]
+        let rect = NSRect(x: 0, y: 12, width: size.width, height: 40)
+        text.draw(in: rect, withAttributes: attrs)
+        image.unlockFocus()
+        return image
     }
 
     // MARK: - 원점 축

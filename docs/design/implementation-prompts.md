@@ -38,7 +38,7 @@ docs/design/handheld-direct-pilot-upgrade.md 의 Wave H0 을 수행해줘.
 로봇이 walklab 데모 구동 중이어도 무해해야 함. 보고서 커밋: docs(report) 스코프.
 ```
 
-## [ ] P2 — 3D 뷰포트 W2: 화면별 환경 프리셋 + 셰이더 그리드 · 독립
+## [x] P2 — 3D 뷰포트 W2: 화면별 환경 프리셋 + 셰이더 그리드 · 독립 ✅ (2026-06-12)
 
 ```
 docs/design/3d-viewport-enhancement.md 의 Wave 2 를 구현해줘. W0(분할)·W1(PBR/IBL)은

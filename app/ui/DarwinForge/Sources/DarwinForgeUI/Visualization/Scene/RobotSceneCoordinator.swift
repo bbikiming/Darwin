@@ -32,12 +32,15 @@ public final class RobotSceneCoordinator {
     /// SceneTuning 변경 구독 — 뷰 계층과 무관하게 모든 활성 씬에 즉시 반영.
     private var tuningCancellable: AnyCancellable?
 
-    public init() {
+    /// **W2 (2026-06-11)**: 화면별 환경 프리셋 주입. 기본 `.studio`(= W1 값, 픽셀 동일).
+    /// preset 은 빌드 시 고정 — 런타임 변경 미지원(코디네이터 재생성 비용 회피).
+    public init(preset: ScenePreset = .studio) {
+        let spec = SceneEnvironmentSpec.spec(for: preset)
         scene = SCNScene()
         scene.background.contents = NSColor.clear
 
-        // ── 무대: 조명(key+rim) + IBL + 바닥 + 그리드 — SceneStage 로 위임.
-        let lights = SceneStage.installLighting(into: scene)
+        // ── 무대: 조명(key+rim) + IBL + 바닥 + 그리드 — SceneStage 로 위임(preset 스펙 소비).
+        let lights = SceneStage.installLighting(into: scene, spec: spec)
 
         // ── 카메라 — InteractiveSceneView default와 동일 위치 (snapshot test consistency).
         let cam = SCNCamera()
@@ -65,10 +68,11 @@ public final class RobotSceneCoordinator {
         cameraNode.look(at: dT)
         scene.rootNode.addChildNode(cameraNode)
 
-        // ── 그라운드 + 그리드.
-        let floorNode = SceneStage.makeFloor()
+        // ── 그라운드 + 그리드(셰이더 AA) + 소품.
+        let floorNode = SceneStage.makeFloor(spec: spec)
         scene.rootNode.addChildNode(floorNode)
-        scene.rootNode.addChildNode(SceneStage.makeGrid())
+        scene.rootNode.addChildNode(GridFloorMaterial.makeGridNode(style: spec.grid))
+        scene.rootNode.addChildNode(SceneStage.makeProps(spec: spec))
 
         // 라이브 튜닝 핸들 — 조명/IBL/바닥 참조 보관.
         stageHandle = SceneStage.StageHandle(
@@ -117,9 +121,12 @@ public final class RobotSceneCoordinator {
             return n
         }
 
-        // 초기 1회 + SceneTuning 변경 구독으로 라이브 반영(뷰 계층 비의존).
-        // objectWillChange 는 값 변경 직전 발화 → 다음 runloop 에서 최신값 읽기.
-        applyTuning()
+        // **W2 충돌 회피**: 종전 init 의 `applyTuning()` 은 preset 조명/바닥/IBL 을
+        // SceneTuning 의 절대 기본값(550/180/1.0/0.10…)으로 덮어써 화면별 프리셋을
+        // 무력화한다. preset 은 빌드 시 spec 이 소유하므로 init 에선 **머티리얼 튜닝만**
+        // 적용한다(머티리얼은 전 화면 공용). 라이브 패널 슬라이더를 사용자가 움직이면
+        // 그때 full applyTuning() 이 절대값으로 조명/바닥까지 오버라이드(디버그 도구).
+        RigMaterials.applyTuning(SceneTuning.shared)
         tuningCancellable = SceneTuning.shared.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.applyTuning() }

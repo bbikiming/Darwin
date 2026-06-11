@@ -90,7 +90,8 @@ struct MotionStudioCanvas: View {
                          footTrace: [],
                          highlight: highlightJoint,
                          showAxes: true,
-                         cameraController: camera)
+                         cameraController: camera,
+                         preset: .motion)
             // 3D 가 무엇을 보여주는지 명확히 — 사용자가 편집/재생/송출을 한눈에 구분.
             HStack(spacing: DFSpace.xs) {
                 sourceModeBadge

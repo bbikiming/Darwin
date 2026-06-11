@@ -47,7 +47,8 @@ struct WalkLabSceneSection: View {
             pose: session.visualPose,
             footTrace: session.footTrailLefts,
             imuRollDeg: session.displayImuRollDeg,
-            imuPitchDeg: session.displayImuPitchDeg
+            imuPitchDeg: session.displayImuPitchDeg,
+            preset: .walkLab
         )
         // V284 (2026-05-24) — 사용자 요청 "3D 뷰 비율이 너무 작고 비효율적".
         // minHeight 360 → 600 (RobotScene3D 가 ScrollView 안에서 항상 충분 세로 확보).

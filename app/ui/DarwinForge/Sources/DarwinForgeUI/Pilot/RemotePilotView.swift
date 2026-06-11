@@ -630,7 +630,8 @@ public struct RemotePilotView: View {
                     footTrace: [],
                     highlight: nil,
                     showAxes: true,
-                    onMeshFallback: { fallback in meshFallback = fallback }
+                    onMeshFallback: { fallback in meshFallback = fallback },
+                    preset: .cockpit
                 )
                 .background(
                     LinearGradient(

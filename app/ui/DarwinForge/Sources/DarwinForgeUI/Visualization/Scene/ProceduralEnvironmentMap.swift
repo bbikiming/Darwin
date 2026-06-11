@@ -48,6 +48,15 @@ enum ProceduralEnvironmentMap {
         patches: [studioKeyPatch, studioFillPatch]
     )
 
+    /// **W2**: preset 스펙의 tint 로 IBL 환경맵 생성. 패치는 studio key+fill 공용.
+    /// (128×64 루프라 화면당 1회 생성 비용 무시 가능 — 별도 캐시 불요.)
+    static func image(for spec: SceneEnvironmentSpec) -> CGImage {
+        make(zenith: spec.iblZenith,
+             horizon: spec.iblHorizon,
+             ground: spec.iblGround,
+             patches: [studioKeyPatch, studioFillPatch])
+    }
+
     /// equirectangular 그라디언트 + 패치 → CGImage.
     static func make(zenith: NSColor,
                      horizon: NSColor,
@@ -141,13 +150,5 @@ private extension NSColor {
         let c = usingColorSpace(.deviceRGB) ?? self
         return (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
     }
-
-    /// 휘도 스케일(클램프는 호출자/렌더에서).
-    func scaled(_ factor: CGFloat) -> NSColor {
-        let c = usingColorSpace(.deviceRGB) ?? self
-        return NSColor(calibratedRed: min(1, c.redComponent * factor),
-                       green: min(1, c.greenComponent * factor),
-                       blue: min(1, c.blueComponent * factor),
-                       alpha: 1)
-    }
+    // `scaled(_:)` 는 SceneEnvironment.swift 의 internal 확장으로 통합(중복 제거).
 }
