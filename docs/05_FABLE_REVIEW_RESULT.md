@@ -15,6 +15,28 @@
 
 ---
 
+## [P12] 3D W4+W5 — 카메라 연출 + 성능 검증 — **통과 (커밋 대기)** (2026-06-12)
+
+- 구현: 메인 워크트리 미커밋(Visualization/·Pilot/Cockpit/ + 신규 SceneMath·
+  CockpitChaseFollower + 테스트 3스위트) · 리뷰어: **Fable 교차**(별도 세션)
+- **A 안전·성능: 통과** — 턴테이블 on 시 `isFullyIdle` 강제 false(InteractiveSceneView:342
+  가드 + 회귀 테스트 명시 assert), DOF 는 `InteractiveSceneView` 전용이라 헤드리스
+  렌더러 구조적 제외, Cockpit follower 는 renderer delegate(설계 명시 예외 — 원래 연속
+  렌더), `shortestAngleDelta` 최단경로 보정(SceneMath).
+- **B 계약: 통과** — follower 상수가 설계 §6 4-D 고정값 그대로(lerp 0.12/0.08 ·
+  lean ≤2.5° · FOV 50→54 @0.3m/s 포화 · zoom 0.6~4.0), 순수 로직 분리로 헤드리스
+  테스트 가능(설계 대비 개선). W5 §7 표에 실측치 기입(헤드리스 측정분 수치 +
+  Instruments/.app 항목은 대기로 정직 표기).
+- **C 품질: 통과** — 신규 테스트 20개(SceneMath·InteractiveSceneBehavior·
+  CockpitChaseFollower) **리뷰 세션 직접 재실행 0 실패**.
+- **D 절차: 커밋 대기** — README·설계 문서 갱신은 워크트리에 존재.
+- **커밋 위생 비고(중요)**: 메인 워크트리의 MeshRig·DarwinOP2Rig·RigSkeleton.swift 는
+  **P11 브랜치 48ba615 산출물과 바이트 수렴 + P12 추가분(MeshRig 머리 디테일 75줄)** 구조
+  임을 diff 로 확인 — P12 커밋에 W3 선행분이 포함되는 것은 의도된 수렴(커밋 메시지에
+  명시할 것). 이후 P11 머지 시 MeshRig 충돌은 **main 버전 채택**으로 해소(superset).
+- 이월: 커밋 전 풀 스위트 1회(동시 편집 세션 종료로 간헐 실패 원인 소멸), Instruments
+  풀링·GPU frame time 실측은 .app 실행 시.
+
 ## [P3] 전송 묶음 (W1+O0·O1) — **통과 (재검 완료)** (2026-06-12)
 
 - 최종 커밋: `74fca94`(connection: O0 계측+W1 Mac 채널+Swift 5스위트) ·
