@@ -12,23 +12,27 @@ import SwiftUI
 enum SceneStage {
 
     // ───────────────────────────────────────────────────────────────────────
-    // 조명 상수 (3점) — burn-out 방지를 위해 강도 하향 (v1.14.8 이력).
+    // 조명 상수 (PBR) — **W1**: IBL 이 base 를 깔아주므로 Blinn 시절 강도와 의미가
+    // 다르다. fill/ambient 삭제(IBL 소프트박스 패치가 대체, PBR+ambient 는 워시아웃
+    // 원인), key 상향 + rim 신규. 노출 가드는 SceneExposureTests.
     // ───────────────────────────────────────────────────────────────────────
 
     /// Key directional — warm, 그림자 캐스터.
-    static let keyIntensity: CGFloat = 240
+    static let keyIntensity: CGFloat = 550
     static let keyColor = NSColor(calibratedRed: 1.00, green: 0.98, blue: 0.95, alpha: 1.0)
     static let keyPosition = SCNVector3(0.6, 2.3, -2.0)
-    static let keyShadowRadius: CGFloat = 4
-    static let keyShadowSampleCount = 12
+    static let keyShadowRadius: CGFloat = 7
+    static let keyShadowSampleCount = 8
+    static let keyShadowMapSize = CGSize(width: 1024, height: 1024)
+    static let keyShadowColor = NSColor(white: 0, alpha: 0.5)
 
-    /// Fill directional — cool.
-    static let fillIntensity: CGFloat = 130
-    static let fillColor = NSColor(calibratedRed: 0.86, green: 0.92, blue: 1.00, alpha: 1.0)
-    static let fillPosition = SCNVector3(-1.5, 1.4, 0.5)
+    /// Rim directional — 흰 쉘 윤곽을 배경에서 분리. 그림자 없음.
+    static let rimIntensity: CGFloat = 180
+    static let rimColor = NSColor(calibratedRed: 0.85, green: 0.90, blue: 1.00, alpha: 1.0)
+    static let rimPosition = SCNVector3(0, 2.0, 2.2)
 
-    /// Ambient.
-    static let ambientIntensity: CGFloat = 200
+    /// IBL 강도(화면별 0.55–1.0 은 W2, W1 기본 studio 1.0).
+    static let iblIntensity: CGFloat = 1.0
 
     /// 조명이 바라보는 robot 허리 높이.
     static let lightLookAt = SCNVector3(0, 0.30, 0)
@@ -37,15 +41,20 @@ enum SceneStage {
     // 바닥/그리드 상수.
     // ───────────────────────────────────────────────────────────────────────
 
-    static let floorDiffuse = NSColor(white: 0.10, alpha: 1.0)
+    static let floorAlbedo = NSColor(white: 0.10, alpha: 1.0)
+    static let floorRoughness: CGFloat = 0.85
     static let gridColor = NSColor(white: 0.18, alpha: 1.0)
     static let gridHalf = 0.85
     static let gridStep = 0.10
 
-    // MARK: - 조명 rig
+    // MARK: - 조명 rig + IBL
 
-    /// 3점 조명 노드를 scene root 에 부착.
-    static func installLighting(into root: SCNNode) {
+    /// key + rim 조명을 scene root 에 부착하고 절차적 IBL 을 환경맵으로 주입.
+    /// **W1**: lightingEnvironment(IBL)와 background 는 독립이므로 background(clear)는
+    /// SwiftUI 그라디언트가 계속 담당.
+    static func installLighting(into scene: SCNScene) {
+        let root = scene.rootNode
+
         let key = SCNLight()
         key.type = .directional
         key.intensity = keyIntensity
@@ -53,6 +62,8 @@ enum SceneStage {
         key.shadowRadius = keyShadowRadius
         key.shadowSampleCount = keyShadowSampleCount
         key.shadowMode = .deferred
+        key.shadowMapSize = keyShadowMapSize
+        key.shadowColor = keyShadowColor
         key.color = keyColor
         let keyNode = SCNNode()
         keyNode.light = key
@@ -60,35 +71,31 @@ enum SceneStage {
         keyNode.look(at: lightLookAt)
         root.addChildNode(keyNode)
 
-        let fill = SCNLight()
-        fill.type = .directional
-        fill.intensity = fillIntensity
-        fill.color = fillColor
-        let fillNode = SCNNode()
-        fillNode.light = fill
-        fillNode.position = fillPosition
-        fillNode.look(at: lightLookAt)
-        root.addChildNode(fillNode)
+        let rim = SCNLight()
+        rim.type = .directional
+        rim.intensity = rimIntensity
+        rim.color = rimColor
+        rim.castsShadow = false
+        let rimNode = SCNNode()
+        rimNode.light = rim
+        rimNode.position = rimPosition
+        rimNode.look(at: lightLookAt)
+        root.addChildNode(rimNode)
 
-        let ambient = SCNLight()
-        ambient.type = .ambient
-        ambient.intensity = ambientIntensity
-        let aNode = SCNNode()
-        aNode.light = ambient
-        root.addChildNode(aNode)
+        // 절차적 IBL — PBR 머티리얼의 base 광량 + 금속 형태감.
+        scene.lightingEnvironment.contents = ProceduralEnvironmentMap.studio
+        scene.lightingEnvironment.intensity = iblIntensity
     }
 
     // MARK: - 바닥
 
-    /// 반사 없는 어두운 바닥 — 흰 robot 의 후광 burn-out 차단.
+    /// PBR 바닥 — IBL-only 조명에서 검게 죽지 않도록 physicallyBased. 반사는 IBL 로만.
     static func makeFloor() -> SCNNode {
         let ground = SCNFloor()
         ground.reflectivity = 0
-        let gMat = SCNMaterial()
-        gMat.diffuse.contents = floorDiffuse
-        gMat.specular.contents = NSColor.black
-        gMat.lightingModel = .blinn
-        ground.firstMaterial = gMat
+        ground.firstMaterial = RigMaterials.pbr(diffuse: floorAlbedo,
+                                                metalness: 0.0,
+                                                roughness: floorRoughness)
         return SCNNode(geometry: ground)
     }
 

@@ -598,33 +598,21 @@ final class DarwinOP2Rig {
         return SCNNode(geometry: cap)
     }
 
+    /// **W1**: makeBox/darkMat/lightCapMat 를 PBR 로 승격 — IBL-only 조명(ambient
+    /// 삭제)에서 Blinn 머티리얼이 검게 죽지 않도록. 부위별 색은 그대로 보존.
     private func makeBox(w: CGFloat, h: CGFloat, d: CGFloat,
                          color: NSColor, chamfer: CGFloat) -> SCNNode {
         let box = SCNBox(width: w, height: h, length: d, chamferRadius: chamfer)
-        let m = SCNMaterial()
-        m.diffuse.contents = color
-        m.specular.contents = NSColor.white.withAlphaComponent(0.22)
-        m.shininess = 16
-        m.lightingModel = .blinn
-        box.firstMaterial = m
+        box.firstMaterial = RigMaterials.pbr(diffuse: color, metalness: 0.0, roughness: 0.5)
         return SCNNode(geometry: box)
     }
 
     private func darkMat() -> SCNMaterial {
-        let m = SCNMaterial()
-        m.diffuse.contents = Self.detailDark
-        m.specular.contents = NSColor.white.withAlphaComponent(0.22)
-        m.shininess = 16
-        return m
+        RigMaterials.pbr(diffuse: Self.detailDark, metalness: 0.0, roughness: 0.5)
     }
 
     private func lightCapMat() -> SCNMaterial {
-        let m = SCNMaterial()
-        m.diffuse.contents = Self.motorCap
-        m.specular.contents = NSColor.white.withAlphaComponent(0.35)
-        m.shininess = 22
-        m.lightingModel = .blinn
-        return m
+        RigMaterials.pbr(diffuse: Self.motorCap, metalness: 0.3, roughness: 0.4)
     }
 
     private func registerHighlight(_ joint: JointID, _ meshes: [SCNNode]) {

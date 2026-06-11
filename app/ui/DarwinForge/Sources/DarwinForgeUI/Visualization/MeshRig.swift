@@ -252,11 +252,9 @@ final class MeshRig {
                                    linkID: JointID? = nil,
                                    applyDefaultZRotation: Bool = true) {
         do {
-            let geom = try STLLoader.loadGeometry(
-                named: name,
-                scale: 0.001,
-                diffuse: Self.linkColor(for: linkID, name: name)
-            )
+            let geom = try STLLoader.loadGeometry(named: name, scale: 0.001)
+            // **W1**: PBR 머티리얼 주입(부위 카테고리별 metalness/roughness).
+            geom.firstMaterial = RigMaterials.material(forLinkNamed: name)
             let meshNode = SCNNode(geometry: geom)
             // visuals.xacro는 모든 mesh에 rpy(0, 0, -π/2)를 적용.
             // 일부 (head_tilt)는 별도 rpy를 가지므로 override.
@@ -287,17 +285,4 @@ final class MeshRig {
         }
     }
 
-    /// 부위별 색상 — 실제 OP2 사진을 참고한 회색 톤 + 디테일 강조.
-    private static func linkColor(for joint: JointID?, name: String) -> NSColor {
-        // 머리는 약간 darker, 본체는 light gray, foot은 dark.
-        if name.contains("head") { return NSColor(white: 0.32, alpha: 1.0) }
-        if name.contains("foot") { return NSColor(white: 0.18, alpha: 1.0) }
-        if name.contains("ankle") { return NSColor(white: 0.25, alpha: 1.0) }
-        if name.contains("body") { return NSColor(white: 0.78, alpha: 1.0) }
-        if name.contains("shoulder") || name.contains("hip") {
-            return NSColor(white: 0.52, alpha: 1.0)
-        }
-        // 기본: bodyShell 회색
-        return NSColor(white: 0.74, alpha: 1.0)
-    }
 }

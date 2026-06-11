@@ -30,8 +30,8 @@ public final class RobotSceneCoordinator {
         scene = SCNScene()
         scene.background.contents = NSColor.clear
 
-        // ── 무대: 조명(3점) + 바닥 + 그리드 — SceneStage 로 위임.
-        SceneStage.installLighting(into: scene.rootNode)
+        // ── 무대: 조명(key+rim) + IBL + 바닥 + 그리드 — SceneStage 로 위임.
+        SceneStage.installLighting(into: scene)
 
         // ── 카메라 — InteractiveSceneView default와 동일 위치 (snapshot test consistency).
         let cam = SCNCamera()

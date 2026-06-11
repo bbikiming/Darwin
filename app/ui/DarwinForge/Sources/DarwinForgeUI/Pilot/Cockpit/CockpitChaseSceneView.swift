@@ -190,10 +190,11 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
                                                 blue: 0.07,
                                                 alpha: 1.0)
 
-            // Lighting — moody FPV grid look but enough to read the robot mesh.
+            // Lighting — **W1**: PBR 전환에 맞춰 ambient 삭제 + teal IBL.
+            // MeshRig/DarwinOP2Rig 이 이제 PBR 이라 lightingEnvironment 없으면 검게 죽는다.
             let key = SCNLight()
             key.type = .directional
-            key.intensity = 420
+            key.intensity = 700                        // 420 → 700 (IBL base 위 key)
             key.color = NSColor(calibratedRed: 0.95,
                                 green: 0.97,
                                 blue: 1.00,
@@ -205,16 +206,9 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
                                               0)
             scene.rootNode.addChildNode(keyNode)
 
-            let ambient = SCNLight()
-            ambient.type = .ambient
-            ambient.intensity = 240
-            ambient.color = NSColor(calibratedRed: 0.75,
-                                    green: 0.82,
-                                    blue: 0.95,
-                                    alpha: 1.0)
-            scene.rootNode.addChildNode({
-                let n = SCNNode(); n.light = ambient; return n
-            }())
+            // 절차적 IBL(teal) — ambient 대체.
+            scene.lightingEnvironment.contents = ProceduralEnvironmentMap.cockpit
+            scene.lightingEnvironment.intensity = 0.6
 
             // Grid floor — FPV cliché, helps user gauge motion.
             scene.rootNode.addChildNode(Self.makeGridFloor())
