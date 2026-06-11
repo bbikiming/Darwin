@@ -15,7 +15,7 @@
 | [3d-viewport-enhancement.md](3d-viewport-enhancement.md) | 5개 화면 3D 뷰포트 (모델링·조명·환경·오버레이) | b46a226 | **W0 ✅**(b941f54, 픽셀 diff 0) · **W1 ✅**(2a58777+2abd6d4, PBR/IBL/스무딩, 3381 테스트) · +라이브 튜닝 패널(9a32f8d, 계획 외) · W2~W5 ⬜ |
 | [walklab-onboard-teleop-upgrade.md](walklab-onboard-teleop-upgrade.md) | 로봇 측 코드·알고리즘 + 명령/텔레메트리 계약 | 2507be6 | O0~O4 전부 ⬜ |
 | [bus-direct-teleop-upgrade.md](bus-direct-teleop-upgrade.md) | 직결(bus) 조종 — 50Hz 연속 스트리밍 | b54daff | **D0 ✅**(J4 deadline 스케줄·J13 FTDI 1ms ioctl·PilotLatencyTracer bus 계측 — 실기 지터/IMU read 벤치는 사용자 보고 대기) · D1~D3 ⬜ (전송 선행분 L5·J11·J12·S4 기완료) |
-| [handheld-direct-pilot-upgrade.md](handheld-direct-pilot-upgrade.md) | RG G01 로봇 USB 직결 + Switch 무선 최적화 | f157c06 | H0~H3 전부 ⬜ (**H0 프로브는 로봇 전원만 있으면 즉시 가능** — df-inbox 원격 실행) |
+| [handheld-direct-pilot-upgrade.md](handheld-direct-pilot-upgrade.md) | RG G01 **2.4G 동글** 직결(USB HID, 유선은 폴백) + Switch 무선 최적화 | f157c06 (동글 기본 개정 2026-06-11) | H0~H3 전부 ⬜ (**H0 프로브는 로봇 전원만 있으면 즉시 가능** — df-inbox 원격 실행) |
 
 ## 2. 의존 그래프
 
@@ -48,9 +48,10 @@ cockpit-latency-hardening (Mac 공통 전송·계측)
 
 ## 4. 권장 착수 순서 (2026-06-11 시점)
 
-1. **H0 — RG G01 호환성 프로브** (읽기 전용, 즉시): 이후 H1 트랙 확정의 입구.
+1. **H0 — RG G01 2.4G 동글 호환성 프로브** (읽기 전용, 즉시): 동글 인식 모드·링크 단절
+   거동·절전 타임아웃 실측 — H1 트랙·failsafe 설계의 입구.
 2. **3D W2 — 화면별 환경 프리셋+셰이더 그리드** (독립, UI 전용): W1 완료로 즉시 가능.
 3. **레이턴시 W1 + 온보드 O0·O1** (한 묶음, 최대 체감): 명령 4–8Hz→20-30Hz,
    E-STOP 로봇 측 100ms→~5ms.
 4. **온보드 O2 — 거버너·의미론 v2**: 핸드헬드(H1·H3)와 bus(D1) 착수의 안전 전제.
-5. 이후 병렬: bus D0·D1·D2 / handheld H1·H2 / 3D W3(O4 TEL2 이후 실데이터) / O3(실기 비중 최대).
+5. 이후 병렬: bus D1·D2(D0 ✅) / handheld H1·H2 / 3D W3(O4 TEL2 이후 실데이터) / O3(실기 비중 최대).

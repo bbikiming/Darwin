@@ -330,7 +330,7 @@ ROS 를 로봇에 설치하자는 것이 아니다(Ubuntu 12/14 EOL + Atom N2600
 
 직결(bus) 모드의 대칭 설계는 `docs/design/bus-direct-teleop-upgrade.md` 참조 — 래칭·슬루·
 거버너 규칙(O2)과 밸런스 LPF(O3-2)는 양 문서가 **동일 상수를 공유**한다(모드 간 조종감 패리티).
-핸드헬드(RG G01 로봇 USB 직결·Switch 무선) 경로는 `docs/design/handheld-direct-pilot-upgrade.md`
+핸드헬드(RG G01 2.4G 동글 직결·Switch 무선) 경로는 `docs/design/handheld-direct-pilot-upgrade.md`
 참조 — O1 슬롯에 local 게임패드 소스가 합류하고, O2 거버너가 전 클라이언트의 최종 안전판이 된다.
 
 ## 8. 착수 가이드

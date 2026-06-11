@@ -15,8 +15,9 @@
 ```
 docs/design/handheld-direct-pilot-upgrade.md 의 Wave H0 을 수행해줘.
 
-목표: RG G01 을 로봇 등 USB 에 꽂았을 때(유선 USB-C 와 2.4G 동글 각각) 로봇 커널이
-어떻게 인식하는지 판정하고, H1 구현에 쓸 축/버튼 코드 테이블을 확정한다.
+목표: **RG G01 의 2.4G 동글(기본 연결)**을 로봇 등 USB 에 꽂았을 때 로봇 커널이 어떻게
+인식하는지 판정하고, H1 구현에 쓸 축/버튼 코드 테이블과 **동글 링크 단절 거동**을 확정한다.
+유선 USB-C 는 폴백으로 같은 절차를 1회 수행.
 
 작업:
 1. firmware-patches/tools/probe-gamepad.sh 작성 — lsusb, dmesg tail, /proc/bus/input/devices,
@@ -24,13 +25,17 @@ docs/design/handheld-direct-pilot-upgrade.md 의 Wave H0 을 수행해줘.
 2. 실행 경로는 둘 중 가능한 것: (a) 로봇 SSH 직접(유선 192.168.123.1, 무선 192.168.0.33),
    (b) df-inbox 채널(SMB ~/.df_inbox 에 .sh 투하 → 2s 내 자동 실행 → .out 회수,
    docs/design/handheld-direct-pilot-upgrade.md §1.3 참조).
-3. 판정 매트릭스(§4 H0): D-input event 노드 생성 여부 → XInput 이면
-   echo <VID> <PID> > /sys/bus/usb/drivers/xpad/new_id 시도 → 동글 동일 절차.
-4. 결과를 docs/reports/2026-MM-DD-rgg01-usb-probe.md 로 기록: VID/PID, 바인딩 드라이버,
-   event 노드, 축 범위(EVIOCGABS), 버튼 코드 → H1 용 코드 테이블 초안 포함.
+3. 판정 매트릭스(§4 H0, 동글 우선): 동글이 D-input event 노드 생성 → 확정. XInput 이면
+   echo <VID> <PID> > /sys/bus/usb/drivers/xpad/new_id 시도(휘발성 — 재부팅 시 원복) →
+   유선 USB-C 동일 절차(폴백 확보).
+4. **동글 전용 측정(failsafe 설계 입력 — §4 H0)**: ① 데드맨 홀드 중 패드 전원 OFF/거리
+   이탈 시 release 이벤트 합성 여부·USB 노드 유지 여부·재연결 자동 복귀 ② 패드 절전
+   타임아웃(데드맨 홀드가 keep-alive 인지) ③ 로봇 Wi-Fi 동시 구동 시 이벤트 드랍 여부.
+5. 결과를 docs/reports/2026-MM-DD-rgg01-usb-probe.md 로 기록: VID/PID, 바인딩 드라이버,
+   event 노드, 축 범위(EVIOCGABS), 버튼 코드, 단절 거동 → H1 용 코드 테이블 초안 포함.
 
-제약: 로봇 파일 수정·데몬 재시작 금지(읽기 전용). 로봇이 walklab 데모 구동 중이어도
-무해해야 함. 보고서 커밋: docs(report) 스코프.
+제약: 로봇 영구 변경 금지(파일 수정·데몬 재시작 불가, 휘발성 sysfs new_id 만 허용).
+로봇이 walklab 데모 구동 중이어도 무해해야 함. 보고서 커밋: docs(report) 스코프.
 ```
 
 ## [ ] P2 — 3D 뷰포트 W2: 화면별 환경 프리셋 + 셰이더 그리드 · 독립
@@ -173,13 +178,17 @@ intensity^0.7→period/foot 스케줄(switch-pilot ssh_control_client.py:278-302
 클램프는 로봇 거버너(O2)가 최종 — 없으면 임시로 38/22/12 하드 클램프.
 
 H2: 소스 우선순위 E-STOP(전 소스 상시) > local(최근 입력 ≤1s) > 네트워크. ARM 의미론
-(A 버튼 ARM 전 이동 게이트 잠금 — switch-pilot main.py:469-496 settle 규칙 이식),
-USB 분리/5s 무수신 → inputSourceLost → 워치독 티어(즉시 제자리 슬루). TEL 에
-active_source 토큰 추가(Mac 파서 ≥11 완화 전제).
+(A 버튼 ARM 전 이동 게이트 잠금 — switch-pilot main.py:469-496 settle 규칙 이식).
+**분리 failsafe 는 동글 기준 3중(문서 §4 H2-2)**: 동글은 패드 전원 OFF 에도 event 노드가
+유지될 수 있음 — ① 단절 시 release 합성(H0 실측)이면 데드맨 해제가 1차 방어 ② EVIOCGKEY
+1s 상태 폴 실패/노드 소멸 → inputSourceLost 즉시 제자리 슬루 ③ 무신호 동글이면 데드맨
+마지막 확인 ≥1.5s 를 단절 간주(H0 절전 측정값으로 임계 보정) → 워치독 티어 합류.
+TEL 에 active_source 토큰 추가(Mac 파서 ≥11 완화 전제).
 
-검증: 호스트 빌드 단위 테스트(매핑·정산·중재 — Robot:: 스텁), 증거 제시. 실기(크래들에서
-E-STOP ≤20ms·분리 failsafe·10분 CPU)는 멈추고 사용자 보고. 케이블 스트레인 릴리프/동글
-권장 사항을 보고에 포함. README 갱신. 커밋: feat(firmware).
+검증: 호스트 빌드 단위 테스트(매핑·정산·중재·3중 failsafe — Robot:: 스텁), 증거 제시.
+실기(크래들에서 E-STOP ≤20ms·패드 전원 OFF/동글 뽑기 failsafe·10분 CPU)는 멈추고 사용자
+보고. 동글 운용 체크리스트(충전·페어링·E-STOP 리허설)를 보고에 포함. README 갱신.
+커밋: feat(firmware).
 ```
 
 ## [ ] P8 — 온보드 O3: 밸런스 피드백(FSR/IMU) · 전제 P3·P4 · 실기 비중 최대
