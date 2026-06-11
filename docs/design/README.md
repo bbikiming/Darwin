@@ -12,7 +12,7 @@
 |---|---|---|---|
 | [cockpit-latency-hardening.md](cockpit-latency-hardening.md) | Mac 전송·입력·시리얼 (확정 이슈 35건) | cf132bd | **W0 ✅**(66039c6·8139247) · **W2 ✅**(e0bb2cf·da495d6·7808fdb·c62d3af·a61afbc·9dff323) · W3 부분(J1 fe8d748, J9 0153464) · **J4·J13 ✅**(bus D0) · §6 Tracer 골격 ✅(bus 채널) · **W1 ⬜**(온보드 O1과 한 묶음) |
 | [controller-mapping-uiux.md](controller-mapping-uiux.md) | 컨트롤러 매핑 GUI/프로파일 | 2026-06-10 | **P1~P3+드라이버 실소비 ✅**(3c5f97c·f3352c1·f088628·1f52279·cde16de) · 잔여 L4(드라이버 일원화)는 레이턴시 문서 관할 |
-| [3d-viewport-enhancement.md](3d-viewport-enhancement.md) | 5개 화면 3D 뷰포트 (모델링·조명·환경·오버레이) | b46a226 | **W0 ✅**(b941f54) · **W1 ✅**(2a58777+2abd6d4) · +라이브 튜닝 패널(9a32f8d, 계획 외) · **W2 ✅**(화면별 프리셋 5종+셰이더 AA 그리드+소품·콕핏 그리드 58→1노드, 3399 테스트) · W3~W5 ⬜ |
+| [3d-viewport-enhancement.md](3d-viewport-enhancement.md) | 5개 화면 3D 뷰포트 (모델링·조명·환경·오버레이) | b46a226 | **W0 ✅**(b941f54) · **W1 ✅**(2a58777+2abd6d4) · +라이브 튜닝 패널(9a32f8d, 계획 외) · **W2 ✅**(화면별 프리셋 5종+셰이더 AA 그리드+소품·콕핏 그리드 58→1노드) · **W3 ✅**(protocol RigSkeleton 선행 + 오버레이 7종: CoM·지지다각형·관절축·한계각·FSR·수평선·EE궤적·한계경고, 0-alloc 풀·자체 타이머 0, 3408 테스트, branch `claude/p11-3d-overlays`) · W4~W5 ⬜ |
 | [walklab-onboard-teleop-upgrade.md](walklab-onboard-teleop-upgrade.md) | 로봇 측 코드·알고리즘 + 명령/텔레메트리 계약 | 2507be6 | O0~O4 전부 ⬜ |
 | [bus-direct-teleop-upgrade.md](bus-direct-teleop-upgrade.md) | 직결(bus) 조종 — 50Hz 연속 스트리밍 | b54daff | **D0 ✅**(J4 deadline 스케줄·J13 FTDI 1ms ioctl·PilotLatencyTracer bus 계측 — 실기 지터/IMU read 벤치는 사용자 보고 대기) · D1~D3 ⬜ (전송 선행분 L5·J11·J12·S4 기완료) |
 | [handheld-direct-pilot-upgrade.md](handheld-direct-pilot-upgrade.md) | RG G01 **2.4G 동글** 직결(USB HID, 유선은 폴백) + Switch 무선 최적화 | f157c06 (동글 기본 개정 2026-06-11) | H0~H3 전부 ⬜ (**H0 프로브는 로봇 전원만 있으면 즉시 가능** — df-inbox 원격 실행) |
