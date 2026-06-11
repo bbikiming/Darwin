@@ -1174,7 +1174,7 @@ public final class ConnectionStore: ObservableObject {
     ///   - `apsBuildResult` — 하체/통신/상체 분기 → lastSafetyEvent + PoseApplyResult
     private func applyPoseSmoothlyImpl(target: RobotPose, profile p: MotorSpeedProfile) async -> PoseApplyResult {
         // 1) 컨텍스트 구축 — bus / 현재 자세 / verdict / steps / 카운터 초기화.
-        let ctxResult = apsBuildContext(target: target, profile: p)
+        let ctxResult = await apsBuildContext(target: target, profile: p)
         switch ctxResult {
         case .earlyReturn(let result): return result
         case .ok(let ctx):
@@ -1182,11 +1182,17 @@ public final class ConnectionStore: ObservableObject {
             isMovingPoseCancelled = false
             defer { isMovingPose = false }
 
-            // 2) step loop — 각 step 마다 cancel → speed write → position write → watchdog.
+            // 2) step loop — 각 step 마다 cancel → (detached) speed+position write → 집계
+            //    → watchdog. L6: write 를 MainActor 밖에서 실행해 step당 40 write 의
+            //    메인스레드 정지를 제거. 결과 struct 를 MainActor 에서 집계(불변성).
             for (stepIdx, step) in ctx.steps.enumerated() {
                 if isMovingPoseCancelled { return .cancelled }
-                apsWriteStepSpeeds(step, ctx: ctx)
-                apsWriteStepPositions(step, ctx: ctx)
+                let busRef = ctx.bus
+                let stepSpeed = ctx.speed
+                let outcome = await Task.detached(priority: .userInitiated) {
+                    Self.apsWriteStep(bus: busRef, step: step, speed: stepSpeed)
+                }.value
+                apsAccumulate(outcome, into: ctx)
                 if let earlyReturn = await apsRunWatchdog(ctx: ctx) {
                     return earlyReturn
                 }
@@ -1241,21 +1247,22 @@ public final class ConnectionStore: ObservableObject {
     ///   - `bus == nil` → `.notConnected` (lastSafetyEvent 미설정).
     ///   - readState 실패 → 해당 관절은 target 값(또는 2048) fallback (원본과 동일).
     ///   - verdict 거부 → `lastSafetyEvent` 작성 후 `.rejected(reason:)`.
-    private func apsBuildContext(target: RobotPose, profile p: MotorSpeedProfile) -> ApsContextResult {
+    private func apsBuildContext(target: RobotPose, profile p: MotorSpeedProfile) async -> ApsContextResult {
         guard let bus = bus else {
             return .earlyReturn(.notConnected)
         }
 
-        // 1) 현재 자세 read — 안전 검증의 기준.
+        // 1) 현재 자세 read — 안전 검증의 기준. L6: ~20 readState 를 MainActor 밖에서
+        //    실행(죽은 bus 면 20×timeout 동결 제거). bus 직렬화 락이 폴러와 직렬화.
+        let busRef = bus
+        let read = await Task.detached(priority: .userInitiated) {
+            Self.apsReadCurrentState(bus: busRef)
+        }.value
         var currentPositions: [JointID: Int] = [:]
-        var loads: [JointID: Int] = [:]
+        let loads: [JointID: Int] = read.loads
         for j in JointID.allCases {
-            if let s = try? bus.readState(j) {
-                currentPositions[j] = Int(s.presentPosition)
-                loads[j] = Int(s.presentLoad)
-            } else {
-                currentPositions[j] = target.positions[j] ?? 2048
-            }
+            // read 실패 관절은 target(또는 2048) fallback — 기존 동작 보존.
+            currentPositions[j] = read.positions[j] ?? (target.positions[j] ?? 2048)
         }
         let currentPose = RobotPose(positions: currentPositions)
         let voltage = lastTelemetry?.board?.voltageVolts
@@ -1286,39 +1293,75 @@ public final class ConnectionStore: ObservableObject {
         return .ok(ctx)
     }
 
-    /// step 2-a) — 한 step 의 모든 관절에 setMovingSpeed 일괄 전송. 실패 시 카운터 누적
-    /// + DFLog.connection.warning (W1.2 silent-failure 진단 trail 보존).
-    private func apsWriteStepSpeeds(_ step: RobotPose, ctx: ApsContext) {
+    /// **L6 (2026-06-11)** — 한 step 의 bus write 결과(Sendable). detached write 가
+    /// MainActor 로 돌려 `ApsContext` 에 집계한다. `ApsContext` 가변 카운터와 동일 필드 —
+    /// 값 타입이라 actor 경계 이동이 안전(불변성 원칙).
+    private struct ApsStepOutcome: Sendable {
+        var positionFailureCount = 0
+        var speedFailureCount = 0
+        var lowerBodyPositionFails: Set<JointID> = []
+        var failedJointsUnique: Set<JointID> = []
+        var lastWriteError: String?
+    }
+
+    /// **L6** — 현재 자세 read 를 MainActor 밖에서 실행. 종전 ~20 readState 를 MainActor
+    /// 에서 동기 수행해 죽은 bus 면 20×timeout 만큼 메인스레드가 동결됐다. bus 의 직렬화
+    /// 락이 telemetry 폴러와 직렬화하므로 detached 실행에도 race 없다. 실패 관절은
+    /// 결과에서 빠지고 호출자가 target/2048 fallback (기존 동작 보존).
+    private nonisolated static func apsReadCurrentState(bus: any BusInterface)
+        -> (positions: [JointID: Int], loads: [JointID: Int]) {
+        var positions: [JointID: Int] = [:]
+        var loads: [JointID: Int] = [:]
+        for j in JointID.allCases {
+            if let s = try? bus.readState(j) {
+                positions[j] = Int(s.presentPosition)
+                loads[j] = Int(s.presentLoad)
+            }
+        }
+        return (positions, loads)
+    }
+
+    /// **L6** — 한 step 의 speed + position write 를 MainActor 밖에서 실행. per-joint
+    /// granularity 보존(SYNC_WRITE 미사용 — 하체 position 실패 분리가 balance-critical
+    /// hard-fail 신호라 batch 로 뭉개면 안 됨). 순서: speed 전체 → position 전체 (기존
+    /// apsWriteStepSpeeds→apsWriteStepPositions 와 동일). DFLog 는 thread-safe(os.Logger).
+    private nonisolated static func apsWriteStep(bus: any BusInterface, step: RobotPose,
+                                                 speed: UInt16) -> ApsStepOutcome {
+        var out = ApsStepOutcome()
+        // 2-a) speed write — 실패 시 카운터 누적 + DFLog (W1.2 진단 trail 보존).
         for j in step.positions.keys {
-            do { try ctx.bus.setMovingSpeed(j, speed: ctx.speed) }
+            do { try bus.setMovingSpeed(j, speed: speed) }
             catch {
-                ctx.speedFailureCount += 1
-                ctx.failedJointsUnique.insert(j)
-                ctx.lastWriteError = "\(j.name) 목표 속도 전송: \(error.localizedDescription)"
-                // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
-                // 카테고리=connection (DFLog.swift: ConnectionStore/SerialPort/SSH/NetworkProbe).
-                // privacy=.public: joint.name + bus error 는 PII X (precedent: line 1381 readState).
+                out.speedFailureCount += 1
+                out.failedJointsUnique.insert(j)
+                out.lastWriteError = "\(j.name) 목표 속도 전송: \(error.localizedDescription)"
                 DFLog.connection.warning("setMovingSpeed 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             }
         }
-    }
-
-    /// step 2-b) — 한 step 의 모든 관절에 setPosition 일괄 전송. 하체 관절 실패는
-    /// `lowerBodyPositionFails` 에 별도 누적 (balance-critical → 결과 분기에서 hard fail).
-    private func apsWriteStepPositions(_ step: RobotPose, ctx: ApsContext) {
+        // 2-b) position write — 하체 실패는 별도 누적(balance-critical → hard fail).
         for (j, raw) in step.positions {
-            do { _ = try ctx.bus.setPosition(j, raw: UInt16(clamping: raw)) }
+            do { _ = try bus.setPosition(j, raw: UInt16(clamping: raw)) }
             catch {
-                ctx.positionFailureCount += 1
-                ctx.failedJointsUnique.insert(j)
+                out.positionFailureCount += 1
+                out.failedJointsUnique.insert(j)
                 if Self.lowerBodyJoints.contains(j) {
-                    ctx.lowerBodyPositionFails.insert(j)
+                    out.lowerBodyPositionFails.insert(j)
                 }
-                ctx.lastWriteError = "\(j.name) 목표 위치 전송: \(error.localizedDescription)"
-                // P0 (2026-05-23): silent failure → 진단 trail 없음. DFLog 추가.
+                out.lastWriteError = "\(j.name) 목표 위치 전송: \(error.localizedDescription)"
                 DFLog.connection.warning("setPosition 실패 joint=\(j.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             }
         }
+        return out
+    }
+
+    /// **L6** — detached step write 결과를 cross-step 누적 `ApsContext` 에 합산.
+    /// `lastWriteError` 는 마지막 non-nil 보존(기존 덮어쓰기 의미 유지).
+    private func apsAccumulate(_ out: ApsStepOutcome, into ctx: ApsContext) {
+        ctx.positionFailureCount += out.positionFailureCount
+        ctx.speedFailureCount += out.speedFailureCount
+        ctx.lowerBodyPositionFails.formUnion(out.lowerBodyPositionFails)
+        ctx.failedJointsUnique.formUnion(out.failedJointsUnique)
+        if let e = out.lastWriteError { ctx.lastWriteError = e }
     }
 
     /// step 2-c) — stepDuration 동안 100 ms 폴링. critical 부하 감지 시 emergencyStop +
