@@ -655,10 +655,8 @@ public final class ConnectionStore: ObservableObject {
         var lastError: Error?
         for attempt in 1...maxAttempts {
             do {
-                let bus = try Bus(endpoint: endpoint)
-                let t0 = Date()
-                let snap = try bus.boardSnapshot()
-                let rtt = Date().timeIntervalSince(t0) * 1000
+                // L7: bus open(≤3s) + snapshot(4왕복)을 전용 직렬 큐에서 — MainActor 무정지.
+                let (bus, snap, rtt) = try await openBusAndSnapshot(endpoint)
                 // codex HIGH fix: await(Bus 생성/스냅샷) 동안 더 새로운 연결 시도가 시작됐으면
                 // 이 결과를 폐기 — bus/status/endpoint 를 덮지 않는다. 새로 만든 bus 는 스코프
                 // 이탈로 ARC 가 닫는다(다음 시도/경로가 ttyUSB0/소켓 소유).
@@ -734,6 +732,35 @@ public final class ConnectionStore: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     private static let maxReconnectAttempts: Int = 5
 
+    /// **L7 (2026-06-11)** — bus open 전용 *직렬* 큐. blocking syscall(`Bus(endpoint:)`
+    /// TCP connect ≤3s + `boardSnapshot()` 4왕복)을 협력 스레드풀·MainActor 밖에서
+    /// 돌리고, 직렬성으로 USB 포트 동시 open 충돌을 방지한다(한 번에 하나).
+    private let busOpenQueue = DispatchQueue(label: "com.darwinforge.busOpen")
+
+    /// L7 — bus open + boardSnapshot 의 비동기 래퍼. MainActor 정지 제거.
+    ///
+    /// 종전 connect/reconnect 는 위 두 blocking 호출을 MainActor 에서 동기 실행해
+    /// 죽은 호스트면 UI 가 ~10s 동결됐다. `busOpenQueue` 직렬 큐로 빼고 continuation
+    /// 으로 결과를 MainActor 에 돌린다. `rttMs` 는 snapshot 왕복만 측정(기존 계측 보존).
+    /// 반환 `Bus`/`BoardSnapshot` 은 Sendable — actor 경계 이동 안전. 호출자는 await
+    /// 후 generation 가드로 stale 결과를 폐기한다(폐기 시 Bus deinit 이 handle close).
+    private func openBusAndSnapshot(_ endpoint: Endpoint) async throws
+        -> (bus: Bus, snapshot: BoardSnapshot, rttMs: Double) {
+        try await withCheckedThrowingContinuation { cont in
+            busOpenQueue.async {
+                do {
+                    let bus = try Bus(endpoint: endpoint)
+                    let t0 = Date()
+                    let snap = try bus.boardSnapshot()
+                    let rtt = Date().timeIntervalSince(t0) * 1000
+                    cont.resume(returning: (bus, snap, rtt))
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     /// 자동 재연결 비활성화 (사용자가 명시적으로 끊기 누름 등).
     public func cancelReconnect() {
         reconnectTask?.cancel()
@@ -796,8 +823,8 @@ public final class ConnectionStore: ObservableObject {
         reconnectTask = Task { [weak self] in
             for attempt in 1...Self.maxReconnectAttempts {
                 if Task.isCancelled { break }
-                // codex HIGH fix: 더 새로운 연결 시도가 시작됐으면(세대 변경) 재연결 중단 —
-                // reconnTryAttempt 는 동기라, 호출 직전 1회 체크로 stale status/bus 쓰기를 막는다.
+                // codex HIGH fix: 더 새로운 연결 시도가 시작됐으면(세대 변경) 재연결 중단.
+                // L7: reconnTryAttempt 가 async 가 됐으므로 open 후 내부에서도 세대를 재확인한다.
                 guard let s0 = self, gen == s0.connectAttemptGeneration else { break }
                 let delaySeconds = Double(1 << (attempt - 1))   // 1, 2, 4, 8, 16
                 s0.transport.updateReconnectAttempt(attempt)
@@ -805,7 +832,8 @@ public final class ConnectionStore: ObservableObject {
                 if Task.isCancelled { break }
                 guard let self, gen == self.connectAttemptGeneration else { break }
 
-                if self.reconnTryAttempt(attempt: attempt, delaySeconds: delaySeconds, target: target) {
+                if await self.reconnTryAttempt(attempt: attempt, delaySeconds: delaySeconds,
+                                               target: target, generation: gen) {
                     return  // 성공 — task 정상 종료.
                 }
                 // 실패 → 다음 attempt (백오프 loop continue).
@@ -829,7 +857,8 @@ public final class ConnectionStore: ObservableObject {
     ///
     /// **계약**: 성공 시 reconnectTask=nil 까지 설정해야 facade 의 `reconnCanStart` 가 다음
     /// 호출 때 통과한다.
-    private func reconnTryAttempt(attempt: Int, delaySeconds: Double, target: Endpoint) -> Bool {
+    private func reconnTryAttempt(attempt: Int, delaySeconds: Double, target: Endpoint,
+                                  generation gen: Int) async -> Bool {
         // **v1.14.2** — 매 attempt 발화 — 진단성 위해 어디서 실패했는지 추적.
         harness.record(
             .connectReconnectAttempt, level: .info, actor: .system,
@@ -842,8 +871,11 @@ public final class ConnectionStore: ObservableObject {
         // 빠른 sanity check — 연결 시도.
         self.status = .connecting("자동 재연결 \(attempt)/\(Self.maxReconnectAttempts)")
         do {
-            let bus = try Bus(endpoint: target)
-            let snap = try bus.boardSnapshot()
+            // L7: open(≤3s) + snapshot 을 전용 직렬 큐에서 — MainActor 무정지.
+            let (bus, snap, _) = try await openBusAndSnapshot(target)
+            // open 동안 더 새로운 연결 시도가 시작됐으면(세대 변경) 폐기 — performConnect 와 동형.
+            // 새 bus 는 스코프 이탈 ARC 로 close. 호출 loop 가 다음 iteration 에서 break.
+            guard gen == connectAttemptGeneration else { return false }
             self.bus = bus
             self.activeEndpoint = target
             self.status = .connected(snap)
