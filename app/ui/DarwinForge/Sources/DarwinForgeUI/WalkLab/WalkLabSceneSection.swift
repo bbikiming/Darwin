@@ -63,15 +63,18 @@ struct WalkLabSceneSection: View {
             sceneInfoOverlay
                 .padding(DFSpace.sm)
         }
-        // Tertiary — 사용자 명시 토글 또는 advanced 모드 시만 노출.
-        .overlay(alignment: .topTrailing) { sceneOverlayToggleChip }
+        // Tertiary — 우상단 클러스터: 오버레이 토글 칩 + 튜닝 컨트롤 + 속도계.
+        // (튜닝 토글을 추가하며 종전 2개 topTrailing 오버레이를 1개 VStack 으로 통합 —
+        //  수동 top padding 대신 VStack spacing 으로 정렬.)
         .overlay(alignment: .topTrailing) {
-            if showSceneOverlays || session.advanced {
-                SceneSpeedometerOverlay()
-                    .padding(DFSpace.sm)
-                    // chip 가 표시될 때만 stack 회피 padding. advanced 모드 시 chip hidden — 종전 정렬 유지.
-                    .padding(.top, session.advanced ? 0 : DFSpace.lg)
+            VStack(alignment: .trailing, spacing: DFSpace.xs) {
+                sceneOverlayToggleChip
+                SceneTuningControl()
+                if showSceneOverlays || session.advanced {
+                    SceneSpeedometerOverlay()
+                }
             }
+            .padding(DFSpace.sm)
         }
         .overlay(alignment: .bottomLeading) {
             if showSceneOverlays || session.advanced {
@@ -106,7 +109,6 @@ struct WalkLabSceneSection: View {
                     .background(.regularMaterial, in: Circle())
             }
             .buttonStyle(.plain)
-            .padding(DFSpace.sm)
             .help(showSceneOverlays
                   ? "Scene 오버레이 4종 숨기기 (Speedometer / Gyro / Graph / 안내)"
                   : "Scene 오버레이 4종 표시")

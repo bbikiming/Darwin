@@ -644,6 +644,11 @@ public struct RemotePilotView: View {
                     meshFallbackBanner
                         .padding(DFSpace.sm)
                 }
+
+                // 조명·머티리얼 튜닝 — 우상단(이 화면은 top-trailing 비어 있음).
+                SceneTuningControl()
+                    .padding(DFSpace.sm)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 220)
