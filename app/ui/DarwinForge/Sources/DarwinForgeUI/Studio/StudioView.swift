@@ -27,6 +27,8 @@ public struct StudioView: View {
 
     /// 3D 뷰포트 카메라 컨트롤러 — ViewCube/Home 버튼이 transitionTo 호출.
     @StateObject private var camera = CameraController()
+    /// **W3**: 로봇공학 오버레이 토글 store(Studio 기본값).
+    @StateObject private var overlayStore = OverlayToggleStore(preset: .studio)
 
     /// 우측 자세 편집기 열림 여부.
     @State private var inspectorOpen: Bool = true
@@ -348,7 +350,8 @@ public struct StudioView: View {
                          highlight: selectedJoint,
                          showAxes: true,
                          onMeshFallback: { fallback in meshFallback = fallback },
-                         cameraController: camera)
+                         cameraController: camera,
+                         overlays: overlayStore.overlays)
                 .background(LinearGradient(
                     colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                     startPoint: .top, endPoint: .bottom))
@@ -357,7 +360,7 @@ public struct StudioView: View {
                 .padding(DFSpace.md)
 
             // 공통 ViewportControls — Studio/TeachMode/WalkLab/MotionStudio 모두 동일 UI.
-            ViewportControls(camera: camera)
+            ViewportControls(camera: camera, overlayStore: overlayStore)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topTrailing)
 

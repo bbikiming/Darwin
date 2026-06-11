@@ -33,6 +33,10 @@ public struct RobotScene3D: NSViewRepresentable {
     public let imuPitchDeg: Double
     /// **W2**: 화면별 3D 환경 프리셋(조명·IBL tint·바닥·그리드·소품). 화면당 고정.
     public let preset: ScenePreset
+    /// **W3**: 활성 로봇공학 오버레이. nil 이면 preset 기본값(코디네이터가 소유).
+    public let overlays: RobotOverlaySet?
+    /// **W3**: 오버레이가 소비할 외부 텔레메트리(FSR·ZMP verdict 등). nil 이면 휴리스틱.
+    public let overlayData: SceneOverlayData?
 
     public init(pose: RobotPose,
                 footTrace: [SIMD3<Double>] = [],
@@ -42,7 +46,9 @@ public struct RobotScene3D: NSViewRepresentable {
                 cameraController: CameraController? = nil,
                 imuRollDeg: Double = 0,
                 imuPitchDeg: Double = 0,
-                preset: ScenePreset = .studio) {
+                preset: ScenePreset = .studio,
+                overlays: RobotOverlaySet? = nil,
+                overlayData: SceneOverlayData? = nil) {
         self.pose = pose
         self.footTrace = footTrace
         self.highlight = highlight
@@ -52,6 +58,13 @@ public struct RobotScene3D: NSViewRepresentable {
         self.imuRollDeg = imuRollDeg
         self.imuPitchDeg = imuPitchDeg
         self.preset = preset
+        self.overlays = overlays
+        self.overlayData = overlayData
+    }
+
+    /// overlays 가 nil 이면 preset 기본값을 코디네이터에서 가져온다.
+    private func resolvedOverlays() -> RobotOverlaySet {
+        overlays ?? RobotOverlaySet.defaults(for: preset)
     }
 
     public func makeNSView(context: Context) -> InteractiveSceneView {
@@ -68,6 +81,7 @@ public struct RobotScene3D: NSViewRepresentable {
         view.preferredFramesPerSecond = 30
         view.pointOfView = context.coordinator.cameraNode
         view.applyCamera()                         // orbit state → 카메라 적용
+        context.coordinator.applyOverlays(resolvedOverlays(), data: overlayData)  // W3: pose 전 주입.
         context.coordinator.applyPose(pose)
         context.coordinator.applyFootTrace(footTrace)
         context.coordinator.applyHighlight(highlight)
@@ -86,6 +100,7 @@ public struct RobotScene3D: NSViewRepresentable {
     }
 
     public func updateNSView(_ nsView: InteractiveSceneView, context: Context) {
+        context.coordinator.applyOverlays(resolvedOverlays(), data: overlayData)  // W3.
         context.coordinator.applyPose(pose)
         context.coordinator.applyFootTrace(footTrace)
         context.coordinator.applyHighlight(highlight)
@@ -108,8 +123,12 @@ public extension RobotScene3D {
                             size: CGSize = CGSize(width: 1024, height: 768),
                             highlight: JointID? = nil,
                             cameraOverride: SCNVector3? = nil,
-                            preset: ScenePreset = .studio) -> NSImage? {
+                            preset: ScenePreset = .studio,
+                            overlays: RobotOverlaySet? = nil,
+                            overlayData: SceneOverlayData? = nil) -> NSImage? {
         let coord = Coordinator(preset: preset)
+        // **W3**: 오버레이 주입(nil 이면 preset 기본값) → pose/highlight 순으로 갱신.
+        coord.applyOverlays(overlays ?? RobotOverlaySet.defaults(for: preset), data: overlayData)
         coord.applyPose(pose)
         coord.applyHighlightPublic(highlight)
 
@@ -135,11 +154,15 @@ public extension RobotScene3D {
                          size: CGSize = CGSize(width: 1024, height: 768),
                          highlight: JointID? = nil,
                          cameraOverride: SCNVector3? = nil,
-                         preset: ScenePreset = .studio) -> Bool {
+                         preset: ScenePreset = .studio,
+                         overlays: RobotOverlaySet? = nil,
+                         overlayData: SceneOverlayData? = nil) -> Bool {
         guard let img = renderImage(pose: pose, size: size,
                                     highlight: highlight,
                                     cameraOverride: cameraOverride,
-                                    preset: preset),
+                                    preset: preset,
+                                    overlays: overlays,
+                                    overlayData: overlayData),
               let tiff = img.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiff),
               let png = bitmap.representation(using: .png, properties: [:]) else {

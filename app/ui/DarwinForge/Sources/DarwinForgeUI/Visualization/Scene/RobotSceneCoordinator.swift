@@ -16,6 +16,17 @@ public final class RobotSceneCoordinator {
     private let traceNode: SCNNode
     private let axesNode: SCNNode
 
+    /// **W3 (2026-06-12)**: rig 공통 추상화 핸들(오버레이가 rig 종류 무관 질의).
+    private let rigSkeleton: RigSkeleton?
+    /// **W3**: 로봇공학 오버레이 노드 풀 소유. scene root 직속(tiltNode 바깥 —
+    /// 오버레이는 절대 world 좌표를 쓰므로 tilt 영향과 분리).
+    private let overlayLayer = RobotOverlayLayer()
+    /// 현재 오버레이 상태 — applyPose/applyHighlight 경로에서 함께 갱신.
+    private var currentOverlays: RobotOverlaySet
+    private var currentOverlayData: SceneOverlayData?
+    private var lastPose: RobotPose = .center
+    private var lastHighlight: JointID?
+
     /// **v1.11.18.1 (2026-05-20)** — IMU tilt 적용용 wrapper 노드.
     /// 종전 (v1.11.18): root.eulerAngles 직접 set → MeshRig 의 ROS→SceneKit
     /// 좌표 변환 transform 이 덮어쓰여 robot 이 잘못 보임.
@@ -36,6 +47,7 @@ public final class RobotSceneCoordinator {
     /// preset 은 빌드 시 고정 — 런타임 변경 미지원(코디네이터 재생성 비용 회피).
     public init(preset: ScenePreset = .studio) {
         let spec = SceneEnvironmentSpec.spec(for: preset)
+        currentOverlays = RobotOverlaySet.defaults(for: preset)   // W3: 화면별 기본 오버레이.
         scene = SCNScene()
         scene.background.contents = NSColor.clear
 
@@ -92,13 +104,19 @@ public final class RobotSceneCoordinator {
             primitiveRig = nil
             usingMeshFallback = false
             tiltNode.addChildNode(mr.root)  // 종전: scene.rootNode 직접
+            rigSkeleton = mr
         } else {
             meshRig = nil
             let pr = DarwinOP2Rig()
             primitiveRig = pr
             usingMeshFallback = true   // P0-F: SwiftUI overlay에서 banner를 띄우게 시그널.
             tiltNode.addChildNode(pr.root)  // 종전: scene.rootNode 직접
+            rigSkeleton = pr
         }
+
+        // **W3**: 오버레이 root 를 scene root 직속으로(tilt 바깥). 오버레이 노드는
+        // rig 의 절대 world 좌표를 직접 쓰므로 tiltNode 자식이면 이중 적용된다.
+        scene.rootNode.addChildNode(overlayLayer.root)
 
         traceNode = SCNNode()
         scene.rootNode.addChildNode(traceNode)
@@ -141,11 +159,34 @@ public final class RobotSceneCoordinator {
     public func applyPose(_ pose: RobotPose) {
         meshRig?.apply(pose: pose)
         primitiveRig?.apply(pose: pose)
+        lastPose = pose
+        refreshOverlays()   // W3: pose 변경과 동일 경로에서 오버레이 갱신(자체 타이머 없음).
     }
 
     public func applyHighlightPublic(_ joint: JointID?) {
         meshRig?.highlight(joint)
         primitiveRig?.highlight(joint)
+        lastHighlight = joint
+        refreshOverlays()
+    }
+
+    /// **W3**: 활성 오버레이 집합 + 외부 텔레메트리 주입(화면 토글/세션 데이터).
+    /// 값이 바뀐 경우에만 즉시 재갱신.
+    public func applyOverlays(_ overlays: RobotOverlaySet, data: SceneOverlayData?) {
+        let changed = overlays != currentOverlays || data != currentOverlayData
+        currentOverlays = overlays
+        currentOverlayData = data
+        if changed { refreshOverlays() }
+    }
+
+    /// 저장된 pose/highlight/overlays/data 로 오버레이 풀 갱신. 0-alloc 경로.
+    private func refreshOverlays() {
+        guard let rig = rigSkeleton else { return }
+        overlayLayer.update(overlays: currentOverlays,
+                            pose: lastPose,
+                            highlight: lastHighlight,
+                            data: currentOverlayData,
+                            rig: rig)
     }
 
     /// 2026-05-17 perf audit fix: pool 재사용 — alloc 0.

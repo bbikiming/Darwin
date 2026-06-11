@@ -32,6 +32,8 @@ struct MotionStudioCanvas: View {
 
     /// 카메라 컨트롤러 — 좌상단 badge 와 우상단 ViewportControls 모두 공유.
     @ObservedObject var camera: CameraController
+    /// **W3**: 로봇공학 오버레이 토글 store(Motion 기본값 — EE 궤적 포함).
+    @StateObject private var overlayStore = OverlayToggleStore(preset: .motion)
 
     /// 좌상단 badge 에 표시할 현재 source mode (owner 계산).
     let sourceMode: SourceMode
@@ -91,14 +93,15 @@ struct MotionStudioCanvas: View {
                          highlight: highlightJoint,
                          showAxes: true,
                          cameraController: camera,
-                         preset: .motion)
+                         preset: .motion,
+                         overlays: overlayStore.overlays)
             // 3D 가 무엇을 보여주는지 명확히 — 사용자가 편집/재생/송출을 한눈에 구분.
             HStack(spacing: DFSpace.xs) {
                 sourceModeBadge
                 pageMetaBadge
             }
             .padding(DFSpace.md)
-            ViewportControls(camera: camera)
+            ViewportControls(camera: camera, overlayStore: overlayStore)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topTrailing)
         }

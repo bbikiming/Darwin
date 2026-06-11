@@ -8,9 +8,12 @@ import SwiftUI
 ///   - 모든 메뉴에서 동일 위치 / 동일 디자인 → 사용자 일관성.
 public struct ViewportControls: View {
     @ObservedObject public var camera: CameraController
+    /// **W3**: 비-nil 이면 로봇공학 오버레이 토글 팝오버를 노출. nil 이면 종전과 동일.
+    public let overlayStore: OverlayToggleStore?
 
-    public init(camera: CameraController) {
+    public init(camera: CameraController, overlayStore: OverlayToggleStore? = nil) {
         self.camera = camera
+        self.overlayStore = overlayStore
     }
 
     public var body: some View {
@@ -43,6 +46,11 @@ public struct ViewportControls: View {
 
             // 조명·머티리얼 튜닝 — 공유 컴포넌트(버튼 + 패널).
             SceneTuningControl()
+
+            // **W3**: 로봇공학 오버레이 토글(주입된 화면만).
+            if let store = overlayStore {
+                OverlayToggleControl(store: store)
+            }
         }
         .padding(DFSpace.md)
     }
