@@ -10,6 +10,9 @@
 #ifndef WALKLAB_BROKERAGE_H_
 #define WALKLAB_BROKERAGE_H_
 
+#include <pthread.h>          // O1 transport 스레드
+#include "WalkLabTransport.h" // O1 — latest-wins 슬롯·워치독·파서(Robot:: 의존 0)
+
 // 공식 ROBOTIS 프레임워크의 Walking/CM730 클래스는 namespace Robot 에 있음 (Robotis 아님).
 namespace Robot { class Walking; }
 namespace Robot { class CM730; }
@@ -58,8 +61,18 @@ public:
     /// **UDP 업링크 타깃 파일 재read 주기 (ms, 2026-06-03)**. 타깃은 거의 안 바뀌므로 1s throttle.
     static const int UPLINK_REFRESH_MS = 1000;
 
-    /// 명령 stale 임계 (ms). Mac 명령 갱신 끊긴 후 자동 stop.
+    /// 명령 stale 임계 (ms). Mac 명령 갱신 끊긴 후 자동 stop (워치독 최후 방어선).
     static const int STALE_TIMEOUT_MS = 5000;
+
+    // ===== O1 이벤트 구동 전송 (2026-06-12, walklab-onboard-teleop-upgrade Wave O1) =====
+    /// supervisor 루프 주기 (ms) — 보행 중. 종전 100ms → 20ms(실효율 ≥20Hz 목표).
+    /// 정지/유휴 시엔 POLL_INTERVAL_MS(100ms) 유지(CPU 절약). 볼트래킹은 카메라 페이스.
+    static const int SUPERVISOR_WALK_MS = 20;
+    /// 핸드셰이크 파일 — Mac 이 세션 시작 시 "TOKEN ESTOP_PORT CMD_PORT" 한 줄 기록.
+    /// 존재하면 UDP transport 스레드 기동(토큰 인증). 없으면 파일 폴 단독(영구 폴백).
+    static const char* const CHANNEL_PATH;
+    /// UDP transport 활성 시 파일 폴 완화 주기 (ms) — 250ms(디스크 churn 억제). 비활성 시 매 루프.
+    static const int FILE_POLL_RELAXED_MS = 250;
 
     /// **v1.13 (2026-06-02)** — ONBOARD auto-getup (자동 일어나기) debounce.
     /// MotionStatus::FALLEN 이 STANDUP(0) 이 아닌 상태가 이 횟수만큼 연속 poll 동안
@@ -92,9 +105,32 @@ public:
     void Run() { Run(0); }
 
 private:
-    /// CMD_PATH 한 줄 read + parse + Walking/Head 적용.
+    /// CMD_PATH 한 줄 read → ApplyCommandLine 위임 (파일 경로 — 영구 폴백).
     /// @return true = 정상 parse, false = 파싱 실패 (이전 명령 유지).
     bool ParseAndApply(Robot::Walking* walking, bool& walking_active);
+
+    /// **O1** — 명령 라인 1개를 파싱(WalkLabTransport::ParseCommandLine)·클램프·적용 +
+    /// ACK write. 파일 경로와 UDP 슬롯 경로가 공유하는 단일 적용 함수(중복 제거).
+    /// @return true = 적용됨, false = 파싱 실패(이전 명령 유지).
+    bool ApplyCommandLine(Robot::Walking* walking, bool& walking_active, const char* line);
+
+    // ===== O1 transport (UDP 리스너 스레드 — 핸드셰이크 토큰 있을 때만 기동) =====
+    /// CHANNEL_PATH 읽어 m_udp_token/포트 채움. 토큰 있으면 true.
+    bool LoadHandshake();
+    /// **cross-review [MEDIUM]** — CHANNEL_PATH 를 1s 주기로 점검: 미기동 시 재시도 기동,
+    /// mtime 변경(토큰 회전) 시 재기동, 파일 삭제(세션 종료) 시 정지(파일 폴 복귀).
+    void RefreshHandshake(long long now_ms);
+    /// UDP 명령(17374)·E-STOP(17372) 리스너 스레드 기동. 토큰 없으면 no-op.
+    void StartTransportThreads();
+    /// 리스너 스레드 정지 + 소켓 close (정상 종료 경로).
+    void StopTransportThreads();
+    /// UDP 명령 리스너 루프 — recvfrom → ParseCmdDatagram → 슬롯 Offer + UDP ACK 회신.
+    void CmdUdpLoop();
+    /// UDP E-STOP 리스너 루프 — recvfrom → ParseEstopDatagram → 즉시 Stop+토크OFF+flag touch.
+    void EstopUdpLoop();
+    /// pthread entry trampolines (C++03).
+    static void* CmdUdpThreadEntry(void* self);
+    static void* EstopUdpThreadEntry(void* self);
 
     /// **v1.12** — Telemetry 한 줄 (§A.2). 한 번 format 후: UDP push(매 poll) + (write_file
     /// 면) 파일 atomic write(tmp+rename, 200ms gate). cm730 NULL 이면 MotionStatus fallback.
@@ -125,6 +161,29 @@ private:
 
     /// **v1.12** — head 가 한 번이라도 non-zero 명령을 받았는지 (default pose 보존용).
     bool m_head_commanded;
+
+    // ===== O0 계측 (2026-06-12, walklab-onboard-teleop-upgrade Wave O0) =====
+    /// 마지막으로 적용한 명령의 cmd_id (TEL 에 append → Mac 폐루프 확인). "no_id" 기본.
+    char m_last_cmd_id[32];
+    /// supervisor 루프 1회 소요(ms). 직전 루프 시작과의 delta. TEL loop_ms 토큰.
+    long long m_loop_ms;
+
+    // ===== O1 transport 상태 =====
+    Robotis::CommandSlot m_cmd_slot;   ///< latest-wins 명령 슬롯(transport 스레드↔supervisor).
+    long long m_last_cmd_ms;           ///< 마지막 유효 명령 적용 시각(ms) — 워치독 티어.
+    bool m_last_cmd_from_stream;       ///< 마지막 명령이 UDP 슬롯(스트림) 소스였나 — 티어 게이트.
+    char  m_udp_token[64];             ///< 핸드셰이크 토큰("" = transport 비활성).
+    int   m_estop_port;                ///< E-STOP UDP 포트(핸드셰이크).
+    int   m_cmd_port;                  ///< 명령 UDP 포트(핸드셰이크).
+    int   m_estop_listen_fd;           ///< E-STOP 리스너 소켓 fd(-1 = 미생성).
+    int   m_cmd_listen_fd;             ///< 명령 리스너 소켓 fd(-1 = 미생성).
+    pthread_t m_estop_thread;          ///< E-STOP 리스너 스레드.
+    pthread_t m_cmd_thread;            ///< 명령 리스너 스레드.
+    volatile bool m_transport_running; ///< 스레드 기동 여부(스레드 루프 종료 플래그 — volatile).
+    // 핸드셰이크 재시도·토큰 회전(cross-review [MEDIUM] 2026-06-12).
+    long long m_last_channel_check_ms; ///< 마지막 CHANNEL_PATH 점검 시각(ms) — 1s throttle.
+    long  m_channel_mtime_sec;         ///< CHANNEL_PATH mtime(sec) — 토큰 회전 감지.
+    long  m_channel_mtime_nsec;        ///< CHANNEL_PATH mtime(nsec).
 
     // ===== UDP 텔레메트리 업링크 (2026-06-03) =====
     int m_udp_fd;               ///< UDP 소켓 fd. -1 = 미생성(lazy-open).

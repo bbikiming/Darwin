@@ -3,15 +3,19 @@
 @@ -18,7 +18,7 @@ LFLAGS += -lpthread -ljpeg -lrt
 
 -OBJECTS = VisionMode.o StatusCheck.o main.o
-+OBJECTS = VisionMode.o StatusCheck.o main.o WalkLabBrokerage.o
++OBJECTS = VisionMode.o StatusCheck.o main.o WalkLabBrokerage.o WalkLabTransport.o
 
  all: $(TARGET)
 
-@@ -38,3 +38,9 @@ libdarwin:
+@@ -38,3 +38,13 @@ libdarwin:
  $(TARGET): libdarwin $(OBJECTS)
  	$(CXX) -o $(TARGET) $(OBJECTS) ../../build/darwin.a $(LFLAGS)
  	chmod 755 $(TARGET)
 
 +# **v1.11.7 (DarwinForge)** — WalkLabBrokerage 모듈.
-+WalkLabBrokerage.o: WalkLabBrokerage.cpp WalkLabBrokerage.h
++WalkLabBrokerage.o: WalkLabBrokerage.cpp WalkLabBrokerage.h WalkLabTransport.h
 +	$(CXX) $(CXXFLAGS) -c WalkLabBrokerage.cpp
++
++# **O1 (2026-06-12)** — 순수 transport 로직(Robot:: 의존 0). 호스트 단위 테스트 대상.
++WalkLabTransport.o: WalkLabTransport.cpp WalkLabTransport.h
++	$(CXX) $(CXXFLAGS) -c WalkLabTransport.cpp

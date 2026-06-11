@@ -92,21 +92,28 @@ Single line, space-separated, prefixed with literal `TEL`, newline-terminated:
 
 ```
 TEL {ts_ms} {gyroX} {gyroY} {gyroZ} {accelX} {accelY} {accelZ} {voltage_dV} {walking01} {fallen}
+    [{last_cmd_id} {loop_ms}]        ← O0 (2026-06-12): optional appended tokens
 ```
-- 11 tokens total (`TEL` + 10 values).
+- **≥11 tokens** (`TEL` + 10 required values), **was "exactly 11"** before O0.
 - `ts_ms`: integer (`long long`), unix epoch ms.
 - `gyroX..accelZ`: integers 0..1023 (raw ADC).
 - `voltage_dV`: integer deci-volts (0 = unknown).
 - `walking01`: 0 or 1.
 - `fallen`: -1, 0, or 1.
-- printf: `fprintf(fp, "TEL %lld %d %d %d %d %d %d %d %d %d\n", ts_ms, gx,gy,gz, ax,ay,az, vdV, w, fallen);`
+- **O0 appended (optional)**: `last_cmd_id` (string, last applied cmd_id; `no_id`/`-`→nil),
+  `loop_ms` (int ≥0, supervisor loop duration). Closes the command-applied loop + loop_p95.
+- printf (O0): `fprintf(fp, "TEL %lld %d %d %d %d %d %d %d %d %d %s %lld\n", ts_ms, gx,gy,gz, ax,ay,az, vdV, w, fallen, last_cmd_id, loop_ms);`
 
-Example: `TEL 1748736000123 511 530 498 512 489 760 122 1 0`
+Example: `TEL 1748736000123 511 530 498 512 489 760 122 1 0` (legacy 11)
+Example: `TEL 1748736000123 511 530 498 512 489 760 122 1 0 c123_ab12cd34 18` (O0)
 
 ### A.3 Consumer (Mac, W2 parse; W3 wire into store)
 `OnboardTelemetry.parse` (see §D) splits on whitespace, requires `tokens[0]=="TEL"` and
-exactly 11 tokens, parses the rest. Out-of-range or NaN → return nil (drop the sample;
-do not crash, do not feed garbage to gates).
+**≥11 tokens** (O0: relaxed from "exactly 11"), parses the first 11 + optional `last_cmd_id`
+/`loop_ms`, ignores any further tokens (forward-compat). Out-of-range or NaN → return nil
+(drop the sample; do not crash, do not feed garbage to gates). **Ship the relaxation FIRST**
+so the robot's token append cannot break an older Mac parser (would force telemetryMode
+offline). Extra unknown tokens are ignored, never rejected.
 
 ---
 
@@ -431,3 +438,64 @@ No two workstreams write the same file. The only cross-WS seams are typed contra
    desaturation + SAFETY GATES banner. (D.5)
 8. Default connection path is SSH onboard; LAN (5530) is an explicit wizard setting. (W6)
 9. C++ stays C++03: new static const non-int members defined in `.cpp`; no constexpr/auto.
+
+---
+
+## G. O0/O1 event-driven transport (2026-06-12, P3)
+
+Adds an **event-driven UDP transport** alongside the file-poll path. The file paths
+(§A/§B/command file) are **permanent fallbacks** — UDP is additive, gated by a handshake.
+
+### G.1 Channel handshake `/tmp/df-walklab-channel`
+- Single line `"{token} {estop_port} {cmd_port}\n"`, atomic tmp+mv.
+- CREATOR: Mac, **any time** (`RobotSetupCommand.walkLabWriteChannelHandshake`) — need not
+  precede `Run()`. The robot re-checks every 1s (`RefreshHandshake`) and accepts within ≤1s.
+- CONSUMER: robot `WalkLabBrokerage::RefreshHandshake` (1s throttle). Present + threads down →
+  `LoadHandshake` + start UDP threads. **mtime change → restart** (token/port rotation; handles
+  a stale token from a crashed prior session). File absent → stop threads (file poll only).
+- `token`: 16 alphanumerics (shell-safe). Ports default to 17372/17374 if omitted.
+- **Session end: Mac MUST call `walkLabClearChannelHandshake`** (`rm -f /tmp/df-walklab-channel`)
+  so the robot tears down UDP transport and returns to file-poll (no stale listener with an old
+  token). Absent handshake = legacy file-poll behavior fully preserved.
+
+### G.2 E-STOP datagram (UDP `estop_port`, default 17372)
+- Payload `DF-ESTOP v1 {token} {unixMillis}`. Mac fires **×3 burst (0/50/100ms)** in
+  parallel with the SSH/file path (first to land wins).
+- Robot listener: on prefix+token match → `Walking::Stop()` + body torque off (~1–5ms) +
+  **touch the §B flag file** (so the existing latch/re-arm machinery owns hold-stopped state;
+  Mac re-arms via `rm`). Wrong token → ignored (spoof damage = unnecessary stop = fail-safe).
+- **No throttle/batch/extra hop on this path** (latency §7 invariant).
+
+### G.3 Command datagram (UDP `cmd_port`, default 17374)
+- Payload `DFCMD {token} {seq} {line}` where `line` is the §C command line (cmd_id + 13).
+- Robot listener: token match → `CommandSlot.Offer(line, seq)` (latest-wins, **seq strictly
+  monotonic** — reordered/old datagrams dropped) + best-effort UDP `ACK {seq} {t_rx}` reply.
+- Supervisor applies the slot each loop (single writer — transport threads only touch the slot).
+
+### G.4 Supervisor loop + watchdog tiers
+- Loop period: **20ms while walking** (`SUPERVISOR_WALK_MS`, ≥20Hz effective), 100ms idle;
+  ball-tracking keeps camera pace (no sleep). File poll relaxed to 250ms when UDP active.
+- **Watchdog tiers** (`WalkLabTransport::WatchdogDecision`, ms since last applied command):
+  `≥600` → amplitude slew to 0 (march in place, **torque held**); `≥2500` → `Walking::Stop()`
+  (torque held). 5s `STALE_TIMEOUT_MS` remains as a backstop. Torque cut is E-STOP/FALLEN only.
+- **Tiers are STREAM-SOURCE ONLY** (`from_stream` gate). A command applied from the **file**
+  path does NOT arm the tiers — the Mac bridge dedups and Switch sends only on change, so a
+  steady stick-hold legitimately stops refreshing the file; arming 600ms/2.5s there would cause
+  a march/stop regression. File-source commands rely on the 5s STALE backstop only. UDP-slot
+  (continuous 20–30Hz) commands arm the tiers so packet loss is caught fast.
+
+### G.5 Persistent SSH channel (Mac → robot command path)
+- `PersistentSSHChannel` runs one resident `ssh host 'exec sh -s'`; commands written to stdin
+  as `… > cmd.tmp && mv …; printf '__DF_DONE_<id>_<exit>__\n' "$?"`. stdout sentinel
+  correlates completion. 0 fork/exec per command. Falls back to `SSHShell.run` on failure.
+- Coalescing: `SendPolicy.latestWins(key:)` for freeform tuning; `.ordered` for estop/mode
+  switch (never coalesced). Feature flag `df.onboard.persistentChannel`.
+
+### G.6 Pure logic location (host-testable)
+- `firmware-patches/walklab-brokerage/WalkLabTransport.{h,cpp}` — `CommandSlot`,
+  `WatchdogDecision`, `ParseCommandLine`(+clamps), `ParseEstopDatagram`, `ParseCmdDatagram`.
+  No `Robot::` deps → host unit tests (`tests/`, plain Makefile, C++03). Brokerage links it.
+
+### G.7 New ports (single source: `DFConnectionConstants` ↔ handshake file)
+`estopUDPPort=17372`, `commandUDPPort=17374` (telemetry stays 17371). Do not hard-code
+elsewhere — the handshake conveys them to the robot.

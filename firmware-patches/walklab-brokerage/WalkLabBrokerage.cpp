@@ -38,7 +38,8 @@
 #include <signal.h>
 #include <math.h>          // 두리번 스캔 sweep (sin)
 #include <sys/stat.h>
-#include <sys/socket.h>     // UDP 업링크 (2026-06-03) — socket / sendto
+#include <sys/socket.h>     // UDP 업링크 (2026-06-03) — socket / sendto / recvfrom / setsockopt
+#include <sys/time.h>       // O1 — struct timeval (SO_RCVTIMEO)
 #include <netinet/in.h>     // sockaddr_in
 #include <arpa/inet.h>      // inet_addr / htons / INADDR_NONE
 #include <fcntl.h>          // O_NONBLOCK (비차단 소켓)
@@ -66,6 +67,8 @@ namespace Robotis {
     const char* const WalkLabBrokerage::TELEMETRY_PATH = "/tmp/df-walklab-telemetry";
     const char* const WalkLabBrokerage::ESTOP_PATH = "/tmp/df-walklab-estop";
     const char* const WalkLabBrokerage::UPLINK_PATH = "/tmp/df-walklab-uplink";
+    // O1 — 핸드셰이크 파일("TOKEN ESTOP_PORT CMD_PORT"). Mac 이 세션 시작 시 기록.
+    const char* const WalkLabBrokerage::CHANNEL_PATH = "/tmp/df-walklab-channel";
     const double WalkLabBrokerage::HIP_PITCH_MIN = 0.0;
     const double WalkLabBrokerage::HIP_PITCH_MAX = 20.0;
 
@@ -411,8 +414,178 @@ namespace Robotis {
         }
     }
 
+    // ===== O1 transport — UDP 리스너 스레드 (2026-06-12) =========================
+    // 핸드셰이크 토큰이 있을 때만 기동. 스레드는 "수신→슬롯/정지"만 수행(적용 로직 없음).
+    // Walking 파라미터 쓰기는 supervisor 단일 루프가 담당(§c 스레드 안전 — 단일 writer).
+
+    bool WalkLabBrokerage::LoadHandshake() {
+        m_udp_token[0] = '\0';
+        m_estop_port = 0;
+        m_cmd_port = 0;
+        FILE* fp = fopen(CHANNEL_PATH, "r");
+        if (!fp) return false;
+        char tok[64] = {0};
+        int ep = 0, cp = 0;
+        int n = fscanf(fp, "%63s %d %d", tok, &ep, &cp);
+        fclose(fp);
+        if (n < 1 || tok[0] == '\0') return false;
+        strncpy(m_udp_token, tok, sizeof(m_udp_token) - 1);
+        m_udp_token[sizeof(m_udp_token) - 1] = '\0';
+        // 포트 미기재 시 DFConnectionConstants 기본값(17372/17374)과 일치.
+        m_estop_port = (n >= 2 && ep > 0) ? ep : 17372;
+        m_cmd_port   = (n >= 3 && cp > 0) ? cp : 17374;
+        return true;
+    }
+
+    // 1s recv 타임아웃 UDP 리스너 소켓 open+bind. 실패 시 -1.
+    static int OpenUdpListener(int port) {
+        int fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd < 0) return -1;
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons((unsigned short)port);
+        struct timeval tv; tv.tv_sec = 1; tv.tv_usec = 0;   // 종료 플래그 재검사 주기.
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
+        return fd;
+    }
+
+    void* WalkLabBrokerage::EstopUdpThreadEntry(void* self) {
+        ((WalkLabBrokerage*)self)->EstopUdpLoop();
+        return 0;
+    }
+    void* WalkLabBrokerage::CmdUdpThreadEntry(void* self) {
+        ((WalkLabBrokerage*)self)->CmdUdpLoop();
+        return 0;
+    }
+
+    void WalkLabBrokerage::EstopUdpLoop() {
+        char buf[256];
+        while (m_transport_running) {
+            struct sockaddr_in src; socklen_t slen = sizeof(src);
+            int len = (int)recvfrom(m_estop_listen_fd, buf, sizeof(buf) - 1, 0,
+                                    (struct sockaddr*)&src, &slen);
+            if (len <= 0) continue;   // 타임아웃/에러 — 종료 플래그 재검사.
+            if (!Robotis::ParseEstopDatagram(buf, len, m_udp_token)) continue;
+            // 즉시 정지(~1–5ms): Walking::Stop + body torque off.
+            Robot::Walking* w = Robot::Walking::GetInstance();
+            if (w) { w->Stop(); w->m_Joint.SetEnableBody(false); }
+            // flag 파일 touch — 기존 latch/re-arm(EstopRequested) 경로가 hold-stopped 소유.
+            // UDP estop 은 일회성 datagram → 파일이 상태를 소유(Mac 이 rm 할 때까지 정지 유지).
+            int fd = open(ESTOP_PATH, O_CREAT | O_WRONLY, 0644);
+            if (fd >= 0) close(fd);
+        }
+    }
+
+    void WalkLabBrokerage::CmdUdpLoop() {
+        char buf[512];
+        while (m_transport_running) {
+            struct sockaddr_in src; socklen_t slen = sizeof(src);
+            int len = (int)recvfrom(m_cmd_listen_fd, buf, sizeof(buf) - 1, 0,
+                                    (struct sockaddr*)&src, &slen);
+            if (len <= 0) continue;
+            long long seq = 0;
+            char line[256];
+            if (!Robotis::ParseCmdDatagram(buf, len, m_udp_token, &seq, line, sizeof(line)))
+                continue;
+            // latest-wins 슬롯(seq 단조 — 역행 폐기). 적용은 supervisor.
+            if (m_cmd_slot.Offer(line, seq)) {
+                struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+                long long t_rx = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+                char ack[64];
+                int an = snprintf(ack, sizeof(ack), "ACK %lld %lld\n", seq, t_rx);
+                if (an > 0) sendto(m_cmd_listen_fd, ack, (size_t)an, 0,
+                                   (struct sockaddr*)&src, slen);  // best-effort.
+            }
+        }
+    }
+
+    // **cross-review [MEDIUM] (2026-06-12)** — CHANNEL_PATH 1s 주기 점검.
+    //  · 미기동 + 파일 존재 → LoadHandshake → 기동(Mac 이 나중에 기록해도 1s 내 수용).
+    //  · 기동 중 + mtime 변경 → 재기동(구세션 토큰 잔존/회전 대응).
+    //  · 기동 중 + 파일 삭제 → 정지(세션 종료 — walkLabClearChannelHandshake → 파일 폴 복귀).
+    void WalkLabBrokerage::RefreshHandshake(long long now_ms) {
+        if (m_last_channel_check_ms != 0 && (now_ms - m_last_channel_check_ms) < 1000) return;
+        m_last_channel_check_ms = now_ms;
+
+        struct stat st;
+        if (stat(CHANNEL_PATH, &st) != 0) {
+            // 파일 없음 — Mac 세션 종료. transport 가 떠 있으면 내려 파일 폴 단독 복귀.
+            if (m_transport_running) {
+                printf("[WalkLabBrokerage] channel handshake cleared — UDP transport down\n");
+                StopTransportThreads();
+                m_channel_mtime_sec = 0;
+                m_channel_mtime_nsec = 0;
+            }
+            return;
+        }
+
+        bool mtime_changed = (st.st_mtim.tv_sec != m_channel_mtime_sec) ||
+                             (st.st_mtim.tv_nsec != m_channel_mtime_nsec);
+
+        if (!m_transport_running) {
+            if (LoadHandshake()) {
+                StartTransportThreads();
+                m_channel_mtime_sec = st.st_mtim.tv_sec;
+                m_channel_mtime_nsec = st.st_mtim.tv_nsec;
+            }
+        } else if (mtime_changed) {
+            // 토큰/포트 회전 — 내렸다 새 핸드셰이크로 재기동.
+            printf("[WalkLabBrokerage] channel handshake changed — restart UDP transport\n");
+            StopTransportThreads();
+            if (LoadHandshake()) StartTransportThreads();
+            m_channel_mtime_sec = st.st_mtim.tv_sec;
+            m_channel_mtime_nsec = st.st_mtim.tv_nsec;
+        }
+    }
+
+    void WalkLabBrokerage::StartTransportThreads() {
+        if (m_transport_running) return;
+        if (m_udp_token[0] == '\0') return;   // 토큰 없음 — 파일 폴 단독(영구 폴백).
+        m_estop_listen_fd = OpenUdpListener(m_estop_port);
+        m_cmd_listen_fd   = OpenUdpListener(m_cmd_port);
+        if (m_estop_listen_fd < 0 && m_cmd_listen_fd < 0) return;   // 둘 다 실패 — 폴백.
+        m_transport_running = true;
+        if (m_estop_listen_fd >= 0)
+            pthread_create(&m_estop_thread, 0, EstopUdpThreadEntry, this);
+        if (m_cmd_listen_fd >= 0)
+            pthread_create(&m_cmd_thread, 0, CmdUdpThreadEntry, this);
+        printf("[WalkLabBrokerage] UDP transport up (estop:%d cmd:%d)\n",
+               m_estop_port, m_cmd_port);
+    }
+
+    void WalkLabBrokerage::StopTransportThreads() {
+        if (!m_transport_running) return;
+        m_transport_running = false;   // 스레드 루프 종료(≤1s recv 타임아웃 후).
+        if (m_estop_listen_fd >= 0) {
+            pthread_join(m_estop_thread, 0);
+            close(m_estop_listen_fd); m_estop_listen_fd = -1;
+        }
+        if (m_cmd_listen_fd >= 0) {
+            pthread_join(m_cmd_thread, 0);
+            close(m_cmd_listen_fd); m_cmd_listen_fd = -1;
+        }
+    }
+
     void WalkLabBrokerage::Run(Robot::CM730* cm730) {
         m_head_commanded = false;
+        // O0 계측 — last_cmd_id/loop_ms 초기화.
+        strcpy(m_last_cmd_id, "no_id");
+        m_loop_ms = 0;
+        // O1 transport — 멤버 초기화. 핸드셰이크는 루프의 RefreshHandshake 가 1s 내 수용.
+        m_last_cmd_ms = 0;
+        m_last_cmd_from_stream = false;
+        m_udp_token[0] = '\0';
+        m_estop_port = 0;
+        m_cmd_port = 0;
+        m_estop_listen_fd = -1;
+        m_cmd_listen_fd = -1;
+        m_transport_running = false;
+        m_last_channel_check_ms = 0;
+        m_channel_mtime_sec = 0;
+        m_channel_mtime_nsec = 0;
         m_fall_count = 0;   // **v1.13** auto-getup debounce 카운터 초기화.
         // 볼 트래킹 (2026-06-02) — vision 상태 초기화 (lazy-init 은 첫 enable 시).
         m_balltrack_enabled = false;
@@ -441,6 +614,9 @@ namespace Robotis {
             fprintf(stderr, "WalkLabBrokerage: Walking::GetInstance() == NULL\n");
             return;
         }
+
+        // O1 — 핸드셰이크는 루프의 RefreshHandshake 가 1s 주기로 점검(첫 루프에서 즉시 시도).
+        // Mac 은 세션 시작 시 언제든 CHANNEL_PATH 를 기록하면 되고, 로봇이 1s 내 수용한다.
 
         printf("[WalkLabBrokerage] start polling %s every %dms\n",
                CMD_PATH, POLL_INTERVAL_MS);
@@ -473,6 +649,7 @@ namespace Robotis {
                 walking->m_Joint.SetEnableBody(false);
                 // 헤드도 정지 + 토크 풀어 사용자가 들고 내릴 수 있게.
                 Robot::Head::GetInstance()->m_Joint.SetEnableHeadOnly(false);
+                StopTransportThreads();   // O1 — UDP 리스너 정리 후 정상 종료.
                 break;
             }
 
@@ -481,9 +658,15 @@ namespace Robotis {
             clock_gettime(CLOCK_REALTIME, &loop_ts);
             long long now_ms =
                 (long long)loop_ts.tv_sec * 1000LL + loop_ts.tv_nsec / 1000000LL;
+            // O0 계측 — 루프 1회 소요(직전 루프 시작과의 delta). 첫 루프(prev==0)는 0.
+            static long long prev_loop_ms = 0;
+            m_loop_ms = (prev_loop_ms != 0 && now_ms >= prev_loop_ms) ? (now_ms - prev_loop_ms) : 0;
+            prev_loop_ms = now_ms;
             // UDP 업링크 타깃(/tmp/df-walklab-uplink) 주기 갱신(내부 1Hz throttle). Mac 연결 시
             // 자기 IP:port 를 기록 → 로봇이 그쪽으로 telemetry push. e-stop 전에 둬 정지 중에도 갱신.
             RefreshUplinkTarget(now_ms);
+            // O1 — 핸드셰이크 재시도·토큰 회전 점검(1s throttle). e-stop 전에 둬 정지 중에도 갱신.
+            RefreshHandshake(now_ms);
 
             // **v1.12 (§B)** — e-stop flag 검사를 명령 parse 보다 먼저. presence == STOP.
             // flag 존재 시 즉시 Stop()+body torque off, 제거될 때까지 hold (재-arm 가능하도록
@@ -528,40 +711,84 @@ namespace Robotis {
                 continue;
             }
 
-            struct stat current_stat = {};
-            int stat_ret = stat(CMD_PATH, &current_stat);
-
-            if (stat_ret == 0) {
-                // **v1.11.16.2 (2026-05-19) — Codex CRITICAL 1 fix**: mtime+size 만으로는
-                // 같은 길이 명령이 1초 내 변경 시 미처리. nanosecond mtim 사용 + 매 poll
-                // 시 cmd_id 비교로 신뢰성 확보. Linux 의 st_mtim.tv_sec/tv_nsec 사용.
-                bool file_changed =
-                    (current_stat.st_mtim.tv_sec != last_stat.st_mtim.tv_sec) ||
-                    (current_stat.st_mtim.tv_nsec != last_stat.st_mtim.tv_nsec) ||
-                    (current_stat.st_size != last_stat.st_size);
-                if (file_changed) {
-                    last_stat = current_stat;
-                    if (ParseAndApply(walking, walking_active)) {
+            // ── O1: UDP latest-wins 슬롯 우선 소비 (이벤트 구동). transport 미기동이면
+            //    슬롯은 항상 비어 no-op → 종전 파일 경로 동작 완전 보존.
+            {
+                char slot_line[256];
+                if (m_cmd_slot.Take(slot_line, sizeof(slot_line))) {
+                    if (ApplyCommandLine(walking, walking_active, slot_line)) {
                         last_cmd_time = time(NULL);
+                        m_last_cmd_ms = now_ms;
+                        m_last_cmd_from_stream = true;   // 스트림 소스 — 워치독 티어 대상.
                     }
                 }
+            }
 
-                // Stale check — Mac 명령 5초 이상 안 오면 자동 stop.
-                if (walking_active && last_cmd_time > 0 &&
-                    (time(NULL) - last_cmd_time) > (STALE_TIMEOUT_MS / 1000)) {
-                    printf("[WalkLabBrokerage] stale > %dms — auto stop\n",
-                           STALE_TIMEOUT_MS);
-                    walking->Stop();
-                    walking_active = false;
+            // ── 파일 경로 (영구 폴백). transport 활성 시 250ms 완화(디스크 churn 억제),
+            //    비활성 시 매 루프(종전 동작 보존).
+            static long long last_file_poll_ms = 0;
+            bool do_file_poll = !m_transport_running ||
+                                (now_ms - last_file_poll_ms >= FILE_POLL_RELAXED_MS);
+            if (do_file_poll) {
+                last_file_poll_ms = now_ms;
+                struct stat current_stat = {};
+                int stat_ret = stat(CMD_PATH, &current_stat);
+
+                if (stat_ret == 0) {
+                    // mtime(ns)+size 변경 감지(같은 길이 1초 내 변경 대응).
+                    bool file_changed =
+                        (current_stat.st_mtim.tv_sec != last_stat.st_mtim.tv_sec) ||
+                        (current_stat.st_mtim.tv_nsec != last_stat.st_mtim.tv_nsec) ||
+                        (current_stat.st_size != last_stat.st_size);
+                    if (file_changed) {
+                        last_stat = current_stat;
+                        if (ParseAndApply(walking, walking_active)) {
+                            last_cmd_time = time(NULL);
+                            m_last_cmd_ms = now_ms;
+                            m_last_cmd_from_stream = false;  // 파일 소스 — 티어 제외(5s STALE 만).
+                        }
+                    }
+
+                    // 5s STALE_TIMEOUT — 최후 방어선(워치독 2.5s 가 먼저 발화하므로 backstop).
+                    if (walking_active && last_cmd_time > 0 &&
+                        (time(NULL) - last_cmd_time) > (STALE_TIMEOUT_MS / 1000)) {
+                        printf("[WalkLabBrokerage] stale > %dms — auto stop\n",
+                               STALE_TIMEOUT_MS);
+                        walking->Stop();
+                        walking_active = false;
+                    }
+                } else {
+                    // 파일 없음 — Mac 측 미연결. transport 가 없으면 정지(종전 동작).
+                    // transport 활성이면 UDP 가 명령을 공급하므로 파일 부재로 정지하지 않는다
+                    // (정지는 워치독 티어가 명령 stale 기준으로 판정).
+                    if (!m_transport_running) {
+                        if (walking_active) {
+                            walking->Stop();
+                            walking_active = false;
+                        }
+                        m_balltrack_enabled = false;   // 헤드 scan 무한지속 방지.
+                    }
                 }
-            } else {
-                // 파일 없음 — Mac 측 미연결. polling 만 유지.
-                if (walking_active) {
-                    walking->Stop();
-                    walking_active = false;
+            }
+
+            // ── O1 워치독 티어 (G3) — 매 루프. 600ms: 진폭 0 슬루(제자리 걸음, 토크 유지),
+            //    2.5s: Walking::Stop()(토크 유지 — 컷은 E-STOP 만). 5s STALE 은 위의 backstop.
+            //    **[HIGH] 티어는 스트림(UDP 슬롯) 소스 전용** — 파일 소스(dedup·변경시만 송신)는
+            //    제외(일정 스틱 홀드 회귀 방지). WatchdogDecision 이 from_stream 으로 게이팅.
+            if (m_last_cmd_ms > 0) {
+                Robotis::WatchdogAction wd = Robotis::WatchdogDecision(
+                    now_ms - m_last_cmd_ms, walking_active, m_last_cmd_from_stream);
+                if (wd == Robotis::WD_SLEW_ZERO) {
+                    walking->X_MOVE_AMPLITUDE = 0.0;
+                    walking->Y_MOVE_AMPLITUDE = 0.0;
+                    walking->A_MOVE_AMPLITUDE = 0.0;
+                } else if (wd == Robotis::WD_STOP) {
+                    if (walking_active) {
+                        printf("[WalkLabBrokerage] watchdog stale — auto stop (torque held)\n");
+                        walking->Stop();
+                        walking_active = false;
+                    }
                 }
-                // 볼 트래킹 (2026-06-02): Mac 끊김 → 자동 추적 해제 (헤드 scan 무한지속 방지).
-                m_balltrack_enabled = false;
             }
 
             // 볼 트래킹 (2026-06-02): enabled 면 매 poll 카메라+BallTracker 로 헤드를 움직인다.
@@ -571,8 +798,9 @@ namespace Robotis {
             }
 
             // **v1.12 (§A) + UDP push (2026-06-03)** — telemetry uplink.
-            // UDP 는 매 poll 전송(10Hz idle / ~30Hz 볼트래킹 — 1 RTT 신선도). 파일은 종전대로
-            // 200ms(5Hz) gate(SSH fallback·디스크 churn 억제). now_ms 는 루프 상단에서 계산됨.
+            // UDP 는 매 poll 전송(1 RTT 신선도). O1 supervisor 주기상 **보행 중 ~50Hz**(20ms)·
+            // 정지/유휴 ~10Hz(100ms)·볼트래킹 ~30Hz(카메라 페이스). 파일은 종전대로 200ms(5Hz)
+            // gate(SSH fallback·디스크 churn 억제). now_ms 는 루프 상단에서 계산됨.
             bool write_tel_file = (now_ms - last_tel_ms >= TELEMETRY_INTERVAL_MS);
             if (write_tel_file) last_tel_ms = now_ms;
             WriteTelemetry(cm730, walking_active, write_tel_file);
@@ -582,9 +810,11 @@ namespace Robotis {
             // — 기본 SOCCER 데모와 동일 구조. 여기에 100ms usleep 을 더하면 ~7fps 로 떨어져 헤드가
             // 버벅이고 반응이 느려진다(사용자 보고). 트래킹 중엔 usleep 생략 → 카메라 자연 페이스로
             // 부드러운 추적. e-stop/getup/command 검사도 30Hz 로 더 자주 돌아 반응성도 향상.
-            // 볼 트래킹 OFF 일 때만 100ms idle poll (CPU 절약, 명령 폴링은 충분).
+            // 볼 트래킹 OFF 일 때만 sleep. **O1**: 보행 중 20ms(SUPERVISOR_WALK_MS, 실효율
+            // ≥20Hz) / 정지·유휴 100ms(CPU 절약). 볼트래킹은 카메라 페이스(usleep 생략).
             if (!m_balltrack_enabled) {
-                usleep(POLL_INTERVAL_MS * 1000);
+                int sleep_ms = walking_active ? SUPERVISOR_WALK_MS : POLL_INTERVAL_MS;
+                usleep(sleep_ms * 1000);
             }
         }
     }
@@ -599,80 +829,38 @@ namespace Robotis {
             return false;
         }
         fclose(fp);
+        return ApplyCommandLine(walking, walking_active, line);
+    }
 
-        // **v1.11.16.2 (2026-05-19) — Codex CRITICAL 1 fix**: cmd_id nonce 첫 token.
-        // **v1.12 (2026-06-01) — §C**: balance(3) + head(2) 토큰 추가 → 12 필드.
-        // 형식(cmd_id 포함, 13 token):
-        //   "{cmd_id} {enabled} {x} {y} {a} {period} {foot} {hip} {bgain} {benable} {blevel} {headPan} {headTilt}"
-        // backward-compat(cmd_id 없음, 12 token) 및 구형(7 token, hip 까지)도 처리.
-        // cmd_id 가 있으면 ACK 에 echo 하여 Mac 이 stale ACK 검출 가능.
-        char cmd_id[32] = "no_id";  // default — backward compat
-        int enabled = 0;
-        float x = 0, y = 0, a = 0, period = 0, foot = 0, hip = 13.0f;
-        // **v1.12** — balance 필드(현재 미적용, 토큰 위치 정렬용으로 consume)와 head 필드.
-        float bgain = 1.0f; int benable = 0, blevel = 2;
-        float head_pan = 0.0f, head_tilt = 0.0f;  // default 0 (keep-last 는 위험).
-        // 볼 트래킹 (2026-06-02) — 13번째 필드. 0=off, 1=on. 옛 Mac(12필드)은 미전송 → 0 유지.
-        float balltrack = 0.0f;
-        // 첫 token 이 숫자가 아니면 cmd_id 로 간주.
-        // 시도 1: cmd_id 포함 형식 (최대 14 token — head 2 + ball_track 1).
-        int n = sscanf(line, "%31s %d %f %f %f %f %f %f %f %d %d %f %f %f",
-                       cmd_id, &enabled, &x, &y, &a, &period, &foot, &hip,
-                       &bgain, &benable, &blevel, &head_pan, &head_tilt, &balltrack);
-        if (n < 7) {
-            // 시도 2: cmd_id 없는 형식 (최대 13 token).
-            n = sscanf(line, "%d %f %f %f %f %f %f %f %d %d %f %f %f",
-                       &enabled, &x, &y, &a, &period, &foot, &hip,
-                       &bgain, &benable, &blevel, &head_pan, &head_tilt, &balltrack);
-            if (n < 6) {
-                // 잘못된 line 무시 — 이전 명령 유지 (safety).
-                return false;
-            }
-            strcpy(cmd_id, "no_id");
-        }
-        if (n == 6) {
-            // v1.11.5 (6 필드) backward-compat — hip 미전달 시 default 유지.
-            hip = walking->HIP_PITCH_OFFSET;
+    // **O1 (2026-06-12)** — 파일 경로와 UDP 슬롯 경로가 공유하는 단일 적용 함수.
+    // 파싱·클램프는 WalkLabTransport::ParseCommandLine(순수, 호스트 단위 테스트됨)에 위임 —
+    // 양 경로가 동일 의미로 적용됨을 보장(중복 제거). 명령 라인 형식(cmd_id 포함 14 token,
+    // backward-compat 13/6 token)은 §C 와 동일.
+    bool WalkLabBrokerage::ApplyCommandLine(Robot::Walking* walking, bool& walking_active,
+                                            const char* line) {
+        Robotis::WalkCommand cmd;
+        if (!Robotis::ParseCommandLine(line, &cmd)) {
+            return false;   // 파싱 실패 — 이전 명령 유지(safety).
         }
 
-        // hip_pitch_deg clamp [0, 20].
-        if (hip < HIP_PITCH_MIN) hip = HIP_PITCH_MIN;
-        if (hip > HIP_PITCH_MAX) hip = HIP_PITCH_MAX;
+        // Walking 진폭/주기 직접 대입 (게이트는 PHASE1/3 경계에서 래치 — Walking.cpp).
+        walking->X_MOVE_AMPLITUDE = cmd.x;
+        walking->Y_MOVE_AMPLITUDE = cmd.y;
+        walking->A_MOVE_AMPLITUDE = cmd.a;
+        walking->Z_MOVE_AMPLITUDE = cmd.foot;
+        walking->PERIOD_TIME      = cmd.period;
+        walking->HIP_PITCH_OFFSET = cmd.hip;
 
-        // **v1.12 (§C)** — head pan/tilt clamp + 적용. Mac 가 이미 clamp 하지만 방어.
-        // 2026-06-08 — 머리 들기(+tilt) 방향을 사용자 요청에 따라 +20도 더 허용
-        // (45 → 65). 머리 숙이기(-tilt) 는 기계적 안전 한도(-45) 유지. Switch 측
-        // max_head_tilt_up_deg=55 와 함께 적용돼 비대칭 효과 — 시야 확보 용이.
-        if (head_pan < -90.0f) head_pan = -90.0f;
-        if (head_pan >  90.0f) head_pan =  90.0f;
-        if (head_tilt < -45.0f) head_tilt = -45.0f;
-        if (head_tilt >  65.0f) head_tilt =  65.0f;
-
-        // PERIOD_TIME 갑작스러운 변경은 cycle 중간 불안정 — 다음 cycle 부터 적용 의도지만
-        // ROBOTIS Walking.cpp 은 매 8ms tick 의 m_PeriodTime 갱신 → 즉시 반영.
-        // (안정성 검증 필요 항목 — TODO.)
-        walking->X_MOVE_AMPLITUDE = (double)x;
-        walking->Y_MOVE_AMPLITUDE = (double)y;
-        walking->A_MOVE_AMPLITUDE = (double)a;
-        walking->Z_MOVE_AMPLITUDE = (double)foot;
-        walking->PERIOD_TIME = (double)period;
-        walking->HIP_PITCH_OFFSET = (double)hip;
-
-        // 볼 트래킹 (2026-06-02) — 모드 토글. ON 이면 로봇이 자체 카메라로 헤드를 제어하므로
-        // 아래 Mac head MoveByAngle 을 skip (singleton Head 의 last-write-wins 충돌 방지).
-        bool want_balltrack = (balltrack > 0.5f);
-        // OFF→ON edge: 공 색상 config 재로드 — balltrack.ini 편집 후 껐다 켜면 재빌드 없이
-        // hue 튜닝이 반영된다 (m_ball_finder 가 lazy-init 됐을 때만).
+        // 볼 트래킹 토글 (edge 처리 — 종전과 동일).
+        bool want_balltrack = (cmd.balltrack != 0);
         if (want_balltrack && !m_balltrack_prev && m_ball_finder) {
             ReloadBallColor();
             printf("[WalkLabBrokerage] ball color reloaded from %s\n", BALLCOLOR_INI);
         }
-        // OFF edge — 스캔 상태 리셋 (다음 ON 깨끗이 시작) + Head 추적 PD 리셋(잔여 drift 차단).
-        // 이후 Mac head 명령(아래 게이트)이 머리를 인계받아 정지/수동 제어.
         if (!want_balltrack && m_balltrack_prev) {
             m_scanning = false;
             m_noball_count = 0;
-            m_track_valid = false;   // 추적 평활/예측 상태 리셋 (다음 ON 깨끗이 시작)
+            m_track_valid = false;
             m_found_streak = 0;
             m_limit_stuck = 0;
             Robot::Head* h = Robot::Head::GetInstance();
@@ -681,45 +869,40 @@ namespace Robotis {
         m_balltrack_prev = want_balltrack;
         m_balltrack_enabled = want_balltrack;
 
-        // **v1.12 (§C)** — head pan/tilt 적용. walklab injection 이 이미
-        // Head::GetInstance()->m_Joint.SetEnableHeadOnly(true,true) 호출함.
-        // 한 번도 non-zero head 명령을 받은 적이 없고 둘 다 0 이면, 프레임워크
-        // default head pose 보존을 위해 MoveByAngle skip. 그 외엔 항상 적용.
-        // **볼 트래킹 ON 이면 Mac head 무시** — ProcessBallTracking 이 Head::MoveTracking 으로
-        // 제어한다 (Mac 도 ballTracking 시 head 0 을 보내지만 방어적으로 여기서도 gate).
-        bool head_nonzero = (head_pan != 0.0f) || (head_tilt != 0.0f);
-        if (head_nonzero) m_head_commanded = true;
+        // head 적용 (default pose 보존: 한 번도 non-zero 미수신이면 skip). 볼트래킹 ON 이면
+        // ProcessBallTracking 이 Head 를 소유 → Mac head 무시.
+        if (cmd.head_explicit) m_head_commanded = true;
         if (m_head_commanded && !m_balltrack_enabled) {
             Robot::Head* head = Robot::Head::GetInstance();
-            if (head) head->MoveByAngle((double)head_pan, (double)head_tilt);
+            if (head) head->MoveByAngle(cmd.head_pan, cmd.head_tilt);
         }
 
         // enabled 토글 — Start/Stop edge 감지.
-        bool want_active = (enabled != 0);
+        bool want_active = (cmd.enabled != 0);
         if (want_active && !walking_active) {
             walking->Start();
             walking_active = true;
             printf("[WalkLabBrokerage] start (x=%.2f y=%.2f a=%.2f p=%.0f f=%.0f h=%.2f)\n",
-                   x, y, a, period, foot, hip);
+                   cmd.x, cmd.y, cmd.a, cmd.period, cmd.foot, cmd.hip);
         } else if (!want_active && walking_active) {
             walking->Stop();
             walking_active = false;
             printf("[WalkLabBrokerage] stop\n");
         }
-        // **v1.11.16.1 (2026-05-19)** — ACK write. Mac 측이 250ms 후 cat 으로 검증.
-        // ts_ms = unix epoch * 1000 (간단한 monotonic ID).
-        // **v1.11.16.2 — Codex CRITICAL 1 fix**: cmd_id echo 로 stale ACK 검출.
-        // 형식: "OK {ts_ms} {cmd_id} {cmd_line}\n" — Mac 의 검출 시 cmd_id 매치.
-        // ACK write 도 tmp + rename 으로 atomic (부분 read 차단).
+
+        // O0 계측 — 적용된 cmd_id 보존(TEL last_cmd_id 토큰 → Mac 폐루프 확인).
+        strncpy(m_last_cmd_id, cmd.cmd_id, sizeof(m_last_cmd_id) - 1);
+        m_last_cmd_id[sizeof(m_last_cmd_id) - 1] = '\0';
+
+        // ACK write — "OK {ts_ms} {cmd_id} {line}" atomic(tmp+rename). Mac 이 cmd_id 매치.
         const char* ack_tmp = "/tmp/df-walklab-ack.tmp";
         FILE* ack = fopen(ack_tmp, "w");
         if (ack) {
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             long long ts_ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
-            fprintf(ack, "OK %lld %s %s", ts_ms, cmd_id, line);
+            fprintf(ack, "OK %lld %s %s", ts_ms, cmd.cmd_id, line);
             fclose(ack);
-            // atomic rename (같은 filesystem 보장).
             rename(ack_tmp, ACK_PATH);
         }
         return true;
@@ -762,11 +945,14 @@ namespace Robotis {
         clock_gettime(CLOCK_REALTIME, &ts);
         long long ts_ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 
-        // §A.2 PINNED 형식: "TEL {ts} {gx} {gy} {gz} {ax} {ay} {az} {vdV} {w} {fallen}\n"
+        // §A.2 형식 (O0 확장): 종전 10 토큰(11 필드) + `{last_cmd_id} {loop_ms}` 2 토큰 APPEND.
+        //   "TEL {ts} {gx} {gy} {gz} {ax} {ay} {az} {vdV} {w} {fallen} {last_cmd_id} {loop_ms}\n"
+        // Mac 파서는 "≥11" 로 완화돼 추가 토큰을 선택 소비(구버전 파서 비호환 제거 — 완화 선배포).
         // 한 번 format → UDP(매 poll) + (write_file 면) 파일. 두 경로가 동일 바이트열을 쓴다.
-        char buf[128];
-        int n = snprintf(buf, sizeof(buf), "TEL %lld %d %d %d %d %d %d %d %d %d\n",
-                         ts_ms, gx, gy, gz, ax, ay, az, vdV, walking01, fallen);
+        char buf[160];
+        int n = snprintf(buf, sizeof(buf), "TEL %lld %d %d %d %d %d %d %d %d %d %s %lld\n",
+                         ts_ms, gx, gy, gz, ax, ay, az, vdV, walking01, fallen,
+                         m_last_cmd_id, m_loop_ms);
         if (n < 0) return;
         if (n > (int)sizeof(buf)) n = (int)sizeof(buf);   // snprintf truncation guard.
 
