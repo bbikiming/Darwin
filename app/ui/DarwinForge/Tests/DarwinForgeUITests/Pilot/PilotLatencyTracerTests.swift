@@ -78,4 +78,50 @@ final class PilotLatencyTracerTests: XCTestCase {
         tracer.configureFromDefaults(defaults)
         XCTAssertTrue(tracer.isEnabled)
     }
+
+    // MARK: - W1 입력→송출 마크 모델 (P3)
+
+    func testMark_inputToSentSpan_recordedForMatchingSeq() {
+        let tracer = PilotLatencyTracer(capacity: 64, enabled: true)
+        tracer.mark(.inputSampled, seq: 7)
+        // 약간의 시간 경과(busy wait 대신 짧은 sleep — 단조 mach time).
+        Thread.sleep(forTimeInterval: 0.002)
+        tracer.mark(.channelSent, seq: 7)
+        let s = tracer.inputToSentStats()
+        XCTAssertEqual(s.count, 1)
+        XCTAssertGreaterThan(s.p95Ms, 0)
+    }
+
+    func testMark_mismatchedSeq_noSpan() {
+        let tracer = PilotLatencyTracer(capacity: 64, enabled: true)
+        tracer.mark(.inputSampled, seq: 1)
+        tracer.mark(.channelSent, seq: 999)   // 다른 seq → 상관 안 됨.
+        XCTAssertEqual(tracer.inputToSentStats().count, 0)
+    }
+
+    func testMark_disabled_recordsNothing() {
+        let tracer = PilotLatencyTracer(capacity: 64, enabled: false)
+        tracer.mark(.inputSampled, seq: 3)
+        tracer.mark(.channelSent, seq: 3)
+        XCTAssertEqual(tracer.inputToSentStats().count, 0)
+    }
+
+    func testEstopMarks_alwaysRecord_evenWhenDisabled() {
+        // E-STOP 경로는 enabled 무시하고 항상 기록(안전 회귀 상시 감시, §6).
+        let tracer = PilotLatencyTracer(capacity: 64, enabled: false)
+        tracer.markEstopRequested(seq: 42)
+        Thread.sleep(forTimeInterval: 0.001)
+        tracer.markEstopSent(seq: 42)
+        let s = tracer.estopToSentStats()
+        XCTAssertEqual(s.count, 1)
+        XCTAssertGreaterThan(s.p95Ms, 0)
+    }
+
+    func testAckReceived_withoutClockOffset_fallsBackToAckMark() {
+        let tracer = PilotLatencyTracer(capacity: 64, enabled: true)
+        tracer.mark(.inputSampled, seq: 5)
+        Thread.sleep(forTimeInterval: 0.001)
+        tracer.markAckReceived(seq: 5, robotAppliedMacMs: nil)
+        XCTAssertEqual(tracer.inputToAckStats().count, 1)
+    }
 }

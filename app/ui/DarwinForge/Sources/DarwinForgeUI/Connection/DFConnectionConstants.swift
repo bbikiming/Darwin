@@ -24,4 +24,17 @@ public enum DFConnectionConstants {
     /// bridgePort(5530)/vncPort(5900)/Tello(8890) 와 비충돌 고정 사설 포트 —
     /// 로봇이 sendto 하는 계약값이므로 robot uplink 설정과 반드시 일치해야 한다.
     public static let telemetryUDPPort: UInt16 = 17371
+
+    /// **E-STOP UDP 포트 (2026-06-12, cockpit-latency-hardening S5 / onboard O1)** —
+    /// Mac→robot 긴급정지 전용 채널. 페이로드 `DF-ESTOP v1 {token} {unixMillis}` 를
+    /// ×3 연발(0/50/100ms) 발사 — SSH 확인 경로와 *병행*(먼저 닿는 쪽 승리). 로봇 측
+    /// 리스너(브로커리지 O1)는 수신 즉시 `Walking::Stop()`+토크OFF(~1–5ms). 토큰은 세션
+    /// 시작 시 SSH 로 프로비저닝(spoofing 시에도 피해 = '불필요 정지' = fail-safe).
+    /// telemetry(17371)/command(17374) 와 비충돌 고정 사설 포트.
+    public static let estopUDPPort: UInt16 = 17372
+
+    /// **명령 UDP 포트 (2026-06-12, onboard O1)** — Mac→robot 조종 명령(latest-wins) 채널.
+    /// 페이로드 `DFCMD {token} {seq} {14-token-line}`. 로봇 리스너가 seq 단조 검사 후
+    /// latest-wins 슬롯에 저장 → supervisor 가 적용. UDP 차단 시 파일+SSH 폴백 영구 보존.
+    public static let commandUDPPort: UInt16 = 17374
 }

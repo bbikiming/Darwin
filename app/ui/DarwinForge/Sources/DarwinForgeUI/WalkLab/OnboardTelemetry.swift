@@ -7,11 +7,19 @@ import ForgeCore
 /// 한 장 남긴다. Mac은 그 엽서를 주워서 읽기만 한다. 이 struct는 그 엽서 한 장을
 /// 그대로 옮겨 적은 것 — 해석/가공은 하지 않고 원시(raw) 값만 담는다.
 ///
-/// 줄 포맷 (contract §A.2, PINNED) — 11 토큰, 공백 구분, `TEL` prefix:
+/// 줄 포맷 (contract §A.2) — **최소 11 토큰**, 공백 구분, `TEL` prefix:
 /// ```
 /// TEL {ts_ms} {gyroX} {gyroY} {gyroZ} {accelX} {accelY} {accelZ} {voltage_dV} {walking01} {fallen}
+///     [{last_cmd_id} {loop_ms}]                                                   ← O0 (≥11 토큰)
 /// ```
 /// 예: `TEL 1748736000123 511 530 498 512 489 760 122 1 0`
+/// 예(O0): `TEL 1748736000123 511 530 498 512 489 760 122 1 0 c123_ab12cd34 18`
+///
+/// **O0 (2026-06-12, walklab-onboard-teleop-upgrade Wave O0)**: 종전 "정확히 11 토큰"
+/// 검증을 "≥11" 로 완화한다 — 로봇 브로커리지가 `{last_cmd_id} {loop_ms}` 2 토큰을 APPEND
+/// 해도 구버전 파서가 매번 실패(telemetryMode 영원히 offline)하던 비호환을 제거. 완화
+/// 커밋을 *먼저* 배포해야 로봇 측 토큰 추가가 안전하다(contract §A.3). 추가 토큰이 없으면
+/// `lastCmdId`/`loopMs` 는 nil — 명령 적용 시각 폐루프 확인 기능만 graceful degrade.
 public struct OnboardTelemetry: Equatable, Sendable {
     public let tsMs: Int64
     public let gyroX: UInt16   // raw 0..1023
@@ -24,10 +32,17 @@ public struct OnboardTelemetry: Equatable, Sendable {
     public let walking: Bool
     public let fallen: Int             // -1 / 0 / 1
 
+    /// **O0** — 로봇이 마지막으로 적용한 명령의 cmd_id. 토큰 미존재(구버전 펌웨어) 시 nil.
+    /// Mac 이 "보낸 cmd_id == 텔레메트리 last_cmd_id" 로 명령 적용을 폐루프 확인.
+    public let lastCmdId: String?
+    /// **O0** — 로봇 supervisor 루프 1회 소요(ms). 토큰 미존재 시 nil. HUD loop_p95 진단용.
+    public let loopMs: Int?
+
     public init(tsMs: Int64,
                 gyroX: UInt16, gyroY: UInt16, gyroZ: UInt16,
                 accelX: UInt16, accelY: UInt16, accelZ: UInt16,
-                voltageDeciVolts: Int, walking: Bool, fallen: Int) {
+                voltageDeciVolts: Int, walking: Bool, fallen: Int,
+                lastCmdId: String? = nil, loopMs: Int? = nil) {
         self.tsMs = tsMs
         self.gyroX = gyroX
         self.gyroY = gyroY
@@ -38,6 +53,8 @@ public struct OnboardTelemetry: Equatable, Sendable {
         self.voltageDeciVolts = voltageDeciVolts
         self.walking = walking
         self.fallen = fallen
+        self.lastCmdId = lastCmdId
+        self.loopMs = loopMs
     }
 
     // MARK: - Parse
@@ -46,7 +63,7 @@ public struct OnboardTelemetry: Equatable, Sendable {
     /// (샘플 drop). 절대 crash 하지 않고, gate에 garbage를 흘려보내지 않는다.
     ///
     /// 규칙 (contract §A.3): trim → 공백 split(빈 토큰 제거) → `[0] == "TEL"` &&
-    /// 정확히 11 토큰 → 나머지 파싱. 범위 초과/NaN → nil.
+    /// **≥11 토큰** → 첫 11 토큰 파싱 + 선택적 `{last_cmd_id} {loop_ms}`. 범위 초과/NaN → nil.
     public static func parse(_ input: String) -> OnboardTelemetry? {
         // **버그 fix (2026-06-01)**: poller 는 SSHShell 의 *combined* 출력을 넘긴다 —
         // "TEL ...\n--- exit 0 ---" 처럼 exit suffix/stderr 가 붙는다. 전체를 한 번에
@@ -58,14 +75,16 @@ public struct OnboardTelemetry: Equatable, Sendable {
         return nil
     }
 
-    /// 한 줄 파싱 — "TEL {ts} {gx gy gz ax ay az} {voltage} {walking01} {fallen}" (11 토큰).
+    /// 한 줄 파싱 — "TEL {ts} {gx gy gz ax ay az} {voltage} {walking01} {fallen}" (≥11 토큰)
+    /// + 선택적 O0 토큰 `{last_cmd_id} {loop_ms}` (12·13번째).
     private static func parseLine(_ line: String) -> OnboardTelemetry? {
         let tokens = line
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .split(whereSeparator: { $0 == " " || $0 == "\t" })
             .map(String.init)
 
-        guard tokens.count == 11, tokens[0] == "TEL" else { return nil }
+        // **O0**: "정확히 11" → "≥11". 추가 토큰은 선택적으로 소비, 미지 토큰은 무시.
+        guard tokens.count >= 11, tokens[0] == "TEL" else { return nil }
 
         guard let tsMs = Int64(tokens[1]),
               let gyroX = adcWord(tokens[2]),
@@ -85,13 +104,27 @@ public struct OnboardTelemetry: Equatable, Sendable {
               fallen == -1 || fallen == 0 || fallen == 1
         else { return nil }
 
+        // **O0** 선택 토큰 — 존재하면 파싱, 형식 불량이면 그 필드만 nil(라인은 유효).
+        // last_cmd_id 는 임의 shell-safe 문자열(cmd_id 규약). "no_id"/"-" 는 nil 로 정규화.
+        let lastCmdId: String? = {
+            guard tokens.count >= 12 else { return nil }
+            let raw = tokens[11]
+            return (raw == "no_id" || raw == "-") ? nil : raw
+        }()
+        let loopMs: Int? = {
+            guard tokens.count >= 13, let v = Int(tokens[12]), v >= 0 else { return nil }
+            return v
+        }()
+
         return OnboardTelemetry(
             tsMs: tsMs,
             gyroX: gyroX, gyroY: gyroY, gyroZ: gyroZ,
             accelX: accelX, accelY: accelY, accelZ: accelZ,
             voltageDeciVolts: voltage,
             walking: walking01 == 1,
-            fallen: fallen
+            fallen: fallen,
+            lastCmdId: lastCmdId,
+            loopMs: loopMs
         )
     }
 

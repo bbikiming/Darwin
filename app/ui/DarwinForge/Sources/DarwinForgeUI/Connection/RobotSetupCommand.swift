@@ -607,6 +607,33 @@ public enum RobotSetupCommand {
         return "c\(ts)_\(uuid)"
     }
 
+    /// **O1 핸드셰이크 프로비저닝 (2026-06-12)** — Mac → robot `/tmp/df-walklab-channel`
+    /// atomic write. 로봇 브로커리지가 Run 시작 시 읽어(LoadHandshake) UDP transport 스레드를
+    /// 기동한다. 형식: `"{token} {estop_port} {cmd_port}\n"`. 토큰은 UDP E-STOP/명령
+    /// 데이터그램 인증값(`OnboardEstopDatagram`/`OnboardCommandDatagram` 과 동일) — spoofing
+    /// 시에도 피해 = '불필요 정지' = fail-safe. 토큰은 영숫자만(shell-safe).
+    public static func walkLabWriteChannelHandshake(
+        token: String,
+        estopPort: UInt16 = DFConnectionConstants.estopUDPPort,
+        cmdPort: UInt16 = DFConnectionConstants.commandUDPPort
+    ) -> String {
+        return "printf '%s %d %d\\n' '\(token)' \(estopPort) \(cmdPort) > /tmp/df-walklab-channel.tmp && mv /tmp/df-walklab-channel.tmp /tmp/df-walklab-channel"
+    }
+
+    /// **O1** — 로봇 측 핸드셰이크 제거(세션 종료 — UDP transport 비활성화, 파일 폴 복귀).
+    public static let walkLabClearChannelHandshake: String =
+        "rm -f /tmp/df-walklab-channel 2>/dev/null; true"
+
+    /// **O1** — UDP 채널 인증 토큰 생성. 영숫자만(shell-safe), 길이 16. 세션마다 새로.
+    public static func generateChannelToken() -> String {
+        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+        var token = ""
+        for _ in 0..<16 {
+            token.append(alphabet[Int.random(in: 0..<alphabet.count)])
+        }
+        return token
+    }
+
     /// 현재 demo 활성 상태 — 사용자에게 어떤 모드인지 알려줌.
     ///
     /// **출력 contract** (Mac 앱이 파싱):

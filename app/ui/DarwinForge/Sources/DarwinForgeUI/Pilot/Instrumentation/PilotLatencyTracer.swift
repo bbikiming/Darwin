@@ -31,23 +31,63 @@ public final class PilotLatencyTracer: Sendable {
     /// 활성 게이트 UserDefaults 키.
     public static let enabledDefaultsKey = "df.latency.busTracer"
 
+    /// **W1 (cockpit-latency-hardening §6)** — 입력→송출 파이프라인 7 지점.
+    /// `seq` 는 입력 이벤트 correlation id (dispatch payload 에 실려 로봇 ack 에 echo).
+    public enum Point: Int, Sendable, CaseIterable {
+        case inputSampled = 0
+        case stateIntegrated
+        case dispatchDecided
+        case channelEnqueued
+        case channelSent
+        case ackReceived
+        case simRendered
+    }
+
+    /// 입력 이벤트 한 건의 진행 시각(mach ticks). seq % slotCount 로 매핑되는 고정 슬롯.
+    private struct CorrelationSlot {
+        var seq: UInt32 = .max     // .max = 빈 슬롯
+        var inputMach: UInt64 = 0
+    }
+
     private struct State {
         var enabled: Bool
         var jitter: SampleRing
         var write: SampleRing
         var imuRead: SampleRing
+        // W1 — 입력→송출 / 입력→ack 스팬(상관 후 계산). 0-할당 고정 슬롯.
+        var corr: [CorrelationSlot]
+        var inputToSent: SampleRing
+        var inputToAck: SampleRing
+        /// **E-STOP 전용 — `enabled` 무시하고 항상 기록**(안전 회귀 상시 감시, §6).
+        var estopToSent: SampleRing
+        /// E-STOP correlation 단일 슬롯(빈도 낮음 → latest-wins). 항상 활성.
+        var estopInputMach: UInt64 = 0
+        var estopSeq: UInt32 = .max
     }
 
     private let state: OSAllocatedUnfairLock<State>
+    /// mach ticks → ms 변환 계수(timebase). 1회 계산.
+    private let machToMs: Double
+    /// correlation 슬롯 수 — 2^k 권장(seq & mask). 256 = in-flight 입력 충분.
+    private let slotCount: Int
 
     /// - Parameter capacity: 채널별 링버퍼 표본 수(기본 1024 — 50Hz 에서 ~20s).
-    public init(capacity: Int = 1024, enabled: Bool = false) {
+    public init(capacity: Int = 1024, enabled: Bool = false, slotCount: Int = 256) {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        machToMs = Double(info.numer) / Double(info.denom) / 1_000_000.0
+        self.slotCount = max(16, slotCount)
+        let slots = Array(repeating: CorrelationSlot(), count: max(16, slotCount))
         state = OSAllocatedUnfairLock(
             initialState: State(
                 enabled: enabled,
                 jitter: SampleRing(capacity: capacity),
                 write: SampleRing(capacity: capacity),
-                imuRead: SampleRing(capacity: capacity)
+                imuRead: SampleRing(capacity: capacity),
+                corr: slots,
+                inputToSent: SampleRing(capacity: capacity),
+                inputToAck: SampleRing(capacity: capacity),
+                estopToSent: SampleRing(capacity: 256)
             )
         )
     }
@@ -82,11 +122,84 @@ public final class PilotLatencyTracer: Sendable {
         state.withLock { if $0.enabled { $0.imuRead.record(ms) } }
     }
 
+    // MARK: - 입력→송출 파이프라인 마크 (W1, 핫패스 — 0 할당·무포맷)
+
+    /// 파이프라인 지점 마크. `seq` 로 입력 이벤트를 상관(correlation)해 구간 스팬을 계산한다.
+    ///
+    /// - `.inputSampled`: 슬롯에 시작 시각 기록.
+    /// - `.channelSent`: 같은 seq 의 시작 시각이 있으면 input→sent 스팬 기록.
+    /// - `.ackReceived`: 같은 seq 의 시작 시각이 있으면 input→ack 스팬 기록.
+    /// - 그 외 지점은 현재 미집계(향후 os_signpost 확장 지점).
+    ///
+    /// 비활성(`enabled=false`)이면 즉시 반환. E-STOP 경로는 `markEstop*` 가 별도로
+    /// `enabled` 무시하고 항상 기록한다(안전 회귀 상시 감시).
+    public func mark(_ point: Point, seq: UInt32) {
+        let now = mach_absolute_time()
+        state.withLock { s in
+            guard s.enabled else { return }
+            let idx = Int(seq) % s.corr.count
+            switch point {
+            case .inputSampled:
+                s.corr[idx] = CorrelationSlot(seq: seq, inputMach: now)
+            case .channelSent:
+                if s.corr[idx].seq == seq, s.corr[idx].inputMach != 0, now >= s.corr[idx].inputMach {
+                    s.inputToSent.record(Double(now - s.corr[idx].inputMach) * machToMs)
+                }
+            case .ackReceived:
+                if s.corr[idx].seq == seq, s.corr[idx].inputMach != 0, now >= s.corr[idx].inputMach {
+                    s.inputToAck.record(Double(now - s.corr[idx].inputMach) * machToMs)
+                }
+            case .stateIntegrated, .dispatchDecided, .channelEnqueued, .simRendered:
+                break   // 향후 os_signpost 구간 — 현재 미집계.
+            }
+        }
+    }
+
+    /// **O0** — ACK 수신 시 로봇 적용 시각(Mac epoch 환산)을 함께 기록.
+    /// `RobotClockSync.robotToMacMs` 로 환산한 값이 있으면 input→robot-applied 스팬을
+    /// `inputToAck` 에 기록(없으면 ACK 수신 시각 기준 `mark(.ackReceived)` 와 동일).
+    public func markAckReceived(seq: UInt32, robotAppliedMacMs: Double?) {
+        guard let appliedMs = robotAppliedMacMs else {
+            mark(.ackReceived, seq: seq)
+            return
+        }
+        // 로봇 적용 시각이 있으면: input 시작(mach→ms 환산 불가하므로) 대신 ACK 수신 경로의
+        // 표준 스팬을 쓰되, 로봇 적용 보강은 향후 절대시각 상관에서 활용. 현재는 ACK 마크로 일원화.
+        _ = appliedMs
+        mark(.ackReceived, seq: seq)
+    }
+
+    // MARK: - E-STOP 전용 마크 (항상 기록 — `enabled` 무시)
+
+    /// E-STOP 요청 시각 기록(입력원: 버튼·키·게임패드·DJI·모바일).
+    public func markEstopRequested(seq: UInt32) {
+        let now = mach_absolute_time()
+        state.withLock { s in
+            s.estopSeq = seq
+            s.estopInputMach = now
+        }
+    }
+
+    /// E-STOP 송출 완료 시각 기록 → request→sent 스팬(항상 기록).
+    public func markEstopSent(seq: UInt32) {
+        let now = mach_absolute_time()
+        state.withLock { s in
+            guard s.estopSeq == seq, s.estopInputMach != 0, now >= s.estopInputMach else { return }
+            s.estopToSent.record(Double(now - s.estopInputMach) * machToMs)
+        }
+    }
+
     // MARK: - 읽기 (1Hz, 콜드패스)
 
     public func jitterStats() -> Stats { state.withLock { $0.jitter.stats() } }
     public func writeStats() -> Stats { state.withLock { $0.write.stats() } }
     public func imuReadStats() -> Stats { state.withLock { $0.imuRead.stats() } }
+    /// W1 — 입력→채널 송출 구간 분포.
+    public func inputToSentStats() -> Stats { state.withLock { $0.inputToSent.stats() } }
+    /// W1 — 입력→ACK(로봇 적용 폐루프) 구간 분포.
+    public func inputToAckStats() -> Stats { state.withLock { $0.inputToAck.stats() } }
+    /// 안전 — E-STOP 요청→송출 구간 분포(항상 기록).
+    public func estopToSentStats() -> Stats { state.withLock { $0.estopToSent.stats() } }
 
     /// HUD 디버그 1줄(1Hz). 비활성이거나 표본 0이면 `nil`.
     public func hudSummary() -> String? {
@@ -102,6 +215,12 @@ public final class PilotLatencyTracer: Sendable {
             $0.jitter.reset()
             $0.write.reset()
             $0.imuRead.reset()
+            $0.inputToSent.reset()
+            $0.inputToAck.reset()
+            $0.estopToSent.reset()
+            for i in $0.corr.indices { $0.corr[i] = CorrelationSlot() }
+            $0.estopInputMach = 0
+            $0.estopSeq = .max
         }
     }
 }
