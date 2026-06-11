@@ -12,7 +12,7 @@ import SceneKit
 /// 출처:
 /// - `vendor/robotis-op2-common/urdf/robotis_op2.structure.{leg,arm,head}.xacro`
 /// - `vendor/robotis-op2-common/meshes/*.stl` (Apache 2.0)
-final class MeshRig {
+final class MeshRig: RigSkeleton {
 
     let root: SCNNode
 
@@ -22,6 +22,14 @@ final class MeshRig {
     private var meshes: [JointID: SCNNode] = [:]
     private var allMeshNodes: [SCNNode] = []
     private var originalEmissions: [ObjectIdentifier: NSColor] = [:]
+    /// **W3**: 발 anchor(ank_roll) — 지지 다각형·FSR 접지 worldTransform 원천.
+    private var footNodes: [FootSide: SCNNode] = [:]
+
+    // MARK: emission 채널 (W3) — highlight 와 한계 경고가 같은 채널 공유.
+    /// 현재 highlight 된 선택 관절(highlight 채널).
+    private var highlightedJoint: JointID?
+    /// 관절별 한계 경고 상태(warn 채널) — .warn85/.warn95 만 보관.
+    private var warnStates: [JointID: EmissionState] = [:]
 
     /// **사이클 125 (audit #19/#36, P1/P2)**: 개별 STL 로드 실패 카운트. 호출자 (Robot3DViewport)
     /// 가 본 count 를 구독 → ≥1 이면 사용자에게 "일부 mesh 실패 (plain cube fallback)" overlay.
@@ -64,15 +72,54 @@ final class MeshRig {
         }
     }
 
+    /// **W3**: 선택 관절 highlight. emission 채널을 직접 쓰지 않고 우선순위 합성을
+    /// 경유 — 한계 경고(warn85/warn95)가 켜진 관절은 highlight 가 덮어쓰지 않는다.
     func highlight(_ joint: JointID?) {
-        for n in allMeshNodes {
-            let key = ObjectIdentifier(n)
-            n.geometry?.firstMaterial?.emission.contents =
-                originalEmissions[key] ?? NSColor.black
+        let prev = highlightedJoint
+        highlightedJoint = joint
+        if let p = prev { refreshEmission(p) }
+        if let j = joint { refreshEmission(j) }
+    }
+
+    // MARK: - RigSkeleton (W3)
+
+    var rootNode: SCNNode { root }
+
+    func jointAnchor(_ joint: JointID) -> SCNNode? { joints[joint] }
+
+    func linkWorldPosition(_ joint: JointID) -> SCNVector3? {
+        joints[joint]?.worldPosition
+    }
+
+    func footNode(_ side: FootSide) -> SCNNode? { footNodes[side] }
+
+    func jointAxisDirection(_ joint: JointID) -> SCNVector3? { jointAxes[joint] }
+
+    /// 한계 경고(warn) 채널 갱신 — highlight 채널은 `highlight(_:)` 소유.
+    /// `.highlight` 입력은 무시(설계: highlight 는 별도 경로). `.none` 은 warn 해제.
+    func setEmissionState(_ joint: JointID, _ state: EmissionState) {
+        guard state != .highlight else { return }
+        if state == .none {
+            warnStates[joint] = nil
+        } else {
+            warnStates[joint] = state
         }
-        guard let j = joint, let mesh = meshes[j] else { return }
+        refreshEmission(joint)
+    }
+
+    /// 관절의 최종 emission 상태 = warn(95>85) > highlight > none.
+    private func resolvedEmission(_ joint: JointID) -> EmissionState {
+        if let w = warnStates[joint] { return w }
+        if joint == highlightedJoint { return .highlight }
+        return .none
+    }
+
+    /// 합성 결과를 실제 mesh emission 에 반영. 원래 색은 originalEmissions 캐시.
+    private func refreshEmission(_ joint: JointID) {
+        guard let mesh = meshes[joint] else { return }
+        let key = ObjectIdentifier(mesh)
         mesh.geometry?.firstMaterial?.emission.contents =
-            NSColor.systemOrange.withAlphaComponent(0.55)
+            resolvedEmission(joint).emissionColor ?? originalEmissions[key] ?? NSColor.black
     }
 
     // MARK: - Build
@@ -211,6 +258,8 @@ final class MeshRig {
         // l_ank_roll origin (0,0,0) — URDF
         ankPitchAnchor.addChildNode(ankRollAnchor)
         attachVisualMesh(named: "\(prefix)_foot", to: ankRollAnchor, linkID: nil)
+        // **W3**: 발 anchor 기록 — 지지 다각형·FSR 접지 오버레이의 worldTransform 원천.
+        footNodes[side == .left ? .left : .right] = ankRollAnchor
     }
 
     // MARK: - Helpers

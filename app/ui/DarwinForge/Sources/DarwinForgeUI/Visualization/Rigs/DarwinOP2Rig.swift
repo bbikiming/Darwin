@@ -8,11 +8,17 @@ import SwiftUI
 ///
 /// **W0 (2026-06-11)**: 종전 `RobotScene3D.swift` 하단에서 이 파일로 분리. 로직 변화 0.
 /// STL mesh 로드 실패 시 폴백 rig 이며 `CockpitChaseSceneView` 도 동일 클래스를 재사용.
-final class DarwinOP2Rig {
+final class DarwinOP2Rig: RigSkeleton {
     let root: SCNNode
     private var joints: [JointID: SCNNode] = [:]
     private var highlightMeshes: [JointID: [SCNNode]] = [:]
     private var originalEmissions: [ObjectIdentifier: NSColor] = [:]
+    /// **W3**: 발 박스 노드 — 지지 다각형·FSR 접지 worldTransform 원천.
+    private var footNodes: [FootSide: SCNNode] = [:]
+
+    // MARK: emission 채널 (W3) — highlight 와 한계 경고 공유.
+    private var highlightedJoint: JointID?
+    private var warnStates: [JointID: EmissionState] = [:]
 
     // ────────────────────────────────────────────────────────────────────────
     // 컬러 팔레트 (Webots OP2 스크린샷 기반)
@@ -100,18 +106,53 @@ final class DarwinOP2Rig {
         }
     }
 
+    /// **W3**: 선택 관절 highlight — emission 우선순위 합성 경유(warn > highlight).
     func highlight(_ joint: JointID?) {
-        for (_, meshes) in highlightMeshes {
-            for m in meshes {
-                let key = ObjectIdentifier(m)
-                m.geometry?.firstMaterial?.emission.contents =
-                    originalEmissions[key] ?? NSColor.black
-            }
-        }
-        guard let j = joint, let meshes = highlightMeshes[j] else { return }
+        let prev = highlightedJoint
+        highlightedJoint = joint
+        if let p = prev { refreshEmission(p) }
+        if let j = joint { refreshEmission(j) }
+    }
+
+    // MARK: - RigSkeleton (W3)
+
+    var rootNode: SCNNode { root }
+
+    func jointAnchor(_ joint: JointID) -> SCNNode? { joints[joint] }
+
+    func linkWorldPosition(_ joint: JointID) -> SCNVector3? {
+        joints[joint]?.worldPosition
+    }
+
+    func footNode(_ side: FootSide) -> SCNNode? { footNodes[side] }
+
+    /// 프리미티브 rig 의 회전축은 `apply(pose:)` 와 동일한 robot→scene 매핑.
+    func jointAxisDirection(_ joint: JointID) -> SCNVector3? {
+        let robotAxis = joint.rotationAxis
+        if robotAxis == SIMD3(0, 1, 0) { return SCNVector3(1, 0, 0) }   // pitch → X
+        if robotAxis == SIMD3(1, 0, 0) { return SCNVector3(0, 0, 1) }   // roll → Z
+        return SCNVector3(0, 1, 0)                                       // yaw → Y
+    }
+
+    func setEmissionState(_ joint: JointID, _ state: EmissionState) {
+        guard state != .highlight else { return }
+        if state == .none { warnStates[joint] = nil } else { warnStates[joint] = state }
+        refreshEmission(joint)
+    }
+
+    private func resolvedEmission(_ joint: JointID) -> EmissionState {
+        if let w = warnStates[joint] { return w }
+        if joint == highlightedJoint { return .highlight }
+        return .none
+    }
+
+    private func refreshEmission(_ joint: JointID) {
+        guard let meshes = highlightMeshes[joint] else { return }
+        let resolved = resolvedEmission(joint)
         for m in meshes {
+            let key = ObjectIdentifier(m)
             m.geometry?.firstMaterial?.emission.contents =
-                NSColor.systemOrange.withAlphaComponent(0.55)
+                resolved.emissionColor ?? originalEmissions[key] ?? NSColor.black
         }
     }
 
@@ -499,6 +540,8 @@ final class DarwinOP2Rig {
                             color: Self.footBlack, chamfer: Self.footChamfer)
         foot.position = SCNVector3(0, -Self.shinLen - 0.072, 0.022)
         kneeAnchor.addChildNode(foot)
+        // **W3**: 발 노드 기록 — 지지 다각형·FSR 접지 오버레이 worldTransform 원천.
+        footNodes[side == .left ? .left : .right] = foot
 
         // 신발 흰 밑창
         let sole = makeBox(w: Self.footW + 0.002,
