@@ -1,3 +1,4 @@
+import Combine
 import ForgeCore
 import SceneKit
 import SwiftUI
@@ -28,6 +29,8 @@ public final class RobotSceneCoordinator {
 
     /// 라이브 튜닝(SceneTuning)이 갱신할 조명/IBL/바닥 핸들.
     private let stageHandle: SceneStage.StageHandle
+    /// SceneTuning 변경 구독 — 뷰 계층과 무관하게 모든 활성 씬에 즉시 반영.
+    private var tuningCancellable: AnyCancellable?
 
     public init() {
         scene = SCNScene()
@@ -113,6 +116,13 @@ public final class RobotSceneCoordinator {
             traceNode.addChildNode(n)
             return n
         }
+
+        // 초기 1회 + SceneTuning 변경 구독으로 라이브 반영(뷰 계층 비의존).
+        // objectWillChange 는 값 변경 직전 발화 → 다음 runloop 에서 최신값 읽기.
+        applyTuning()
+        tuningCancellable = SceneTuning.shared.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.applyTuning() }
     }
 
     /// 2026-05-17 perf audit: footTrail max 200 (WalkLabSession.swift:1108) 정합.

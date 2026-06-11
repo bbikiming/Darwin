@@ -2,8 +2,8 @@ import SwiftUI
 
 /// 뷰포트 오버레이 — 조명·머티리얼 라이브 튜닝 슬라이더.
 ///
-/// `SceneTuning.shared` 에 바인딩. 슬라이더 변경 → `Robot3DViewport`(관찰자) 재평가
-/// → `RobotScene3D.updateNSView` → `RobotSceneCoordinator.applyTuning()` 으로 즉시 반영.
+/// `ViewportControls`(우상단 카메라 칩)의 토글로 노출. `SceneTuning.shared` 에 바인딩하며
+/// 변경은 `RobotSceneCoordinator` 의 Combine 구독을 통해 모든 활성 3D 씬에 즉시 반영된다.
 struct SceneTuningPanel: View {
     @ObservedObject private var tuning = SceneTuning.shared
     @Binding var isPresented: Bool

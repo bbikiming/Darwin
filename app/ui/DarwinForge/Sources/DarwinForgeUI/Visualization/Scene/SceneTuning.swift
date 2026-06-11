@@ -6,9 +6,9 @@ import SwiftUI
 /// 렌더에서만 할 수 있다([[headless-snapshot-robot-invisible]]). 사용자가 슬라이더로
 /// 직접 조절하도록 도입. 기본값 = W1 커밋 수치이므로 디폴트 상태 렌더는 불변.
 ///
-/// 적용 경로: 패널 슬라이더 → `@Published` 변경 → `Robot3DViewport`(관찰자) body
-/// 재평가 → `RobotScene3D.updateNSView` → `RobotSceneCoordinator.applyTuning()`.
-/// 세션 한정(미영속) — UserDefaults 미사용(테스트 오염 회피).
+/// 적용 경로: 패널 슬라이더 → `@Published` 변경 → `RobotSceneCoordinator` 가
+/// `objectWillChange` 를 Combine 구독해 `applyTuning()` 호출(뷰 계층 비의존 →
+/// 모든 활성 3D 씬에 동시 반영). 세션 한정(미영속) — UserDefaults 미사용(테스트 오염 회피).
 public final class SceneTuning: ObservableObject {
     public static let shared = SceneTuning()
 

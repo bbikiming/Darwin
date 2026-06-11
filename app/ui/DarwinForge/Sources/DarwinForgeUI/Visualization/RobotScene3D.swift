@@ -69,7 +69,6 @@ public struct RobotScene3D: NSViewRepresentable {
         context.coordinator.applyHighlight(highlight)
         context.coordinator.applyAxesVisible(showAxes)
         context.coordinator.applyImuTilt(rollDeg: imuRollDeg, pitchDeg: imuPitchDeg)
-        context.coordinator.applyTuning()
         // ViewCube/Home 버튼이 카메라를 조작할 수 있도록 controller에 view 등록.
         if let controller = cameraController {
             Task { @MainActor in controller.view = view }
@@ -88,7 +87,6 @@ public struct RobotScene3D: NSViewRepresentable {
         context.coordinator.applyHighlight(highlight)
         context.coordinator.applyAxesVisible(showAxes)
         context.coordinator.applyImuTilt(rollDeg: imuRollDeg, pitchDeg: imuPitchDeg)
-        context.coordinator.applyTuning()
     }
 
     public func makeCoordinator() -> Coordinator {
