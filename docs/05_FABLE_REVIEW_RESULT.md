@@ -15,7 +15,27 @@
 
 ---
 
-## [P3] 전송 묶음 (W1+O0·O1) — **조건부: HIGH 1·MEDIUM 1 수정 후 재검** (2026-06-12, 미커밋)
+## [P3] 전송 묶음 (W1+O0·O1) — **통과 (재검 완료)** (2026-06-12)
+
+- 최종 커밋: `74fca94`(connection: O0 계측+W1 Mac 채널+Swift 5스위트) ·
+  `ad287e4`(firmware: O0 TEL+O1 transport 통합+호스트 테스트+계약 §G) · `729b4f5`(docs)
+- **재검 결과 — 1차 이슈 2건 모두 수정 확인**:
+  - [HIGH] 워치독 소스 게이팅: `WatchdogDecision(elapsed, walking_active, from_stream)`
+    순수 로직로 이관(WalkLabTransport.cpp:134-140 — `!from_stream → WD_NONE`),
+    슬롯 적용 시 true(브로커리지 722행)·파일 적용 시 false(748행),
+    신규 `test_watchdog_stream_only` 5체크(파일 소스 700ms/3s/way-stale 전부 미발화 +
+    스트림 소스 600/2500ms 발화), 계약 §G.4:481 "Tiers are STREAM-SOURCE ONLY" 명시 ✓
+  - [MEDIUM] 핸드셰이크: `RefreshHandshake(now_ms)`(브로커리지 509-542행) — 1s 스로틀·
+    첫 루프 즉시 시도·늦은 도착 수용·mtime 변경 시 재기동(토큰 회전)·파일 삭제 시
+    transport 정지(파일 폴 복귀), 계약 §G.1:457 세션 종료 clear 의무 ✓
+  - [record] `sendEmergencyStopNow` nonisolated 전환 TODO(channel:83) ·
+    WriteTelemetry 주석 실제 주기 정정(801행) ✓
+- 재검 독립 재실행: 호스트 C++ **63체크 0실패**(58→63, +게이팅 5) · Swift 5스위트 **41/41**
+- 실기 이월(로봇 연결일): demoBuildPatched 재빌드 배포 → 실효율 ≥20Hz ·
+  E-STOP→walking=0 p95 ≤60ms · 케이블 분리 0.6s 제자리→2.5s 정지 벤치 (단, 워치독 티어는
+  UDP 명령 송신기 도입(H3 등) 전까지 휴면 — 파일 경로는 5s STALE 만)
+
+### 1차 리뷰 기록 (조건부 — 수정 전, 이력 보존)
 
 - 구현: 메인 워크트리 미커밋(Connection/·WalkLab/·firmware-patches/ 19파일+계약 §G) ·
   리뷰어: **Fable 교차**(별도 세션)

@@ -3,18 +3,33 @@
 > 프로그램 진행의 누적 요약 — P 완료마다 1절 적립(최신이 위). 전체 프로젝트 이력은
 > `PROGRESS.md`, 웨이브 상태 표는 `docs/design/README.md` §1 참조.
 
-## 누계 현황 (2026-06-12 갱신)
+## 누계 현황 (2026-06-12 갱신 2차)
 
-- 완료(머지됨): **P2**(3D W2), **P5**(bus D0) + 하네스 도입 이전 완료분(3D W0·W1,
-  레이턴시 W0·W2·W3 일부, 컨트롤러 매핑 P1~P3)
+- 완료(머지·리뷰 통과): **P2**(3D W2), **P5**(bus D0), **P3**(전송 묶음 — 74fca94·ad287e4·
+  729b4f5, 교차 리뷰 2회전 통과) + 하네스 도입 이전 완료분(3D W0·W1, 레이턴시 W0·W2·W3
+  일부, 컨트롤러 매핑 P1~P3)
 - 완료(리뷰 통과·**머지 대기**): **P11**(3D W3 — `claude/p11-3d-overlays` 3커밋,
   충돌 표면 7파일은 05 비고 참조)
-- 코드 완료(메인 워크트리, **커밋·리뷰 대기**): **P3**(W1+O0·O1 — 동시 세션 작업분)
-- 진행 중(메인 워크트리): P12(카메라 연출 일부)
-- 다음(로봇 불필요): P3 커밋·리뷰 → P12 마감 → P11 머지 → P4 → P6 → P9 → P10
-- 로봇 대기: P1(프로브), P7, P8, 실기 벤치 누적분(05 의 "실기 보류" 항목들)
+- 완료 보고(**검수 대기**): **P12**(3D W4+W5 — README 표 기준 완료, 05 원장 기록 전)
+- 다음(로봇 불필요): P12 검수 → P11 머지(+풀 스위트) → P4 → P6 → P9 → P10
+- 로봇 대기: P1(프로브), P7, P8, 실기 벤치 누적분(05 의 "실기 보류" 항목들 + P3 배포·벤치)
 
 ---
+
+## [P3] 전송 묶음 — 레이턴시 W1 + 온보드 O0·O1 (2026-06-12, 74fca94·ad287e4·729b4f5)
+
+- **O0 계측**: TEL 파서 ≥11 토큰(+last_cmd_id/loop_ms 폐루프), RobotClockSync(EWMA 클럭
+  오프셋), PilotLatencyTracer 7지점 mark + ackReceived 로봇 시각.
+- **W1 Mac**: OnboardCommandChannel(actor) + PersistentSSHChannel(상주 exec sh -s·sentinel·
+  동기 폴백) + EstopUDPSender(×3연발) + SendPolicy/CoalescingQueue. E-STOP 큐 우회·무스로틀.
+  라이브 송출 경로 교체는 후속(플래그 df.onboard.persistentChannel 뒤).
+- **O1 로봇**: WalkLabTransport 순수 로직(latest-wins 슬롯·seq 단조·워치독·파서 — 호스트
+  테스트 63체크) + 브로커리지 UDP 리스너 2개(E-STOP 17372 즉시정지 / 명령 17374) +
+  supervisor 보행 중 20ms + **워치독 티어(스트림 소스 전용 게이팅)** + RefreshHandshake
+  (1s 재시도·토큰 회전·삭제 복귀) + 파일 폴백 영구 보존.
+- 계약: ssh-parity-contract.md §A.2/§A.3 개정 + §G 신설(핸드셰이크·데이터그램·티어 규약).
+- 검증: 호스트 C++ 63 · Swift 5스위트 41/41 · cargo 382 · 빌드 0 errors.
+  교차 리뷰 2회전(HIGH 워치독 게이팅·MEDIUM 핸드셰이크 → 수정 확인). 실기 배포·벤치 이월.
 
 ## [P11] 3D W3 — 로봇공학 오버레이 (2026-06-12, `claude/p11-3d-overlays` 59c6501→48ba615 · 머지 대기)
 
