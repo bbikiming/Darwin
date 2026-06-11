@@ -66,6 +66,13 @@ extension WalkLabSession {
         var lowerBodyPositionFails: Set<JointID> = []
         var sampleError: String? = nil
         var stepsExecuted = 0
+        // **Wave 2 (2026-06-11) io-timeout 상한** — 보행 동안 bus read timeout 을
+        // walkIoTimeoutMs(50ms)로 낮춰 직렬화 락 보유 상한을 줄이고, 정상/취소/하드스톱
+        // 등 모든 종료 경로에서 defer 로 원복한다. exit walkReady 복귀·emergencyStop 은
+        // SYNC_WRITE/torque-off write(응답 read 없음)라 낮은 timeout 의 영향을 받지 않는다.
+        let restoreIoTimeoutMs = bus.configuredIoTimeoutMs
+        bus.setIoTimeout(ms: Self.walkIoTimeoutMs)
+        defer { bus.setIoTimeout(ms: restoreIoTimeoutMs) }
         // v1.8 (10x review Major #1): per-joint consecutive failure counter (local, static-safe).
         var perJointFailsLocal: [JointID: Int] = [:]
         // **L5 (2026-06-11)**: liveness 프로브 상태 — SYNC_WRITE 는 죽은 서보가 오류를
@@ -349,6 +356,11 @@ extension WalkLabSession {
         var lowerBodyPositionFails: Set<JointID> = []
         var sampleError: String? = nil
         var stepsExecuted = 0
+        // **Wave 2 (2026-06-11) io-timeout 상한** — runContinuousWalk 와 동일. 보행 동안
+        // bus read timeout 을 walkIoTimeoutMs(50ms)로 낮추고 모든 종료 경로에서 원복.
+        let restoreIoTimeoutMs = bus.configuredIoTimeoutMs
+        bus.setIoTimeout(ms: Self.walkIoTimeoutMs)
+        defer { bus.setIoTimeout(ms: restoreIoTimeoutMs) }
         var perJointFailsLocal: [JointID: Int] = [:]
         // L5 (2026-06-11): liveness 프로브 — runContinuousWalk 와 동일 (SYNC_WRITE 보상).
         var probeFailsLocal: [JointID: Int] = [:]

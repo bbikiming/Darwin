@@ -48,6 +48,10 @@ public protocol BusInterface: AnyObject, Sendable {
     /// 응답 timeout(ms) 변경 — 보행 시작 시 락 보유 상한 축소(예: 50ms), 종료 시 복원.
     func setIoTimeout(ms: UInt32)
 
+    /// open 시 구성된 read timeout(ms) — 보행 종료 시 `setIoTimeout` 으로 원복할 기준값.
+    /// non-FFI conformer 는 extension default(USB 기본 200ms) 사용.
+    var configuredIoTimeoutMs: UInt32 { get }
+
     // MARK: - Joint write
 
     @discardableResult
@@ -110,6 +114,9 @@ extension BusInterface {
     public func requestEstopPreempt() {}
     public func clearEstopPreempt() {}
     public func setIoTimeout(ms: UInt32) {}
+
+    /// non-FFI conformer 기본 구성값 — USB open 기본(200ms)과 일치.
+    public var configuredIoTimeoutMs: UInt32 { 200 }
 }
 
 /// `Bus` 는 이미 모든 BusInterface 메서드를 구현 — empty conformance.

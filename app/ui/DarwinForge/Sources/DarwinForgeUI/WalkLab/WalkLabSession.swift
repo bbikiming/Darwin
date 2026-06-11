@@ -2819,6 +2819,21 @@ public final class WalkLabSession {
     /// 기준 단일 결함 감지 ≈ 24 step ≈ 2-3s — IMU fast-poll 이 낙상은 더 빨리 잡음.)
     public static let livenessProbeFailureLimit: Int = 2
 
+    /// **Wave 2 (2026-06-11)** — 보행 핫루프 동안의 bus read timeout(ms) 상한.
+    ///
+    /// 평시 configured 값(USB 200ms / TCP 250ms)은 connect-time snapshot 견고성용으로
+    /// 보수적이다. 보행 중에는 직렬화 락 보유 시간을 줄여야 stale 명령·E-STOP 지연이
+    /// 짧아지므로, 보행 시작 시 이 값으로 낮추고 종료 시 원복한다(`runContinuousWalk`/
+    /// `runWalkCycle` 의 defer).
+    ///
+    /// 이 timeout 은 **read_exact 슬라이스마다** 적용되므로 *침묵하는*(죽은/부재) 서보
+    /// 읽기에만 영향을 준다 — 살아있는 서보의 응답 바이트는 유선 < 8ms 로 도착해 천장과
+    /// 무관하다. 따라서 유선 보행 경로에서 50ms 는 live PING 을 헛되이 실패시키지 않으면서
+    /// 죽은-서보 락 점유를 200→50ms 로 줄인다. E-STOP 의 1차 보장은 이 값이 아니라
+    /// S4 의 estop_check 선점(read 슬라이스 직전 abort)이며, 본 값은 보조 상한이다.
+    /// (느린 TCP socat 링크에서 live round-trip 이 50ms 를 넘기면 실기 검증 시 상향.)
+    public static let walkIoTimeoutMs: UInt32 = 50
+
     /// 10x review Major #1: per-joint consecutive failure counter — `runContinuousWalk` /
     /// `runWalkCycle` 의 local var. instance var X (static func 라 mutate 불가, concurrency
     /// 안전성 위해). 단일 joint 5회 연속 fail 시 cycle abort.

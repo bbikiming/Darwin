@@ -513,6 +513,10 @@ public final class Bus: @unchecked Sendable {
         locked { _ = fc_bus_set_io_timeout(raw(), ms) }
     }
 
+    /// open 시 구성된 read timeout(ms). 보행 종료 시 `setIoTimeout` 으로 이 값에 원복한다.
+    /// (USB 200 / TCP 250 — backend 의 런타임 변경이 아닌 *구성값*.)
+    public var configuredIoTimeoutMs: UInt32 { timeoutMs }
+
     // MARK: - Motion play (Sprint 15 라이브러리 노출 — 2026-05-16 v1.1 통합)
 
     /// `motion_4096.bin` 의 `slot` 페이지를 실 robot 에 동기 송출.
