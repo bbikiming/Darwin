@@ -21,12 +21,9 @@ struct SceneTuningPanel: View {
                         row("그림자 부드러움", $tuning.shadowRadius, 0...20, "%.1f")
                     }
                     group("머티리얼") {
-                        row("흰 쉘 거칠기", $tuning.whiteShellRoughness, 0...1.0)
+                        row("흰 쉘 거칠기 (몸체·머리·전완)", $tuning.whiteShellRoughness, 0...1.0)
                         row("알루미늄 metalness", $tuning.aluminumMetalness, 0...1.0)
                         row("알루미늄 거칠기", $tuning.aluminumRoughness, 0...1.0)
-                        row("전완 밝기", $tuning.servoBlackBrightness, 0...0.8)
-                        row("머리 밝기", $tuning.helmetBrightness, 0...0.8)
-                        row("머리 거칠기", $tuning.helmetRoughness, 0...1.0)
                     }
                     group("바닥") {
                         row("바닥 밝기", $tuning.floorBrightness, 0...0.5)

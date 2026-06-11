@@ -19,12 +19,10 @@ public final class SceneTuning: ObservableObject {
     @Published public var shadowRadius: Double = 7        // SceneStage.keyShadowRadius
 
     // ── 머티리얼 ──────────────────────────────────────────────────────────
+    // 머리·전완은 흰 쉘로 통일 — whiteShellRoughness 가 함께 제어.
     @Published public var whiteShellRoughness: Double = 0.42
     @Published public var aluminumMetalness: Double = 0.85
     @Published public var aluminumRoughness: Double = 0.35
-    @Published public var servoBlackBrightness: Double = 0.27   // 전완 diffuse 회색도
-    @Published public var helmetBrightness: Double = 0.29       // 머리 diffuse 회색도
-    @Published public var helmetRoughness: Double = 0.38
 
     // ── 바닥 ──────────────────────────────────────────────────────────────
     @Published public var floorBrightness: Double = 0.10
@@ -37,8 +35,6 @@ public final class SceneTuning: ObservableObject {
         keyIntensity = 550;  rimIntensity = 180;  iblIntensity = 1.0;  shadowRadius = 7
         whiteShellRoughness = 0.42
         aluminumMetalness = 0.85;  aluminumRoughness = 0.35
-        servoBlackBrightness = 0.27
-        helmetBrightness = 0.29;  helmetRoughness = 0.38
         floorBrightness = 0.10;  floorRoughness = 0.85
     }
 }

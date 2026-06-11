@@ -11,11 +11,9 @@ import SwiftUI
 enum RigMaterials {
 
     enum Category {
-        case whiteShell    // body, thigh, shin, upper-arm, 프리미티브 bodyShell
-        case servoBlack    // lower-arm, 모터 본체
+        case whiteShell    // body, thigh, shin, upper-arm, head, lower-arm, 프리미티브 bodyShell
         case aluminum      // shoulder, hip-yaw, hip-roll, ankle, neck
         case rubberFoot    // foot
-        case helmetDark    // head
     }
 
     /// **옵션 플래그**: whiteShell clearcoat — 비용 + 번아웃 변수라 기본 off.
@@ -44,10 +42,6 @@ enum RigMaterials {
             m.roughness.contents = t.whiteShellRoughness
             m.clearCoat.contents = whiteShellClearcoat ? 0.25 : 0.0
             m.clearCoatRoughness.contents = 0.5
-        case .servoBlack:
-            m.diffuse.contents = NSColor(calibratedWhite: CGFloat(t.servoBlackBrightness), alpha: 1)
-            m.metalness.contents = 0.0
-            m.roughness.contents = 0.55
         case .aluminum:
             // metalness 1.0 금지 — 128×64 IBL 해상도에서 순금속은 얼룩짐.
             m.diffuse.contents = NSColor(calibratedRed: 0.62, green: 0.63, blue: 0.65, alpha: 1)
@@ -57,10 +51,6 @@ enum RigMaterials {
             m.diffuse.contents = NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.08, alpha: 1)
             m.metalness.contents = 0.0
             m.roughness.contents = 0.90
-        case .helmetDark:
-            m.diffuse.contents = NSColor(calibratedWhite: CGFloat(t.helmetBrightness), alpha: 1)
-            m.metalness.contents = 0.0
-            m.roughness.contents = t.helmetRoughness
         }
     }
 
@@ -92,11 +82,10 @@ enum RigMaterials {
     }
 
     static func category(forLinkNamed name: String) -> Category {
-        if name.contains("head") { return .helmetDark }
         if name.contains("foot") { return .rubberFoot }
         if name.contains("ankle") || name.contains("neck") { return .aluminum }
         if name.contains("shoulder") || name.contains("hip") { return .aluminum }
-        if name.contains("lower-arm") { return .servoBlack }
+        // head, lower-arm 은 흰 쉘로 통일(사용자 요청 2026-06-11).
         // body, thigh, shin, upper-arm → 흰 쉘.
         return .whiteShell
     }

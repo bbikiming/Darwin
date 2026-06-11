@@ -297,6 +297,12 @@ extension WalkLabSession {
         var cancelledMidStep = false
         var phaseIndex = 0
 
+        // J4 (bus D0): deadline 기반 step 케이던스. 직전 발화 목표 시각을 들고 다니며
+        // write·MainActor 홉 시간을 자동 보상해 드리프트를 제거한다.
+        var stepDeadline: ContinuousClock.Instant? = nil
+        let tracer = PilotLatencyTracer.shared
+        tracer.configureFromDefaults()
+
         func sendStep(_ step: MotionStep, previousIn: RobotPose) async -> RobotPose {
             let rawTarget = step.toPose()
             let target: RobotPose
@@ -329,10 +335,12 @@ extension WalkLabSession {
                 // SYNC_WRITE 1 packet — no per-servo status return.
                 // Retry once on transport failure (mirrors prior per-joint retry logic).
                 var lastErr: Error?
+                let writeStart = ContinuousClock.now
                 for attempt in 0..<2 {
                     do {
                         try bus.setPositions(changedTargets)
                         lastErr = nil
+                        tracer.recordWriteLatency(ms: writeStart.duration(to: .now).inMilliseconds)
                         break
                     } catch {
                         lastErr = error
@@ -363,8 +371,15 @@ extension WalkLabSession {
                 }
             }
 
+            // J4: 고정 sleep → deadline. phase floor 80ms 는 유지(보행 안정성).
+            // E-STOP/cancel 체크 포인트는 step 경계 그대로 — Task.sleep(until:) 가
+            // 취소 시 throw → try? 흡수, 루프 헤더의 `!Task.isCancelled` 가 종료 판정.
             let totalMs = max(80, step.playMs + step.pauseMs)
-            try? await Task.sleep(nanoseconds: UInt64(totalMs) * 1_000_000)
+            let wakeTarget = StepDeadlineScheduler.next(previous: stepDeadline, now: .now, stepMs: totalMs)
+            stepDeadline = wakeTarget
+            try? await Task.sleep(until: wakeTarget, clock: .continuous)
+            // 의도한 wake 대비 실제 wake 편차 = step 케이던스 지터(양수=늦음).
+            tracer.recordStepJitter(deviationMs: wakeTarget.duration(to: .now).inMilliseconds)
             return target
         }
 
