@@ -31,6 +31,10 @@ public final class MockBus: BusInterface, @unchecked Sendable {
     public private(set) var motionPlaySlotCalls: [(slot: UInt8, confirmRisk: Bool, dryRun: Bool)] = []
     public private(set) var motionPlayCancelCount: Int = 0
     public private(set) var pingCalls: [UInt8] = []
+    /// S4 — 선점 요청/해제/timeout 변경 기록 (Wave 2 잔여 테스트용).
+    public private(set) var estopPreemptRequests: Int = 0
+    public private(set) var estopPreemptClears: Int = 0
+    public private(set) var ioTimeoutSettings: [UInt32] = []
 
     /// `setPositions` 배치 호출 기록 — CommBatch 테스트에서 "1 batched call not N individual" 검증.
     public private(set) var batchPositionCalls: [[(joint: JointID, raw: UInt16)]] = []
@@ -164,6 +168,11 @@ public final class MockBus: BusInterface, @unchecked Sendable {
         for j in JointID.allCases { torques[j] = false }
     }
 
+    // S4 — 선점 surface (mock 은 기록만; 실 락 abort 는 FFI Bus 책임).
+    public func requestEstopPreempt() { estopPreemptRequests += 1 }
+    public func clearEstopPreempt() { estopPreemptClears += 1 }
+    public func setIoTimeout(ms: UInt32) { ioTimeoutSettings.append(ms) }
+
     // MARK: - Joint write
 
     @discardableResult
@@ -277,6 +286,9 @@ public final class MockBus: BusInterface, @unchecked Sendable {
         motionPlayCancelCount = 0
         pingCalls = []
         batchPositionCalls = []
+        estopPreemptRequests = 0
+        estopPreemptClears = 0
+        ioTimeoutSettings = []
     }
 
     /// 외부에서 in-memory position 직접 seed — readState 가 그 값 반환.

@@ -51,6 +51,12 @@
 #define FC_ERR_DEVICE_NOT_FOUND -6
 
 /*
+ E-STOP 선점으로 read 가 조기 abort 됨 (S4). 오류가 아닌 의도된 중단 —
+ 호출자(백그라운드 리더/폴러)는 무음 skip 으로 분류해야 한다.
+ */
+#define FC_ERR_ESTOP_PREEMPTED -7
+
+/*
  panic 보호 — Rust 코드가 panic.
  */
 #define FC_ERR_PANIC -99
@@ -356,6 +362,30 @@ int fc_joint_read_state(struct fc_bus *handle, uint8_t raw_id, struct fc_joint_s
  모든 관절 토크 OFF (소프트 e-stop).
  */
 int fc_emergency_stop(struct fc_bus *handle);
+
+/*
+ **S4 — E-STOP 선점 요청 (2026-06-11)**. 직렬화 락을 *획득하지 않고* 선점 플래그를
+ set — 다른 스레드가 진행 중인 read(보행 중 status 폴 등)를 다음 슬라이스에서
+ `EstopPreempted` 로 조기 abort 시켜 락을 즉시 풀게 한다. 긴급정지 경로는 이 호출
+ 직후 정상 락을 획득해 `fc_emergency_stop` 으로 torque-off 한다.
+
+ `motion_state` 와 동일하게 backend(port)와 disjoint 한 `estop_flag` Arc 만 접근하므로
+ in-flight `&mut *handle` 호출과 aliasing UB 없음.
+ */
+int fc_bus_request_estop_preempt(struct fc_bus *handle);
+
+/*
+ 선점 플래그 수동 해제 — 정상적으로는 `fc_emergency_stop` 이 자동 해제하나,
+ 선점만 요청하고 정지를 송출하지 않는 경로(취소/복구)를 위해 노출.
+ */
+int fc_bus_clear_estop_preempt(struct fc_bus *handle);
+
+/*
+ 응답 timeout 변경 (ms). 보행 시작 시 락 보유 상한을 낮추고(예: 50 ms) 종료 시
+ 복원해 — E-STOP 선점 최악 대기를 timeout 1슬라이스로 제한한다. backend Bus 를
+ 직접 mutate 하므로 직렬화 락 보유 중 호출 (다른 FFI 와 동일 진입 규약).
+ */
+int fc_bus_set_io_timeout(struct fc_bus *handle, uint32_t timeout_ms);
 
 /*
  `.mtn` 텍스트 → JSON 문자열. 호출자가 fc_string_free.

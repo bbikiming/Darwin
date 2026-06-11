@@ -9,6 +9,9 @@ public enum ForgeError: Int32, Error, Equatable, Sendable {
     case timeout        = -4
     case codec          = -5
     case deviceNotFound = -6
+    /// S4 — 진행 중 read 가 E-STOP 선점으로 조기 abort. 오류가 아닌 의도된 중단 —
+    /// 백그라운드 리더/폴러는 disconnect 로 취급하지 말고 무음 skip 해야 한다.
+    case estopPreempted = -7
     case panic          = -99
 
     /// FFI raw → enum (FC_OK 0은 nil).
@@ -32,6 +35,7 @@ public enum ForgeError: Int32, Error, Equatable, Sendable {
         case .timeout:        return "device did not respond in time"
         case .codec:          return "Dynamixel packet decode error"
         case .deviceNotFound: return "device did not respond on bus"
+        case .estopPreempted: return "read aborted by e-stop preempt"
         case .panic:          return "forge-core panicked (bug)"
         }
     }

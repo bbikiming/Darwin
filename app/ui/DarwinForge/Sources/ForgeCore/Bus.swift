@@ -491,7 +491,26 @@ public final class Bus: @unchecked Sendable {
     }
 
     public func emergencyStop() throws {
+        // S4: 락 획득 *전에* 선점 플래그를 set — 보행 status 폴 등 진행 중 read 가
+        // 락을 물고 있어도 다음 read 슬라이스에서 조기 abort 돼 락이 즉시 풀린다.
+        // fc_emergency_stop 은 송출 완료 후 선점 플래그를 자동 해제한다.
+        fc_bus_request_estop_preempt(raw())
         try locked { try checkForgeReturn(fc_emergency_stop(raw())) }
+    }
+
+    /// **S4 — E-STOP 선점 요청**. 직렬화 락 *없이* in-flight read 를 abort 시킨다.
+    public func requestEstopPreempt() {
+        fc_bus_request_estop_preempt(raw())
+    }
+
+    /// 선점 플래그 해제 (정지 송출 없이 선점만 거둘 때).
+    public func clearEstopPreempt() {
+        fc_bus_clear_estop_preempt(raw())
+    }
+
+    /// 응답 timeout(ms) 변경 — 보행 중 락 보유 상한 축소용. 락 안에서 backend mutate.
+    public func setIoTimeout(ms: UInt32) {
+        locked { _ = fc_bus_set_io_timeout(raw(), ms) }
     }
 
     // MARK: - Motion play (Sprint 15 라이브러리 노출 — 2026-05-16 v1.1 통합)

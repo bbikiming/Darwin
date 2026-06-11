@@ -36,6 +36,18 @@ public protocol BusInterface: AnyObject, Sendable {
     func setTorque(_ joint: JointID, enable: Bool) throws
     func emergencyStop() throws
 
+    /// **S4 — E-STOP 선점 요청 (2026-06-11)**. 직렬화 락을 *획득하지 않고* 진행 중
+    /// read 를 조기 abort 시킨다. 보행 중 status 폴이 락을 물고 있어도 긴급정지가
+    /// 락 해제를 기다리지 않게 한다. `emergencyStop()` 이 내부적으로 먼저 호출하므로
+    /// 일반 경로는 추가 호출 불필요 — 별도 선제 차단이 필요한 경우만 직접 호출.
+    func requestEstopPreempt()
+
+    /// 선점 플래그 해제 — 정지를 송출하지 않고 선점만 해제(취소/복구)할 때.
+    func clearEstopPreempt()
+
+    /// 응답 timeout(ms) 변경 — 보행 시작 시 락 보유 상한 축소(예: 50ms), 종료 시 복원.
+    func setIoTimeout(ms: UInt32)
+
     // MARK: - Joint write
 
     @discardableResult
@@ -93,6 +105,11 @@ extension BusInterface {
             try setMovingSpeed(joint, speed: speed)
         }
     }
+
+    /// S4 — mock/비-FFI conformer 기본 no-op. 선점은 실 시리얼 락에서만 의미.
+    public func requestEstopPreempt() {}
+    public func clearEstopPreempt() {}
+    public func setIoTimeout(ms: UInt32) {}
 }
 
 /// `Bus` 는 이미 모든 BusInterface 메서드를 구현 — empty conformance.

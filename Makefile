@@ -43,9 +43,10 @@ lint:
 headers:
 	@cargo build --manifest-path $(CARGO_DIR)/Cargo.toml -p forge-ffi 2>&1 | tail -3
 	@find $(CARGO_DIR)/target -name forge_core.h -path '*/build/forge-ffi-*/out/*' \
-		| head -1 \
+		-exec stat -f '%m %N' {} \; \
+		| sort -rn | head -1 | cut -d' ' -f2- \
 		| xargs -I{} cp {} $(CARGO_DIR)/forge-ffi/forge_core.h.in
-	@echo "✓ $(CARGO_DIR)/forge-ffi/forge_core.h.in 갱신"
+	@echo "✓ $(CARGO_DIR)/forge-ffi/forge_core.h.in 갱신 (최신 build dir)"
 
 clean:
 	@rm -rf $(CARGO_DIR)/target

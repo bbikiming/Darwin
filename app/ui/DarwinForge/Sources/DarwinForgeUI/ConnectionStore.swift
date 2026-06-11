@@ -3046,7 +3046,8 @@ public final class ConnectionStore: ObservableObject {
     private func isJointLevelError(_ error: Error) -> Bool {
         guard let fe = error as? ForgeError else { return false }
         switch fe {
-        case .timeout, .deviceNotFound: return true
+        // estopPreempted: bus 사망이 아닌 의도된 abort — disconnect 유발 금지(무음 skip).
+        case .timeout, .deviceNotFound, .estopPreempted: return true
         case .io, .codec, .generic, .invalid, .panic: return false
         }
     }

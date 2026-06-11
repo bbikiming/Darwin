@@ -47,6 +47,9 @@ pub const FC_ERR_TIMEOUT: c_int = -4;
 pub const FC_ERR_CODEC: c_int = -5;
 /// 디바이스 응답 없음.
 pub const FC_ERR_DEVICE_NOT_FOUND: c_int = -6;
+/// E-STOP 선점으로 read 가 조기 abort 됨 (S4). 오류가 아닌 의도된 중단 —
+/// 호출자(백그라운드 리더/폴러)는 무음 skip 으로 분류해야 한다.
+pub const FC_ERR_ESTOP_PREEMPTED: c_int = -7;
 /// panic 보호 — Rust 코드가 panic.
 pub const FC_ERR_PANIC: c_int = -99;
 
@@ -83,6 +86,7 @@ fn err_code(e: &forge_core::Error) -> c_int {
         Codec(_) => FC_ERR_CODEC,
         Timeout(_) => FC_ERR_TIMEOUT,
         DeviceNotFound(_) => FC_ERR_DEVICE_NOT_FOUND,
+        EstopPreempted => FC_ERR_ESTOP_PREEMPTED,
         Other(_) => FC_ERR_GENERIC,
     }
 }
@@ -180,15 +184,50 @@ pub struct FcBus {
     /// `fc_motion_play_cancel` / `is_running` 이 `Arc.clone()` 으로 접근 → backend
     /// 와 메모리 disjoint, Rust aliasing UB 없음.
     motion_state: std::sync::Arc<MotionState>,
+    /// E-STOP 선점 플래그 (S4) — backend 내부 Bus 의 estop_flag 와 동일 AtomicBool 을
+    /// 가리키는 disjoint clone. `fc_bus_request_estop_preempt` 가 직렬화 락 없이 set 해
+    /// 진행 중 read 를 조기 abort 시킨다. motion_state 와 동일한 disjoint 패턴.
+    estop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FcBus {
     /// 2026-05-17: 인스턴스화 헬퍼 — 5 곳 반복 boilerplate 통합.
-    /// motion_state 는 idle Arc 자동 init — 호출자는 backend 만 명시.
+    /// motion_state 는 idle Arc 자동 init. estop_flag 는 backend Bus 와 공유.
     fn new(backend: BusBackend) -> Self {
+        let estop_flag = backend.estop_flag_handle();
         Self {
             backend,
             motion_state: std::sync::Arc::new(MotionState::new()),
+            estop_flag,
+        }
+    }
+}
+
+impl BusBackend {
+    /// 내부 Bus 의 E-STOP 선점 플래그 공유 핸들.
+    fn estop_flag_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        match self {
+            BusBackend::Posix(b) => b.estop_flag_handle(),
+            BusBackend::Loopback(b) => b.estop_flag_handle(),
+            BusBackend::Tcp(b) => b.estop_flag_handle(),
+        }
+    }
+
+    /// 내부 Bus 의 응답 timeout 변경 (보행 중 락 보유 상한 축소용).
+    fn set_io_timeout(&mut self, timeout: Duration) {
+        match self {
+            BusBackend::Posix(b) => b.set_timeout(timeout),
+            BusBackend::Loopback(b) => b.set_timeout(timeout),
+            BusBackend::Tcp(b) => b.set_timeout(timeout),
+        }
+    }
+
+    /// 내부 Bus 의 선점 플래그 해제.
+    fn clear_estop_preempt(&self) {
+        match self {
+            BusBackend::Posix(b) => b.clear_estop_preempt(),
+            BusBackend::Loopback(b) => b.clear_estop_preempt(),
+            BusBackend::Tcp(b) => b.clear_estop_preempt(),
         }
     }
 }
@@ -971,11 +1010,66 @@ pub unsafe extern "C" fn fc_emergency_stop(handle: *mut FcBus) -> c_int {
                 .map(|_| FC_OK)
                 .unwrap_or_else(|e| err_code(&e))
         }
-        match &mut bus.backend {
+        let code = match &mut bus.backend {
             BusBackend::Posix(b) => run(b),
             BusBackend::Loopback(b) => run(b),
             BusBackend::Tcp(b) => run(b),
-        }
+        };
+        // S4: 토크 OFF 송출 완료 후 선점 플래그 해제 — 다음 정상 read 재개.
+        bus.backend.clear_estop_preempt();
+        code
+    })
+}
+
+/// **S4 — E-STOP 선점 요청 (2026-06-11)**. 직렬화 락을 *획득하지 않고* 선점 플래그를
+/// set — 다른 스레드가 진행 중인 read(보행 중 status 폴 등)를 다음 슬라이스에서
+/// `EstopPreempted` 로 조기 abort 시켜 락을 즉시 풀게 한다. 긴급정지 경로는 이 호출
+/// 직후 정상 락을 획득해 `fc_emergency_stop` 으로 torque-off 한다.
+///
+/// `motion_state` 와 동일하게 backend(port)와 disjoint 한 `estop_flag` Arc 만 접근하므로
+/// in-flight `&mut *handle` 호출과 aliasing UB 없음.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_request_estop_preempt(handle: *mut FcBus) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        use std::sync::atomic::Ordering;
+        let bus = &*handle;
+        let flag = bus.estop_flag.clone();
+        flag.store(true, Ordering::SeqCst);
+        FC_OK
+    })
+}
+
+/// 선점 플래그 수동 해제 — 정상적으로는 `fc_emergency_stop` 이 자동 해제하나,
+/// 선점만 요청하고 정지를 송출하지 않는 경로(취소/복구)를 위해 노출.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_clear_estop_preempt(handle: *mut FcBus) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        use std::sync::atomic::Ordering;
+        let bus = &*handle;
+        bus.estop_flag.store(false, Ordering::SeqCst);
+        FC_OK
+    })
+}
+
+/// 응답 timeout 변경 (ms). 보행 시작 시 락 보유 상한을 낮추고(예: 50 ms) 종료 시
+/// 복원해 — E-STOP 선점 최악 대기를 timeout 1슬라이스로 제한한다. backend Bus 를
+/// 직접 mutate 하므로 직렬화 락 보유 중 호출 (다른 FFI 와 동일 진입 규약).
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_set_io_timeout(handle: *mut FcBus, timeout_ms: u32) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let bus = &mut *handle;
+        bus.backend
+            .set_io_timeout(Duration::from_millis(timeout_ms as u64));
+        FC_OK
     })
 }
 
@@ -1585,6 +1679,62 @@ mod tests {
                 LoopbackBus::default(),
             ))));
             assert_eq!(fc_motion_play_is_running(h.as_mut() as *mut _), 0);
+        }
+    }
+
+    // ---- S4 E-STOP 선점 FFI tests ----
+
+    #[test]
+    fn estop_preempt_null_handle_returns_invalid() {
+        unsafe {
+            assert_eq!(
+                fc_bus_request_estop_preempt(ptr::null_mut()),
+                FC_ERR_INVALID
+            );
+            assert_eq!(fc_bus_clear_estop_preempt(ptr::null_mut()), FC_ERR_INVALID);
+            assert_eq!(fc_bus_set_io_timeout(ptr::null_mut(), 50), FC_ERR_INVALID);
+        }
+    }
+
+    #[test]
+    fn request_estop_preempt_aborts_inflight_read() {
+        unsafe {
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
+            let handle = h.as_mut() as *mut FcBus;
+            // 선점 요청 — disjoint Arc 만 건드림 (락 없이).
+            assert_eq!(fc_bus_request_estop_preempt(handle), FC_OK);
+            // 이제 어떤 read 든 EstopPreempted 로 막혀야 한다. fc_bus_ping 은 recv 를 탄다.
+            assert_eq!(fc_bus_ping(handle, 1), FC_ERR_ESTOP_PREEMPTED);
+            // emergency_stop 은 broadcast(SYNC_WRITE)라 recv 없이 통과 + 플래그 해제.
+            assert_eq!(fc_emergency_stop(handle), FC_OK);
+            // 해제 후 ping 은 더 이상 선점으로 막히지 않는다 (큐 비어 timeout 일 뿐).
+            assert_ne!(fc_bus_ping(handle, 1), FC_ERR_ESTOP_PREEMPTED);
+        }
+    }
+
+    #[test]
+    fn clear_estop_preempt_restores_reads() {
+        unsafe {
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
+            let handle = h.as_mut() as *mut FcBus;
+            assert_eq!(fc_bus_request_estop_preempt(handle), FC_OK);
+            assert_eq!(fc_bus_ping(handle, 1), FC_ERR_ESTOP_PREEMPTED);
+            assert_eq!(fc_bus_clear_estop_preempt(handle), FC_OK);
+            assert_ne!(fc_bus_ping(handle, 1), FC_ERR_ESTOP_PREEMPTED);
+        }
+    }
+
+    #[test]
+    fn set_io_timeout_ok_on_loopback() {
+        unsafe {
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
+            assert_eq!(fc_bus_set_io_timeout(h.as_mut() as *mut _, 50), FC_OK);
         }
     }
 
