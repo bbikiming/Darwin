@@ -10,10 +10,10 @@
 
 | 문서 | 영역 | 설계 커밋 | 구현 현황 |
 |---|---|---|---|
-| [cockpit-latency-hardening.md](cockpit-latency-hardening.md) | Mac 전송·입력·시리얼 (확정 이슈 35건) | cf132bd | **W0 ✅**(66039c6·8139247) · **W2 ✅**(e0bb2cf·da495d6·7808fdb·c62d3af·a61afbc·9dff323) · W3 부분(J1 fe8d748, J9 0153464) · **J4·J13 ✅**(bus D0) · §6 Tracer 골격 ✅(bus 채널) · **W1 ⬜**(온보드 O1과 한 묶음) |
+| [cockpit-latency-hardening.md](cockpit-latency-hardening.md) | Mac 전송·입력·시리얼 (확정 이슈 35건) | cf132bd | **W0 ✅**(66039c6·8139247) · **W2 ✅**(e0bb2cf·da495d6·7808fdb·c62d3af·a61afbc·9dff323) · W3 부분(J1 fe8d748, J9 0153464) · **J4·J13 ✅**(bus D0) · §6 Tracer 7지점 mark 모델 ✅ · **W1 코드 ✅**(OnboardCommandChannel+PersistentSSHChannel+UDP E-STOP+SendPolicy, P3) · LatencyBudgetRegressionTests ✅ · 실기 벤치 ⬜ |
 | [controller-mapping-uiux.md](controller-mapping-uiux.md) | 컨트롤러 매핑 GUI/프로파일 | 2026-06-10 | **P1~P3+드라이버 실소비 ✅**(3c5f97c·f3352c1·f088628·1f52279·cde16de) · 잔여 L4(드라이버 일원화)는 레이턴시 문서 관할 |
-| [3d-viewport-enhancement.md](3d-viewport-enhancement.md) | 5개 화면 3D 뷰포트 (모델링·조명·환경·오버레이) | b46a226 | **W0 ✅**(b941f54) · **W1 ✅**(2a58777+2abd6d4) · +라이브 튜닝 패널(9a32f8d, 계획 외) · **W2 ✅**(화면별 프리셋 5종+셰이더 AA 그리드+소품·콕핏 그리드 58→1노드, 3399 테스트) · W3~W5 ⬜ |
-| [walklab-onboard-teleop-upgrade.md](walklab-onboard-teleop-upgrade.md) | 로봇 측 코드·알고리즘 + 명령/텔레메트리 계약 | 2507be6 | O0~O4 전부 ⬜ |
+| [3d-viewport-enhancement.md](3d-viewport-enhancement.md) | 5개 화면 3D 뷰포트 (모델링·조명·환경·오버레이) | b46a226 | **W0 ✅**(b941f54) · **W1 ✅**(2a58777+2abd6d4) · +라이브 튜닝 패널(9a32f8d, 계획 외) · **W2 ✅**(화면별 프리셋 5종+셰이더 AA 그리드+소품·콕핏 그리드 58→1노드, 3399 테스트) · W3 ⬜(별도 브랜치 `claude/p11-3d-overlays`) · **W4 ✅**(MeshRig 머리 디테일·ViewCube ease 전환+`shortestAngleDelta`·턴테이블·DOF 토글·Cockpit 체이스 follower) · **W5 ✅**(성능 가드 §7 실측·`renderImage` 회귀 가드·스냅샷 5종 기준선, +20 테스트) |
+| [walklab-onboard-teleop-upgrade.md](walklab-onboard-teleop-upgrade.md) | 로봇 측 코드·알고리즘 + 명령/텔레메트리 계약 | 2507be6 | **O0 코드 ✅**(TEL ≥11+last_cmd_id/loop_ms·RobotClockSync·tracer ackReceived, P3) · **O1 코드 ✅**(WalkLabTransport 순수 로직+호스트 테스트 58 checks·브로커리지 UDP 리스너 17372/17374·supervisor 20ms·워치독 티어 600/2500ms·파일 폴백 보존, P3) · 실기 배포(demoBuildPatched)·벤치(≥20Hz·E-STOP p95) ⬜ · O2~O4 ⬜ |
 | [bus-direct-teleop-upgrade.md](bus-direct-teleop-upgrade.md) | 직결(bus) 조종 — 50Hz 연속 스트리밍 | b54daff | **D0 ✅**(J4 deadline 스케줄·J13 FTDI 1ms ioctl·PilotLatencyTracer bus 계측 — 실기 지터/IMU read 벤치는 사용자 보고 대기) · D1~D3 ⬜ (전송 선행분 L5·J11·J12·S4 기완료) |
 | [handheld-direct-pilot-upgrade.md](handheld-direct-pilot-upgrade.md) | RG G01 **2.4G 동글** 직결(USB HID, 유선은 폴백) + Switch 무선 최적화 | f157c06 (동글 기본 개정 2026-06-11) | H0~H3 전부 ⬜ (**H0 프로브는 로봇 전원만 있으면 즉시 가능** — df-inbox 원격 실행) |
 

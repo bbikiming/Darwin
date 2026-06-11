@@ -59,7 +59,7 @@ legacyGrid() 로 보존. Cockpit 그리드(58노드)도 teal 파라미터로 교
 커밋: feat(ui): Wave 2 — … 형식, 웨이브 내 커밋 분할 자유.
 ```
 
-## [ ] P3 — 전송 묶음: 레이턴시 W1 + 온보드 O0·O1 · 최대 체감 개선
+## [x] P3 — 전송 묶음: 레이턴시 W1 + 온보드 O0·O1 · 최대 체감 개선 — 코드/테스트 완료, 실기 배포·벤치 대기 (2026-06-12)
 
 ```
 docs/design/cockpit-latency-hardening.md 의 Wave 1 과
@@ -269,7 +269,14 @@ ViewportControls 에 오버레이 팝오버 토글.
 문서화, swift test(serial) 증거. README 갱신. 커밋: feat(ui).
 ```
 
-## [ ] P12 — 3D 뷰포트 W4+W5: 디테일·카메라 연출 + 성능 검증 · 독립
+## [x] P12 — 3D 뷰포트 W4+W5: 디테일·카메라 연출 + 성능 검증 · 독립
+<!-- 완료 2026-06-12: W4(MeshRig.attachHeadDetails · ViewCube ease 전환+shortestAngleDelta
+     최단경로 · 턴테이블 turntableRadPerSec + isFullyIdle 가드 · DOF 토글 Studio/Motion
+     옵트인·스냅샷 렌더러 제외 · Cockpit 체이스 follower scene-root 직속 lerp 0.12/0.08
+     +lean≤2.5°+FOV 50→54) · W5(성능 §7 실측 기입 · renderImage 시그니처 회귀 가드 ·
+     SceneExposure/preset 5종 스냅샷 기준선). +20 단위테스트(SceneMath 9·ChaseFollower 6·
+     InteractiveSceneBehavior 5). swift test 3452건 중 P12 관련 전부 통과(잔여 1 실패는
+     무관한 P9/TEL2 미커밋 OnboardTelemetry 파서/테스트 불일치). 미커밋 브랜치 작업. -->
 
 ```
 docs/design/3d-viewport-enhancement.md 의 Wave 4 와 5 를 구현해줘.
