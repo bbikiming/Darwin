@@ -15,6 +15,32 @@
 
 ---
 
+## [P3] 전송 묶음 (W1+O0·O1) — **조건부: HIGH 1·MEDIUM 1 수정 후 재검** (2026-06-12, 미커밋)
+
+- 구현: 메인 워크트리 미커밋(Connection/·WalkLab/·firmware-patches/ 19파일+계약 §G) ·
+  리뷰어: **Fable 교차**(별도 세션)
+- 증거(리뷰 세션 독립 재실행): Swift 5스위트 **41/41 통과** · 호스트 C++ **58체크 0실패**
+  (구현 세션 보고와 일치. cargo 382는 구현 세션 증거 인정)
+- 잘된 점: 스레드는 "수신→슬롯/정지"만(적용은 supervisor 단일 writer), E-STOP UDP 수신
+  즉시 Stop+토크OFF+flag touch(상태는 파일이 소유 — 기존 latch/re-arm 재사용), SO_RCVTIMEO
+  1s 로 깨끗한 종료, 파일 폴백 보존(`transport 미기동 → 종전 동작 완전 보존` 주석·코드 일치),
+  순수 로직 분리(WalkLabTransport)로 호스트 테스트 가능 구조
+- **이슈 1 (HIGH — 머지 전 수정 필수)**: 워치독 티어가 **소스 무관 적용**
+  (WalkLabBrokerage.cpp:729-743 — `m_last_cmd_ms` 는 파일 적용(701)에도 갱신).
+  Mac 브리지(dedup: line==lastAckedLine 스킵)·Switch v1(변경 시만 송신) 등 파일 경로
+  클라이언트는 **일정한 스틱 홀드 시 명령이 끊겨 600ms 후 제자리·2.5s 후 정지** — 정상
+  보행 회귀. 설계(O1 §4)는 "20-30Hz 연속 스트림" 계약 클라이언트 전용 티어였음.
+  수정: 슬롯(UDP) 소스 플래그 게이팅 + 호스트 테스트 + 계약 §G.4 명시.
+- **이슈 2 (MEDIUM — 머지 전 수정 권고)**: 핸드셰이크 `LoadHandshake` 가 Run() 1회뿐
+  (576행) + Mac `walkLabWriteChannelHandshake` 호출처 0건(정의만). 정상 플로(데모 기동 후
+  Mac 이 기록)에서 UDP 영영 비활성 + 구세션 잔존 토큰 회전 미대응(토큰 불일치 시 UDP
+  E-STOP **무음 불능** — SSH 폴백은 생존). 수정: 미기동 시 1s 재시도 + mtime 변경 시 재기동.
+- 결선 시 주의(차단 아님, 기록): ① `sendEmergencyStopNow` 가 actor-isolated — 라이브
+  E-STOP 결선 시 await 홉 1회 추가됨(§7 위반 소지) → 결선 전 nonisolated 전환
+  ② WriteTelemetry 주석 stale(보행 중 실제 50Hz push — O4 에서 30Hz 정식화)
+  ③ `m_transport_running` plain bool 크로스스레드(실용상 무해, volatile 권장)
+- 절차: 04 §리뷰 절차에 따라 **수정 → 재검 → 커밋(명시 경로) → 본 원장 확정** 순.
+
 ## [P11] 3D W3 — 로봇공학 오버레이 — **통과** (2026-06-12, 머지 대기)
 
 - 구현: `claude/p11-3d-overlays` 브랜치 3커밋(59c6501 RigSkeleton 선행 → 9471528 오버레이
