@@ -206,6 +206,12 @@ public final class CockpitState: ObservableObject {
         lastIntegrationAt = nil
     }
 
+    #if DEBUG
+    /// **테스트용 hook (J1)** — 타이머 없이 integrate() 한 틱 구동. dt>0 보장 위해
+    /// 호출자가 틱 사이 짧은 간격을 둔다.
+    internal func _testIntegrateTick() { integrate() }
+    #endif
+
     /// Robot 을 원점으로 reset — 새 세션 시작 시.
     public func resetSimulation() {
         simHeadingDeg = 0
@@ -226,6 +232,16 @@ public final class CockpitState: ObservableObject {
     /// - `turnDeg` (deg/step) → 1.67 × deg/sec
     /// step period 는 WalkLab 의 slowWalk(600 ms) 기준. 시뮬용이라 cadence 보존
     /// 보다 사용자 체감 속도가 중요.
+    /// **J1 (2026-06-11)** — @Published 변화-가드. 값이 실제로 바뀔 때만 대입해
+    /// objectWillChange 발행을 막는다. 종전 integrate() 는 틱당 ~10개 @Published 를
+    /// 무조건 대입해, 유휴(스틱 중립·로봇 정지)에도 1698줄 뷰트리가 30Hz 재렌더됐다.
+    /// 유휴 시 모든 값이 상수로 수렴하므로 가드가 재렌더를 0 으로 만든다(동작 모드는
+    /// 값이 실제로 바뀌어 그대로 발행). 디스패치는 .onChange 가 별도 dedupe 하므로
+    /// motorCommand 가드도 의미 불변.
+    private func setIfChanged<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<CockpitState, T>, _ value: T) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+    }
+
     private func integrate() {
         let now = Date()
         guard let last = lastIntegrationAt else {
@@ -247,13 +263,14 @@ public final class CockpitState: ObservableObject {
         // **명령 스무딩** — motorCommand 를 lastCommand(raw 목표)로 EMA 추종 + 다축
         // 결합 안전한계 + 미세값 snap. 화면(walkAnimator)·게이지·실모터가 공통으로 이
         // 값을 써 디지털 트윈을 유지하면서 다축 입력을 매끄럽고 안정적으로 만든다.
-        motorCommand = CockpitCommandSmoother.step(
+        let newCmd = CockpitCommandSmoother.step(
             current: motorCommand, target: lastCommand,
             alpha: Self.commandSmoothingAlpha,
             strideMax: VirtualJoystickMapper.cockpitStrideMm,
             sideMax: VirtualJoystickMapper.cockpitSideMm,
             turnMax: VirtualJoystickMapper.cockpitTurnDeg)
-        let cmd = motorCommand
+        setIfChanged(\.motorCommand, newCmd)   // J1
+        let cmd = newCmd
         walkAnimator.update(
             commandStrideMm: cmd.strideMm,
             commandSideMm: cmd.sideMm,
@@ -279,18 +296,20 @@ public final class CockpitState: ObservableObject {
             smoothedHeadPanNorm, headInputPanNorm, alpha: Self.headSmoothingAlpha)
         smoothedHeadTiltNorm = CockpitCommandSmoother.ema(
             smoothedHeadTiltNorm, headInputTiltNorm, alpha: Self.headSmoothingAlpha)
-        headPanDeg = CockpitHeadKinematics.integrate(
+        let newPanDeg = CockpitHeadKinematics.integrate(
             currentDeg: headPanDeg, inputNorm: -smoothedHeadPanNorm,
             rateDegPerSec: CockpitHeadKinematics.panRateDegPerSec,
             dt: dt, limit: headPanLimit)
-        headTiltDeg = CockpitHeadKinematics.integrate(
+        let newTiltDeg = CockpitHeadKinematics.integrate(
             currentDeg: headTiltDeg, inputNorm: smoothedHeadTiltNorm,
             rateDegPerSec: CockpitHeadKinematics.tiltRateDegPerSec,
             dt: dt, limit: headTiltLimit)
+        setIfChanged(\.headPanDeg, newPanDeg)    // J1
+        setIfChanged(\.headTiltDeg, newTiltDeg)  // J1
         pose = pose
-            .with(.headPan, raw: Kinematics.raw(fromDegrees: headPanDeg))
-            .with(.headTilt, raw: Kinematics.raw(fromDegrees: headTiltDeg))
-        animatedPose = pose
+            .with(.headPan, raw: Kinematics.raw(fromDegrees: newPanDeg))
+            .with(.headTilt, raw: Kinematics.raw(fromDegrees: newTiltDeg))
+        setIfChanged(\.animatedPose, pose)       // J1
 
         // 정직성: 시뮬 모드 토글이 OFF 면 robot 의 sim 위치/방향을 갱신하지 않는다.
         guard simulationEnabled else { return }
@@ -350,13 +369,13 @@ public final class CockpitState: ObservableObject {
         let isAccelerating = !cmd.isStop
         let linearRate = isAccelerating ? acceleration : deceleration
         let alphaLin = 1.0 - exp(-linearRate * dt)
-        simVelocityMps = SIMD2(
+        var newVel = SIMD2(
             simVelocityMps.x + (desiredVx - simVelocityMps.x) * alphaLin,
             simVelocityMps.y + (desiredVy - simVelocityMps.y) * alphaLin)
-
         // Snap velocity to zero when very small — 잔여 drift 제거.
-        if abs(simVelocityMps.x) < 0.01 { simVelocityMps.x = 0 }
-        if abs(simVelocityMps.y) < 0.01 { simVelocityMps.y = 0 }
+        if abs(newVel.x) < 0.01 { newVel.x = 0 }
+        if abs(newVel.y) < 0.01 { newVel.y = 0 }
+        setIfChanged(\.simVelocityMps, newVel)   // J1 (유휴 0 수렴 → 발행 중단)
 
         // **HIGH #5 fix**: angular velocity 도 동일 lerp 적용 — linear 와 turn 사이
         // 의 가속/감속 비대칭 제거. 종전 dHeading = desiredW * dt (즉시 적용) 였음.
@@ -378,32 +397,40 @@ public final class CockpitState: ObservableObject {
         // **거짓 없는 게이지**: effStride/Side/Turn (= 실 motor 가 받는 clamp 값) 으로
         // 계산. 후진 full 시 -30 × 2000/period (실제 robot 속도) 표시 — 종전 -38 의
         // 27% 과대 표시 제거.
-        simForwardSpeedMmPerSec = effStrideMm * 2000.0 / periodMs
-        simLateralSpeedMmPerSec = effSideMm * 2000.0 / periodMs
-        simTurnSpeedDegPerSec   = effTurnDeg * 2000.0 / periodMs
+        let newFwd = effStrideMm * 2000.0 / periodMs
+        setIfChanged(\.simForwardSpeedMmPerSec, newFwd)              // J1
+        setIfChanged(\.simLateralSpeedMmPerSec, effSideMm * 2000.0 / periodMs)  // J1
+        setIfChanged(\.simTurnSpeedDegPerSec, effTurnDeg * 2000.0 / periodMs)   // J1
 
         // Peak-hold (forward magnitude). 1초 hold, 그 후 frame-rate independent decay.
-        let fwdMag = abs(simForwardSpeedMmPerSec)
+        let fwdMag = abs(newFwd)
         let now2 = Date()
         if fwdMag > peakForwardSpeedMmPerSec {
-            peakForwardSpeedMmPerSec = fwdMag
+            setIfChanged(\.peakForwardSpeedMmPerSec, fwdMag)
             peakHoldUntil = now2.addingTimeInterval(1.0)
         } else if let hold = peakHoldUntil, now2 > hold {
             // dt-based exponential decay (방법론 #8 review feedback)
-            let decay = pow(0.985, dt * 30)
-            peakForwardSpeedMmPerSec *= decay
-            if peakForwardSpeedMmPerSec < 1 { peakForwardSpeedMmPerSec = 0 }
+            let decayed = peakForwardSpeedMmPerSec * pow(0.985, dt * 30)
+            if decayed < 1 {
+                // **버그 수정 (J1)**: 0 도달 시 peakHoldUntil 을 nil 로 리셋.
+                // 종전엔 리셋이 없어 hold 가 과거 시각으로 남아 매 틱 0 을 재대입 →
+                // @Published 영구 발행(유휴에도 30Hz 재렌더). 이제 0 후 분기 종료.
+                setIfChanged(\.peakForwardSpeedMmPerSec, 0)
+                peakHoldUntil = nil
+            } else {
+                setIfChanged(\.peakForwardSpeedMmPerSec, decayed)
+            }
         }
 
         // 누적 거리 — **거짓 없는 odometer (MINOR fix)**: 종전 simVelocityMps
         // (game-physics lerp, max 1.6 m/s) 사용 → 실 robot (max ~0.13 m/s) 의 약
         // 12배 과대 표시. 이제 ROBOTIS commanded speed (forward/lateral mm/sec) 의
         // magnitude 로 적분 — 게이지와 동일 source.
-        let robotSpeedMmPerSec = hypot(simForwardSpeedMmPerSec, simLateralSpeedMmPerSec)
-        totalDistanceMm += robotSpeedMmPerSec * dt
+        let robotSpeedMmPerSec = hypot(newFwd, simLateralSpeedMmPerSec)
+        setIfChanged(\.totalDistanceMm, totalDistanceMm + robotSpeedMmPerSec * dt)  // J1
 
         // Heading 적분 — lerped angular velocity 사용 (linear 와 대칭).
-        simHeadingDeg += currentTurnSpeedDps * dt
+        setIfChanged(\.simHeadingDeg, simHeadingDeg + currentTurnSpeedDps * dt)     // J1
         // Rotate velocity vector by current heading to world frame.
         let theta = simHeadingDeg * .pi / 180.0
         let cosT = cos(theta)
@@ -418,8 +445,8 @@ public final class CockpitState: ObservableObject {
         let worldVxMps = vForwardMps * sinT - vLateralMps * cosT
         let worldVzMps = vForwardMps * cosT + vLateralMps * sinT
         // World position in mm (m × 1000 × dt).
-        simPositionMM = SIMD2(simPositionMM.x + worldVxMps * 1000 * dt,
-                              simPositionMM.y + worldVzMps * 1000 * dt)
+        setIfChanged(\.simPositionMM, SIMD2(simPositionMM.x + worldVxMps * 1000 * dt,  // J1
+                                            simPositionMM.y + worldVzMps * 1000 * dt))
 
         // Path trail — minimap 이 표시. 1cm 이상 움직였을 때만 새 포인트 추가
         // (60 포인트 ring buffer, 약 2-4초 분량).
