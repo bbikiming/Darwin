@@ -35,7 +35,9 @@ enum RigMaterials {
             }
             return m
         case .servoBlack:
-            return pbr(diffuse: NSColor(calibratedRed: 0.11, green: 0.11, blue: 0.12, alpha: 1),
+            // **W1 후속 조정(2026-06-11)**: 전완(lower-arm)이 거의 검정으로 보여 diffuse
+            // 0.11→0.27 상향. 새틴 다크 그레이로 읽히게(여전히 흰 쉘보다 어두움).
+            return pbr(diffuse: NSColor(calibratedRed: 0.27, green: 0.27, blue: 0.29, alpha: 1),
                        metalness: 0.0, roughness: 0.55)
         case .aluminum:
             // metalness 1.0 금지 — 128×64 IBL 해상도에서 순금속은 얼룩짐.
@@ -45,8 +47,10 @@ enum RigMaterials {
             return pbr(diffuse: NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.08, alpha: 1),
                        metalness: 0.0, roughness: 0.90)
         case .helmetDark:
-            return pbr(diffuse: NSColor(calibratedRed: 0.16, green: 0.17, blue: 0.19, alpha: 1),
-                       metalness: 0.0, roughness: 0.30)
+            // **W1 후속 조정(2026-06-11)**: 머리가 거의 검정으로 보여 diffuse 0.16→0.29
+            // 상향 + roughness 0.30→0.38(검은 거울 느낌 완화, 형태감 ↑).
+            return pbr(diffuse: NSColor(calibratedRed: 0.29, green: 0.30, blue: 0.32, alpha: 1),
+                       metalness: 0.0, roughness: 0.38)
         }
     }
 
