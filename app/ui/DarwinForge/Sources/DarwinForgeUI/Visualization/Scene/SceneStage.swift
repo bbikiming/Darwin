@@ -49,10 +49,19 @@ enum SceneStage {
 
     // MARK: - 조명 rig + IBL
 
+    /// 라이브 튜닝(SceneTuning)에서 갱신할 무대 핸들 — 광원/IBL/바닥 참조.
+    struct StageHandle {
+        let keyLight: SCNLight
+        let rimLight: SCNLight
+        weak var floorMaterial: SCNMaterial?
+        weak var scene: SCNScene?
+    }
+
     /// key + rim 조명을 scene root 에 부착하고 절차적 IBL 을 환경맵으로 주입.
     /// **W1**: lightingEnvironment(IBL)와 background 는 독립이므로 background(clear)는
     /// SwiftUI 그라디언트가 계속 담당.
-    static func installLighting(into scene: SCNScene) {
+    @discardableResult
+    static func installLighting(into scene: SCNScene) -> (key: SCNLight, rim: SCNLight) {
         let root = scene.rootNode
 
         let key = SCNLight()
@@ -85,6 +94,20 @@ enum SceneStage {
         // 절차적 IBL — PBR 머티리얼의 base 광량 + 금속 형태감.
         scene.lightingEnvironment.contents = ProceduralEnvironmentMap.studio
         scene.lightingEnvironment.intensity = iblIntensity
+
+        return (key, rim)
+    }
+
+    /// 라이브 튜닝값을 무대 핸들에 적용(조명·IBL·바닥).
+    static func apply(_ t: SceneTuning, to handle: StageHandle) {
+        handle.keyLight.intensity = CGFloat(t.keyIntensity)
+        handle.keyLight.shadowRadius = CGFloat(t.shadowRadius)
+        handle.rimLight.intensity = CGFloat(t.rimIntensity)
+        handle.scene?.lightingEnvironment.intensity = CGFloat(t.iblIntensity)
+        if let fm = handle.floorMaterial {
+            fm.diffuse.contents = NSColor(calibratedWhite: CGFloat(t.floorBrightness), alpha: 1)
+            fm.roughness.contents = t.floorRoughness
+        }
     }
 
     // MARK: - 바닥

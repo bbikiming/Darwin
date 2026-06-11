@@ -23,34 +23,66 @@ enum RigMaterials {
 
     // MARK: - 팩토리
 
-    /// 카테고리별 PBR 머티리얼(개별 인스턴스).
+    /// 카테고리별 PBR 머티리얼(개별 인스턴스). 값은 `SceneTuning.shared` 에서 읽고,
+    /// 레지스트리에 등록해 이후 라이브 튜닝(`applyTuning`) 으로 갱신 가능하게 한다.
     static func material(for category: Category) -> SCNMaterial {
+        let m = SCNMaterial()
+        m.lightingModel = .physicallyBased
+        m.isDoubleSided = true   // STL normal 이 가끔 뒤집혀 있어 양면 활성화.
+        configure(m, category: category, tuning: SceneTuning.shared)
+        register(m, category: category)
+        return m
+    }
+
+    /// 카테고리 + 튜닝 → 머티리얼 속성 적용(생성·라이브 갱신 공용).
+    /// emission 채널은 건드리지 않음 — highlight 상태 보존.
+    private static func configure(_ m: SCNMaterial, category: Category, tuning t: SceneTuning) {
         switch category {
         case .whiteShell:
-            let m = pbr(diffuse: NSColor(calibratedRed: 0.80, green: 0.80, blue: 0.82, alpha: 1),
-                        metalness: 0.0, roughness: 0.42)
-            if whiteShellClearcoat {
-                m.clearCoat.contents = 0.25
-                m.clearCoatRoughness.contents = 0.5
-            }
-            return m
+            m.diffuse.contents = NSColor(calibratedRed: 0.80, green: 0.80, blue: 0.82, alpha: 1)
+            m.metalness.contents = 0.0
+            m.roughness.contents = t.whiteShellRoughness
+            m.clearCoat.contents = whiteShellClearcoat ? 0.25 : 0.0
+            m.clearCoatRoughness.contents = 0.5
         case .servoBlack:
-            // **W1 후속 조정(2026-06-11)**: 전완(lower-arm)이 거의 검정으로 보여 diffuse
-            // 0.11→0.27 상향. 새틴 다크 그레이로 읽히게(여전히 흰 쉘보다 어두움).
-            return pbr(diffuse: NSColor(calibratedRed: 0.27, green: 0.27, blue: 0.29, alpha: 1),
-                       metalness: 0.0, roughness: 0.55)
+            m.diffuse.contents = NSColor(calibratedWhite: CGFloat(t.servoBlackBrightness), alpha: 1)
+            m.metalness.contents = 0.0
+            m.roughness.contents = 0.55
         case .aluminum:
             // metalness 1.0 금지 — 128×64 IBL 해상도에서 순금속은 얼룩짐.
-            return pbr(diffuse: NSColor(calibratedRed: 0.62, green: 0.63, blue: 0.65, alpha: 1),
-                       metalness: 0.85, roughness: 0.35)
+            m.diffuse.contents = NSColor(calibratedRed: 0.62, green: 0.63, blue: 0.65, alpha: 1)
+            m.metalness.contents = t.aluminumMetalness
+            m.roughness.contents = t.aluminumRoughness
         case .rubberFoot:
-            return pbr(diffuse: NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.08, alpha: 1),
-                       metalness: 0.0, roughness: 0.90)
+            m.diffuse.contents = NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.08, alpha: 1)
+            m.metalness.contents = 0.0
+            m.roughness.contents = 0.90
         case .helmetDark:
-            // **W1 후속 조정(2026-06-11)**: 머리가 거의 검정으로 보여 diffuse 0.16→0.29
-            // 상향 + roughness 0.30→0.38(검은 거울 느낌 완화, 형태감 ↑).
-            return pbr(diffuse: NSColor(calibratedRed: 0.29, green: 0.30, blue: 0.32, alpha: 1),
-                       metalness: 0.0, roughness: 0.38)
+            m.diffuse.contents = NSColor(calibratedWhite: CGFloat(t.helmetBrightness), alpha: 1)
+            m.metalness.contents = 0.0
+            m.roughness.contents = t.helmetRoughness
+        }
+    }
+
+    // MARK: - 라이브 튜닝 레지스트리
+
+    private final class WeakMat {
+        weak var value: SCNMaterial?
+        let category: Category
+        init(_ v: SCNMaterial, _ c: Category) { value = v; category = c }
+    }
+    private static var registry: [WeakMat] = []
+
+    private static func register(_ m: SCNMaterial, category: Category) {
+        if registry.count > 2048 { registry.removeAll { $0.value == nil } }
+        registry.append(WeakMat(m, category))
+    }
+
+    /// 현재 살아있는 모든 카테고리 머티리얼을 튜닝값으로 재구성(패널 슬라이더용).
+    static func applyTuning(_ t: SceneTuning) {
+        registry.removeAll { $0.value == nil }
+        for entry in registry {
+            if let m = entry.value { configure(m, category: entry.category, tuning: t) }
         }
     }
 

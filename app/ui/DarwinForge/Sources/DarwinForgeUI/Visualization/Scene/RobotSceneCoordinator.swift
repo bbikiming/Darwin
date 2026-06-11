@@ -26,12 +26,15 @@ public final class RobotSceneCoordinator {
     /// 호출자(RobotScene3D)가 SwiftUI overlay로 노란 banner를 띄우는 데 사용.
     public let usingMeshFallback: Bool
 
+    /// 라이브 튜닝(SceneTuning)이 갱신할 조명/IBL/바닥 핸들.
+    private let stageHandle: SceneStage.StageHandle
+
     public init() {
         scene = SCNScene()
         scene.background.contents = NSColor.clear
 
         // ── 무대: 조명(key+rim) + IBL + 바닥 + 그리드 — SceneStage 로 위임.
-        SceneStage.installLighting(into: scene)
+        let lights = SceneStage.installLighting(into: scene)
 
         // ── 카메라 — InteractiveSceneView default와 동일 위치 (snapshot test consistency).
         let cam = SCNCamera()
@@ -60,8 +63,14 @@ public final class RobotSceneCoordinator {
         scene.rootNode.addChildNode(cameraNode)
 
         // ── 그라운드 + 그리드.
-        scene.rootNode.addChildNode(SceneStage.makeFloor())
+        let floorNode = SceneStage.makeFloor()
+        scene.rootNode.addChildNode(floorNode)
         scene.rootNode.addChildNode(SceneStage.makeGrid())
+
+        // 라이브 튜닝 핸들 — 조명/IBL/바닥 참조 보관.
+        stageHandle = SceneStage.StageHandle(
+            keyLight: lights.key, rimLight: lights.rim,
+            floorMaterial: floorNode.geometry?.firstMaterial, scene: scene)
 
         axesNode = SceneStage.makeAxes()
         scene.rootNode.addChildNode(axesNode)
@@ -168,6 +177,14 @@ public final class RobotSceneCoordinator {
 
     func applyAxesVisible(_ visible: Bool) {
         axesNode.isHidden = !visible
+    }
+
+    /// 라이브 튜닝값(SceneTuning.shared)을 조명/IBL/바닥 + 모든 카테고리 머티리얼에 적용.
+    /// `RobotScene3D.make/updateNSView` 에서 호출(패널 슬라이더 변경 → body 재평가 경유).
+    func applyTuning() {
+        let t = SceneTuning.shared
+        SceneStage.apply(t, to: stageHandle)
+        RigMaterials.applyTuning(t)
     }
 
     /// **v1.11.18 (2026-05-19)**: IMU 기반 robot tilt 적용.

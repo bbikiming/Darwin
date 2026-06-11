@@ -30,6 +30,10 @@ public struct Robot3DViewport<TopLeading: View, BottomLeading: View>: View {
     public let topLeading: () -> TopLeading
     public let bottomLeading: () -> BottomLeading
 
+    /// 조명·머티리얼 라이브 튜닝 — 패널 슬라이더 변경 시 body 재평가 → 씬 갱신.
+    @ObservedObject private var tuning = SceneTuning.shared
+    @State private var showTuning = false
+
     public init(
         pose: RobotPose,
         footTrace: [SIMD3<Double>] = [],
@@ -86,6 +90,27 @@ public struct Robot3DViewport<TopLeading: View, BottomLeading: View>: View {
             bottomLeading()
                 .padding(DFSpace.md)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+
+            // 5. 하단 우측 — 조명·머티리얼 튜닝 패널 + 토글 버튼.
+            VStack(alignment: .trailing, spacing: DFSpace.xs) {
+                if showTuning {
+                    SceneTuningPanel(isPresented: $showTuning)
+                }
+                Button {
+                    showTuning.toggle()
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(DFFont.caption.bold())
+                        .foregroundStyle(showTuning ? DFColor.accent : DFColor.textPrimary)
+                        .padding(8)
+                        .background(.regularMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help("조명·머티리얼 튜닝")
+            }
+            .padding(DFSpace.md)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
     }
 }
