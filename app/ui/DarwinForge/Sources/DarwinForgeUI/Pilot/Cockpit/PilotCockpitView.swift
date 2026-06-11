@@ -1165,26 +1165,20 @@ public struct PilotCockpitView: View {
         lastHeadWriteAt = now
         let panRawU16 = UInt16(clamping: panRaw)
         let tiltRawU16 = UInt16(clamping: tiltRaw)
-        do {
-            if freshSession {
-                try store.writeJointMovingSpeed(
-                    .headPan,
-                    speed: CockpitHeadKinematics.movingSpeedUnits(
-                        forRateDegPerSec: CockpitHeadKinematics.panRateDegPerSec))
-                try store.writeJointMovingSpeed(
-                    .headTilt,
-                    speed: CockpitHeadKinematics.movingSpeedUnits(
-                        forRateDegPerSec: CockpitHeadKinematics.tiltRateDegPerSec))
-            }
-            _ = try store.writeJointPosition(.headPan, raw: panRawU16)
-            _ = try store.writeJointPosition(.headTilt, raw: tiltRawU16)
-            recorder?.logEvent(
-                .headMove,
-                detail: "pan=\(Int(cockpit.headPanDeg)) tilt=\(Int(cockpit.headTiltDeg))")
-        } catch {
-            recorder?.logEvent(.headMove,
-                               detail: "write-failed: \(error.localizedDescription)")
-        }
+        // **J2 (2026-06-11)**: 동기 4왕복(speed×2 + position×2) → 코얼레싱 detached
+        // SYNC_WRITE(1패킷). dxlPower 게이트·E-STOP·실패 회계는 writeHeadPose 내부.
+        // freshSession 일 때만 moving speed 1회 설정(연속 조종 중 재설정 안 함).
+        let panSpeed: UInt16? = freshSession
+            ? CockpitHeadKinematics.movingSpeedUnits(forRateDegPerSec: CockpitHeadKinematics.panRateDegPerSec)
+            : nil
+        let tiltSpeed: UInt16? = freshSession
+            ? CockpitHeadKinematics.movingSpeedUnits(forRateDegPerSec: CockpitHeadKinematics.tiltRateDegPerSec)
+            : nil
+        store.writeHeadPose(panRaw: panRawU16, tiltRaw: tiltRawU16,
+                            panSpeed: panSpeed, tiltSpeed: tiltSpeed)
+        recorder?.logEvent(
+            .headMove,
+            detail: "pan=\(Int(cockpit.headPanDeg)) tilt=\(Int(cockpit.headTiltDeg))")
     }
 
     // MARK: - Real motor dispatch

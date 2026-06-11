@@ -2064,6 +2064,61 @@ public final class ConnectionStore: ObservableObject {
         try bus.setMovingSpeed(joint, speed: speed)
     }
 
+    /// **J2 (2026-06-11)** — 머리 pan/tilt 를 코얼레싱 detached SYNC_WRITE 로 송출.
+    ///
+    /// 종전 머리 조종 hot-path 는 MainActor 에서 동기 4왕복(speed×2 + position×2)을
+    /// 돌아 30Hz 입력마다 메인스레드를 정지시켰다. 본 메서드는
+    ///   (a) headPan/headTilt position 을 `setPositions` 1패킷(SYNC_WRITE)으로 묶고,
+    ///   (b) 직전 미완 머리 write 를 cancel 해 stale 명령을 버리며(latest-wins),
+    ///   (c) 실제 bus I/O 를 `Task.detached` 로 빼 MainActor 정지를 없앤다.
+    /// 50ms throttle·보행 중 pendingHead 분기는 호출처(PilotCockpitView)가 유지한다.
+    ///
+    /// dxlPower 게이트는 position write 와 동일 — OFF 시 즉시 E-STOP(silent-fail 방지).
+    /// 게이트는 spawn *전* MainActor 에서 평가하므로 detached 경로는 게이트 통과분만 실행.
+    ///
+    /// `panSpeed`/`tiltSpeed` 는 freshSession(첫 write/1s+ 휴지) 일 때만 non-nil — 모터가
+    /// 목표각을 일정 rate 로 부드럽게 추종(stop-and-go 제거)하게 한다. 연속 조종 중엔 nil.
+    public func writeHeadPose(panRaw: UInt16, tiltRaw: UInt16,
+                              panSpeed: UInt16?, tiltSpeed: UInt16?) {
+        guard isDxlPowerOn, let bus else {
+            // position write 와 동일한 dxlPower 게이트 — OFF 시 E-STOP.
+            harness.record(
+                .busWriteFail, level: .error, actor: .system,
+                data: ["reason": AnyCodable("dxlPower OFF — head write 차단"),
+                       "joint": AnyCodable("head")],
+                context: harnessContext()
+            )
+            emergencyStop()
+            return
+        }
+        // 코얼레싱 — 직전 미완 머리 write 취소(latest-wins). 같은 MainActor 에서만
+        // 접근하므로 race 없음.
+        headDispatchTask?.cancel()
+        headDispatchTask = Task.detached(priority: .userInitiated) { [weak self] in
+            if Task.isCancelled { return }
+            do {
+                if let panSpeed { try bus.setMovingSpeed(.headPan, speed: panSpeed) }
+                if let tiltSpeed { try bus.setMovingSpeed(.headTilt, speed: tiltSpeed) }
+                if Task.isCancelled { return }
+                try bus.setPositions([(.headPan, panRaw), (.headTilt, tiltRaw)])
+            } catch {
+                // hot-path 실패 — 진단 trail + 실패 카운터(walk 와 동일 회계).
+                DFLog.connection.warning(
+                    "writeHeadPose 실패 error=\(error.localizedDescription, privacy: .public)")
+                await self?._bumpBusWriteFailureCount()
+            }
+        }
+    }
+
+    /// J2 — 코얼레싱 머리 write 의 in-flight 핸들. 새 write 가 직전 미완을 cancel.
+    private var headDispatchTask: Task<Void, Never>?
+
+    #if DEBUG
+    /// **테스트용 hook** — detached 머리 write 완료 대기. coalesce/SYNC_WRITE 검증용.
+    /// `#if DEBUG` gate — release binary 에서 symbol 제거.
+    internal func _testAwaitHeadDispatch() async { await headDispatchTask?.value }
+    #endif
+
     // MARK: - 로봇 복구 (E-stop 이후 액추에이터 재활성)
 
     /// 복구 진행 여부 — UI 가 spinner 로 표시.
