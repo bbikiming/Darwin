@@ -43,6 +43,35 @@ public struct PilotDiagnosticsPanel: View {
                 if let recovery = store.lastRecoveryResult, !recovery.isEmpty {
                     recoveryRow(recovery)
                 }
+                busLatencyRow
+            }
+        }
+    }
+
+    /// **bus D0 계측 HUD (1Hz)** — `df.latency.busTracer` 활성 시에만 노출.
+    /// TimelineView 라 패널이 보일 때만 틱(자체 타이머 누수 없음).
+    @ViewBuilder
+    private var busLatencyRow: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            if let summary = PilotLatencyTracer.shared.hudSummary() {
+                Divider().background(DFColor.textSecondary.opacity(DFOpacity.o15))
+                HStack(alignment: .top, spacing: DFSpace.sm) {
+                    Image(systemName: "timer")
+                        .font(.system(size: DFFontSize.s14, weight: .semibold))
+                        .foregroundStyle(DFColor.accent)
+                        .frame(width: 18)
+                    VStack(alignment: .leading, spacing: DFSpace.none) {
+                        Text("직결 케이던스")
+                            .font(DFFont.caption)
+                            .foregroundStyle(DFColor.textSecondary)
+                        Text(summary)
+                            .font(DFFont.bodyEmph.monospaced())
+                            .foregroundStyle(DFColor.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    Spacer(minLength: 0)
+                }
             }
         }
     }

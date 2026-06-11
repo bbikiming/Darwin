@@ -18,6 +18,24 @@ pub struct PosixSerial {
 
 impl PosixSerial {
     /// 기본 1 Mbps로 open. timeout은 read_exact가 매번 전달.
+    ///
+    /// **J13 (bus D0)**: macOS 에선 `TTYPort` 를 직접 열어 raw fd 를 얻은 뒤
+    /// `IOSSDATALAT` ioctl 로 FTDI latency timer 를 1ms 로 낮춘다(기본 16ms 버퍼링이
+    /// 모든 status 왕복에 가산 — USB 직결 IMU 50Hz 의 전제). 미지원 어댑터는 no-op.
+    #[cfg(target_os = "macos")]
+    pub fn open(path: &str, baud: u32) -> Result<Self> {
+        use std::os::unix::io::AsRawFd;
+        let tty = serialport::TTYPort::open(&builder(path, baud))
+            .map_err(|e| Error::Other(format!("open {}: {}", path, e)))?;
+        set_data_latency(tty.as_raw_fd(), 1);
+        Ok(Self {
+            inner: Box::new(tty),
+            path: path.to_string(),
+        })
+    }
+
+    /// 기본 1 Mbps로 open. timeout은 read_exact가 매번 전달.
+    #[cfg(not(target_os = "macos"))]
     pub fn open(path: &str, baud: u32) -> Result<Self> {
         let inner = builder(path, baud)
             .open()
@@ -53,6 +71,46 @@ fn builder(path: &str, baud: u32) -> SerialPortBuilder {
         .parity(serialport::Parity::None)
         .stop_bits(serialport::StopBits::One)
         .flow_control(serialport::FlowControl::None)
+}
+
+/// macOS `IOSSDATALAT` = `_IOW('T', 0, unsigned long)`.
+///
+/// `_IOW(g, n, t)` = `IOC_IN | ((sizeof(t) & IOCPARM_MASK) << 16) | (g << 8) | n`.
+/// LP64 에서 `sizeof(unsigned long) == 8` → `0x8000_0000 | (8 << 16) | ('T' << 8) | 0`.
+/// (`<IOKit/serial/ioss.h>`)
+#[cfg(target_os = "macos")]
+const IOSSDATALAT: libc::c_ulong = 0x8008_5400;
+
+/// FTDI latency timer 를 `latency_ms` (보통 1ms) 로 설정. best-effort —
+/// 미지원 어댑터(비-FTDI 등)는 ioctl 이 -1 을 반환하지만 16ms 기본값을 유지한 채
+/// 조용히 no-op 한다(시리얼 동작 자체엔 무해).
+#[cfg(target_os = "macos")]
+fn set_data_latency(fd: std::os::unix::io::RawFd, latency_ms: libc::c_ulong) {
+    let value: libc::c_ulong = latency_ms;
+    // SAFETY: `fd` 는 방금 연 유효한 직렬 포트 디스크립터이며, IOSSDATALAT 는
+    // `unsigned long` 한 개를 가리키는 포인터를 받는다(_IOW 의 in-arg). 실패 시 -1.
+    let _ = unsafe { libc::ioctl(fd, IOSSDATALAT, &value as *const libc::c_ulong) };
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod posix_tests {
+    use super::*;
+
+    #[test]
+    fn iossdatalat_matches_iow_formula() {
+        // _IOW('T', 0, unsigned long), LP64.
+        const IOC_IN: libc::c_ulong = 0x8000_0000;
+        let group = b'T' as libc::c_ulong;
+        let size = std::mem::size_of::<libc::c_ulong>() as libc::c_ulong; // 8
+        let expected = IOC_IN | ((size & 0x1fff) << 16) | (group << 8);
+        assert_eq!(expected, IOSSDATALAT);
+    }
+
+    #[test]
+    fn set_data_latency_on_invalid_fd_is_noop() {
+        // 잘못된 fd 에도 panic 없이 반환(ioctl 은 -1/EBADF).
+        set_data_latency(-1, 1);
+    }
 }
 
 impl SerialPort for PosixSerial {

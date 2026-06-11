@@ -23,5 +23,10 @@ serde_json.workspace = true
 tracing.workspace   = true
 serialport = { version = "4.7", default-features = false }
 
+# J13 (bus D0): macOS IOSSDATALAT ioctl 로 FTDI latency timer 16ms→1ms.
+# macOS 전용 — 다른 플랫폼에선 미사용이므로 target-specific dependency.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tracing-subscriber.workspace = true

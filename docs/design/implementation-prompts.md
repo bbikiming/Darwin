@@ -112,7 +112,7 @@ swift test(serial) 증거 제시. ssh-parity-contract.md 개정 동일 커밋. �
 정착 시간 ≥30% 단축 확인)는 멈추고 사용자 보고. README 현황 갱신.
 ```
 
-## [ ] P5 — bus D0: J4 deadline + J13 FTDI + 계측 · 독립·즉시
+## [x] P5 — bus D0: J4 deadline + J13 FTDI + 계측 · 독립·즉시 ✅ (2026-06-11)
 
 ```
 docs/design/bus-direct-teleop-upgrade.md 의 Wave D0 을 구현해줘.
