@@ -98,7 +98,8 @@ struct MotionStudioCanvas: View {
                 pageMetaBadge
             }
             .padding(DFSpace.md)
-            ViewportControls(camera: camera)
+            // **W4**: Motion 도 시네마틱(DOF) 토글 노출.
+            ViewportControls(camera: camera, showCinematic: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topTrailing)
         }

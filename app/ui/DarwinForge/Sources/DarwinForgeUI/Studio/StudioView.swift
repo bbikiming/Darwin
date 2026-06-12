@@ -357,7 +357,8 @@ public struct StudioView: View {
                 .padding(DFSpace.md)
 
             // 공통 ViewportControls — Studio/TeachMode/WalkLab/MotionStudio 모두 동일 UI.
-            ViewportControls(camera: camera)
+            // **W4**: Studio 는 시네마틱(DOF) 토글 노출.
+            ViewportControls(camera: camera, showCinematic: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topTrailing)
 

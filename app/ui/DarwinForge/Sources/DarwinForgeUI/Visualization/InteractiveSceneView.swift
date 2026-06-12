@@ -89,6 +89,34 @@ public final class InteractiveSceneView: SCNView {
     private let inertiaDecay: CGFloat = 0.88  // 매 프레임 감속
     private let velocityCutoff: CGFloat = 0.0005
 
+    /// **W4 (2026-06-12)** — ViewCube/Home 프리셋 전환용 별도 smoothing.
+    /// 기존 0.32 보다 느긋(0.18)해 "툭 끊기는 점프" 대신 부드러운 호를 그린다.
+    /// 60fps × 0.18 이면 ~24프레임(≈0.4s) 안에 시각적으로 도달(잔차 <1.5°).
+    private let transitionSmoothing: CGFloat = 0.18
+
+    /// 프로그램적 프리셋 전환 진행 플래그. `true` 동안 tick 은 `transitionSmoothing`
+    /// 으로 보간하고, 도달(epsilon) 시 해제한다. drag/scroll 같은 사용자 입력은
+    /// 즉시 일반 `smoothing` 으로 복귀(전환 인터럽트).
+    private var isTransitioning = false
+
+    /// **W4 (2026-06-12)** — 턴테이블 자동 회전 (rad/s, 기본 0=off).
+    /// `> 0` 이면 tick 마다 `desiredAzimuth` 를 rate/60 만큼 증가시켜 모델을
+    /// 천천히 회전시킨다. **idle CPU 계약 예외**: 사용자가 명시적으로 켰을 때만
+    /// 연속 tick 이 도므로 `isFullyIdle` 가 `!= 0` 을 반드시 검사한다(아래).
+    /// (Timer 는 항상 60Hz 로 살아있고 `isFullyIdle` 가 body 를 게이트하므로 별도
+    /// 재시작이 필요 없다 — `!= 0` 이면 다음 tick 부터 자동으로 body 가 돈다.)
+    public var turntableRadPerSec: CGFloat = 0
+
+    /// **W4 (2026-06-12)** — DOF(피사계 심도) 시네마틱 토글 (기본 off, 옵트인).
+    /// Studio/Motion 의 "시네마틱" 토글에서만 켜며, **헤드리스 스냅샷 renderer 에는
+    /// 미적용**(`renderImage` 는 `InteractiveSceneView` 를 만들지 않으므로 자동 제외 —
+    /// 스냅샷 결정성 보존). 초점거리는 tick 에서 카메라-타깃 거리로 갱신.
+    public var depthOfFieldEnabled: Bool = false {
+        didSet {
+            if depthOfFieldEnabled != oldValue { applyDepthOfFieldState() }
+        }
+    }
+
     /// 줌 한계.
     public var minDistance: CGFloat = 0.20
     public var maxDistance: CGFloat = 5.00
@@ -200,6 +228,8 @@ public final class InteractiveSceneView: SCNView {
     private func beginDrag(at point: NSPoint) {
         lastDragLocation = point
         window?.makeFirstResponder(self)
+        // **W4**: 사용자 입력이 프로그램적 전환을 인터럽트 → 일반 smoothing 복귀.
+        isTransitioning = false
         // 드래그 시작 시 inertia 차단.
         azVelocity = 0
         elVelocity = 0
@@ -241,6 +271,7 @@ public final class InteractiveSceneView: SCNView {
             : zoomSensitivity
         // 반전: 위로 스크롤 → 줌 아웃 (멀어짐), 아래로 → 줌 인 (가까워짐).
         let scale = exp(raw * factor)
+        isTransitioning = false        // **W4**: zoom 입력도 전환 인터럽트.
         desiredDistance = clampDistance(desiredDistance * scale)
         let velContribution: CGFloat = event.hasPreciseScrollingDeltas ? 0.15 : 0.50
         distVelocity = (distVelocity + (1 - scale)) * velContribution
@@ -304,7 +335,12 @@ public final class InteractiveSceneView: SCNView {
     /// 작동했으나 fragile — cutoff 변경 또는 외부 desired-set 시 영구 non-idle 위험.
     /// 신규: epsilon = cutoff (0.0008) 와 일관. 동일 효과 + 방어적.
     private static let idleEpsilon: CGFloat = 0.0008
-    private var isFullyIdle: Bool {
+    /// **W4 (2026-06-12)**: 턴테이블이 켜져 있으면 절대 idle 이 아니다 — `desiredAzimuth`
+    /// 를 매 tick 증가시켜야 하므로 idle skip 과 정면 충돌. **반드시** 이 조건 선행.
+    /// (테스트 가시성 위해 `internal` — `InteractiveSceneViewBehaviorTests` 에서 검증.)
+    var isFullyIdle: Bool {
+        guard turntableRadPerSec == 0 else { return false }
+        guard !isTransitioning else { return false }
         guard !isDragging else { return false }
         guard abs(azVelocity) < Self.idleEpsilon,
               abs(elVelocity) < Self.idleEpsilon,
@@ -339,6 +375,12 @@ public final class InteractiveSceneView: SCNView {
             }
         }
 
+        // 0.5) **W4 턴테이블** — 켜져 있으면 매 tick desiredAzimuth 를 한 스텝 회전.
+        // 60Hz 기준 rate/60. 누적이라 사용자 orbit 입력과 자연스럽게 합산된다.
+        if turntableRadPerSec != 0 {
+            desiredAzimuth += turntableRadPerSec / 60.0
+        }
+
         // 1) Inertia — 드래그 중이 아니면 마지막 속도를 desired에 적용 후 감속.
         if !isDragging {
             desiredAzimuth   += azVelocity
@@ -369,11 +411,13 @@ public final class InteractiveSceneView: SCNView {
 
         // 2) Smoothing — applied state가 desired에 점진 접근.
         //    Cutoff: lerp이 아주 가까워지면 정확히 desired로 snap (무한 접근 방지).
-        azimuth   = lerp(azimuth, desiredAzimuth, smoothing)
+        //    **W4**: 프로그램적 프리셋 전환 중에는 느긋한 `transitionSmoothing` 사용.
+        let s = isTransitioning ? transitionSmoothing : smoothing
+        azimuth   = lerp(azimuth, desiredAzimuth, s)
         if abs(desiredAzimuth - azimuth) < 0.0008 { azimuth = desiredAzimuth }
-        elevation = lerp(elevation, desiredElevation, smoothing)
+        elevation = lerp(elevation, desiredElevation, s)
         if abs(desiredElevation - elevation) < 0.0008 { elevation = desiredElevation }
-        distance  = lerp(distance, desiredDistance, smoothing)
+        distance  = lerp(distance, desiredDistance, s)
         if abs(desiredDistance - distance) < 0.0008 { distance = desiredDistance }
         let tdx = desiredTarget.x - target.x
         let tdy = desiredTarget.y - target.y
@@ -382,13 +426,24 @@ public final class InteractiveSceneView: SCNView {
             target = desiredTarget
         } else {
             target = SCNVector3(
-                lerp(target.x, desiredTarget.x, smoothing),
-                lerp(target.y, desiredTarget.y, smoothing),
-                lerp(target.z, desiredTarget.z, smoothing)
+                lerp(target.x, desiredTarget.x, s),
+                lerp(target.y, desiredTarget.y, s),
+                lerp(target.z, desiredTarget.z, s)
             )
         }
 
+        // **W4**: 전환이 도달하면 플래그 해제 → 다음 사용자 입력은 일반 smoothing.
+        if isTransitioning,
+           azimuth == desiredAzimuth, elevation == desiredElevation,
+           distance == desiredDistance, target.x == desiredTarget.x,
+           target.y == desiredTarget.y, target.z == desiredTarget.z {
+            isTransitioning = false
+        }
+
         applyCameraInternal()
+
+        // **W4 DOF**: 초점거리 = 카메라-타깃 거리. 켜져 있을 때만 갱신.
+        if depthOfFieldEnabled { updateFocusDistance() }
     }
 
     // MARK: - Camera apply
@@ -415,14 +470,16 @@ public final class InteractiveSceneView: SCNView {
         cam.look(at: target)
     }
 
-    /// 정면 기본 view로 *즉시* 복귀. 사용자 요청: 버튼 누르면 절대값.
+    /// 정면 기본 view로 부드럽게 복귀.
+    /// **W4 (2026-06-12)**: 종전 `instant: true` 점프 → ease 전환(`transitionSmoothing`).
+    /// 롤백이 필요하면 `instant: true` 한 줄로 복원 가능.
     public func resetCamera() {
         transitionTo(
             azimuth: Self.defaultAzimuth,
             elevation: Self.defaultElevation,
             distance: Self.defaultDistance,
             target: Self.defaultTarget,
-            instant: true
+            instant: false
         )
     }
 
@@ -437,8 +494,10 @@ public final class InteractiveSceneView: SCNView {
                               distance: CGFloat? = nil,
                               target: SCNVector3? = nil,
                               instant: Bool = false) {
-        // 절대값으로 desired 설정.
-        desiredAzimuth = azimuth
+        // **W4 최단경로 보정**: azimuth 를 절대값으로 대입하면 현재값과 목표값이
+        // 2π 경계를 사이에 둘 때 카메라가 한 바퀴 가까이 도는 케이스가 생긴다.
+        // 현재 applied azimuth 기준 최단 delta 를 더해 desired 를 잡는다.
+        desiredAzimuth = self.azimuth + shortestAngleDelta(from: self.azimuth, to: azimuth)
         desiredElevation = clampElevation(elevation)
         if let d = distance { desiredDistance = clampDistance(d) }
         if let t = target { desiredTarget = t }
@@ -447,23 +506,28 @@ public final class InteractiveSceneView: SCNView {
         panVelocity = SCNVector3(0, 0, 0)
 
         if instant {
-            // 사용자 요청: 버튼 누르면 절대값으로 즉시 이동. lerp 우회.
+            // 롤백 경로: 절대값으로 즉시 이동. lerp 우회.
+            isTransitioning = false
             self.azimuth = desiredAzimuth
             self.elevation = desiredElevation
             self.distance = desiredDistance
             self.target = desiredTarget
             applyCameraInternal()
+        } else {
+            // **W4**: 부드러운 호 전환. tick 이 transitionSmoothing 으로 보간.
+            isTransitioning = true
         }
     }
 
-    /// ViewCube의 6 face + isometric preset으로 *즉시* 전환.
+    /// ViewCube의 6 face + isometric preset으로 부드럽게 전환.
+    /// **W4 (2026-06-12)**: 종전 `instant: true` 점프 → ease 전환. 롤백은 1줄.
     public func goToFace(_ face: CameraFace) {
         transitionTo(
             azimuth: face.azimuth,
             elevation: face.elevation,
             distance: Self.defaultDistance,
             target: Self.defaultTarget,
-            instant: true                  // 절대값 즉시 jump
+            instant: false
         )
     }
 
@@ -487,6 +551,24 @@ public final class InteractiveSceneView: SCNView {
     @inline(__always)
     private func clampDistance(_ v: CGFloat) -> CGFloat {
         max(minDistance, min(maxDistance, v))
+    }
+
+    // MARK: - DOF (W4 시네마틱)
+
+    /// DOF on/off 토글 시 카메라 플래그 일괄 적용. 초점거리는 즉시 1회 갱신.
+    private func applyDepthOfFieldState() {
+        guard let cam = pointOfView?.camera else { return }
+        cam.wantsDepthOfField = depthOfFieldEnabled
+        if depthOfFieldEnabled {
+            cam.fStop = 5.6
+            cam.apertureBladeCount = 6
+            updateFocusDistance()
+        }
+    }
+
+    /// 초점거리 = 현재 카메라-타깃 거리. tick + 토글 시점에 호출.
+    private func updateFocusDistance() {
+        pointOfView?.camera?.focusDistance = distance
     }
 }
 

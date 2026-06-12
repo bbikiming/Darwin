@@ -12,7 +12,7 @@ import SceneKit
 /// 출처:
 /// - `vendor/robotis-op2-common/urdf/robotis_op2.structure.{leg,arm,head}.xacro`
 /// - `vendor/robotis-op2-common/meshes/*.stl` (Apache 2.0)
-final class MeshRig {
+final class MeshRig: RigSkeleton {
 
     let root: SCNNode
 
@@ -22,6 +22,14 @@ final class MeshRig {
     private var meshes: [JointID: SCNNode] = [:]
     private var allMeshNodes: [SCNNode] = []
     private var originalEmissions: [ObjectIdentifier: NSColor] = [:]
+    /// **W3**: 발 anchor(ank_roll) — 지지 다각형·FSR 접지 worldTransform 원천.
+    private var footNodes: [FootSide: SCNNode] = [:]
+
+    // MARK: emission 채널 (W3) — highlight 와 한계 경고가 같은 채널 공유.
+    /// 현재 highlight 된 선택 관절(highlight 채널).
+    private var highlightedJoint: JointID?
+    /// 관절별 한계 경고 상태(warn 채널) — .warn85/.warn95 만 보관.
+    private var warnStates: [JointID: EmissionState] = [:]
 
     /// **사이클 125 (audit #19/#36, P1/P2)**: 개별 STL 로드 실패 카운트. 호출자 (Robot3DViewport)
     /// 가 본 count 를 구독 → ≥1 이면 사용자에게 "일부 mesh 실패 (plain cube fallback)" overlay.
@@ -64,15 +72,54 @@ final class MeshRig {
         }
     }
 
+    /// **W3**: 선택 관절 highlight. emission 채널을 직접 쓰지 않고 우선순위 합성을
+    /// 경유 — 한계 경고(warn85/warn95)가 켜진 관절은 highlight 가 덮어쓰지 않는다.
     func highlight(_ joint: JointID?) {
-        for n in allMeshNodes {
-            let key = ObjectIdentifier(n)
-            n.geometry?.firstMaterial?.emission.contents =
-                originalEmissions[key] ?? NSColor.black
+        let prev = highlightedJoint
+        highlightedJoint = joint
+        if let p = prev { refreshEmission(p) }
+        if let j = joint { refreshEmission(j) }
+    }
+
+    // MARK: - RigSkeleton (W3)
+
+    var rootNode: SCNNode { root }
+
+    func jointAnchor(_ joint: JointID) -> SCNNode? { joints[joint] }
+
+    func linkWorldPosition(_ joint: JointID) -> SCNVector3? {
+        joints[joint]?.worldPosition
+    }
+
+    func footNode(_ side: FootSide) -> SCNNode? { footNodes[side] }
+
+    func jointAxisDirection(_ joint: JointID) -> SCNVector3? { jointAxes[joint] }
+
+    /// 한계 경고(warn) 채널 갱신 — highlight 채널은 `highlight(_:)` 소유.
+    /// `.highlight` 입력은 무시(설계: highlight 는 별도 경로). `.none` 은 warn 해제.
+    func setEmissionState(_ joint: JointID, _ state: EmissionState) {
+        guard state != .highlight else { return }
+        if state == .none {
+            warnStates[joint] = nil
+        } else {
+            warnStates[joint] = state
         }
-        guard let j = joint, let mesh = meshes[j] else { return }
+        refreshEmission(joint)
+    }
+
+    /// 관절의 최종 emission 상태 = warn(95>85) > highlight > none.
+    private func resolvedEmission(_ joint: JointID) -> EmissionState {
+        if let w = warnStates[joint] { return w }
+        if joint == highlightedJoint { return .highlight }
+        return .none
+    }
+
+    /// 합성 결과를 실제 mesh emission 에 반영. 원래 색은 originalEmissions 캐시.
+    private func refreshEmission(_ joint: JointID) {
+        guard let mesh = meshes[joint] else { return }
+        let key = ObjectIdentifier(mesh)
         mesh.geometry?.firstMaterial?.emission.contents =
-            NSColor.systemOrange.withAlphaComponent(0.55)
+            resolvedEmission(joint).emissionColor ?? originalEmissions[key] ?? NSColor.black
     }
 
     // MARK: - Build
@@ -107,6 +154,7 @@ final class MeshRig {
                          meshRPY: SCNVector3(0, Float.pi, Float.pi / 2),
                          linkID: .headTilt,
                          applyDefaultZRotation: false)
+        attachHeadDetails(to: headTiltAnchor)
 
         // ── 좌측 팔
         try buildArm(side: .left, body: body)
@@ -211,6 +259,82 @@ final class MeshRig {
         // l_ank_roll origin (0,0,0) — URDF
         ankPitchAnchor.addChildNode(ankRollAnchor)
         attachVisualMesh(named: "\(prefix)_foot", to: ankRollAnchor, linkID: nil)
+        // **W3**: 발 anchor 기록 — 지지 다각형·FSR 접지 오버레이의 worldTransform 원천.
+        footNodes[side == .left ? .left : .right] = ankRollAnchor
+    }
+
+    // MARK: - Head details (W4)
+
+    /// **W4 (2026-06-12)**: 프리미티브 rig(`DarwinOP2Rig`)에만 있던 얼굴 디테일을
+    /// STL 머리에도 이식 — 보라 LED 눈 2개(디스크, emission 0.85) + 이마 카메라 +
+    /// 정수리 녹색 LED.
+    ///
+    /// 좌표계: `head_tilt` anchor 는 URDF frame(+X=정면, +Y=좌, +Z=위)을 따른다.
+    /// 따라서 눈은 +X(앞)·±Y(좌우)·소량 +Z(위)에 놓이고, 디스크의 평면이 +X 를
+    /// 향하도록 실린더 축을 Z 기준 π/2 회전한다.
+    ///
+    /// STL head 는 URDF frame 이라 프리미티브 좌표를 직접 쓸 수 없어 아래 상수는
+    /// **초기 튜닝값**이다. 최종 위치는 .app 번들 클로즈업 스냅샷으로 미세 조정한다
+    /// (swift test 헤드리스 환경은 STL 미로드 → 폴백 rig 렌더라 이 디테일이 보이지
+    /// 않는다 — 알려진 제약, `headless-snapshot-robot-invisible`).
+    private func attachHeadDetails(to head: SCNNode) {
+        // 튜닝 상수 (URDF m). forward=+X, lateral=±Y, up=+Z.
+        let eyeForward: CGFloat = 0.048
+        let eyeLateral: CGFloat = 0.021
+        let eyeUp: CGFloat = 0.015
+
+        addEyeDisc(to: head, x: eyeForward, y:  eyeLateral, z: eyeUp)
+        addEyeDisc(to: head, x: eyeForward, y: -eyeLateral, z: eyeUp)
+
+        // 이마 카메라 — 눈 사이 위쪽, 앞으로 약간 돌출.
+        let camGeom = SCNCylinder(radius: 0.005, height: 0.006)
+        let camMat = SCNMaterial()
+        camMat.diffuse.contents = DarwinOP2Rig.eyePupil
+        camMat.specular.contents = NSColor.white.withAlphaComponent(0.7)
+        camMat.shininess = 80
+        camGeom.firstMaterial = camMat
+        let camNode = SCNNode(geometry: camGeom)
+        // 실린더 축(Y) → +X(정면) 향하게 Z 기준 π/2 회전.
+        camNode.eulerAngles = SCNVector3(0, 0, Float.pi / 2)
+        camNode.position = SCNVector3(eyeForward + 0.002, 0, eyeUp + 0.020)
+        head.addChildNode(camNode)
+
+        // 정수리 녹색 LED.
+        let ledGeom = SCNSphere(radius: 0.0048)
+        let ledMat = SCNMaterial()
+        ledMat.diffuse.contents = DarwinOP2Rig.ledGreen
+        ledMat.emission.contents = DarwinOP2Rig.ledGreen
+        ledMat.lightingModel = .constant
+        ledGeom.firstMaterial = ledMat
+        let ledNode = SCNNode(geometry: ledGeom)
+        ledNode.position = SCNVector3(0.012, 0, eyeUp + 0.044)
+        head.addChildNode(ledNode)
+    }
+
+    /// 보라 LED 눈 디스크(앞면 +X) + 검은 동공.
+    private func addEyeDisc(to head: SCNNode, x: CGFloat, y: CGFloat, z: CGFloat) {
+        let outer = SCNCylinder(radius: 0.012, height: 0.005)
+        let outerMat = SCNMaterial()
+        outerMat.diffuse.contents = DarwinOP2Rig.eyePurple
+        outerMat.emission.contents = DarwinOP2Rig.eyePurple.withAlphaComponent(0.85)
+        outerMat.specular.contents = NSColor.white.withAlphaComponent(0.5)
+        outerMat.shininess = 30
+        outerMat.lightingModel = .blinn
+        outer.firstMaterial = outerMat
+        let outerNode = SCNNode(geometry: outer)
+        outerNode.eulerAngles = SCNVector3(0, 0, Float.pi / 2)   // 디스크 평면 → +X
+        outerNode.position = SCNVector3(x, y, z)
+        head.addChildNode(outerNode)
+
+        let pupil = SCNSphere(radius: 0.005)
+        let pupilMat = SCNMaterial()
+        pupilMat.diffuse.contents = DarwinOP2Rig.eyePupil
+        pupilMat.specular.contents = NSColor.white.withAlphaComponent(0.9)
+        pupilMat.shininess = 90
+        pupil.firstMaterial = pupilMat
+        let pupilNode = SCNNode(geometry: pupil)
+        pupilNode.position = SCNVector3(x + 0.0035, y, z)
+        head.addChildNode(pupilNode)
     }
 
     // MARK: - Helpers

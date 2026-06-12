@@ -8,67 +8,32 @@ import SwiftUI
 /// so we only mutate its local `position` along the Z axis (camera-to-robot
 /// distance). Roll/yaw/pitch follow the anchor automatically.
 public final class CockpitChaseSCNView: SCNView {
-    /// Camera node — child of `rigAnchor` in Coordinator.
-    public weak var cameraNode: SCNNode?
-
-    /// Distance limits — robot is ~0.45 m tall, so 0.6 m min keeps the robot
-    /// fully framed without clipping into the mesh, and 4.0 m max keeps the
-    /// scene readable even on small windows.
-    public var minDistance: CGFloat = 0.6
-    public var maxDistance: CGFloat = 4.0
-
-    /// 고정된 chase camera 높이 (m). zoom 시 변하지 않아 robot 등 뒤 시점 안정.
-    private let chaseHeight: CGFloat = 0.95
-    /// 고정 look-at target (robot 의 가슴 높이).
-    private let chaseTarget = SCNVector3(0, 0.30, 0)
+    /// **W4 (2026-06-12)**: zoom 입력은 더 이상 카메라 노드를 직접 만지지 않고
+    /// 체이스 follower 의 `distance` 를 조정한다(카메라는 이제 scene root 직속이며
+    /// 렌더 델리게이트가 위치를 lerp 추종). coordinator 가 follower 를 소유.
+    public weak var coordinator: CockpitChaseSceneView.Coordinator?
 
     public override func scrollWheel(with event: NSEvent) {
-        guard let cam = cameraNode else { return super.scrollWheel(with: event) }
+        guard let coordinator else { return super.scrollWheel(with: event) }
 
         // **방법론 (Apple HIG + SceneKit best practice)**:
         //   - 트랙패드: hasPreciseScrollingDeltas == true, deltaY 가 작고 정밀.
         //   - 마우스 휠: hasPreciseScrollingDeltas == false, deltaY 가 큰 step.
-        // 두 input 의 scale 을 분리해 양쪽 모두 매끄럽게 zoom.
         let raw = event.scrollingDeltaY
-        let delta: CGFloat = event.hasPreciseScrollingDeltas
-            ? -raw * 0.008
-            : -raw * 0.06
-        // 한 frame 의 변화량을 ±0.4m 로 limit — 트랙패드 inertial flick 으로 카메라가
-        // 한순간에 튀어 chase 가 부자연스러워지는 현상 차단.
-        let clampedDelta = max(-0.4, min(0.4, delta))
-
-        var pos = cam.position
-        let newZ = (CGFloat(pos.z) - clampedDelta)
-            .clamped(to: -maxDistance ... -minDistance)
-        // **카메라 등 뒤 고정 invariant**: x/y 는 절대 변경하지 않아 chase camera 가
-        // 항상 robot 의 등 뒤 정중앙 + 동일 높이에 위치. zoom 은 distance (z) 만
-        // 변경. rotation 은 SCNLookAtConstraint 가 매 frame 자동 보정하므로 별도
-        // `look(at:)` 호출 불필요 — constraint 가 hard lock 을 보장.
-        pos.x = 0
-        pos.y = chaseHeight
-        pos.z = newZ
-        cam.position = pos
+        let delta: Double = event.hasPreciseScrollingDeltas
+            ? Double(-raw * 0.008)
+            : Double(-raw * 0.06)
+        // ±0.4m 로 limit — 트랙패드 inertial flick 의 과한 튐 차단.
+        let clamped = max(-0.4, min(0.4, delta))
+        // distance 부호: 멀어짐 = +. 종전 z(−distance) 기준 "-clampedDelta" 와 등가.
+        coordinator.zoom(by: -clamped)
     }
 
-    /// Trackpad pinch zoom — 두 손가락 magnify 도 zoom 으로 라우팅.
+    /// Trackpad pinch zoom.
     public override func magnify(with event: NSEvent) {
-        guard let cam = cameraNode else { return super.magnify(with: event) }
-        // event.magnification: pinch in = positive, pinch out = negative.
-        // pinch in = zoom in (가까이) → z 증가 (덜 negative).
-        let delta = CGFloat(event.magnification) * 0.8
-        var pos = cam.position
-        let newZ = (CGFloat(pos.z) + delta)
-            .clamped(to: -maxDistance ... -minDistance)
-        pos.x = 0
-        pos.y = chaseHeight
-        pos.z = newZ
-        cam.position = pos
-    }
-}
-
-private extension Comparable {
-    func clamped(to limits: ClosedRange<Self>) -> Self {
-        min(max(self, limits.lowerBound), limits.upperBound)
+        guard let coordinator else { return super.magnify(with: event) }
+        // pinch in (양수) = 가까이 = distance 감소.
+        coordinator.zoom(by: Double(-event.magnification) * 0.8)
     }
 }
 
@@ -117,7 +82,7 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
 
     public func makeNSView(context: Context) -> CockpitChaseSCNView {
         let view = CockpitChaseSCNView(frame: .zero)
-        view.cameraNode = context.coordinator.cameraNode
+        view.coordinator = context.coordinator
         view.scene = context.coordinator.scene
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling2X
@@ -125,6 +90,12 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
         view.allowsCameraControl = false
         view.autoenablesDefaultLighting = false
         view.pointOfView = context.coordinator.cameraNode
+        // **W4**: 체이스 follower 를 30fps 렌더 루프에서 구동. delegate 는 약참조라
+        // coordinator 가 소유권 유지. `rendersContinuously` 로 매 프레임 delegate 가
+        // 발화하도록 보장(Cockpit 은 chase 추종이 본질이라 연속 렌더가 필요·정당 —
+        // WalkLab/Studio 의 idle tick 계약과는 무관한 별도 화면).
+        view.rendersContinuously = true
+        view.delegate = context.coordinator.renderDelegate
         applyState(to: context.coordinator)
         return view
     }
@@ -164,13 +135,29 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
 
     // MARK: - Coordinator
 
+    /// **W4 (2026-06-12)**: SCNView 의 약참조 delegate 가 dealloc 되지 않도록
+    /// coordinator 가 소유하는 렌더 델리게이트. 렌더 루프(30fps)에서 체이스 follower
+    /// 를 구동한다. SCNSceneRendererDelegate 는 @objc 라 NSObject 가 필요하므로
+    /// Coordinator 본체와 분리(본체는 plain class 로 init 단순 유지).
+    public final class ChaseRenderDelegate: NSObject, SCNSceneRendererDelegate {
+        weak var owner: Coordinator?
+        public func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+            owner?.advanceChase(time: time)
+        }
+    }
+
     public final class Coordinator {
         let scene: SCNScene
         let cameraNode: SCNNode
-        /// Heading + position 적용 wrapper. 카메라가 자식으로 붙어 chase camera.
+        /// Heading + position 적용 wrapper. (카메라는 W4 부터 scene root 직속이고
+        /// rigAnchor 는 robot 본체 + 룩타깃의 부모로만 쓰인다.)
         let rigAnchor: SCNNode
         /// IMU roll/pitch 적용 wrapper — heading 과 독립.
         let tiltWrapper: SCNNode
+        /// **W4**: 카메라 LookAt 대상(scene root 직속). follower 가 lean 반영해 위치.
+        private let lookTargetNode: SCNNode
+        /// **W4**: 렌더 루프 델리게이트(coordinator 소유 → 약참조여도 생존).
+        let renderDelegate = ChaseRenderDelegate()
 
         private let meshRig: MeshRig?
         private let primitiveRig: DarwinOP2Rig?
@@ -183,7 +170,14 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
         fileprivate var lastTiltPitchRad: CGFloat?
         fileprivate var lastTiltRollRad: CGFloat?
 
+        /// **W4 (2026-06-12)**: 체이스 follower(순수 로직) + 렌더/메인 스레드 간 보호 락.
+        /// scroll(메인)과 renderer(렌더 스레드)가 모두 follower 를 만지므로 직렬화.
+        private var follower = CockpitChaseFollower()
+        private let followerLock = NSLock()
+        private var lastUpdateTime: TimeInterval = -1
+
         init() {
+            lookTargetNode = SCNNode()
             scene = SCNScene()
             scene.background.contents = NSColor(calibratedRed: 0.02,
                                                 green: 0.04,
@@ -261,24 +255,33 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
             // 튀었다. SCNLookAtConstraint 로 hard lock — 카메라가 robot 추적에서
             // **절대** 벗어나지 않는다.
 
+            // **W4 (2026-06-12)**: 카메라를 rigAnchor 자식 → **scene root 직속**으로.
+            // 종전엔 카메라가 rigAnchor 자식이라 robot 이동/yaw 에 즉시(0-lag) 붙어버려
+            // FPV 특유의 "관성 추종"이 없었다. 이제 카메라는 독립 노드이고 렌더 델리게이트
+            // (`advanceChase`)가 follower 로 위치 lerp(0.12)/heading lerp(0.08) 추종한다.
             let cam = SCNCamera()
             cam.fieldOfView = 50
             cam.zNear = 0.05
             cam.zFar = 80
             cameraNode = SCNNode()
             cameraNode.camera = cam
-            cameraNode.position = SCNVector3(0, 0.95, -1.55)
-            rigAnchor.addChildNode(cameraNode)
+            // 초기 위치 = 등 뒤(heading 0). follower 초기값과 동일.
+            cameraNode.simdPosition = SIMD3<Float>(CockpitChaseFollower.backOffset(
+                heading: 0, distance: 1.55, height: 0.95))
+            scene.rootNode.addChildNode(cameraNode)
 
-            // Chase target — robot 의 가슴 위치 (rigAnchor 좌표계).
-            let chestTarget = SCNNode()
-            chestTarget.position = SCNVector3(0, 0.30, 0)
-            rigAnchor.addChildNode(chestTarget)
+            // **W4**: 룩타깃을 scene root 직속 노드로. follower 가 lean 반영해 위치
+            // 갱신하고 LookAt constraint 는 그대로 유지(설계: constraint 유지).
+            lookTargetNode.position = SCNVector3(0, 0.30, 0)
+            scene.rootNode.addChildNode(lookTargetNode)
 
             // Hard look-at constraint — 매 frame 자동 적용.
-            let lookAt = SCNLookAtConstraint(target: chestTarget)
+            let lookAt = SCNLookAtConstraint(target: lookTargetNode)
             lookAt.isGimbalLockEnabled = true   // y-axis only — banking 없음
             cameraNode.constraints = [lookAt]
+
+            // 렌더 델리게이트가 self 를 약참조로 구동.
+            renderDelegate.owner = self
         }
 
         func applyPose(_ pose: RobotPose) {
@@ -287,6 +290,38 @@ public struct CockpitChaseSceneView: NSViewRepresentable {
             meshRig?.apply(pose: pose)
             primitiveRig?.apply(pose: pose)
             lastPose = pose
+        }
+
+        /// **W4**: zoom — 메인 스레드(scroll/pinch)에서 호출. follower distance 조정.
+        func zoom(by delta: Double) {
+            followerLock.lock()
+            follower.adjustDistance(by: delta)
+            followerLock.unlock()
+        }
+
+        /// **W4**: 렌더 루프(30fps)에서 호출되는 체이스 추종 갱신.
+        /// rigAnchor 의 world 위치/heading 을 읽어 follower 로 카메라 위치·룩타깃·FOV 를
+        /// 매 프레임 lerp 추종한다. (rigAnchor 는 메인에서 애니메이션 없이 set 되므로
+        /// model==presentation — 렌더 스레드 read 안전.)
+        func advanceChase(time: TimeInterval) {
+            let dt: TimeInterval = lastUpdateTime < 0 ? (1.0 / 30.0)
+                : min(0.1, max(0, time - lastUpdateTime))
+            lastUpdateTime = time
+
+            let wp = rigAnchor.simdWorldPosition
+            let targetPos = SIMD3<Double>(Double(wp.x), Double(wp.y), Double(wp.z))
+            let heading = Double(rigAnchor.eulerAngles.y)
+
+            followerLock.lock()
+            follower.update(targetPosition: targetPos, targetHeading: heading, dt: dt)
+            let camPos = follower.cameraPosition
+            let look = follower.lookTarget
+            let fov = follower.fov
+            followerLock.unlock()
+
+            cameraNode.simdPosition = SIMD3<Float>(Float(camPos.x), Float(camPos.y), Float(camPos.z))
+            lookTargetNode.simdPosition = SIMD3<Float>(Float(look.x), Float(look.y), Float(look.z))
+            cameraNode.camera?.fieldOfView = CGFloat(fov)
         }
 
         private static func makeGridFloor() -> SCNNode {
