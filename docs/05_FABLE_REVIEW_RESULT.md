@@ -15,7 +15,24 @@
 
 ---
 
-## [P4] 온보드 O2 — 거버너·twist v2·슬루·밸런스 결선 — **조건부: HIGH 1·MEDIUM 1 수정 후 재검** (2026-06-12)
+## [P4] 온보드 O2 — 거버너·twist v2·슬루·밸런스 결선 — **통과 (재검 완료)** (2026-06-12)
+
+- 최종 커밋: `39a613b`(구현) + `54e6246`(교차 리뷰 수정 2건)
+- **재검 결과 — 이슈 2건 모두 수정 확인**:
+  - [HIGH] 루프 측 슬루 전진: supervisor 루프 블록(브로커리지 815-822) —
+    `walking_active && !SlewAtTarget && SlewCadenceDue` 시 1스텝 전진 + 공용
+    `WriteShapedCommand` 재적용(게이트 부스트를 보관된 m_tgt_foot/hip/flags 로 재계산 —
+    명령 도착 경로와 일관). cadence 판정은 순수 함수 `SlewCadenceDue` 로 양쪽 공유,
+    `SlewAtTarget`(ε=1e-6, valid 가드)이 워치독 0-동기화 시 자연 no-op ✓
+  - [MEDIUM] Y_SWAP base: Run 진입 시 `walking->Y_SWAP_AMPLITUDE` 1회 캡처(632행,
+    >0 가드 + DEFAULT 폴백) — config.ini 튜닝 보존 ✓
+- 재검 독립 재실행: 호스트 C++ **142체크 0실패**(125→142, +17 — cadence/at-target/
+  루프 진행 시나리오) · Swift 11/11 (풀 스위트 3,472/0 은 구현 세션 증거 인정)
+- 계약 §G.8 개정 동일 커밋(+11줄) ✓
+- 실기 이월: k_x/k_y/k_a 벤치 보정 + 스텝 응답 ≥30% 단축 확인 (로봇 연결일).
+  Mac 송출 v1 유지(serializedLineV2 게이팅)는 배포 순서상 올바름.
+
+### 1차 리뷰 기록 (조건부 — 수정 전, 이력 보존)
 
 - 구현 커밋: `39a613b` · 리뷰어: **Fable 교차**(별도 세션)
 - 증거(리뷰 세션 독립 재실행): 호스트 C++ **125체크 0실패**(63→125) ·
