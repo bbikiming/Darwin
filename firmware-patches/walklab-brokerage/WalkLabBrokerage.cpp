@@ -579,7 +579,9 @@ namespace Robotis {
         m_last_cmd_from_stream = false;
         // O2 셰이핑 — 목표/슬루 초기화(첫 명령은 SlewState.valid=false 라 즉시 수용).
         m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0; m_tgt_period = 600.0;
+        m_tgt_foot = 40.0; m_tgt_hip = 13.0; m_tgt_flags = 0;
         m_last_slew_ms = 0;
+        m_yswap_base = Robotis::DEFAULT_Y_SWAP_AMPLITUDE;  // Run 진입 시 config 값으로 덮어씀.
         m_udp_token[0] = '\0';
         m_estop_port = 0;
         m_cmd_port = 0;
@@ -623,6 +625,13 @@ namespace Robotis {
 
         printf("[WalkLabBrokerage] start polling %s every %dms\n",
                CMD_PATH, POLL_INTERVAL_MS);
+
+        // **O2 [MEDIUM fix]** — Y_SWAP base 캡처: config.ini(LoadINISettings, main.cpp 가
+        //    Run 전 호출)로 튜닝된 값을 1회 캡처해 게이트 부스트의 base 로 쓴다. 상수 20.0
+        //    하드코딩은 튜닝값과 다르면 매 명령마다 실거동을 바꾼다(리뷰 지적). 0/음수면 폴백.
+        m_yswap_base = (walking->Y_SWAP_AMPLITUDE > 0.0)
+                           ? walking->Y_SWAP_AMPLITUDE
+                           : Robotis::DEFAULT_Y_SWAP_AMPLITUDE;
 
         // 초기 default 상태 (정지).
         walking->X_MOVE_AMPLITUDE = 0.0;
@@ -797,6 +806,21 @@ namespace Robotis {
                 }
             }
 
+            // ── O2 [HIGH fix] 루프 측 슬루 전진 — 슬루는 명령 도착(ApplyCommandLine)에서만
+            //    전진하면, 단발 명령(파일 경로 Mac 브리지 dedup·키보드 정확값)은 재송신이 없어
+            //    진폭이 첫 스텝(예: 0→38 명령 시 8mm)에 영구 고착한다. 여기서 보행 중·미도달·
+            //    cadence 충족 시 1스텝 더 전진시켜 목표까지 램프(UDP 스트림은 명령마다 전진하므로
+            //    이미 정상 — 이 블록은 주로 단발/저빈도 소스를 구제). 워치독 WD_SLEW_ZERO 가
+            //    목표·슬루를 모두 0 으로 동기화했으면 SlewAtTarget==true 라 자연히 no-op.
+            if (walking_active && m_slew.valid &&
+                !Robotis::SlewAtTarget(m_slew, m_tgt_x, m_tgt_y, m_tgt_a, m_tgt_period) &&
+                Robotis::SlewCadenceDue(now_ms, m_last_slew_ms, m_tgt_period)) {
+                double sx = m_tgt_x, sy = m_tgt_y, sa = m_tgt_a, sp = m_tgt_period;
+                Robotis::SlewToward(&m_slew, &sx, &sy, &sa, &sp);
+                m_last_slew_ms = now_ms;
+                WriteShapedCommand(walking, sx, sy, sa, sp);
+            }
+
             // 볼 트래킹 (2026-06-02): enabled 면 매 poll 카메라+BallTracker 로 헤드를 움직인다.
             // 보행 여부와 무관 (헤드 전용). e-stop/getup 은 위에서 continue 하므로 여기 미도달.
             if (m_balltrack_enabled) {
@@ -843,6 +867,22 @@ namespace Robotis {
     // 파싱·클램프는 WalkLabTransport::ParseCommandLine(순수, 호스트 단위 테스트됨)에 위임 —
     // 양 경로가 동일 의미로 적용됨을 보장(중복 제거). 명령 라인 형식(cmd_id 포함 14 token,
     // backward-compat 13/6 token)은 §C 와 동일.
+    // **O2 [HIGH fix]** — 슬루 후 진폭에 게이트 부스트를 얹어 Walking 에 대입하는 공유 지점.
+    // ApplyCommandLine(명령 도착)·supervisor 루프 슬루 진행 양쪽이 호출. 게이트 부스트는
+    // 보관된 비-슬루 목표(m_tgt_flags)와 슬루 진폭(sx)으로 재계산 — 루프 진행 시에도 일관.
+    void WalkLabBrokerage::WriteShapedCommand(Robot::Walking* walking,
+                                              double sx, double sy, double sa, double sp) {
+        Robotis::GateBoost boost = Robotis::GateSchedule(sx, sp, m_tgt_flags);
+        // supervisor 단일 writer(§c 스레드 안전). 셰이핑(거버너→슬루→게이트)을 통과한 값.
+        walking->X_MOVE_AMPLITUDE = sx;
+        walking->Y_MOVE_AMPLITUDE = sy;
+        walking->A_MOVE_AMPLITUDE = sa;
+        walking->Z_MOVE_AMPLITUDE = m_tgt_foot + boost.z_move;
+        walking->PERIOD_TIME      = sp;
+        walking->HIP_PITCH_OFFSET = m_tgt_hip + boost.hip;
+        walking->Y_SWAP_AMPLITUDE = m_yswap_base + boost.y_swap;  // [MEDIUM fix] config base.
+    }
+
     bool WalkLabBrokerage::ApplyCommandLine(Robot::Walking* walking, bool& walking_active,
                                             const char* line, long long now_ms) {
         Robotis::WalkCommand cmd;
@@ -855,6 +895,8 @@ namespace Robotis {
         double gx = cmd.x, gy = cmd.y, ga = cmd.a;
         Robotis::GovernEnvelope(&gx, &gy, &ga, cmd.period);
         m_tgt_x = gx; m_tgt_y = gy; m_tgt_a = ga; m_tgt_period = cmd.period;
+        // 게이트 부스트 재계산용 비-슬루 목표 보관(루프 슬루 진행이 공유) — [HIGH fix].
+        m_tgt_foot = cmd.foot; m_tgt_hip = cmd.hip; m_tgt_flags = cmd.flags;
 
         // 정지→보행 전환이면 슬루를 0 에서 재시드 — 첫걸음을 SLEW_*_MAX 로 램프(정지 후
         //    잔존 슬루값에서 출발해 즉시 풀스트라이드로 시작하는 capturability 위험 차단).
@@ -867,9 +909,9 @@ namespace Robotis {
         // ── O2 (2) 래치 단위 슬루 — 셰이핑 일원화(Mac EMA 완화분을 로봇이 흡수). 슬루는
         //    래치(반주기) cadence 로만 1스텝 전진; 래치 사이의 명령은 직전 슬루값을 재적용.
         //    (첫 적용은 SlewState.valid=false → 즉시 수용; 이후 SLEW_*_MAX 로 가속 제한.)
-        double half_period = (cmd.period > 0.0) ? (cmd.period / 2.0) : 300.0;
-        bool advance = (!m_slew.valid) || (m_last_slew_ms == 0) ||
-                       (now_ms - m_last_slew_ms >= (long long)half_period);
+        //    cadence 판정은 루프 측 진행과 공유하는 순수 함수(SlewCadenceDue).
+        bool advance = (!m_slew.valid) ||
+                       Robotis::SlewCadenceDue(now_ms, m_last_slew_ms, m_tgt_period);
         double sx = m_tgt_x, sy = m_tgt_y, sa = m_tgt_a, sp = m_tgt_period;
         if (advance) {
             Robotis::SlewToward(&m_slew, &sx, &sy, &sa, &sp);
@@ -879,18 +921,8 @@ namespace Robotis {
             sx = m_slew.x; sy = m_slew.y; sa = m_slew.a; sp = m_slew.period;
         }
 
-        // ── O2 (5) 속도 비례 게이트 스케줄 — 슬루 후 진폭 기준 가산(발 클리어런스·측면 안정).
-        Robotis::GateBoost boost = Robotis::GateSchedule(sx, sp, cmd.flags);
-
-        // Walking 진폭/주기 대입 (게이트는 PHASE1/3 경계에서 래치 — Walking.cpp). supervisor
-        // 단일 writer(§c 스레드 안전). 셰이핑(거버너→슬루→게이트)을 통과한 값.
-        walking->X_MOVE_AMPLITUDE = sx;
-        walking->Y_MOVE_AMPLITUDE = sy;
-        walking->A_MOVE_AMPLITUDE = sa;
-        walking->Z_MOVE_AMPLITUDE = cmd.foot + boost.z_move;
-        walking->PERIOD_TIME      = sp;
-        walking->HIP_PITCH_OFFSET = cmd.hip + boost.hip;
-        walking->Y_SWAP_AMPLITUDE = Robotis::DEFAULT_Y_SWAP_AMPLITUDE + boost.y_swap;
+        // ── O2 (5) 셰이핑-대입 — 게이트 스케줄 가산 후 Walking 에 대입(루프 진행과 공유).
+        WriteShapedCommand(walking, sx, sy, sa, sp);
 
         // ── O2 (4) 죽은 토큰 결선 (G7 일부) — blevel(0..3)→게인 ×{0,0.5,1.0,1.5}.
         //    출하 게인(BASE_*)에 배율 곱(누적 방지 — 현재값 곱하면 매 명령 발산).

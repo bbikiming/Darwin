@@ -245,6 +245,18 @@ void SlewToward(SlewState* st, double* x, double* y, double* a, double* period) 
     st->x = *x; st->y = *y; st->a = *a; st->period = *period;
 }
 
+bool SlewCadenceDue(long long now_ms, long long last_slew_ms, double period_ms) {
+    if (last_slew_ms == 0) return true;   // 아직 전진 안 함 → 즉시 허용.
+    double half = (period_ms > 0.0) ? (period_ms / 2.0) : 300.0;
+    return (now_ms - last_slew_ms) >= (long long)half;
+}
+
+bool SlewAtTarget(const SlewState& st, double x, double y, double a, double period) {
+    if (!st.valid) return false;
+    return fabs(st.x - x) < 1e-6 && fabs(st.y - y) < 1e-6 &&
+           fabs(st.a - a) < 1e-6 && fabs(st.period - period) < 1e-6;
+}
+
 double BalanceGainScale(int blevel) {
     if (blevel <= 0) return 0.0;
     if (blevel == 1) return 0.5;

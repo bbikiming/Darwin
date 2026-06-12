@@ -534,9 +534,18 @@ client incl. Switch/handheld — robot owns the FINAL clamp):**
    a UX layer (double defense).
 2. **Latch-unit slew** (G5): per half-period, `|ΔX|≤8`, `|ΔY|≤6`mm, `|ΔA|≤4°`,
    `|ΔPERIOD|≤60ms`. Re-seeded to 0 on idle→walk (first-step capturability) and on the
-   watchdog `SLEW_ZERO` tier (ramp from 0 on recovery).
+   watchdog `SLEW_ZERO` tier (ramp from 0 on recovery). **Advanced from BOTH the command
+   apply path AND the supervisor loop** (`SlewCadenceDue`/`SlewAtTarget` pure helpers): a
+   single command (file-path Mac-bridge dedup / exact keyboard value, no re-send) must still
+   ramp to target over successive latches — the loop steps the slew toward `m_tgt_*` while
+   `walking_active && !at-target && cadence-due`, sharing `WriteShapedCommand` so the gate
+   boost re-applies. (Earlier draft advanced only on command arrival → single commands stuck
+   at the first 8mm step; fixed.) Watchdog `SLEW_ZERO` zeroes both target+slew, so the loop
+   advance is a natural no-op there.
 3. **Speed-proportional gate schedule** (dynamics): when `|x|/x_max > 0.70`, linearly add
    `Z_MOVE +5mm`, `Y_SWAP +2mm`, `HIP_PITCH +1.5°` (full at `x_max`). `flags 0x08` = OFF.
+   `Y_SWAP` base is the robot's `config.ini`-tuned `Y_SWAP_AMPLITUDE` **captured once at Run
+   entry** (`m_yswap_base`), not the constant 20.0 — preserves per-robot tuning.
 4. **Balance wiring** (G7): `blevel(0..3) → BALANCE_*_GAIN ×{0, 0.5, 1.0, 1.5}` off the
    shipped base gains (0.3/0.9/0.5/1.0). **`BALANCE_ENABLE` is driven by `blevel`, NOT the
    `benable` token** (`enable = scale>0`) — deployed Mac sends `benable=0` by default and

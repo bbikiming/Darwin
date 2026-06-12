@@ -118,6 +118,13 @@ private:
     bool ApplyCommandLine(Robot::Walking* walking, bool& walking_active,
                           const char* line, long long now_ms);
 
+    /// **O2 [HIGH fix]** — 슬루 후 진폭(sx/sy/sa/sp)에 게이트 스케줄 가산을 얹어 Walking 에
+    /// 대입하는 **공유 셰이핑-대입 지점**. ApplyCommandLine(명령 도착)과 supervisor 루프의
+    /// 슬루 진행(단발 명령 후 목표 도달까지) 양쪽이 호출 — 게이트 부스트는 m_tgt_foot/hip/
+    /// flags(거버너 입력 보관분)로 재계산. 밸런스 게인은 명령 적용 시점에만 set(불변).
+    void WriteShapedCommand(Robot::Walking* walking,
+                            double sx, double sy, double sa, double sp);
+
     // ===== O1 transport (UDP 리스너 스레드 — 핸드셰이크 토큰 있을 때만 기동) =====
     /// CHANNEL_PATH 읽어 m_udp_token/포트 채움. 토큰 있으면 true.
     bool LoadHandshake();
@@ -180,10 +187,17 @@ private:
     // ===== O2 셰이핑 상태 (2026-06-12, walklab-onboard-teleop-upgrade Wave O2) =====
     /// 거버너 적용 후의 명령 목표값(X/Y/A/period) — 슬루가 이 목표로 전진. 래치 사이엔 재적용.
     double m_tgt_x, m_tgt_y, m_tgt_a, m_tgt_period;
+    /// **[HIGH fix]** 게이트 스케줄 재계산용 비-슬루 목표(거버너 입력 보관) — 루프 슬루 진행이
+    /// 부스트를 다시 얹을 수 있도록 foot/hip/flags 를 들고 있는다.
+    double m_tgt_foot, m_tgt_hip;
+    int    m_tgt_flags;
     /// 래치 단위 슬루 상태(마지막 적용 진폭) — supervisor 단일 지점에서만 갱신.
     Robotis::SlewState m_slew;
     /// 마지막 슬루 전진 시각(ms). now - this >= period/2 면 1스텝 전진(래치 cadence).
     long long m_last_slew_ms;
+    /// **[MEDIUM fix]** Y_SWAP_AMPLITUDE base — Run 진입 시 walking 의 config.ini 튜닝값을
+    /// 1회 캡처(상수 20.0 하드코딩 회피). 게이트 부스트는 이 base 에 가산.
+    double m_yswap_base;
     char  m_udp_token[64];             ///< 핸드셰이크 토큰("" = transport 비활성).
     int   m_estop_port;                ///< E-STOP UDP 포트(핸드셰이크).
     int   m_cmd_port;                  ///< 명령 UDP 포트(핸드셰이크).

@@ -92,6 +92,14 @@ struct SlewState {
 // 호출 cadence(래치당 1회)는 호출부가 결정 — 본 함수는 순수 1-스텝 클램프(호스트 테스트).
 void SlewToward(SlewState* st, double* x, double* y, double* a, double* period);
 
+// 슬루 전진 cadence 판정(순수) — last_slew_ms==0(미전진) 또는 반주기(period/2) 경과 시 true.
+// period<=0 면 반주기 300ms 로 폴백. 브로커리지: ApplyCommandLine(명령 도착)·supervisor 루프
+// (단발 명령 후 목표 도달까지 진행) 양쪽이 동일 판정을 공유한다.
+bool SlewCadenceDue(long long now_ms, long long last_slew_ms, double period_ms);
+
+// 슬루 현재값이 목표(x/y/a/period)에 도달했는가(축당 1e-6 허용) — 루프 진행 종료 가드.
+bool SlewAtTarget(const SlewState& st, double x, double y, double a, double period);
+
 // ===== O2 죽은 토큰 결선 (G7 일부) ==========================================
 // Walking 출하 밸런스 게인(단일 정의) — blevel 배율의 곱셈 기준.
 static const double BASE_BALANCE_KNEE_GAIN        = 0.3;

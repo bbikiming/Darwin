@@ -314,6 +314,61 @@ static void test_slew_reaches_target() {
     CHECK_DEQ(x2, 5.0, "small step reaches target");
 }
 
+static void test_slew_cadence_due() {
+    printf("test_slew_cadence_due\n");
+    // last==0 → always due (아직 미전진).
+    CHECK(SlewCadenceDue(1000, 0, 600), "last=0 → due");
+    // period 600 → half 300ms. 299 미만 not due, 300 이상 due.
+    CHECK(!SlewCadenceDue(1299, 1000, 600), "299ms elapsed → not due (<300)");
+    CHECK(SlewCadenceDue(1300, 1000, 600), "300ms elapsed → due (half-period)");
+    CHECK(SlewCadenceDue(2000, 1000, 600), "1000ms elapsed → due");
+    // period<=0 → fallback half 300ms.
+    CHECK(!SlewCadenceDue(1200, 1000, 0), "period 0 → fallback 300, 200ms not due");
+    CHECK(SlewCadenceDue(1300, 1000, 0), "period 0 → fallback 300, 300ms due");
+    // 빠른 주기(440 → half 220).
+    CHECK(SlewCadenceDue(1220, 1000, 440), "period 440 → half 220, due");
+    CHECK(!SlewCadenceDue(1219, 1000, 440), "period 440 → half 220, 219 not due");
+}
+
+static void test_slew_at_target() {
+    printf("test_slew_at_target\n");
+    SlewState st;   // valid=false 초기
+    CHECK(!SlewAtTarget(st, 0, 0, 0, 600), "invalid slew → not at target");
+    double x = 30, y = 5, a = 4, p = 600;
+    SlewToward(&st, &x, &y, &a, &p);   // seed valid at (30,5,4,600)
+    CHECK(SlewAtTarget(st, 30, 5, 4, 600), "seeded value at target");
+    CHECK(!SlewAtTarget(st, 38, 5, 4, 600), "different x → not at target");
+    CHECK(!SlewAtTarget(st, 30, 5, 4, 540), "different period → not at target");
+}
+
+// [HIGH fix] 단발 명령(파일 경로) 후 루프 슬루 진행으로 목표 도달 시나리오.
+// SlewToward 만 반복 호출(루프 측 진행 모사) → 첫 스텝 고착 없이 목표까지 램프.
+static void test_slew_loop_progression_reaches_target() {
+    printf("test_slew_loop_progression_reaches_target\n");
+    SlewState st;
+    // 정지→보행 재시드 모사: 0 에서 valid 시작.
+    st.x = 0; st.y = 0; st.a = 0; st.period = 600; st.valid = true;
+    double tx = 38.0, ty = 0.0, ta = 0.0, tp = 600.0;   // 단발 명령 목표 38mm.
+
+    // 명령 도착 1회(첫 전진) — 0→8.
+    double sx = tx, sy = ty, sa = ta, sp = tp;
+    SlewToward(&st, &sx, &sy, &sa, &sp);
+    CHECK_DEQ(st.x, 8.0, "명령 도착 첫 전진 0→8mm");
+    CHECK(!SlewAtTarget(st, tx, ty, ta, tp), "아직 목표 미도달(고착 지점)");
+
+    // 루프 측 진행 — 재송신 없이 SlewToward 반복으로 목표 도달.
+    int steps = 0;
+    while (!SlewAtTarget(st, tx, ty, ta, tp) && steps < 50) {
+        double lx = tx, ly = ty, la = ta, lp = tp;
+        SlewToward(&st, &lx, &ly, &la, &lp);
+        steps++;
+    }
+    CHECK(SlewAtTarget(st, tx, ty, ta, tp), "루프 진행으로 목표 도달(고착 해소)");
+    CHECK_DEQ(st.x, 38.0, "최종 38mm 도달");
+    // 0→8→16→24→32→38: 첫 전진 후 추가 4스텝(8·8·8·6) = 5스텝째 도달.
+    CHECK(steps == 4, "8mm/스텝으로 38mm 까지 추가 4스텝(첫 전진 포함 5)");
+}
+
 // ---- O2: balance gain scale -------------------------------------------------
 
 static void test_balance_gain_scale() {
@@ -374,6 +429,9 @@ int main() {
     test_slew_first_apply();
     test_slew_clamps_delta();
     test_slew_reaches_target();
+    test_slew_cadence_due();
+    test_slew_at_target();
+    test_slew_loop_progression_reaches_target();
     test_balance_gain_scale();
     test_gate_schedule();
 
