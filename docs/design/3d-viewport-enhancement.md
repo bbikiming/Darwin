@@ -424,18 +424,25 @@ _surface.diffuse.rgb = mix(_surface.diffuse.rgb, lineColor.rgb, line * fade);
 
 ## 7. Wave 5 — 성능 가드 통합 검증 (난이도 S · 커밋 = 테스트/문서)
 
-| 항목 | 가드 | 측정 |
-|---|---|---|
-| IBL | 128×64 고정(수십 KB), preset 당 1회 생성·캐시 | 로드 시간 로그 |
-| Shadow | 1024 map × key 1개만 (spot/rim castsShadow=false) | GPU frame time (Xcode FPS gauge) |
-| 그리드 | 셰이더 1패스, 노드 -36 (Cockpit -58) | draw call 수 (Xcode scene 디버거) |
-| 오버레이 | 전 노드 풀링, pose 변경 시만 갱신, 자체 타이머 0 | Instruments Allocations 평탄성 |
-| idle 계약 | 신규 tick 루프 금지(턴테이블만 명시 예외), `isFullyIdle` 조건 갱신 | idle CPU % 전후 비교 (v1.14.8 기준선) |
-| snapshot | `renderImage(pose:preset:overlays:)` 시그니처 확장, shader modifier/IBL 의 SCNRenderer 동작 확인 | 기존 `writePNG` 회귀 + preset 5종 |
-| burn-out | `SceneExposureTests` CI 상시화 | 휘도 클리핑 비율 assert |
+| 항목 | 가드 | 측정 방법 | 실측 (P12, 2026-06-12) |
+|---|---|---|---|
+| IBL | 128×64 고정(수십 KB), preset 당 1회 생성·캐시 | 로드 시간 로그 | `ProceduralEnvironmentMap` preset 당 1회 생성(코디네이터 init), 코드 검증 ✅ |
+| Shadow | 1024 map × key 1개만 (spot/rim castsShadow=false) | GPU frame time (Xcode FPS gauge) | **.app+Instruments 필요 — 사용자 실행 대기** |
+| 그리드 | 셰이더 1패스, 노드 -36 (Cockpit -58) | draw call 수 (Xcode scene 디버거) | W2 에서 구조적 확정(Cockpit 58→1노드), 코드 검증 ✅ |
+| 오버레이 | 전 노드 풀링, pose 변경 시만 갱신, 자체 타이머 0 | Instruments Allocations 평탄성 | W3 풀링 패턴(별도 브랜치); **Instruments 평탄성은 .app 대기** |
+| idle 계약 | 신규 tick 루프 금지(턴테이블만 명시 예외), `isFullyIdle` 조건 갱신 | idle CPU % 전후 비교 (v1.14.8 기준선) | `isFullyIdle` 에 `turntableRadPerSec != 0`·`isTransitioning` 가드 추가 — 단위 테스트로 idle/턴테이블/전환 분기 검증(`InteractiveSceneBehaviorTests` 5건 ✅). **idle CPU % 절대값은 .app 대기** |
+| snapshot | `renderImage(pose:…)` 시그니처 회귀 금지, shader modifier/IBL 의 SCNRenderer 동작 | 기존 `writePNG` 회귀 + preset 5종 | 헤드리스 render+analyze 384×288: 5-preset 합 **~0.67s(≈130ms/preset)**, 512×384 walkReady **~0.40s**(swift test, debug). DOF 는 `InteractiveSceneView` 전용이라 스냅샷 렌더러 자동 제외 ✅ |
+| burn-out | `SceneExposureTests` CI 상시화 | 휘도 클리핑 비율 assert | `SceneExposureTests`(512×384) + `ScenePresetSnapshotTests`(5종) 통과 — Studio 클리핑 < 1.5% ✅ |
+| 전환 수학 | `shortestAngleDelta` 최단경로 | 단위 테스트 | `SceneMathTests` 9건 ✅ (2π 경계·다중 wrap·±π 경계) |
+| 체이스캠 | 위치 lerp 0.12 / heading lerp 0.08 / lean ≤2.5° / FOV 50→54 | 시뮬 헤딩 스윕 수렴 | `CockpitChaseFollowerTests` 6건 ✅ (수렴·최단경로·lean·FOV·zoom 클램프) |
 
-산출물: preset 5종 × 대표 포즈 스냅샷 기준선(`docs/reports/` 또는 테스트 fixture) + 본 문서에
-실측치 업데이트.
+> **실측 메모**: GPU frame time·draw call·idle CPU %·Allocations 평탄성은 `swift test`
+> 헤드리스에서 측정 불가(STL 미로드 → 폴백 rig 만 렌더, `headless-snapshot-robot-invisible`).
+> `bash scripts/run-app.sh` + Xcode FPS gauge / Instruments 로 사용자 실행 시 채움.
+> 스냅샷 시간은 debug 빌드 + 픽셀 분석 포함 wall-time 이라 순수 GPU 시간보다 보수적.
+
+산출물: preset 5종 × walkReady 스냅샷 기준선(테스트가 `DF_SNAPSHOT_DIR` 에 PNG 기록 —
+`preset-{studio,teach,walkLab,motion,cockpit}.png`) + 본 표 실측치.
 
 ## 8. 의존 관계 · 권장 순서
 
