@@ -167,6 +167,14 @@ public enum WalkMotionLibrary {
 
     // MARK: - Preset tuning
 
+    /// **D1 (2026-06-12)**: 시간 기반 모드용 resolved tuning 노출. `continuousWalkPlan`
+    /// 이 키프레임을 빌드할 때 쓰는 것과 **동일한 클램프 결과**를 반환해, 시간 기반
+    /// 샘플러가 같은 진폭으로 평가되도록(동치 보장) 한다.
+    public static func resolvedPresetTuning(for preset: WalkLabPreset,
+                                            custom: AdvancedTuning? = nil) -> AdvancedTuning {
+        resolvedTuning(for: preset, custom: custom)
+    }
+
     private static func resolvedTuning(for preset: WalkLabPreset, custom: AdvancedTuning?) -> AdvancedTuning {
         let base = custom ?? defaultTuning(for: preset)
         return AdvancedTuning(
@@ -180,6 +188,12 @@ public enum WalkMotionLibrary {
             // 누락되어 모든 custom tuning 의 trim 이 default 13.0 으로 reset 되는 버그.
             hipPitchOffsetDeg: base.hipPitchOffsetDeg.clamped(to: 0...20)
         )
+    }
+
+    /// **D1 (2026-06-12)**: freeform 시간 기반 모드용 resolved tuning 노출 —
+    /// `freeformContinuousWalkPlan` 키프레임과 동일 클램프(동치 보장).
+    public static func freeformResolvedTuning(_ base: AdvancedTuning) -> AdvancedTuning {
+        resolvedFreeformTuning(base)
     }
 
     private static func resolvedFreeformTuning(_ base: AdvancedTuning) -> AdvancedTuning {

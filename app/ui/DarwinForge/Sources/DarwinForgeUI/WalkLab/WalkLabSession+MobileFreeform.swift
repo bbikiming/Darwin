@@ -169,6 +169,8 @@ extension WalkLabSession {
         let lowerBody = Set(JointID.allCases.filter {
             $0.bodyPart == .rightLeg || $0.bodyPart == .leftLeg
         })
+        // **D1 (2026-06-12)**: 시간 기반 50Hz 모드 플래그(MainActor 에서 1회 읽어 캡처).
+        let denseStreaming = WalkDenseStreaming.denseStreamingEnabled()
 
         isRobotWalking = true
         mobileFreeformActive = true
@@ -216,7 +218,8 @@ extension WalkLabSession {
                 },
                 onBusWriteFailure: { [weak self] in
                     self?.store?._bumpBusWriteFailureCount()
-                }
+                },
+                denseStreaming: denseStreaming
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -271,7 +274,11 @@ extension WalkLabSession {
         transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil,
         isBusAlive: @Sendable () async -> Bool = { true },
         isHardStopped: @Sendable () async -> Bool = { false },
-        onBusWriteFailure: (@MainActor @Sendable () -> Void)? = nil
+        onBusWriteFailure: (@MainActor @Sendable () -> Void)? = nil,
+        // **D1 (2026-06-12)**: 시간 기반 50Hz 모드. true 면 cycle 단계를 6 키프레임
+        // 대신 step(20ms)마다 robotisWalkingApproxPose(timeMs:) 직접 평가 + 진폭 래칭.
+        // 기본 false → 종전 동작 보존. 라이브 조종이라 latch 가 명령 변화를 슬루 흡수.
+        denseStreaming: Bool = false
     ) async -> WalkCycleResult {
         var speedFailures = 0
         var positionFailures = 0
@@ -303,7 +310,8 @@ extension WalkLabSession {
         let tracer = PilotLatencyTracer.shared
         tracer.configureFromDefaults()
 
-        func sendStep(_ step: MotionStep, previousIn: RobotPose) async -> RobotPose {
+        func sendStep(_ step: MotionStep, previousIn: RobotPose,
+                      denseInterval: Int? = nil) async -> RobotPose {
             let rawTarget = step.toPose()
             let target: RobotPose
             if let transformPose {
@@ -371,10 +379,11 @@ extension WalkLabSession {
                 }
             }
 
-            // J4: 고정 sleep → deadline. phase floor 80ms 는 유지(보행 안정성).
+            // J4: 고정 sleep → deadline. phase floor 80ms 는 키프레임 모드만 유지.
+            // D1: 시간 모드(denseInterval)는 80ms 하한 미적용(period≥440 클램프가 대체).
             // E-STOP/cancel 체크 포인트는 step 경계 그대로 — Task.sleep(until:) 가
             // 취소 시 throw → try? 흡수, 루프 헤더의 `!Task.isCancelled` 가 종료 판정.
-            let totalMs = max(80, step.playMs + step.pauseMs)
+            let totalMs = denseInterval ?? max(80, step.playMs + step.pauseMs)
             let wakeTarget = StepDeadlineScheduler.next(previous: stepDeadline, now: .now, stepMs: totalMs)
             stepDeadline = wakeTarget
             try? await Task.sleep(until: wakeTarget, clock: .continuous)
@@ -406,6 +415,11 @@ extension WalkLabSession {
         }
 
         if endReason == .completedMaxDuration && !cancelledMidStep {
+            // **D1 (2026-06-12)**: 시간 기반 모드 상태(denseStreaming 일 때만 소비).
+            // 라이브 조종이라 latch 가 명령 변화를 스윙 중간/DSP 경계에서 슬루 흡수.
+            let denseInterval = WalkDenseStreaming.effectiveStepMs()
+            let denseCycleStart = ContinuousClock.now
+            var latch = WalkAmplitudeLatch(initial: WalkMotionLibrary.freeformResolvedTuning(firstTuning))
             cycleLoop: while !Task.isCancelled {
                 if let end = endDate, Date() >= end { break cycleLoop }
                 guard let tuning = await tuningProvider(),
@@ -418,9 +432,22 @@ extension WalkLabSession {
                     endReason = .busDisconnected
                     break cycleLoop
                 }
-                let step = plan.cycle[phaseIndex % plan.cycle.count]
-                phaseIndex += 1
-                previous = await sendStep(step, previousIn: previous)
+                if denseStreaming {
+                    // 같은 연속 함수를 step(20ms)마다 직접 평가 + 진폭 래칭.
+                    let target = WalkMotionLibrary.freeformResolvedTuning(tuning)
+                    let elapsedMs = denseCycleStart.duration(to: .now).inMilliseconds
+                    latch.advance(elapsedMs: elapsedMs, target: target)
+                    let committed = latch.committed
+                    let tCycle = WalkDenseStreaming.cycleTimeMs(
+                        elapsedMs: elapsedMs, periodMs: committed.periodMs)
+                    let pose = WalkDenseStreaming.pose(atCycleMs: tCycle, tuning: committed)
+                    let denseStep = MotionStep.from(pose: pose, playMs: denseInterval, pauseMs: 0)
+                    previous = await sendStep(denseStep, previousIn: previous, denseInterval: denseInterval)
+                } else {
+                    let step = plan.cycle[phaseIndex % plan.cycle.count]
+                    phaseIndex += 1
+                    previous = await sendStep(step, previousIn: previous)
+                }
                 stepsExecuted += 1
 
                 if lowerBodyPositionFails.count >= Self.lowerBodyDistinctFailureThreshold {

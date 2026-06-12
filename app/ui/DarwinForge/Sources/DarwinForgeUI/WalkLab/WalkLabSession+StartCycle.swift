@@ -504,9 +504,16 @@ extension WalkLabSession {
         onPose: @escaping @MainActor @Sendable (RobotPose) -> Void,
         transformPose: @escaping @MainActor @Sendable (RobotPose) -> RobotPose
     ) -> Bool {
-        guard let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: currentWalkTuning()) else {
+        let walkTuning = currentWalkTuning()
+        guard let plan = WalkMotionLibrary.continuousWalkPlan(for: preset, tuning: walkTuning) else {
             return false
         }
+        // **D1 (2026-06-12)**: 시간 기반 50Hz 모드 — `df.walklab.denseStreaming` 플래그.
+        // denseTuning 은 키프레임 plan 과 **동일한 resolved tuning**(동치 보장).
+        let denseStreaming = WalkDenseStreaming.denseStreamingEnabled()
+        let denseTuning = denseStreaming
+            ? WalkMotionLibrary.resolvedPresetTuning(for: preset, custom: walkTuning)
+            : nil
         isRobotWalking = true
         // 사이클 159 (P0-1 fix): 실 robot 송출 path → IMU fast polling (50ms = 20Hz).
         // freshness gate (250ms) 와 4 step 마진. stop 시 finalize 에서 false 복원.
@@ -538,6 +545,8 @@ extension WalkLabSession {
                 bus: bus, plan: plan,
                 maxDurationSec: maxDurationSec,
                 lowerBodyJoints: lowerBody,
+                denseStreaming: denseStreaming,
+                denseTuning: denseTuning,
                 onPose: onPose,
                 transformPose: transformPose,
                 isBusAlive: { [weak self] in

@@ -46,6 +46,13 @@ extension WalkLabSession {
     internal static func runContinuousWalk(
         bus: any BusInterface, plan: WalkMotionLibrary.ContinuousWalkPlan, maxDurationSec: Int,
         lowerBodyJoints: Set<JointID>,
+        // **D1 (2026-06-12)**: 시간 기반 50Hz 연속 스트리밍 모드. true + denseTuning
+        // 비-nil 이면 cycle 단계를 6 키프레임 대신 step(=denseInterval)마다
+        // robotisWalkingApproxPose(timeMs:) 직접 평가로 흘려보낸다(StepDeadlineScheduler
+        // 로 20ms 지터 보상). entry/exit 는 키프레임 그대로(전환 안전). 기본 false →
+        // 종전 동작 100% 보존. denseTuning 은 프리셋 고정 진폭(래치가 즉시 at-target).
+        denseStreaming: Bool = false,
+        denseTuning: WalkMotionLibrary.AdvancedTuning? = nil,
         onPose: (@MainActor @Sendable (RobotPose) -> Void)? = nil,
         transformPose: (@MainActor @Sendable (RobotPose) -> RobotPose)? = nil,
         // 2026-05-17 chaos #1 fix: store.bus 가 nil (disconnect) 됐는지 매 step
@@ -82,6 +89,10 @@ extension WalkLabSession {
         var probeIndex = 0
         let probeJoints = lowerBodyJoints.sorted { $0.rawValue < $1.rawValue }
 
+        // **D1 (2026-06-12)**: 시간 기반 모드 상태. stepDeadline 은 StepDeadlineScheduler
+        // 의 직전 발화 목표 시각(20ms 케이던스 지터 보상, D0 재사용).
+        var stepDeadline: ContinuousClock.Instant? = nil
+
         // 1. moving speed 설정 (1회) — L5: 관절별 개별 write 20회 → SYNC_WRITE 1패킷.
         let cycleSpeed: UInt16 = 256
         do { try bus.setMovingSpeeds(JointID.allCases, speed: cycleSpeed) }
@@ -107,7 +118,13 @@ extension WalkLabSession {
         // 왕복, TCP step당 12회 ≈ 36-72ms)을 setPositions 1패킷으로. per-joint status
         // 가 사라지므로 (a) transport 실패는 배치 내 하체 관절 전체 실패로 보수적
         // 매핑, (b) 죽은 서보 감지는 step 말미 liveness PING 라운드로빈으로 대체.
-        func sendStep(_ step: MotionStep, previousIn: RobotPose) async -> RobotPose {
+        //
+        // **D1 (2026-06-12)**: `denseInterval` 비-nil 이면 시간 기반 모드 —
+        //   · sleep 을 고정값 대신 StepDeadlineScheduler(20ms) 로(지터 보상),
+        //     playMs≥80 하한 미적용(시간 모드는 period≥440 클램프가 대체).
+        //   · `allowPing` 으로 liveness PING 을 시간 1Hz 로 게이팅(매 step → 1Hz).
+        func sendStep(_ step: MotionStep, previousIn: RobotPose,
+                      denseInterval: Int? = nil, allowPing: Bool = true) async -> RobotPose {
             let rawTarget = step.toPose()
             // **Stage 4b (v1.1 fall prevention, 2026-05-16)**: IMU 기반 corrector
             // 적용 — 호출자가 `transformPose` 로 `applyBalanceCorrectionIfEnabled`
@@ -172,7 +189,8 @@ extension WalkLabSession {
             }
             // **L5 liveness 프로브** — bus 직결 경로 전용 (robotPort mock 경로 제외).
             // SYNC_WRITE 무응답을 보상: step 마다 하체 관절 1개 PING (~1ms).
-            if robotPort == nil, !probeJoints.isEmpty, !Task.isCancelled,
+            // D1: 시간 모드는 allowPing 으로 1Hz 게이팅(매 step → 50Hz PING 은 예산 낭비).
+            if allowPing, robotPort == nil, !probeJoints.isEmpty, !Task.isCancelled,
                !(await isHardStopped()) {
                 let probe = probeJoints[probeIndex % probeJoints.count]
                 probeIndex += 1
@@ -185,9 +203,17 @@ extension WalkLabSession {
                     sampleError = "\(probe.name) liveness 무응답: \(error.localizedDescription)"
                 }
             }
-            let totalMs = max(80, step.playMs + step.pauseMs)
-            let ns = UInt64(totalMs) * 1_000_000
-            try? await Task.sleep(nanoseconds: ns)
+            // D1: 시간 모드(denseInterval)는 deadline 스케줄러로 20ms 케이던스 유지(80ms
+            // 하한 미적용). 키프레임 모드는 종전 고정 sleep(max(80,...)).
+            if let denseInterval {
+                let wake = StepDeadlineScheduler.next(previous: stepDeadline, now: .now, stepMs: denseInterval)
+                stepDeadline = wake
+                try? await Task.sleep(until: wake, clock: .continuous)
+            } else {
+                let totalMs = max(80, step.playMs + step.pauseMs)
+                let ns = UInt64(totalMs) * 1_000_000
+                try? await Task.sleep(nanoseconds: ns)
+            }
             return target
         }
 
@@ -216,35 +242,80 @@ extension WalkLabSession {
             }
         }
 
-        // 3. Cycle — 6 phase 무한 반복.
+        // 3. Cycle — 시간 기반(50Hz) 또는 6 키프레임 무한 반복.
         if endReason == .completedMaxDuration && !cancelledMidStep && lowerBodyPositionFails.count < Self.lowerBodyDistinctFailureThreshold {
-            cycleLoop: while !Task.isCancelled {
-                if let end = endDate, Date() >= end { break cycleLoop }
-                for step in plan.cycle {
-                    if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
-                    if let end = endDate, Date() >= end { break cycleLoop }
+            if denseStreaming, let denseTuning {
+                // **D1 시간 기반 스트리밍** — 같은 연속 함수를 step(20ms)마다 직접 평가.
+                // 버스 예산(1Mbps): SYNC_WRITE 12관절 2.7% + IMU 1.6% + PING 0.02% ≈ 4.3%
+                // (D2 의 FSR 10Hz 1.2% 포함 ~5–6%) — 여유.
+                let denseInterval = WalkDenseStreaming.effectiveStepMs()
+                let cycleStart = ContinuousClock.now
+                // 프리셋 고정 진폭이라 latch 를 즉시 at-target 으로 초기화(슬루 지연 0).
+                var latch = WalkAmplitudeLatch(initial: denseTuning)
+                var lastPingElapsedMs: Double = -WalkDenseStreaming.denseLivenessPingIntervalMs
+                denseCycle: while !Task.isCancelled {
+                    if let end = endDate, Date() >= end { break denseCycle }
                     if !(await isBusAlive()) {
                         endReason = .busDisconnected
-                        break cycleLoop
+                        break denseCycle
                     }
-                    previous = await sendStep(step, previousIn: previous)
+                    let elapsedMs = cycleStart.duration(to: .now).inMilliseconds
+                    latch.advance(elapsedMs: elapsedMs, target: denseTuning)
+                    let tCycle = WalkDenseStreaming.cycleTimeMs(
+                        elapsedMs: elapsedMs, periodMs: latch.committed.periodMs)
+                    let pose = WalkDenseStreaming.pose(atCycleMs: tCycle, tuning: latch.committed)
+                    let denseStep = MotionStep.from(pose: pose, playMs: denseInterval, pauseMs: 0)
+                    // liveness PING 을 시간 1Hz 로 게이팅.
+                    let pingDue = (elapsedMs - lastPingElapsedMs) >= WalkDenseStreaming.denseLivenessPingIntervalMs
+                    if pingDue { lastPingElapsedMs = elapsedMs }
+                    previous = await sendStep(denseStep, previousIn: previous,
+                                              denseInterval: denseInterval, allowPing: pingDue)
                     stepsExecuted += 1
 
                     if lowerBodyPositionFails.count >= Self.lowerBodyDistinctFailureThreshold {
                         endReason = .lowerBodyWriteFailure
-                        break cycleLoop
+                        break denseCycle
                     }
-                    // v1.8 Major #1: 단일 joint 연속 fail → 진짜 hardware fault 의심.
-                    // L5: liveness 프로브 연속 실패도 동일 판정 (SYNC_WRITE 무응답 보상).
                     if perJointFailsLocal.contains(where: { lowerBodyJoints.contains($0.key) && $0.value >= Self.perJointConsecutiveFailureLimit })
                         || probeFault() {
                         sampleError = sampleError ?? "단일 모터 연속 응답 없음 — hardware 확인"
                         endReason = .lowerBodyWriteFailure
-                        break cycleLoop
+                        break denseCycle
                     }
                     if positionFailures > max(10, JointID.allCases.count) {
                         endReason = .bulkWriteFailure
-                        break cycleLoop
+                        break denseCycle
+                    }
+                }
+            } else {
+                cycleLoop: while !Task.isCancelled {
+                    if let end = endDate, Date() >= end { break cycleLoop }
+                    for step in plan.cycle {
+                        if Task.isCancelled { cancelledMidStep = true; break cycleLoop }
+                        if let end = endDate, Date() >= end { break cycleLoop }
+                        if !(await isBusAlive()) {
+                            endReason = .busDisconnected
+                            break cycleLoop
+                        }
+                        previous = await sendStep(step, previousIn: previous)
+                        stepsExecuted += 1
+
+                        if lowerBodyPositionFails.count >= Self.lowerBodyDistinctFailureThreshold {
+                            endReason = .lowerBodyWriteFailure
+                            break cycleLoop
+                        }
+                        // v1.8 Major #1: 단일 joint 연속 fail → 진짜 hardware fault 의심.
+                        // L5: liveness 프로브 연속 실패도 동일 판정 (SYNC_WRITE 무응답 보상).
+                        if perJointFailsLocal.contains(where: { lowerBodyJoints.contains($0.key) && $0.value >= Self.perJointConsecutiveFailureLimit })
+                            || probeFault() {
+                            sampleError = sampleError ?? "단일 모터 연속 응답 없음 — hardware 확인"
+                            endReason = .lowerBodyWriteFailure
+                            break cycleLoop
+                        }
+                        if positionFailures > max(10, JointID.allCases.count) {
+                            endReason = .bulkWriteFailure
+                            break cycleLoop
+                        }
                     }
                 }
             }
