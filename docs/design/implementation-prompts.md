@@ -93,7 +93,7 @@ LatencyBudgetRegressionTests(레이턴시 문서 §6) 신설. **로봇 실기 �
 완료 시 docs/design/README.md 갱신. 커밋 스코프: connection / firmware.
 ```
 
-## [ ] P4 — 온보드 O2: 거버너 + 명령 의미론 v2 · 전제 P3
+## [x] P4 — 온보드 O2: 거버너 + 명령 의미론 v2 · 전제 P3 — 구현 완료 39a613b (호스트 125 checks·swift 3472/0 fail, 실기 벤치 대기)
 
 ```
 docs/design/walklab-onboard-teleop-upgrade.md 의 Wave O2 를 구현해줘 (O0·O1 머지 전제).
