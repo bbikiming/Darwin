@@ -45,9 +45,12 @@
 +    // `/tmp/df-pilot-mode == "walklab"` 이면 ROBOTIS Walking 엔진을 Mac SSH 명령
 +    // (`/tmp/df-walklab-cmd`) 으로 제어. SOCCER 모드 / ball tracker 우회.
 +    // 기본 (mode 미설정 또는 "soccer") 은 원본 흐름 유지.
++    // **C1 (2026-06-12)** — streamer(main 지역변수, L67 생성·8080 httpd 가동 중) 전달:
++    // walklab 중에도 카메라 프레임 펌프가 돌아 8080 MJPEG 라이브뷰가 동작한다. 종전엔
++    // 이 분기가 원본 메인 루프의 CaptureFrame→send_image 를 우회해 "포트 열림·영상 없음".
 +    if (ShouldRunWalkLabBrokerage()) {
 +        printf("[main] entering WalkLabBrokerage mode\n");
-+        Robotis::WalkLabBrokerage().Run(&cm730);   // 무한 루프 — SIGTERM 까지 동작 (cm730 전달 → 실 전압/3축 IMU)
++        Robotis::WalkLabBrokerage().Run(&cm730, streamer);   // 무한 루프 — SIGTERM 까지 동작 (cm730 → 실 전압/IMU, streamer → 카메라 스트림)
 +        return 0;
 +    }
 +

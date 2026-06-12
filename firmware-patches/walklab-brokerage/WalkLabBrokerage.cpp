@@ -59,6 +59,11 @@
 #include "Point.h"          // Robot::Point2D
 #include "Camera.h"         // Robot::Camera::WIDTH/HEIGHT (예측 시 프레임 clamp)
 #include "minIni.h"         // Robot::minIni — config 에서 공 색상(HSV) 로드 (싸커 데모와 동일)
+// **C1 카메라 스트림 (2026-06-12)** — walklab 중 8080 MJPEG 프레임 펌프.
+// Linux/include/mjpg_streamer.h(shim) → build/streamer/mjpg_streamer.h + httpd.h.
+// httpd::ClientRequest(public static bool) = "클라이언트가 프레임 대기중" — 이 플래그
+// 덕에 무뷰어 시 캡처/인코드 비용이 0 이다 (send_image 도 인코드를 이 플래그로 gate).
+#include "mjpg_streamer.h"  // mjpg_streamer::send_image + httpd::ClientRequest
 
 namespace Robotis {
 
@@ -105,6 +110,16 @@ namespace Robotis {
     #define STATIC_EPS 1.5    // 프레임간 각 변화 < 1.5° = 정지로 간주
     #define LIMIT_STUCK_FRAMES 20   // ~0.7s 고착 → 탈출
 
+    // **C1 카메라 스트림 (2026-06-12)** — 펌프 튜닝.
+    //  · VIEWER_HOLD: 마지막 클라이언트 요청 관측 후 캡처를 유지하는 창. 스트림 클라이언트는
+    //    프레임 소비마다 요청을 재게양하므로 시청 중엔 계속 갱신된다. 창 밖 = 무뷰어 휴면.
+    //  · 캡처는 항상 카메라 자연 페이스(~30fps) — 캡처를 늦추면 V4L2 mmap 4-버퍼 FIFO 특성상
+    //    DQBUF 가 200ms+ 묵은 프레임을 반환한다(조종용 영상 부적합). 대역/인코드 절감은
+    //    send_every(매 N 캡처당 1회 송출)로만 한다.
+    #define STREAM_VIEWER_HOLD_MS 2000
+    #define STREAM_IDLE_SLEEP_US  (100 * 1000)  // 볼트랙 양보 중 펌프 휴면
+    #define STREAM_POLL_SLEEP_US  (10 * 1000)   // 무뷰어 플래그 폴링(요청 감지 지연 상한 10ms)
+
     // ===== SIGTERM/SIGINT 핸들러 (§B) ============================================
     // Mac e-stop 의 belt-and-suspenders 경로(`killall -TERM demo demo-pilot`) 와
     // Ctrl-C 가 gait 를 빠르게 멈추도록: Walking::Stop() + body torque off 후 즉시 종료.
@@ -129,6 +144,19 @@ namespace Robotis {
             sa.sa_flags = 0;
             sigaction(SIGTERM, &sa, NULL);
             sigaction(SIGINT, &sa, NULL);
+            // **C1 [CRITICAL] (2026-06-12)** — SIGPIPE 무시. httpd::send_stream 은
+            // `write()<0 → break` 에러 처리가 이미 있지만, SIGPIPE 기본 동작(프로세스 종료)이
+            // write 가 -1 을 반환하기 **전에** 데모를 죽인다. 스트림 클라이언트가 끊긴 뒤
+            // 카메라 펌프의 broadcast 가 고아 send_stream 스레드를 깨우면 죽은 소켓 write →
+            // SIGPIPE → 데모 전체 사망(실측: Run 진입 ~200ms 내 무로그 종료). SIG_IGN 이면
+            // write 가 EPIPE 를 반환해 공장 에러 경로가 설계대로 연결을 정리한다.
+            // (공장 READY/SOCCER 모드 스트리밍도 같은 취약점이 있었음 — 본 패치로 함께 경화.)
+            struct sigaction sp;
+            memset(&sp, 0, sizeof(sp));
+            sp.sa_handler = SIG_IGN;
+            sigemptyset(&sp.sa_mask);
+            sp.sa_flags = 0;
+            sigaction(SIGPIPE, &sp, NULL);
         }
 
         // raw 10-bit ADC word 를 0..1023 으로 clamp (§A.1).
@@ -300,9 +328,21 @@ namespace Robotis {
             m_vision_ready = true;
             printf("[WalkLabBrokerage] ball-tracking vision init (config %s)\n", BALLCOLOR_INI);
         }
+        // C1 (2026-06-12) — 캡처/fbuffer 는 펌프 스레드와 m_cam_mutex 로 배타. 볼트랙 중엔
+        // 펌프가 양보(m_balltrack_enabled)하므로 평시 경합 없음 — 모드 전환 순간만 직렬화.
+        pthread_mutex_lock(&m_cam_mutex);
         Robot::LinuxCamera::GetInstance()->CaptureFrame();
         Robot::Point2D pos = m_ball_finder->GetPosition(
             Robot::LinuxCamera::GetInstance()->fbuffer->m_HSVFrame);
+        // 볼트랙 중에도 같은 프레임을 8080 으로 송출(추가 캡처 0 비용). send_image 는
+        // **무조건 호출**(send_every 페이스만 적용) — 요청 유무 분기·인코드 게이트는
+        // send_image 내부가 한다(CameraPumpLoop 의 missed-wakeup 주석 참조). 무시청 시
+        // 비용은 lock+broadcast 마이크로초 수준.
+        if (m_streamer && m_stream_enabled && ++m_stream_skip >= m_stream_send_every) {
+            m_stream_skip = 0;
+            m_streamer->send_image(Robot::LinuxCamera::GetInstance()->fbuffer->m_YUVFrame);
+        }
+        pthread_mutex_unlock(&m_cam_mutex);
 
         // **추적 품질 업그레이드 (2026-06-03) — 카메라 추적 방법론 적용**:
         //  · 공간 검증 게이트(validation gate): 검출이 예측 위치에서 너무 멀면(다른 적색
@@ -415,6 +455,89 @@ namespace Robotis {
         }
     }
 
+    // ===== C1 카메라 스트림 펌프 (2026-06-12) =====================================
+    // 근본 원인: walklab 분기는 demo 원본 메인 루프(CaptureFrame→send_image, 원본 main.cpp
+    // L159/L249) **진입 전에** Run() 으로 빠진다 → 8080 httpd 스레드와 /dev/video0 은 살아
+    // 있는데 프레임을 밀어 넣는 코드만 영원히 실행되지 않았다("포트 열림·영상 없음"의 정체,
+    // 클라이언트는 condvar 대기 고착). 이 펌프가 그 역할을 전담 스레드로 복원한다.
+    //
+    // 설계 불변식:
+    //  · 캡처는 카메라 자연 페이스(~30fps) — CaptureFrame 이 다음 프레임까지 블록해 스스로
+    //    페이스를 만든다. 느린 캡처는 V4L2 4-버퍼 FIFO 에 묵은 프레임을 남긴다(상단 주석).
+    //  · 무뷰어 = 무비용: httpd::ClientRequest 미관측(VIEWER_HOLD 창 밖)이면 캡처/인코드
+    //    없이 10ms 플래그 폴링만 한다. supervisor 루프(보행 20ms)는 어느 경우에도 무영향.
+    //  · 볼트랙 양보: m_balltrack_enabled 동안 펌프는 캡처하지 않는다(ProcessBallTracking
+    //    이 캡처+송출 겸임). fbuffer 경합은 m_cam_mutex 가 전환 순간을 직렬화.
+    //  · CPU 근거: 공장 SOCCER 데모는 같은 CPU 에서 캡처+컬러파인더 4종+보행+인코드를 단일
+    //    루프로 동시 수행(원본 main.cpp L159-249) — 본 펌프 부하는 그 부분집합.
+
+    void* WalkLabBrokerage::CameraPumpThreadEntry(void* self) {
+        ((WalkLabBrokerage*)self)->CameraPumpLoop();
+        return 0;
+    }
+
+    void WalkLabBrokerage::StartCameraPump() {
+        if (!m_streamer || !m_stream_enabled) {
+            printf("[WalkLabBrokerage] camera stream pump off (%s)\n",
+                   m_streamer ? "[Stream] enabled=0" : "no streamer from main.cpp");
+            return;
+        }
+        Robot::LinuxCamera* cam = Robot::LinuxCamera::GetInstance();
+        if (!cam || !cam->fbuffer) {
+            // 카메라 미초기화(이론상 demo 는 초기화 실패 시 기동 전에 죽지만 방어적으로).
+            printf("[WalkLabBrokerage] camera not initialized — stream pump disabled\n");
+            return;
+        }
+        m_camera_running = true;
+        if (pthread_create(&m_camera_thread, 0, CameraPumpThreadEntry, this) != 0) {
+            m_camera_running = false;
+            printf("[WalkLabBrokerage] camera pump thread create failed — stream disabled\n");
+            return;
+        }
+        printf("[WalkLabBrokerage] camera stream pump started (:8080, send_every=%d)\n",
+               m_stream_send_every);
+    }
+
+    void WalkLabBrokerage::StopCameraPump() {
+        if (!m_camera_running) return;
+        m_camera_running = false;   // 루프 종료 — 최대 휴면(100ms)+캡처 1회 후 합류.
+        pthread_join(m_camera_thread, 0);
+    }
+
+    void WalkLabBrokerage::CameraPumpLoop() {
+        long long last_req_ms = 0;   // 마지막 클라이언트 요청 관측 시각(monotonic) — 뷰어 창.
+        while (m_camera_running) {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            long long now_ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+            // httpd 스레드가 set, send_image 가 consume — 공장 코드와 동일한 cross-thread
+            // bool 관례(비-volatile이지만 단순 플래그 관측이라 지연 허용·정확성 무관).
+            if (httpd::ClientRequest) last_req_ms = now_ms;
+
+            bool viewer = (last_req_ms != 0 &&
+                           now_ms - last_req_ms < STREAM_VIEWER_HOLD_MS);
+            if (!viewer) { usleep(STREAM_POLL_SLEEP_US); continue; }
+            if (m_balltrack_enabled) { usleep(STREAM_IDLE_SLEEP_US); continue; }
+
+            pthread_mutex_lock(&m_cam_mutex);
+            if (!m_balltrack_enabled) {   // 전환 레이스 재확인 (mutex 하).
+                Robot::LinuxCamera::GetInstance()->CaptureFrame();   // ~33ms 페이스(신선 프레임).
+                // send_image 는 **무조건 호출** (send_every 페이스만 적용) — 요청 유무 분기는
+                // send_image 내부가 한다. 공장 프로토콜의 함정: ClientRequest=false 클리어가
+                // db 뮤텍스 해제 **후**라, httpd 가 그 사이 재게양한 다음 요청을 지울 수 있다
+                // (missed-wakeup). 공장 데모는 매 프레임 send_image 를 불러 else-브랜치의
+                // broadcast 로 잠든 클라이언트를 깨워 자가 회복한다 — 바깥에서 ClientRequest
+                // 로 게이트하면 그 회복 경로가 끊겨 스트림이 1프레임에서 고착한다(실측).
+                if (++m_stream_skip >= m_stream_send_every) {
+                    m_stream_skip = 0;
+                    m_streamer->send_image(
+                        Robot::LinuxCamera::GetInstance()->fbuffer->m_YUVFrame);
+                }
+            }
+            pthread_mutex_unlock(&m_cam_mutex);
+        }
+    }
+
     // ===== O1 transport — UDP 리스너 스레드 (2026-06-12) =========================
     // 핸드셰이크 토큰이 있을 때만 기동. 스레드는 "수신→슬롯/정지"만 수행(적용 로직 없음).
     // Walking 파라미터 쓰기는 supervisor 단일 루프가 담당(§c 스레드 안전 — 단일 writer).
@@ -435,6 +558,14 @@ namespace Robotis {
         // 포트 미기재 시 DFConnectionConstants 기본값(17372/17374)과 일치.
         m_estop_port = (n >= 2 && ep > 0) ? ep : 17372;
         m_cmd_port   = (n >= 3 && cp > 0) ? cp : 17374;
+        // 세션 사용자 캡처(실기 F1) — 핸드셰이크는 Mac 이 SSH(robotis)로 쓰므로 그
+        // 소유자가 곧 재무장(rm) 주체. UDP estop flag 를 이 uid 로 chown 해야
+        // sticky /tmp 에서 Mac 의 rm 재무장이 가능하다(§G.2).
+        struct stat hs_st;
+        if (stat(CHANNEL_PATH, &hs_st) == 0) {
+            m_session_uid = (int)hs_st.st_uid;
+            m_session_gid = (int)hs_st.st_gid;
+        }
         return true;
     }
 
@@ -475,8 +606,16 @@ namespace Robotis {
             if (w) { w->Stop(); w->m_Joint.SetEnableBody(false); }
             // flag 파일 touch — 기존 latch/re-arm(EstopRequested) 경로가 hold-stopped 소유.
             // UDP estop 은 일회성 datagram → 파일이 상태를 소유(Mac 이 rm 할 때까지 정지 유지).
+            // 실기 F1(2026-06-12): demo 는 root 라 flag 가 root 소유로 생기면 sticky /tmp
+            // 에서 Mac(SSH robotis)의 rm 재무장이 영구 차단된다 → 세션 사용자로 chown.
             int fd = open(ESTOP_PATH, O_CREAT | O_WRONLY, 0644);
-            if (fd >= 0) close(fd);
+            if (fd >= 0) {
+                if (m_session_uid >= 0 &&
+                    fchown(fd, (uid_t)m_session_uid, (gid_t)m_session_gid) != 0) {
+                    // chown 실패(비 root 실행 등)는 무해 — flag 자체는 유효.
+                }
+                close(fd);
+            }
         }
     }
 
@@ -570,7 +709,7 @@ namespace Robotis {
         }
     }
 
-    void WalkLabBrokerage::Run(Robot::CM730* cm730) {
+    void WalkLabBrokerage::Run(Robot::CM730* cm730, mjpg_streamer* streamer) {
         m_head_commanded = false;
         // O0 계측 — last_cmd_id/loop_ms 초기화.
         strcpy(m_last_cmd_id, "no_id");
@@ -596,6 +735,8 @@ namespace Robotis {
         m_last_channel_check_ms = 0;
         m_channel_mtime_sec = 0;
         m_channel_mtime_nsec = 0;
+        m_session_uid = -1;
+        m_session_gid = -1;
         m_fall_count = 0;   // **v1.13** auto-getup debounce 카운터 초기화.
         // 볼 트래킹 (2026-06-02) — vision 상태 초기화 (lazy-init 은 첫 enable 시).
         m_balltrack_enabled = false;
@@ -617,6 +758,18 @@ namespace Robotis {
         m_uplink_ip[0] = 0;
         m_uplink_port = 0;
         m_last_uplink_ms = 0;
+        // C1 카메라 스트림 (2026-06-12) — 상태 초기화 + [Stream] 설정(balltrack.ini 공용,
+        // 섹션/파일 없으면 기본값 = enabled·send_every 2 ≈ 15fps). 재빌드 없이 토글 가능.
+        m_streamer = streamer;
+        m_camera_running = false;
+        pthread_mutex_init(&m_cam_mutex, 0);
+        m_stream_skip = 0;
+        {
+            minIni sini(BALLCOLOR_INI);
+            m_stream_enabled = sini.geti("Stream", "enabled", 1) != 0;
+            m_stream_send_every = sini.geti("Stream", "send_every", 2);
+            if (m_stream_send_every < 1) m_stream_send_every = 1;
+        }
         InstallSignalHandlers();
 
         Robot::Walking* walking = Robot::Walking::GetInstance();
@@ -653,6 +806,10 @@ namespace Robotis {
         // **v1.12** — telemetry write 를 ~200ms(5Hz) 로 gate (poll 은 100ms).
         long long last_tel_ms = 0;
 
+        // C1 (2026-06-12) — 카메라 펌프 스레드 기동 (streamer NULL/disabled/카메라 미초기화면
+        // no-op). supervisor 루프와 분리된 스레드라 보행 제어 타이밍엔 영향 없음.
+        StartCameraPump();
+
         while (true) {
             // **2026-06-08 후면 MODE 버튼 정지** — 사용자가 데모 후면 패널의 MODE
             // 버튼을 다시 누르면 `StatusCheck::Check()` 가 m_is_started=0,
@@ -667,6 +824,7 @@ namespace Robotis {
                 // 헤드도 정지 + 토크 풀어 사용자가 들고 내릴 수 있게.
                 Robot::Head::GetInstance()->m_Joint.SetEnableHeadOnly(false);
                 StopTransportThreads();   // O1 — UDP 리스너 정리 후 정상 종료.
+                StopCameraPump();         // C1 — 카메라 펌프 정리 (정상 종료 경로).
                 break;
             }
 

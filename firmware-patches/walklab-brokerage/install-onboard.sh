@@ -131,13 +131,24 @@ if ! grep -q 'DarwinForge WalkLab onboard' main.cpp; then
                 DF_PROGRESS("walklab-active");
                 unlink("/tmp/df-pilot-mode");
                 fprintf(stderr, "[df-pilot] entering WalkLabBrokerage.Run()\n");
-                Robotis::WalkLabBrokerage().Run(&cm730);
+                // C1 (2026-06-12) — streamer 전달: walklab 중에도 8080 MJPEG 펌프 동작.
+                Robotis::WalkLabBrokerage().Run(DF_RUN_ARGS_PLACEHOLDER);
                 return 0;
             }
         }
     }
     // === end DarwinForge injection ===
 EOF_INJECT
+  # C1 (2026-06-12) — 카메라 스트림: demo main.cpp 의 mjpg_streamer 지역변수(streamer)를
+  # brokerage 에 전달해 walklab 중에도 8080 프레임 펌프가 돌게 한다. streamer 변수가 없는
+  # 데모 변종에서는 종전 시그니처(Run(&cm730))로 폴백 — 컴파일 항상 보장.
+  if grep -q 'mjpg_streamer\*[[:space:]]*streamer' main.cpp; then
+    sed -i 's/Run(DF_RUN_ARGS_PLACEHOLDER)/Run(\&cm730, streamer)/' /tmp/df_walklab_inject.cpp
+    echo "▶ C1: Run(&cm730, streamer) — 카메라 스트림 펌프 활성 주입."
+  else
+    sed -i 's/Run(DF_RUN_ARGS_PLACEHOLDER)/Run(\&cm730)/' /tmp/df_walklab_inject.cpp
+    echo "⚠ C1: main.cpp 에 mjpg_streamer 변수 없음 — 스트림 없이 Run(&cm730) 폴백."
+  fi
   # while(1) 가 처음 나오는 줄 앞에 삽입.
   sed -i '0,/while(1)/{/while(1)/e cat /tmp/df_walklab_inject.cpp
 }' main.cpp || {
@@ -293,13 +304,19 @@ if ! grep -q 'WalkLab button mode' main.cpp; then
                     Walking::GetInstance()->Initialize();
                     cm730.WriteWord(CM730::ID_BROADCAST, MX28::P_MOVING_SPEED_L, 0, 0);
                     fprintf(stderr, "[df-pilot] entering WalkLabBrokerage.Run() via button mode\n");
-                    Robotis::WalkLabBrokerage().Run(&cm730);
+                    Robotis::WalkLabBrokerage().Run(DF_RUN_ARGS_PLACEHOLDER);
                     // Run() 종료(MODE 버튼) 후 boot 플래그 리셋 — 다시 START 누르면 재진입 가능.
                     df_walklab_booted = false;
                 }
             }
             break;
 EOF_CASE
+  # C1 — 버튼 모드 경로도 동일하게 streamer 전달(변종 폴백 포함).
+  if grep -q 'mjpg_streamer\*[[:space:]]*streamer' main.cpp; then
+    sed -i 's/Run(DF_RUN_ARGS_PLACEHOLDER)/Run(\&cm730, streamer)/' /tmp/df_walklab_case.cpp
+  else
+    sed -i 's/Run(DF_RUN_ARGS_PLACEHOLDER)/Run(\&cm730)/' /tmp/df_walklab_case.cpp
+  fi
   # `case ROBOPLUS:` 블록의 끝(`break;`) 다음에 위 case 삽입. ROBOPLUS case 는
   # `roboplus_exec(...);` 한 줄 + `break;` 패턴.
   awk 'BEGIN { applied=0; in_roboplus=0 }

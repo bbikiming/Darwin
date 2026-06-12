@@ -20,6 +20,9 @@ namespace Robot { class Head; }
 // 볼 트래킹 (2026-06-02) — 헤더 include 없이 forward 선언 (impl 에서만 사용).
 namespace Robot { class ColorFinder; }
 namespace Robot { class BallTracker; }
+// **C1 카메라 스트림 (2026-06-12)** — demo main.cpp 의 8080 MJPEG 서버. 전역 namespace
+// (ROBOTIS Linux/build/streamer — Robot:: 아님). impl 에서만 사용, 헤더는 forward 선언.
+class mjpg_streamer;
 
 namespace Robotis {
 
@@ -98,7 +101,14 @@ public:
     /// 무한 루프 — robot main() 가 호출. 외부에서 SIGTERM 또는 demo-pilot kill 까지 동작.
     /// **v1.12** — cm730 포인터 주입 (§A.1): voltage + 3축 raw IMU 를 bulk-read 버퍼에서
     /// 추가 bus 트래픽 없이 read. NULL 이면 MotionStatus 로 graceful degrade.
-    void Run(Robot::CM730* cm730);
+    /// **C1 (2026-06-12)** — streamer 주입: demo main.cpp 가 만든 mjpg_streamer(8080 httpd)
+    /// 로 walklab 중에도 카메라 프레임을 펌프한다(전담 스레드 + 볼트랙 경로 겸용). 종전엔
+    /// walklab 분기가 demo 원본 메인 루프(CaptureFrame→send_image)를 우회해 "8080 열림·
+    /// 영상 없음" 상태였다. NULL 이면 카메라 스트리밍 없이 종전과 동일.
+    void Run(Robot::CM730* cm730, mjpg_streamer* streamer);
+
+    /// 종전 시그니처 호환 — 카메라 스트리밍 비활성 경로.
+    void Run(Robot::CM730* cm730) { Run(cm730, 0); }
 
     /// **v1.12.1 (2026-06-01)** — 레거시 호출 호환 오버로드.
     /// 기존 main.cpp 주입부는 `Run()` (무인자) 로 호출한다. DARWIN 프레임워크의
@@ -106,7 +116,7 @@ public:
     /// MotionManager::m_CM730 는 private 이므로, 무인자 경로는 NULL 을 넘겨
     /// telemetry 를 MotionStatus(IMU) 로 graceful degrade 시킨다 (§A.1).
     /// CM730 을 직접 넘길 수 있는 호출부는 Run(cm730) 를 쓴다.
-    void Run() { Run(0); }
+    void Run() { Run(0, 0); }
 
 private:
     /// CMD_PATH 한 줄 read → ApplyCommandLine 위임 (파일 경로 — 영구 폴백).
@@ -146,6 +156,17 @@ private:
     /// pthread entry trampolines (C++03).
     static void* CmdUdpThreadEntry(void* self);
     static void* EstopUdpThreadEntry(void* self);
+
+    // ===== C1 카메라 스트림 펌프 (2026-06-12) =====
+    /// 펌프 스레드 기동. m_streamer NULL / [Stream] enabled=0 / 카메라 미초기화면 no-op.
+    void StartCameraPump();
+    /// 펌프 스레드 정지 + 합류 (MODE 버튼 정상 종료 경로).
+    void StopCameraPump();
+    /// 펌프 루프 — 뷰어(httpd::ClientRequest 최근 관측) 있을 때만 카메라 자연 페이스
+    /// (~30fps)로 CaptureFrame, send_every 캡처마다 1회 send_image(JPEG q80 → 8080).
+    /// 볼트래킹 중엔 양보 — ProcessBallTracking 이 캡처+송출을 겸임한다.
+    void CameraPumpLoop();
+    static void* CameraPumpThreadEntry(void* self);
 
     /// **v1.12 / O4** — Telemetry. **파일**(write_file=true, 5Hz gate)은 TEL v1 형식 그대로
     /// (SSH 폴백·구버전 Mac 호환). **UDP**는 TEL2(v2) 형식을 30Hz(TEL2_UDP_INTERVAL_MS) gate 로
@@ -228,6 +249,17 @@ private:
     long long m_last_channel_check_ms; ///< 마지막 CHANNEL_PATH 점검 시각(ms) — 1s throttle.
     long  m_channel_mtime_sec;         ///< CHANNEL_PATH mtime(sec) — 토큰 회전 감지.
     long  m_channel_mtime_nsec;        ///< CHANNEL_PATH mtime(nsec).
+    int   m_session_uid;               ///< CHANNEL_PATH 소유 uid — estop flag chown 타깃(-1=미상).
+    int   m_session_gid;               ///< CHANNEL_PATH 소유 gid (실기 F1, 2026-06-12).
+
+    // ===== C1 카메라 스트림 상태 (2026-06-12) =====
+    mjpg_streamer* m_streamer;      ///< demo main.cpp 의 8080 스트리머 (NULL = 스트림 비활성).
+    pthread_t m_camera_thread;      ///< 카메라 펌프 스레드.
+    volatile bool m_camera_running; ///< 펌프 스레드 종료 플래그 (transport 와 동일 관례).
+    pthread_mutex_t m_cam_mutex;    ///< CaptureFrame/fbuffer 배타 (펌프 스레드 ↔ 볼트랙 경로).
+    bool m_stream_enabled;          ///< [Stream] enabled (balltrack.ini, 기본 1 — 재빌드 없이 토글).
+    int  m_stream_send_every;       ///< 매 N 캡처당 1회 인코드/송출 (기본 2 ≈ 15fps).
+    int  m_stream_skip;             ///< send_every 카운터 — m_cam_mutex 하에서만 접근.
 
     // ===== UDP 텔레메트리 업링크 (2026-06-03) =====
     int m_udp_fd;               ///< UDP 소켓 fd. -1 = 미생성(lazy-open).
