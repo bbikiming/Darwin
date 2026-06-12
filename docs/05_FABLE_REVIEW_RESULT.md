@@ -15,6 +15,28 @@
 
 ---
 
+## [P9] 온보드 O4 — TEL2 30Hz 텔레메트리 v2 — **통과** (2026-06-12)
+
+- 구현 커밋: `daa2550`(firmware)·`998297a`(connection)·`980e2a6`(docs) ·
+  리뷰어: **Fable 교차**(별도 세션)
+- 증거(리뷰 세션 독립 재실행): 호스트 C++ **154체크 0실패**(142→154) ·
+  **풀 스위트 3,499 테스트 0 실패**(121s)
+- **A 안전: 통과** — E-STOP·워치독 경로 무영향(read·송신만), estop/getup 분기에서도
+  텔레메트리 계속 보고(5개 호출부 일관 갱신), UDP 30Hz 게이트(TEL2_UDP_INTERVAL_MS=33)
+  로 종전 ~50Hz push 정식화.
+- **B 계약: 통과** — **파일 경로는 TEL v1 형식 그대로**(영구 폴백 불변식 — 5Hz·atomic
+  rename 무변경), TEL2 는 UDP 전용. FSR 은 `m_BulkReadData.error==0` 양발 게이트 +
+  미장착 "-" 폴백, CoP 는 255(무접지) 제외 평균 — 사려 깊음. phase 는 공식
+  `Walking::GetCurrentPhase()`(Walking.h:139), 래치값은 WriteShapedCommand 후 값
+  (P4 보관값 재사용 — 지시한 결정 그대로), active_source(H2 자리)·risk "-"(O3 자리) ✓.
+  Mac 파서는 prefix 방언 판별 — v1 경로 무변경(회귀 가드 테스트 포함).
+- **C 품질: 통과** — FormatTel2 순수 함수(호스트 테스트), Mac 테스트 +27(TEL2 full/
+  FSR 결손/CoP 독립/truncated/v1 회귀/J6), J6 적응형 폴러(udpFreshProvider 클로저 —
+  UDP 신선 시 1Hz 강등·두절 시 5Hz 복귀).
+- 소비 결선 확인: 콕핏 명령 vs 래치 HUD(CockpitLatchIndicator), walkAnimator 외부 위상
+  저게인 동기, TEL2 FSR→3D 오버레이(기존 주입 지점 재사용 — P6 직결 쪽과 대칭 완성).
+- 실기 이월: UDP 30Hz 수신율·HUD 위상 vs 보행 영상 대조·Wi-Fi 손실률 — 로봇 연결일.
+
 ## [P6] bus D1+D2 — 50Hz 연속 스트리밍 + 밸런스 50Hz + FSR 관측 — **통과** (2026-06-12)
 
 - 구현 커밋: `5ff5873`(D1)·`e940e63`(D2)·`bfa4c0d`(docs) · 리뷰어: **Fable 교차**(별도 세션)
