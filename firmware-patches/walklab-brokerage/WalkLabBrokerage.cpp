@@ -1022,6 +1022,11 @@ namespace Robotis {
                 }
             }
 
+            // H2 ②③티어 활성 판정 — 아래 워치독 스냅 양보와 티어 블록이 공유.
+            bool local_fs_slew =
+                (m_active_source == SRC_LOCAL &&
+                 m_gamepad.PollFailsafe(now_ms) == Robotis::GP_FS_SLEW_ZERO);
+
             // ── O1 워치독 티어 (G3) — 매 루프. 600ms: 진폭 0 슬루(제자리 걸음, 토크 유지),
             //    2.5s: Walking::Stop()(토크 유지 — 컷은 E-STOP 만). 5s STALE 은 위의 backstop.
             //    **[HIGH] 티어는 스트림(UDP 슬롯) 소스 전용** — 파일 소스(dedup·변경시만 송신)는
@@ -1030,7 +1035,12 @@ namespace Robotis {
                 Robotis::WatchdogAction wd = Robotis::WatchdogDecision(
                     now_ms - m_last_cmd_ms, walking_active, m_last_cmd_from_stream);
                 if (wd == Robotis::WD_SLEW_ZERO) {
-                    ForceSlewZero(walking);
+                    // **codex P2 r2 fix (2026-06-12)**: local ②③티어 활성 중엔 스냅을
+                    // 양보 — 티어(목표 0)+루프 슬루 램프가 완만한 정지를 소유한다.
+                    // 종전엔 local 유실 후 600ms 에 이 스냅이 램프를 선점해 잔여
+                    // 진폭(~22mm)을 1루프에 0 으로 떨어뜨렸다. WD_STOP(2.5s) 백스톱과
+                    // UDP 스트림 유실 경로(즉시 0 — O1 의미)는 불변.
+                    if (!local_fs_slew) ForceSlewZero(walking);
                 } else if (wd == Robotis::WD_STOP) {
                     if (walking_active) {
                         printf("[WalkLabBrokerage] watchdog stale — auto stop (torque held)\n");
@@ -1049,8 +1059,7 @@ namespace Robotis {
             //    **codex P2 fix (2026-06-12)**: 목표만 0 — 워치독 스냅(ForceSlewZero)과
             //    달리 슬루 상태는 유지해 아래 "루프 측 슬루 전진"이 SLEW_*_MAX 로 램프
             //    다운(스펙의 "완만한 정지" — 풀스트라이드 1루프 스냅 방지).
-            if (m_active_source == SRC_LOCAL && walking_active &&
-                m_gamepad.PollFailsafe(now_ms) == Robotis::GP_FS_SLEW_ZERO) {
+            if (local_fs_slew && walking_active) {
                 m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0;
                 // **codex P2 fix**: local 신선 창까지 만료됐으면 파일 보유 명령의
                 // 재적용을 허용(소비 표시 리셋) — 파일(dedup) 소스는 변경이 없으면
