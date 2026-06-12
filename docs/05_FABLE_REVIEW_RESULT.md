@@ -15,6 +15,50 @@
 
 ---
 
+## [P7] handheld H1+H2 — 온보드 GamepadPilot + 소스 중재 — **통과 (3회전)** (2026-06-12)
+
+- 구현 커밋: `8430f0a`(firmware)·`bbde5ac`(connection)·`49f60e9`(docs) + 리뷰 반영
+  `1bb7224`(r1)·`4c226d6`(r2) · 리뷰어: **Codex 교차 3회전**(gpt-5.5, reasoning=high,
+  read-only — r1 풀 리뷰 1.05M tk → r2 수정 검증+잔여 1건 0.72M tk → r3 단일 게이트
+  검증 0.20M tk **PASS**)
+- 증거: 호스트 `test_gamepad` **141 checks 0 fail**(3티어 시퀀스 시뮬 — release→ENODEV
+  / ENODEV 단독(release 무) / 무이벤트 1.5s 오발 / 재 ARM 포함) + `test_transport`
+  **154 회귀**(codex 가 r2 에서 독립 재실행 확인) · swift test(serial) **3501 tests
+  0 failures**(신규 `testDemoBuildPatchedDeploysGamepadPilot` 포함)
+- **A 안전: 통과** — E-STOP(B)는 읽기 스레드에서 즉시 콜백(스로틀/배칭/추가 홉 0,
+  락 밖 발화) → `TriggerEstopImmediate()`(UDP estop 의 Stop+토크OFF+flag fchown 경로
+  추출 공유 — 의미 불변을 codex 가 확인). 파일 명령/E-STOP/TEL 폴백 보존(파일 walk
+  명령은 local 신선 창 ≤1s 동안만 양보 — H2-1 설계). 클램프 최종 소유 = 거버너
+  (local 라인도 ApplyCommandLine 단일 지점). 정지 DSP 게이팅·Walking.cpp 무변경.
+  티어는 토크 유지(컷은 E-STOP·FALLEN 만).
+- **B 계약: 통과(편차 1)** — TEL v1 파일 포맷·v1 14토큰 라인 불변(P9 불변식), TEL2
+  active_source 값 공간에 `local` 추가 — **편차: ssh-parity-contract §A.2 개정이
+  구현과 동일 커밋이 아닌 후속 docs 커밋**(미푸시 브랜치 내, 해시 상호 참조 때문에
+  rebase 미시행 — 기록으로 승인 요청). 매핑 패리티 표 일치(데드존 0.10·곡선 1.35·
+  38/22/12·터보 ×1.3 콕핏 실측치). 상수 단일 정의(GamepadPilot.h).
+- **C 품질: 통과** — GamepadPilot.h 286줄·cpp 555줄(≤800), C++03(-std=c++03 강제,
+  long long 은 기존 코드베이스 컨벤션 — codex [P3] 기각 합의), 시크릿 0, 순수 로직
+  Robot:: 의존 0(호스트 테스트), 장치 계층 __linux__ 게이트.
+- **D 절차: 통과** — Conventional Commits 5건, 체크박스/06/README §1 갱신, 외부
+  검수 = Codex 3회전(본 절).
+- 발견 이슈(전부 수정·재검증):
+  - **[P1] r1** 노드 소멸 시 disarm 게이트 정지 라인(enabled=0)이 즉시 Walking::Stop
+    — ②티어 스펙(제자리 슬루→WD_STOP) 위반 → 데드맨 해제 관측(①티어)에만 발행
+    (`1bb7224`, 신규 테스트 +3)
+  - **[P2] r1** ForceSlewZero 가 램프 없이 스냅 → H2 티어는 목표만 0(루프 슬루가
+    SLEW_*_MAX 램프 다운), 워치독 스냅은 O1 의미 보존(`1bb7224`)
+  - **[P2] r1** active_source 의 local 고착(파일 dedup 소스 복귀 불가) → 티어 발화
+    +신선 창 만료 시 last_stat 리셋으로 보유 명령 재적용(`1bb7224`)
+  - **[P2] r2** local 유실 후 600ms 스트림 워치독 스냅이 티어 램프 선점 →
+    local_fs_slew 활성 중 스냅 양보(WD_STOP 2.5s·5s STALE·UDP 경로 불변, `4c226d6`)
+    — r3 **PASS**
+  - [P3] r1 long long C++03 pedantic — 기각(기존 컨벤션, 로봇 g++ 수용)
+- 실기 보류(입회 게이트 — 02 §2 트랙 B 갱신): ① ABS_X 부호 확정 ② E-STOP ≤20ms
+  (B→Walking::Stop 타임스탬프) ③ 단절 매트릭스(전원 OFF·절전·거리 이탈·배터리
+  탈락·동글 뽑기 — ③티어 발화 확인) ④ 재전원→재획득→재 ARM ⑤ 10분 CPU·loop_ms
+  (카메라 펌프 동시 부하) ⑥ 정속 직진 이벤트 침묵 분포 → ③티어 1.5s 임계 확정 ·
+  운용 체크리스트(충전·페어링·절전 ~10분·E-STOP 리허설).
+
 ## [P10] handheld H3 — Switch 클라이언트 O1-UDP 화 — **통과** (2026-06-12)
 
 - 구현 커밋: `ae23e5c`(switch)·`c48f8e7`(docs) · 리뷰어: **Fable 교차**(별도 세션)

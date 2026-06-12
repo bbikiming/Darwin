@@ -140,7 +140,9 @@ TEL2 {ts} {seq_applied} {phase} {x_lat} {y_lat} {a_lat} {period_lat}
 - `risk`: **always `-`** for now — O3 (fall-risk indicator) not yet implemented; the slot is
   reserved (`%.2f` when O3 wires it).
 - `vdV`: deci-volts (0 = unknown), same as v1.
-- `active_source`: `udp` or `file` — which transport supplied the last applied command (H2).
+- `active_source`: `udp`, `file`, or `local` — which source supplied the last applied
+  command (H2). `local` = onboard GamepadPilot (RG G01 dongle direct, P7 2026-06-12);
+  arbitration is `E-STOP(all sources, always) > local(last input ≤1s) > network`.
 - `loop_ms`: supervisor loop duration, same as O0.
 
 Formatter is the **pure** `Robotis::FormatTel2` (`WalkLabTransport.{h,cpp}`, `Robot::`-free,

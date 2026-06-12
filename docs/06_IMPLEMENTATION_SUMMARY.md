@@ -19,10 +19,39 @@
   실기 체크리스트 이월) — **로봇-프리 P 전부 소진**. bus 트랙은 D3(데모 운영)만 잔여
 - 온보드 트랙: **O0·O1·O2·O4 완료** — O3(밸런스 피드백, 실기 비중 최대)만 잔여.
   P8(O3) 코드 단계는 플래그 게이트 기본 OFF 라 로봇 없이 착수 가능(실기 튜닝만 대기)
-- 로봇 대기: P1(프로브), P7, P8 실기 튜닝, 실기 벤치 누적분(05 의 "실기 보류" 항목들
-  + P3 배포·벤치 + P4 k_x 보정 + P10 무선 실효율·E-STOP)
+- **P7 ✅**(handheld H1+H2 — 8430f0a·bbde5ac+리뷰 반영 1bb7224·4c226d6, Codex 교차
+  3회전 통과: GamepadPilot 동글 직결+소스 중재+3티어 failsafe. 호스트 141 checks·
+  swift 3501/0. demoBuildPatched 의 WalkLabTransport 누락 잠복 버그 동시 정정.
+  잔여 = 실기 입회 게이트만)
+- 로봇 대기: P7 실기(입회 게이트 — 부호·E-STOP ≤20ms·단절 매트릭스·③ 임계), P8 실기
+  튜닝, 실기 벤치 누적분(05 의 "실기 보류" 항목들 + P3 배포·벤치 + P4 k_x 보정 +
+  P10 무선 실효율·E-STOP)
 
 ---
+
+## [P7] handheld H1+H2 — 온보드 GamepadPilot + 소스 중재 (2026-06-12, 8430f0a·bbde5ac·49f60e9 + 리뷰 반영 1bb7224·4c226d6)
+
+- `GamepadPilot.{h,cpp}` 신설(286+543줄) — H0 실측 상수화(045e:028e·코드 테이블·16B
+  LE 디코드), 순수 로직(디코더/매핑/성형/settle/3티어 판정)은 Robot:: 의존 0,
+  장치 계층(/dev/input 스캔·select 50ms 읽기 스레드)은 `__linux__` 게이트.
+- 매핑 = 콕핏 RG G01 1:1(데드존 0.10·곡선 1.35·터보 ×1.3·intensity^0.7→period
+  700–560/foot 18–40), 트리거 머리팬은 RT−LT 차분 비례(BTN_TL2/TR2 부재 실측 반영).
+- 합류 = 자체 latest-wins 슬롯 → supervisor v1 14토큰 소비(`ApplyCommandLine`
+  단일 지점 — 거버너 최종 클램프). E-STOP(B)만 읽기 스레드 즉시 콜백 →
+  `TriggerEstopImmediate()`(UDP estop 와 공유 헬퍼로 추출 — fchown F1 포함).
+  복구(Y)=estop flag 해제(switch recover 패리티). 정적 홀드 중 50ms 재공급으로
+  스트림 워치독(600/2500ms) 정합.
+- 중재(H2): E-STOP(상시) > local(이벤트 ≤1s) > 네트워크. TEL2 active_source=
+  local/udp/file. 3티어 = ①release 합성→데드맨 즉시 잠금(ENODEV 시 pending 강제
+  커밋) ②노드 소멸→disarm+제자리 슬루+1s 재스캔(재 ARM 필수) ③이벤트 침묵 ≥1.5s→
+  제자리 슬루(disarm 아님 — EVIOCGKEY 생존 폴은 H0 반증으로 폐기).
+- demoBuildPatched 6파일 배치 + OBJECTS 3종 멱등 등록 — **O1 이후 WalkLabTransport
+  미배치 잠복 버그(링크 실패) 동시 정정**(bbde5ac). install-onboard.sh 와 무충돌.
+- 검증: 호스트 `test_gamepad` 141 checks/0 fail(3티어 시퀀스 시뮬 포함) +
+  `test_transport` 154 회귀, swift test(serial) 3501/0. **Codex 교차 3회전 통과**
+  (r1 P1·P2×2 수정 1bb7224 — ②티어 정지 라인 억제·티어 램프 다운·소스 복귀,
+  r2 잔여 P2 수정 4c226d6 — 워치독 스냅 양보, r3 PASS — 05 원장 참조). 실기
+  (부호 확정·E-STOP ≤20ms·단절 매트릭스·10분 CPU·③ 임계)는 입회 게이트 대기.
 
 ## [P10] handheld H3 — Switch 클라이언트 O1-UDP 화 (2026-06-12, ae23e5c)
 
