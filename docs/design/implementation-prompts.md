@@ -223,7 +223,16 @@ E-STOP/FALLEN 경로만. 검증: 호스트 단위 테스트(LPF·CoP 부호·ris
 용이성(최소 diff), 증거 제시. README 갱신. 커밋: feat(firmware).
 ```
 
-## [ ] P9 — 온보드 O4: 텔레메트리 v2 (TEL2 30Hz) · 전제 P3
+## [x] P9 — 온보드 O4: 텔레메트리 v2 (TEL2 30Hz) · 전제 P3 ✅ (2026-06-12, daa2550·998297a)
+
+> 완료: feat(firmware) `daa2550` — FormatTel2 순수 포맷터(+호스트 테스트 154 checks)·
+> WriteTelemetry 파일(TEL v1 5Hz)/UDP(TEL2 30Hz) 분리·FSR(error==0 게이트)·phase
+> (GetCurrentPhase)·래치(WriteShapedCommand)·seq_applied(Take seq_out)·active_source.
+> feat(connection) `998297a` — OnboardTelemetry prefix 분기 파서·J6 적응형 폴러
+> (UDP 신선 시 1Hz 강등)·ingest onboardLatch+FSR→오버레이·콕핏 HUD 명령vs래치
+> 인디케이터·walkAnimator 위상 동기. swift test 3499 tests 0 fail(serial). 계약 §A.2-TEL2·
+> §G.9/G.10 개정. **O3-1 FSR 노출 흡수**(risk 는 "-" 자리만). 실기 30Hz 수신율·HUD 위상
+> 대조는 사용자 보고 대기.
 
 ```
 docs/design/walklab-onboard-teleop-upgrade.md 의 Wave O4 를 구현해줘 (O0·O1 머지 전제,

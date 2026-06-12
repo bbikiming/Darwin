@@ -107,10 +107,54 @@ TEL {ts_ms} {gyroX} {gyroY} {gyroZ} {accelX} {accelY} {accelZ} {voltage_dV} {wal
 Example: `TEL 1748736000123 511 530 498 512 489 760 122 1 0` (legacy 11)
 Example: `TEL 1748736000123 511 530 498 512 489 760 122 1 0 c123_ab12cd34 18` (O0)
 
+#### A.2-TEL2 Telemetry v2 (O4, 2026-06-12 — UDP 30Hz only; file stays TEL v1)
+
+**Transport split (PINNED — permanent fallback invariant):**
+- **File** `/tmp/df-walklab-telemetry` (5Hz): **TEL v1 line above, unchanged** — SSH-poll
+  fallback + older-Mac compatibility. The robot never writes TEL2 to the file.
+- **UDP** uplink: **TEL2 line below, gated at 30Hz** (`TEL2_UDP_INTERVAL_MS=33`,
+  formalizing the prior ~50Hz per-poll push). ~140B → ~4.2KB/s.
+
+Single line, space-separated, literal `TEL2` prefix, newline-terminated. **Variable token
+count** — the FSR group and CoP group are each either a value list or a single `-`:
+```
+TEL2 {ts} {seq_applied} {phase} {x_lat} {y_lat} {a_lat} {period_lat}
+     {gx} {gy} {gz} {ax} {ay} {az}
+     {fsr: l1 l2 l3 l4 r1 r2 r3 r4 | -}  {cop: copx copy | -}
+     {fallen} {risk | -} {vdV} {active_source} {loop_ms}
+```
+- `seq_applied`: `long long`, last command seq the robot applied (stream closes the loop;
+  file-source apply leaves it unchanged — no seq). `0` = none yet.
+- `phase`: Walking gate phase `0..3` (`Walking::GetCurrentPhase()`); `-1` = unknown.
+- `x_lat/y_lat/a_lat/period_lat`: `%.2f` — the **shaped** (governor→slew→gate) amplitudes/
+  period the robot actually wrote to `Walking` (the "applied" half of "command vs applied").
+- `gx..az`: raw 10-bit ADC, same as v1.
+- **FSR group**: `-` when FSR is absent (OP1 / PING fail / `cm730==NULL`, gated on BOTH
+  feet `m_BulkReadData[FSR::ID_L/R].error==0`); else 8 integer cells, **left l1..l4 then
+  right r1..r4** (wire order = `ReadWord(P_FSR1_L..P_FSR4_L)` per foot, i.e. [FL,FR,RR,RL]).
+- **CoP group**: `-` when no foot is loaded; else `copx copy` integers — a **coarse
+  whole-body CoP** = mean of the contacting feet's `FSR_X/FSR_Y` bytes (byte 255 = no
+  contact, excluded). Per-foot precise CoP is **reconstructed on the Mac from the 4 cells**
+  (the FSR MCU does the same quad computation); this combined pair is for whole-body/HUD use.
+- `fallen`: -1/0/1 (v1 semantics).
+- `risk`: **always `-`** for now — O3 (fall-risk indicator) not yet implemented; the slot is
+  reserved (`%.2f` when O3 wires it).
+- `vdV`: deci-volts (0 = unknown), same as v1.
+- `active_source`: `udp` or `file` — which transport supplied the last applied command (H2).
+- `loop_ms`: supervisor loop duration, same as O0.
+
+Formatter is the **pure** `Robotis::FormatTel2` (`WalkLabTransport.{h,cpp}`, `Robot::`-free,
+host-tested) — the brokerage reads sensors and calls it; file v1 and UDP TEL2 diverge by design.
+
+Example (FSR present): `TEL2 1748736000123 42 2 28.00 10.00 5.00 600.00 511 530 498 512 489 760 100 110 120 130 140 150 160 170 20 -5 0 - 122 udp 18`
+Example (no FSR): `TEL2 1000 7 0 0.00 0.00 0.00 600.00 512 512 512 512 512 700 - - -1 - 0 file 5`
+
 ### A.3 Consumer (Mac, W2 parse; W3 wire into store)
-`OnboardTelemetry.parse` (see §D) splits on whitespace, requires `tokens[0]=="TEL"` and
-**≥11 tokens** (O0: relaxed from "exactly 11"), parses the first 11 + optional `last_cmd_id`
-/`loop_ms`, ignores any further tokens (forward-compat). Out-of-range or NaN → return nil
+`OnboardTelemetry.parse` (see §D) splits on whitespace and **branches on the prefix**
+(O4): `tokens[0]=="TEL2"` → the §A.2-TEL2 cursor parser (FSR/CoP `-` groups, `isTel2=true`,
+populates phase/latch/fsr/cop/source); `tokens[0]=="TEL"` → the v1 path below. The v1 path
+requires **≥11 tokens** (O0: relaxed from "exactly 11"), parses the first 11 + optional
+`last_cmd_id`/`loop_ms`, ignores any further tokens (forward-compat). Out-of-range or NaN → return nil
 (drop the sample; do not crash, do not feed garbage to gates). **Ship the relaxation FIRST**
 so the robot's token append cannot break an older Mac parser (would force telemetryMode
 offline). Extra unknown tokens are ignored, never rejected.
@@ -561,6 +605,31 @@ client incl. Switch/handheld — robot owns the FINAL clamp):**
 the prior Mac+robot double-smoothing serial overlap is removed. Sim-display smoothing
 (chase position, head EMA) unchanged.
 
-**Host tests** (`tests/test_transport.cpp`, 125 checks): v2 parse+conversion, envelope
-table+scaledown, slew first-apply/delta-clamp, balance gain scale, gate schedule. Mac
+**Host tests** (`tests/test_transport.cpp`, 154 checks): v2 parse+conversion, envelope
+table+scaledown, slew first-apply/delta-clamp, balance gain scale, gate schedule, **O4
+FormatTel2 (full / FSR-missing / risk) + CommandSlot.Take seq_out**. Mac
 serializer round-trip in `WalkLabO2TwistSerializerTests`.
+
+### G.9 Telemetry v2 — robot side (O4, 2026-06-12)
+
+Wire format + transport split = **§A.2-TEL2** (file=TEL v1 5Hz permanent fallback;
+UDP=TEL2 30Hz). Robot side:
+- `WriteTelemetry(cm730, walking, walking_active, write_file)` — reads gyro/accel/voltage +
+  FSR from the 8ms bulk-read buffer (zero extra bus), phase from `Walking::GetCurrentPhase()`,
+  shaped latch from `m_lat_{x,y,a,period}` (set in `WriteShapedCommand`), `seq_applied` from
+  `m_last_seq_applied` (captured via `CommandSlot::Take(out, cap, &seq)`), `active_source`
+  from `m_last_cmd_from_stream`. UDP is gated separately by `m_last_udp_tel_ms`.
+- **No E-STOP / watchdog impact**: `WriteTelemetry` only reads sensors + sends; the gate
+  is independent of the command/E-STOP/watchdog paths.
+- FSR/CoP single source: `Robot::FSR::ID_L_FSR/ID_R_FSR`, `P_FSR1_L..P_FSR4_L` words +
+  `P_FSR_X/P_FSR_Y` bytes. `error==0` = present.
+
+### G.10 Adaptive telemetry poller — Mac side (J6, 2026-06-12)
+
+`OnboardTelemetryPoller.nextIntervalMs()` re-evaluates the SSH poll cadence each cycle via
+`udpFreshProvider`: when UDP TEL2 is fresh (`ConnectionStore.lastOnboardUdpAt` within
+`onboardUdpFreshThreshold=1.0s`) the SSH `cat` poll **downgrades to 1Hz** (`relaxedIntervalMs`,
+SSH is then just a fallback heartbeat); on UDP silence it **returns to 5Hz** (`intervalMs`),
+recovering fallback delivery within ≤1s. Cuts steady-state SSH subprocess/ControlMaster load
+to 1/5 while UDP carries the live 30Hz stream. The UDP receiver is primary; SSH file (TEL v1)
+remains the always-available fallback.
