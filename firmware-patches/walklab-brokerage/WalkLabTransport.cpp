@@ -198,6 +198,17 @@ WatchdogAction WatchdogDecision(long long elapsed_ms, bool walking_active, bool 
     return WD_NONE;
 }
 
+// ===== ServoGuardDecide (실기 F8) ===========================================
+
+ServoGuardAction ServoGuardDecide(bool read_ok, int torque_limit,
+                                  bool temp_ok, int temp_c) {
+    if (!read_ok) return SG_NONE;            // 무응답 — 추측 복원 금지.
+    if (torque_limit != 0) return SG_NONE;   // tl>0 — 셧다운 래치 아님.
+    if (!temp_ok) return SG_SKIP_HOT;        // 온도 미상 — 보수적 보류.
+    if (temp_c > SG_TEMP_SAFE_C) return SG_SKIP_HOT;
+    return SG_RESTORE;
+}
+
 // ===== O2 거버너 / 슬루 / 밸런스 / 게이트 스케줄 (순수 로직) =================
 
 double EnvelopeXMax(double period_ms) {

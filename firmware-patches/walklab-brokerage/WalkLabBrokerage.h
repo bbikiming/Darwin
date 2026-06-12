@@ -178,6 +178,15 @@ private:
     /// (codex P2 fix 2026-06-12: 풀스트라이드 1루프 스냅 방지).
     void ForceSlewZero(Robot::Walking* walking);
 
+    // ===== 실기 F8 서보 셧다운 가드 (2026-06-12) =====
+    /// 전 서보(1..20) Torque Limit/온도 스윕 — MX-28 알람 셧다운 래치(tl==0:
+    /// 빨간 LED·무토크·estop 해제/getup 불응)를 온도 가드 하에 복원. walklab
+    /// 기동 시·복구(estop 해제 재무장) 시 1회 호출. 판정은
+    /// Robotis::ServoGuardDecide(순수 — 호스트 테스트), 쓰기는 Torque Limit
+    /// 한정(토크 enable 불변 — 자세 점프 없음). 버스 직접 read/write 는
+    /// LinuxCM730 내부 우선순위 세마포어로 MotionManager 8ms 타이머와 직렬화.
+    void SweepServoShutdown(Robot::CM730* cm730, const char* reason);
+
     // ===== C1 카메라 스트림 펌프 (2026-06-12) =====
     /// 펌프 스레드 기동. m_streamer NULL / [Stream] enabled=0 / 카메라 미초기화면 no-op.
     void StartCameraPump();

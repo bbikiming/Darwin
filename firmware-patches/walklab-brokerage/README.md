@@ -159,6 +159,13 @@ sudo killall demo-pilot
 - **hip_pitch_deg clamp**: robot 측에서 `[0, 20]` 범위로 clamp 적용
 - **최종 클램프는 로봇 소유**(O2 거버너): 임의 클라이언트(모바일/Switch/핸드헬드)의 위험
   명령도 결합 엔벨로프·슬루로 로봇이 직접 제한 — Mac 클램프는 UX 레이어(이중 방어)
+- **서보 알람 셧다운 자동 복원 (실기 F8, 2026-06-12)**: MX-28 과부하/과열 셧다운은
+  Torque Limit(addr 34)을 0 으로 강제(빨간 LED·무토크) — 전원 재투입 또는 재기록 전까지
+  getup/estop 해제로도 복구 불가(실기: 보행 벤치 후 양 발목 피치 ID15/16, err=0x20).
+  `SweepServoShutdown`이 **walklab 기동 시·복구(estop 해제 재무장) 시** 전 서보(1..20)의
+  Torque Limit/온도를 스윕해, 래치(tl==0)이고 온도 ≤65°C 면 1023 복원 + 재확인 로그.
+  과열/온도 미상이면 보류(냉각 후 복구 재시도). 쓰기는 Torque Limit 한정 — 토크 enable
+  불변(자세 점프 없음). 판정 `ServoGuardDecide`는 순수 함수(호스트 테스트 17 checks).
 
 ## TODO (robot-side 실 적용 전 검증 필요)
 

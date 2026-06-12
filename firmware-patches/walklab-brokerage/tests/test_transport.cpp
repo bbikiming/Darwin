@@ -492,6 +492,37 @@ static void test_format_tel2_risk_present() {
     CHECK(strstr(buf, " - ") == 0, "no '-' tokens when fsr/cop/risk all present");
 }
 
+// ---- 실기 F8 — ServoGuardDecide (서보 셧다운 복원 판정) ----------------------
+
+static void test_servo_guard_decide() {
+    printf("test_servo_guard_decide\n");
+    // 무응답 — 추측 복원 금지.
+    CHECK(ServoGuardDecide(false, 0, true, 30) == SG_NONE, "no-reply -> NONE");
+    // 정상 서보(tl>0) — err 비트와 무관하게 복원 대상 아님.
+    CHECK(ServoGuardDecide(true, 1023, true, 45) == SG_NONE, "healthy 1023 -> NONE");
+    CHECK(ServoGuardDecide(true, 1, true, 45) == SG_NONE, "tl=1 -> NONE");
+    // 셧다운 래치(tl==0) + 안전 온도 — 복원.
+    CHECK(ServoGuardDecide(true, 0, true, 45) == SG_RESTORE, "latch cool -> RESTORE");
+    CHECK(ServoGuardDecide(true, 0, true, SG_TEMP_SAFE_C) == SG_RESTORE,
+          "boundary 65C -> RESTORE");
+    CHECK(ServoGuardDecide(true, 0, true, 0) == SG_RESTORE, "cold -> RESTORE");
+    // 과열 — 냉각 전 복원 보류(다음 복구 때 재시도).
+    CHECK(ServoGuardDecide(true, 0, true, SG_TEMP_SAFE_C + 1) == SG_SKIP_HOT,
+          "66C -> SKIP_HOT");
+    CHECK(ServoGuardDecide(true, 0, true, 90) == SG_SKIP_HOT, "90C -> SKIP_HOT");
+    // 온도 미상 — 보수적 보류.
+    CHECK(ServoGuardDecide(true, 0, false, -1) == SG_SKIP_HOT, "temp unknown -> SKIP_HOT");
+    // 실기 재현 케이스(2026-06-12): 양 발목 피치 ID15/16 err=0x20, tl=0, 43~45C → 복원.
+    CHECK(ServoGuardDecide(true, 0, true, 43) == SG_RESTORE, "field ID16 -> RESTORE");
+    CHECK(ServoGuardDecide(true, 0, true, 45) == SG_RESTORE, "field ID15 -> RESTORE");
+    // 상수 핀 — 프로토콜/프레임워크(MX28.h) 고정값과 일치해야 한다.
+    CHECK(SG_ADDR_TORQUE_LIMIT_L == 34, "addr34 pin");
+    CHECK(SG_ADDR_PRESENT_TEMPERATURE == 43, "addr43 pin");
+    CHECK(SG_TORQUE_LIMIT_RESTORE == 1023, "restore 1023 pin");
+    CHECK(DXL_ERR_OVERLOAD == 0x20 && DXL_ERR_OVERHEAT == 0x04, "err bits pin");
+    CHECK(SG_JOINT_ID_MIN == 1 && SG_JOINT_ID_MAX == 20, "id range pin");
+}
+
 int main() {
     printf("=== WalkLabTransport host unit tests ===\n");
     test_parse_full_line();
@@ -523,6 +554,7 @@ int main() {
     test_format_tel2_full();
     test_format_tel2_fsr_missing();
     test_format_tel2_risk_present();
+    test_servo_guard_decide();
 
     printf("=== %d checks, %d failures ===\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

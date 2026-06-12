@@ -644,6 +644,52 @@ namespace Robotis {
         ((WalkLabBrokerage*)self)->ClearEstopFlag();
     }
 
+    // ===== 실기 F8 (2026-06-12) — 서보 알람 셧다운 스윕·복원 ====================
+    // 실기 증상: 보행 벤치 후 양 발목 피치(ID15/16) 빨간 LED 점등 + 무토크,
+    // 복구(getup/estop 해제)로도 미복구. 진단(브리지 직접 read): err=0x20(과부하),
+    // Torque Limit=0 — MX-28 알람 셧다운이 tl 을 0 으로 강제(전원 재투입 또는
+    // 재기록 전까지 토크 불가). 기존 복구 경로는 tl 을 재기록하지 않아 불응.
+    // 쓰기는 Torque Limit 한정 — 토크 enable 은 건드리지 않으므로 자세 점프 없음
+    // (enable 은 이후 Walking/Action Start 가 기존 경로로 복구).
+    void WalkLabBrokerage::SweepServoShutdown(Robot::CM730* cm730, const char* reason) {
+        if (!cm730) return;
+        int restored = 0, hot = 0, failed = 0;
+        for (int id = Robotis::SG_JOINT_ID_MIN; id <= Robotis::SG_JOINT_ID_MAX; ++id) {
+            int tl = -1, err = -1;
+            if (cm730->ReadWord(id, Robotis::SG_ADDR_TORQUE_LIMIT_L, &tl, &err)
+                    != Robot::CM730::SUCCESS)
+                continue;   // 무응답 — 추측 복원 금지(SG_NONE 동치).
+            int temp = -1, terr = -1;
+            bool temp_ok =
+                (cm730->ReadByte(id, Robotis::SG_ADDR_PRESENT_TEMPERATURE, &temp, &terr)
+                     == Robot::CM730::SUCCESS);
+            Robotis::ServoGuardAction act =
+                Robotis::ServoGuardDecide(true, tl, temp_ok, temp);
+            if (act == Robotis::SG_RESTORE) {
+                cm730->WriteWord(id, Robotis::SG_ADDR_TORQUE_LIMIT_L,
+                                 Robotis::SG_TORQUE_LIMIT_RESTORE, 0);
+                int tl2 = -1, err2 = -1;
+                bool ok = (cm730->ReadWord(id, Robotis::SG_ADDR_TORQUE_LIMIT_L,
+                                           &tl2, &err2) == Robot::CM730::SUCCESS)
+                          && tl2 > 0;
+                if (ok) ++restored; else ++failed;
+                printf("[WalkLabBrokerage] servo guard(%s): ID%d shutdown latch"
+                       " (err=0x%02x temp=%dC) -> torque limit %s\n",
+                       reason, id, err & 0xFF, temp,
+                       ok ? "restored" : "RESTORE FAILED");
+            } else if (act == Robotis::SG_SKIP_HOT) {
+                ++hot;
+                printf("[WalkLabBrokerage] servo guard(%s): ID%d shutdown latch"
+                       " but hot/unknown (temp=%dC > %dC safe) — cooling 후"
+                       " 복구 재시도 필요\n",
+                       reason, id, temp, Robotis::SG_TEMP_SAFE_C);
+            }
+        }
+        if (restored || hot || failed)
+            printf("[WalkLabBrokerage] servo guard(%s): restored=%d hot-skip=%d"
+                   " failed=%d\n", reason, restored, hot, failed);
+    }
+
     void WalkLabBrokerage::CmdUdpLoop() {
         char buf[512];
         while (m_transport_running) {
@@ -858,6 +904,10 @@ namespace Robotis {
                         &WalkLabBrokerage::GamepadRecoverTrampoline, this, true);
 #endif
 
+        // 실기 F8 (2026-06-12) — 기동 스윕: demo 재시작(전원 유지)으로 이월된 서보
+        // 셧다운 래치 복원. 전원 재투입 후라면 래치가 이미 풀려 있어 no-op.
+        SweepServoShutdown(cm730, "startup");
+
         while (true) {
             // **2026-06-08 후면 MODE 버튼 정지** — 사용자가 데모 후면 패널의 MODE
             // 버튼을 다시 누르면 `StatusCheck::Check()` 가 m_is_started=0,
@@ -911,6 +961,10 @@ namespace Robotis {
                 printf("[WalkLabBrokerage] E-STOP cleared — re-armed\n");
                 estop_latched = false;
                 memset(&last_stat, 0, sizeof(last_stat));  // 정지 후 첫 명령 강제 재처리.
+                // 실기 F8 — 복구 시 서보 셧다운 스윕: 과부하 래치(빨간 LED·무토크)는
+                // estop 해제/getup 만으로 안 풀린다 — Torque Limit 재기록 필요.
+                // 보행 정지 상태(직전까지 hold-stopped)라 스윕 수십 ms 가 안전.
+                SweepServoShutdown(cm730, "re-arm");
             }
 
             // **v1.13 (2026-06-02)** — ONBOARD auto-getup. e-stop 검사 직후 (여기 도달 ==

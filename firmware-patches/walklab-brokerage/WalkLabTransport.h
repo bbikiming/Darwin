@@ -173,6 +173,38 @@ static const long long WATCHDOG_STOP_MS = 2500;
 // 보행 중 + 스트림 소스일 때만 임계로 티어 결정.
 WatchdogAction WatchdogDecision(long long elapsed_ms, bool walking_active, bool from_stream);
 
+// ===== 서보 알람 셧다운 가드 (실기 F8, 2026-06-12) — 순수 판정 ================
+// 실기 증상: 보행 벤치 후 양 발목 피치(ID15/16)가 빨간 LED 점등 + 무토크,
+// getup/estop 해제(복구)로도 미복구. 원인: MX-28 알람 셧다운(과부하 err=0x20)이
+// Torque Limit(addr 34)을 0 으로 강제 — 전원 재투입 또는 재기록 전까지 토크 불가.
+// 복구 의미론: 셧다운 래치의 단일 진실은 **tl==0** (err 비트는 부하에 따라
+// transient — tl>0 이면 토크 가능하므로 복원 대상 아님). 복원은 온도 가드 하에.
+
+enum ServoGuardAction {
+    SG_NONE     = 0,   // 정상(tl>0) 또는 무응답(추측 복원 금지)
+    SG_RESTORE  = 1,   // 셧다운 래치 + 안전 온도 — Torque Limit 복원
+    SG_SKIP_HOT = 2    // 셧다운 래치 + 과열/온도 미상 — 냉각 후 복구 재시도
+};
+
+// DXL protocol 1.0 status error 비트 (보고용 — 판정은 tl==0 이 1차 신호).
+static const int DXL_ERR_OVERHEAT = 0x04;
+static const int DXL_ERR_OVERLOAD = 0x20;
+
+// protocol 1.0 RAM 레지스터 (MX-28) — 프레임워크 MX28.h 와 동일 값(프로토콜 고정).
+static const int SG_ADDR_TORQUE_LIMIT_L      = 34;
+static const int SG_ADDR_PRESENT_TEMPERATURE = 43;
+
+// 복원값(MX-28 공장 기본 최대)·온도 상한(셧다운 기본 80°C 에서 15°C 마진)·ID 범위.
+static const int SG_TORQUE_LIMIT_RESTORE = 1023;
+static const int SG_TEMP_SAFE_C          = 65;
+static const int SG_JOINT_ID_MIN         = 1;    // JointData::ID_R_SHOULDER_PITCH
+static const int SG_JOINT_ID_MAX         = 20;   // JointData::ID_HEAD_TILT
+
+// 판정. read_ok = Torque Limit read 성공(무응답이면 손대지 않는다),
+// temp_ok = 온도 read 성공(미상이면 보수적으로 SKIP_HOT — 복원 보류).
+ServoGuardAction ServoGuardDecide(bool read_ok, int torque_limit,
+                                  bool temp_ok, int temp_c);
+
 // ===== 데이터그램 파서 ======================================================
 // "DF-ESTOP v1 {token} {ts}" — prefix + token 일치 시 true (ts 는 무시).
 bool ParseEstopDatagram(const char* buf, int len, const char* token);
