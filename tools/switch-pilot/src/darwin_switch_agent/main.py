@@ -83,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
     ssh_send_interval = 1.0 / max(1.0, float(_ssh_cfg.get("send_hz", 5)))
     ssh_heartbeat_interval = max(0.1, float(_ssh_cfg.get("heartbeat_ms", 1000)) / 1000.0)
     telemetry_interval = 1.0 / max(0.5, float(_ssh_cfg.get("telemetry_hz", 2)))
+    # H3: when the UDP (O1) transport is live, command sends become a continuous
+    # 20Hz stream and the SSH cat-poll relaxes to a 1Hz fallback heartbeat (J6).
+    udp_send_interval = 1.0 / max(1.0, float(_ssh_cfg.get("udp_send_hz", 20)))
+    relaxed_telemetry_interval = 1.0  # UDP TEL2 carries the live stream; cat = fallback.
     last_sent_line: str | None = None
     last_heartbeat = 0.0
     last_estop_assert = 0.0
@@ -283,11 +287,15 @@ def main(argv: list[str] | None = None) -> int:
                         ok = ssh_client.connect()
                         bus.log("SSH 연결됨" if ok else "SSH 연결 대기 중")
                     continue
+                # Service the UDP transport every tick: drain ACK/TEL2, advance the
+                # auto state machine (probing→udp on first ACK, →ssh on timeout).
+                tel2 = ssh_client.pump()
                 if edges.arm_pressed:
                     log.info("arm pressed")
                     try_control_call(log, "recover", ssh_client.recover)
                 if edges.estop_pressed:
                     log.warning("estop pressed")
+                    # ssh_client.estop fires the §G.2 UDP ×3 burst AND the file touch.
                     try_control_call(log, "estop", ssh_client.estop)
                     last_estop_assert = now
                 if edges.stop_pressed:
@@ -301,9 +309,18 @@ def main(argv: list[str] | None = None) -> int:
                     if now - last_estop_assert >= ssh_heartbeat_interval:
                         last_estop_assert = now
                         try_control_call(log, "estop", ssh_client.estop)
+                elif ssh_client.streaming:
+                    # UDP path: continuous 20Hz stream so the robot watchdog tiers
+                    # (§G.4) stay fed and catch packet loss fast. No change-debounce
+                    # — datagram send is cheap and the stream IS the liveness signal.
+                    if now - last_send >= udp_send_interval:
+                        last_send = now
+                        last_heartbeat = now
+                        ssh_client.send(command)
+                        last_sent_line = ssh_command_line(command)
                 else:
-                    # Debounced amplitude send: on a meaningful command change OR
-                    # the heartbeat, throttled by ssh_send_interval. Separate
+                    # SSH file path: debounced amplitude send on a meaningful command
+                    # change OR the heartbeat, throttled by ssh_send_interval. Separate
                     # clocks; both advance on ATTEMPT so a failing link throttles.
                     # last_sent_line advances only on success so a change keeps
                     # retrying (throttled) until it lands. command is final/gated.
@@ -315,21 +332,33 @@ def main(argv: list[str] | None = None) -> int:
                         last_heartbeat = now
                         if ssh_client.send(command):
                             last_sent_line = line
-                if now - last_telemetry_poll >= telemetry_interval:
+                # Telemetry: prefer the UDP TEL2 30Hz stream; when it is fresh the
+                # SSH cat-poll relaxes to a 1Hz fallback heartbeat (J6 parity).
+                if tel2:
+                    publish_tel2(bus, ssh_client, tel2)
+                tel_interval = (
+                    relaxed_telemetry_interval if ssh_client.udp_tel_fresh()
+                    else telemetry_interval
+                )
+                if now - last_telemetry_poll >= tel_interval:
                     last_telemetry_poll = now
-                    tel = ssh_client.poll_telemetry()
-                    if tel:
-                        bus.publish_telemetry(
-                            ssh_connected=ssh_client.connected,
-                            link_latency_ms=tel["latency_ms"],
-                            battery_v=tel["voltage_v"],
-                            battery_pct=tel["battery_pct"],
-                            walking=tel["walking"],
-                            fallen=tel["fallen"],
-                            robot_state="fallen" if tel["fallen"] != 0 else "upright",
-                            gyro=tel.get("gyro"),
-                            accel=tel.get("accel"),
-                        )
+                    # Only fall back to the TEL v1 cat-poll when UDP is NOT fresh,
+                    # so we never overwrite the richer v2 fields with v1.
+                    if not ssh_client.udp_tel_fresh():
+                        tel = ssh_client.poll_telemetry()
+                        if tel:
+                            bus.publish_telemetry(
+                                ssh_connected=ssh_client.connected,
+                                link_latency_ms=tel["latency_ms"],
+                                battery_v=tel["voltage_v"],
+                                battery_pct=tel["battery_pct"],
+                                walking=tel["walking"],
+                                fallen=tel["fallen"],
+                                robot_state="fallen" if tel["fallen"] != 0 else "upright",
+                                gyro=tel.get("gyro"),
+                                accel=tel.get("accel"),
+                                link={"transport": ssh_client.transport_label},
+                            )
             else:
                 time.sleep(0.02)
 
@@ -432,6 +461,32 @@ def ssh_command_line(command: MotionCommand) -> str:
         f"{1 if command.enabled else 0} "
         f"{command.stride_mm:.1f} {command.side_mm:.1f} {command.turn_deg:.1f} "
         f"{command.head_pan_deg:.1f} {command.head_tilt_deg:.1f}"
+    )
+
+
+def publish_tel2(bus: ControlBus, ssh_client: SshControlClient, tel2: dict) -> None:
+    """Publish a parsed §A.2-TEL2 sample (UDP 30Hz) to the cockpit bus.
+
+    Maps the shared TEL fields onto the existing telemetry snapshot and attaches
+    the v2-only group (phase / shaped-latch amplitudes / FSR ground contact /
+    active_source) plus the transport readout (effective Hz, RTT) for the HUD.
+    """
+    fallen = int(tel2.get("fallen", 0))
+    bus.publish_telemetry(
+        ssh_connected=ssh_client.connected,
+        link_latency_ms=(
+            None if (m := ssh_client.udp_metrics()) is None else
+            (None if m.get("rtt_ms") is None else int(m["rtt_ms"]))
+        ),
+        battery_v=tel2.get("voltage_v"),
+        battery_pct=tel2.get("battery_pct"),
+        walking=bool(tel2.get("walking")),
+        fallen=fallen,
+        robot_state="fallen" if fallen != 0 else "upright",
+        gyro=tel2.get("gyro"),
+        accel=tel2.get("accel"),
+        tel2=tel2,
+        link=ssh_client.udp_metrics(),
     )
 
 

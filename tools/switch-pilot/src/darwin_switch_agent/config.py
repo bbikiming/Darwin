@@ -108,6 +108,17 @@ def _validate_ssh(section: Any) -> dict[str, Any]:
         out["port"] = port
     if "identity_file" in section:
         out["identity_file"] = _require_str(section["identity_file"], "ssh.identity_file")
+    if "transport" in section:
+        transport = _require_str(section["transport"], "ssh.transport")
+        if transport not in {"auto", "ssh"}:
+            raise ValueError("ssh.transport must be 'auto' or 'ssh'")
+        out["transport"] = transport
+    for key in ("cmd_port", "estop_port", "telemetry_port"):
+        if key in section:
+            port = _require_port(section[key], f"ssh.{key}")
+            if not 1 <= port <= 65535:
+                raise ValueError(f"ssh.{key} must be in 1..65535")
+            out[key] = port
     for key in ("connect_timeout_seconds", "timeout_seconds"):
         if key in section:
             value = section[key]
@@ -118,6 +129,7 @@ def _validate_ssh(section: Any) -> dict[str, Any]:
             out[key] = value
     for key in (
         "send_hz",
+        "udp_send_hz",
         "telemetry_hz",
         "period_ms",
         "foot_mm",
@@ -128,6 +140,8 @@ def _validate_ssh(section: Any) -> dict[str, Any]:
         "turn_ref_deg",
         "hip_deg",
         "heartbeat_ms",
+        "ack_probe_ms",
+        "udp_tel_fresh_s",
     ):
         if key in section:
             value = section[key]

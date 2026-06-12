@@ -12,6 +12,7 @@ parsing, and the never-raise / disconnect-on-transport-failure behavior.
 from __future__ import annotations
 
 import subprocess
+import time
 import unittest
 from unittest import mock
 
@@ -273,6 +274,142 @@ class PortRuntimeTests(unittest.TestCase):
     def test_default_client_uses_port_22(self):
         client = SshControlClient({"identity_file": None})
         self.assertEqual(client.port, 22)
+
+
+class _FakeUdp:
+    """Minimal UdpControlTransport stand-in for the auto state-machine tests."""
+
+    def __init__(self):
+        self.token = "FAKETOKEN0000000"
+        self.last_ack_at = None
+        self.last_rtt_ms = None
+        self.last_tel = None
+        self._tel_age = None
+        self.estop_bursts = 0
+        self.sent: list[str] = []
+        self.closed = False
+
+    def uplink_value(self):
+        return "10.0.0.5:40000"
+
+    def send_command(self, line):
+        self.sent.append(line)
+        return len(self.sent)
+
+    def send_estop(self):
+        self.estop_bursts += 1
+
+    def pump(self):
+        return self.last_tel
+
+    def tel_age_s(self):
+        return self._tel_age
+
+    def metrics(self):
+        return {"transport": "udp", "effective_hz": 20.0, "rtt_ms": self.last_rtt_ms}
+
+    def close(self):
+        self.closed = True
+
+
+class TransportSelectionTests(unittest.TestCase):
+    """The auto state machine: probing → udp on ACK, → ssh on probe timeout."""
+
+    def _client(self, **cfg):
+        client = SshControlClient({"identity_file": None, "transport": "auto", **cfg})
+        self.calls = []
+
+        def fake_ssh(command, input_data=None, timeout=None):
+            self.calls.append((command, input_data))
+            return _ok()
+
+        client._ssh = fake_ssh  # type: ignore[assignment]
+        return client
+
+    def test_default_transport_is_auto(self):
+        self.assertEqual(SshControlClient({"identity_file": None}).transport_mode, "auto")
+
+    def test_invalid_transport_falls_back_to_auto(self):
+        self.assertEqual(
+            SshControlClient({"identity_file": None, "transport": "bogus"}).transport_mode, "auto"
+        )
+
+    def test_forced_ssh_mode(self):
+        client = SshControlClient({"identity_file": None, "transport": "ssh"})
+        self.assertEqual(client.transport_mode, "ssh")
+        self.assertFalse(client.streaming)
+        self.assertEqual(client.current_send_hz(), client.ssh_send_hz)
+
+    def test_probing_promotes_to_udp_on_ack(self):
+        client = self._client()
+        client._udp = _FakeUdp()
+        client._transport_state = "probing"
+        client._probe_started = 1.0
+        # An ACK was observed (set by the real transport's _on_ack).
+        client._udp.last_ack_at = 123.0
+        client.pump()
+        self.assertTrue(client.udp_active)
+        self.assertTrue(client.streaming)
+        self.assertEqual(client.current_send_hz(), client.udp_send_hz)
+
+    def test_probing_falls_back_to_ssh_after_timeout(self):
+        client = self._client(ack_probe_ms=10)
+        fake = _FakeUdp()
+        client._udp = fake
+        client._transport_state = "probing"
+        client._probe_started = time.monotonic() - 1.0  # well past 10ms window
+        client.pump()
+        self.assertEqual(client.transport_label, "ssh")
+        self.assertFalse(client.streaming)
+        self.assertTrue(fake.closed)  # socket torn down
+        # Handshake + uplink cleared so the robot returns to file-poll.
+        self.assertTrue(any("rm -f" in c and scc.CHANNEL_PATH in c for c, _ in self.calls))
+
+    def test_dispatch_uses_udp_while_streaming(self):
+        client = self._client()
+        fake = _FakeUdp()
+        client._udp = fake
+        client._transport_state = "udp"
+        self.assertTrue(client.send(_cmd()))
+        self.assertEqual(len(fake.sent), 1)              # went out over UDP
+        # No SSH file write while streaming (the slow path is bypassed).
+        self.assertFalse(any("df-walklab-cmd" in c for c, _ in self.calls))
+
+    def test_dispatch_uses_ssh_file_when_not_streaming(self):
+        client = self._client()
+        client._transport_state = "ssh"
+        self.assertTrue(client.send(_cmd()))
+        self.assertTrue(any("df-walklab-cmd" in c for c, _ in self.calls))
+
+    def test_estop_fires_udp_burst_and_touches_file(self):
+        client = self._client()
+        fake = _FakeUdp()
+        client._udp = fake
+        self.assertTrue(client.estop())
+        self.assertEqual(fake.estop_bursts, 1)           # §G.2 burst fired
+        self.assertEqual(self.calls[-1][0], f"touch {scc.ESTOP_PATH}")  # file still touched
+
+    def test_udp_tel_fresh_window(self):
+        client = self._client(udp_tel_fresh_s=1.0)
+        fake = _FakeUdp()
+        client._udp = fake
+        fake._tel_age = 0.2
+        self.assertTrue(client.udp_tel_fresh())
+        fake._tel_age = 5.0
+        self.assertFalse(client.udp_tel_fresh())
+
+    def test_start_udp_writes_handshake_and_uplink(self):
+        client = self._client()
+        client._start_udp()
+        self.addCleanup(lambda: client._udp and client._udp.close())
+        wrote = [(c, i) for c, i in self.calls if scc.CHANNEL_PATH in c or scc.UPLINK_PATH in c]
+        self.assertEqual(len(wrote), 2)
+        # Handshake body: "TOKEN ESTOP_PORT CMD_PORT".
+        channel_body = next(i for c, i in wrote if scc.CHANNEL_TMP_PATH in c)
+        toks = channel_body.split()
+        self.assertEqual(len(toks), 3)
+        self.assertTrue(toks[0].isalnum())
+        self.assertEqual(client._transport_state, "probing")
 
 
 if __name__ == "__main__":

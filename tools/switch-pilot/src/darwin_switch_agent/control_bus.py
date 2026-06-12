@@ -72,6 +72,8 @@ class ControlBus:
                 "accel_z": None,
             },
             "watchdog_label": "—",
+            "tel2": normalize_tel2(None),
+            "link": normalize_link(None),
             "logs": [],
             "updated_at_ms": int(time.time() * 1000),
         }
@@ -161,12 +163,17 @@ class ControlBus:
         robot_state: str,
         gyro: dict[str, int] | None = None,
         accel: dict[str, int] | None = None,
+        tel2: dict | None = None,
+        link: dict | None = None,
     ) -> None:
+        """Publish robot telemetry. `tel2` carries the §A.2-TEL2 stream fields
+        (phase / shaped-latch amplitudes / FSR ground contact / active_source);
+        `link` carries the transport readout (udp|ssh, effective Hz, RTT). Both
+        are optional so the SSH-only path (TEL v1) keeps working unchanged."""
         gyro = gyro or {}
         accel = accel or {}
         with self._lock:
-            self._snapshot = {
-                **self._snapshot,
+            patch = {
                 "ssh_connected": ssh_connected,
                 "link_latency_ms": link_latency_ms,
                 "battery_v": battery_v,
@@ -185,6 +192,9 @@ class ControlBus:
                 },
                 "updated_at_ms": int(time.time() * 1000),
             }
+            patch["tel2"] = normalize_tel2(tel2)
+            patch["link"] = normalize_link(link)
+            self._snapshot = {**self._snapshot, **patch}
 
     def snapshot(self) -> dict[str, Any]:
         # Deep copy so callers cannot mutate the bus's nested containers
@@ -252,6 +262,45 @@ def normalize_camera(raw: dict[str, Any]) -> dict[str, Any]:
         "snapshot_url": snapshot_url,
         "route": route,
         "label": label,
+    }
+
+
+def normalize_tel2(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Project a parsed TEL2 dict (df_udp.parse_tel2) into JSON-safe HUD fields.
+
+    `present` is False until the first TEL2 datagram arrives, so the cockpit can
+    distinguish "no v2 stream yet" (SSH file path / TEL v1) from a real zero.
+    """
+    raw = raw or {}
+    present = bool(raw)
+    latch = raw.get("latch") or {}
+    return {
+        "present": present,
+        "phase": raw.get("phase"),
+        "seq_applied": raw.get("seq_applied"),
+        "active_source": raw.get("active_source"),
+        "latch_x": latch.get("x"),
+        "latch_y": latch.get("y"),
+        "latch_a": latch.get("a"),
+        "latch_period": latch.get("period"),
+        "ground": raw.get("ground"),
+        "left_contact": raw.get("left_contact"),
+        "right_contact": raw.get("right_contact"),
+        "cop": raw.get("cop"),
+        "loop_ms": raw.get("loop_ms"),
+    }
+
+
+def normalize_link(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Project the transport metrics (df_udp.UdpControlTransport.metrics or the
+    SSH fallback) into a HUD-friendly readout — transport name, effective Hz, RTT."""
+    raw = raw or {}
+    return {
+        "transport": str(raw.get("transport", "ssh")),
+        "effective_hz": raw.get("effective_hz"),
+        "rtt_ms": raw.get("rtt_ms"),
+        "tx_seq": raw.get("tx_seq"),
+        "last_ack_seq": raw.get("last_ack_seq"),
     }
 
 

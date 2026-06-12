@@ -14,6 +14,11 @@ Ubuntu is booting and SSH is enabled.
 - Maps the right stick to head pan/tilt values for future robot-direct support.
 - Sends Mac relay commands over the DarwinForge `/mobile-relay` WebSocket.
 - Sends robot-direct UDP line protocol packets for later onboard receiver work.
+- In `ssh` mode, opens an event-driven **UDP fast path**
+  (`ssh-parity-contract.md §G`) alongside the SSH WalkLab file path: a 20Hz
+  `DFCMD` command stream, an E-STOP ×3 burst (0/50/100ms), and a TEL2 30Hz
+  telemetry receive, with automatic fallback to the SSH file path. The file path
+  stays the permanent fallback.
 - Serves a Switch-sized local cockpit at `http://127.0.0.1:8765/`.
 - Serves a runtime 3D model performance check at
   `http://127.0.0.1:8765/model-check.html`.
@@ -607,14 +612,56 @@ are ready; it runs a read-only `echo ok`.
 
 ## Modes
 
+`mode = "ssh"` (primary WalkLab path):
+
+Switch -> robot over SSH to the WalkLab brokerage. Commands are written to the
+robot command file (`/tmp/df-walklab-cmd`), E-STOP touches
+`/tmp/df-walklab-estop`, and telemetry is read from `/tmp/df-walklab-telemetry`.
+These file paths are the **permanent fallback** and always work.
+
+When `ssh.transport = "auto"` (default) and an SSH identity exists, the agent
+ALSO opens the event-driven **UDP fast path** from `ssh-parity-contract.md §G`
+on top of the same SSH session. It is purely additive — the robot side (O1/O4)
+already consumes this contract, so no robot or Mac code changes are needed:
+
+- **Handshake (§G.1)** — writes `/tmp/df-walklab-channel` =
+  `"{token} {estop_port} {cmd_port}"` (atomic tmp+mv) plus
+  `/tmp/df-walklab-uplink` = `"{ip}:{port}"` so the robot streams telemetry back
+  to us. The robot picks it up within ≤1s and starts its UDP threads. On session
+  end / fallback the agent clears both files so the robot returns to file-poll
+  with no stale listener or old token.
+- **Command (§G.3)** — `DFCMD {token} {seq} {line}` datagrams to `cmd_port`
+  (17374) at `udp_send_hz` (20Hz), `seq` strictly monotonic; the robot replies
+  `ACK {seq} {t_rx}` (used for RTT + effective-Hz). `line` is the same §C
+  14-token command line as the file path — the Switch stays on v1, which the
+  robot accepts permanently.
+- **E-STOP (§G.2)** — `DF-ESTOP v1 {token} {ms}` fired as a **×3 burst at
+  0/50/100ms**, in parallel with the SSH file touch (first to land wins). The
+  file touch always fires too, so a dropped burst can never leave the robot
+  un-stopped.
+- **Telemetry (§A.2-TEL2)** — receives the robot's `TEL2 …` 30Hz stream (gait
+  phase, shaped latch amplitudes, FSR ground contact, CoP, `active_source`);
+  while it is fresh the SSH `cat` poll relaxes to a 1Hz fallback heartbeat.
+
+**auto fallback**: if no `ACK` arrives within `ack_probe_ms` (1.5s) the agent
+tears down the UDP socket, clears the handshake, and continues on the SSH file
+path at `send_hz` (5Hz) — no interruption to piloting. Set
+`ssh.transport = "ssh"` to force the file path only and skip the UDP probe.
+
+> Single-pilot assumption: the handshake file holds one token. If the Mac
+> cockpit and the Switch both write it, last-writer-wins — run one controller at
+> a time.
+
 `mode = "mac_relay"`:
 
 Switch -> Mac DarwinForge MobileRelay -> robot.
 
 `mode = "robot_udp"`:
 
-Switch -> robot UDP line protocol. The robot receiver is not implemented yet,
-so this is for protocol testing only.
+Switch -> robot over a standalone raw UDP line protocol. This is a separate,
+legacy experiment whose onboard receiver was never built, so it is for protocol
+testing only. For the real onboard UDP path, use `mode = "ssh"` with
+`transport = "auto"` (the implemented §G transport described above).
 
 `mode = "dry_run"`:
 
@@ -634,6 +681,29 @@ Important values:
 - `input.event_globs`
 - `mapping.deadman_key_codes`
 - `gui.port`, normally `8765`
+
+### SSH transport (`mode = "ssh"`)
+
+The `ssh` section owns the WalkLab path and the §G UDP fast path:
+
+- `ssh.transport` — `"auto"` (default: try the §G UDP path, fall back to the SSH
+  file path) or `"ssh"` (force the file path only, no UDP probe).
+- `ssh.send_hz` — SSH file-path command rate (default `5`). Used while on the
+  file path or after a UDP fallback.
+- `ssh.udp_send_hz` — UDP `DFCMD` stream rate while the UDP path is live
+  (default `20`).
+- `ssh.cmd_port` / `ssh.estop_port` / `ssh.telemetry_port` — §G.7 UDP ports
+  (default `17374` / `17372` / `17371`). Conveyed to the robot via the handshake
+  file; do not hard-code them elsewhere.
+- `ssh.ack_probe_ms` — how long to wait for the first `ACK` after writing the
+  handshake before declaring UDP dead and falling back to SSH (default `1500`).
+- `ssh.udp_tel_fresh_s` — TEL2 freshness window (default `1.0`); while UDP
+  telemetry is fresher than this, the SSH `cat` poll relaxes to a 1Hz heartbeat.
+
+`motion.max_stride_mm` and `ssh.stride_ref_mm` default to **38mm** (was 50): the
+robot governor (§G.8) clamps stride per period regardless, so 38 makes the
+displayed value match the applied value (mapping-parity table,
+`handheld-direct-pilot-upgrade.md §5`).
 
 ## Robot Camera
 

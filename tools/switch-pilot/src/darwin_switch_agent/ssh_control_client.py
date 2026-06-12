@@ -15,6 +15,16 @@ SSH transport mirrors SSHShell.swift exactly (the robot is OpenSSH 5.9, so the
 legacy +ssh-rsa algorithms and ControlMaster reuse are mandatory). Every ssh
 call has a hard timeout and NEVER raises into the control loop — failures are
 logged and reported as falsy/None.
+
+O1 UDP (ssh-parity-contract §G): when `transport` is "auto" (default) this client
+ALSO opens the event-driven UDP path — it writes the §G.1 channel handshake (its
+own freshly generated token) and the uplink registration over SSH, then sends
+DFCMD datagrams (20Hz) and listens for ACK/TEL2. If no ACK arrives within the
+probe window it falls back to the SSH file path (5Hz) and clears the handshake so
+the robot returns to file-poll. The file paths stay the permanent fallback; UDP is
+purely additive. `transport: "ssh"` forces the legacy file path. The wire formats
+live in `df_udp` (host-tested pure functions); this class owns the SSH-side
+handshake bookkeeping and the auto/fallback state machine.
 """
 
 from __future__ import annotations
@@ -25,6 +35,8 @@ import subprocess
 import time
 import uuid
 
+from . import df_udp
+from .df_udp import UdpControlTransport
 from .mapping import MotionCommand
 
 # Robot-side file paths — pinned to the brokerage contract.
@@ -33,6 +45,29 @@ CMD_TMP_PATH = "/tmp/df-walklab-cmd.tmp"
 ESTOP_PATH = "/tmp/df-walklab-estop"
 TELEMETRY_PATH = "/tmp/df-walklab-telemetry"
 PILOT_MODE_PATH = "/tmp/df-pilot-mode"
+# §G.1 handshake + uplink registration files (written over SSH; consumed by the
+# robot's WalkLabBrokerage::RefreshHandshake / telemetry uplink).
+CHANNEL_PATH = "/tmp/df-walklab-channel"
+CHANNEL_TMP_PATH = "/tmp/df-walklab-channel.tmp"
+UPLINK_PATH = "/tmp/df-walklab-uplink"
+UPLINK_TMP_PATH = "/tmp/df-walklab-uplink.tmp"
+
+# Transport modes for the `transport` config key.
+TRANSPORT_AUTO = "auto"
+TRANSPORT_SSH = "ssh"
+_TRANSPORT_MODES = {TRANSPORT_AUTO, TRANSPORT_SSH}
+
+# UDP path send rate (§G.4 wants a continuous 20–30Hz stream so the robot
+# watchdog tiers catch packet loss fast); SSH file path keeps the verified 5Hz.
+DEFAULT_UDP_SEND_HZ = 20.0
+DEFAULT_SSH_SEND_HZ = 5.0
+# Auto-probe: how long to wait for the first ACK after writing the handshake
+# before declaring UDP dead and falling back to SSH. The robot accepts a fresh
+# handshake within ≤1s (§G.1), so 1.5s covers the settle + a few lost datagrams.
+DEFAULT_ACK_PROBE_MS = 1500.0
+# UDP telemetry is considered "fresh" within this window (J6 parity); when fresh,
+# the SSH cat poll downgrades to a low-rate fallback heartbeat.
+DEFAULT_UDP_TEL_FRESH_S = 1.0
 
 # Defaults — wired direct path is ~166x faster than wireless (see CLAUDE.md).
 DEFAULT_HOST = "192.168.123.1"
@@ -142,6 +177,22 @@ class SshControlClient:
         self._connected = False
         self.log = logging.getLogger("ssh_control")
 
+        # --- O1 UDP transport (§G) -----------------------------------------
+        raw_transport = str(cfg.get("transport", TRANSPORT_AUTO)).lower()
+        self.transport_mode = raw_transport if raw_transport in _TRANSPORT_MODES else TRANSPORT_AUTO
+        self.udp_send_hz = float(cfg.get("udp_send_hz", DEFAULT_UDP_SEND_HZ))
+        self.ssh_send_hz = float(cfg.get("send_hz", DEFAULT_SSH_SEND_HZ))
+        self.cmd_port = int(cfg.get("cmd_port", df_udp.DEFAULT_CMD_PORT))
+        self.estop_port = int(cfg.get("estop_port", df_udp.DEFAULT_ESTOP_PORT))
+        self.telemetry_port = int(cfg.get("telemetry_port", df_udp.DEFAULT_TELEMETRY_PORT))
+        self.ack_probe_ms = float(cfg.get("ack_probe_ms", DEFAULT_ACK_PROBE_MS))
+        self.udp_tel_fresh_s = float(cfg.get("udp_tel_fresh_s", DEFAULT_UDP_TEL_FRESH_S))
+        # State machine: "ssh" (file path only), "probing" (handshake written,
+        # streaming UDP + file, awaiting first ACK), "udp" (ACK seen, UDP only).
+        self._transport_state = TRANSPORT_SSH
+        self._udp: UdpControlTransport | None = None
+        self._probe_started = 0.0
+
     @staticmethod
     def _resolve_identity(raw: str | None) -> str | None:
         expanded = _expand(raw) if isinstance(raw, str) else None
@@ -168,7 +219,113 @@ class SshControlClient:
             return False
         if self.write_mode_file:
             self._write_pilot_mode()
+        # UDP needs the SSH channel to write the §G.1 handshake, so it is only
+        # attempted when an identity (working SSH) exists.
+        if self.transport_mode == TRANSPORT_AUTO and self.identity:
+            self._start_udp()
         return True
+
+    # ----- UDP transport lifecycle (§G) -------------------------------------
+
+    def _start_udp(self) -> None:
+        """Open the UDP socket and write the §G.1 handshake + uplink over SSH.
+
+        Best-effort: if the handshake write fails we stay on the SSH file path.
+        On success we enter "probing" — commands stream over UDP only (never the
+        file at the UDP rate; see `_dispatch`) until the first ACK promotes us to
+        "udp", or the probe window expires and we fall back to the file path.
+        """
+        # A re-connect re-probes from scratch: drop any prior socket first.
+        if self._udp is not None:
+            self._udp.close()
+            self._udp = None
+        try:
+            transport = UdpControlTransport(
+                self.host,
+                cmd_port=self.cmd_port,
+                estop_port=self.estop_port,
+                telemetry_port=self.telemetry_port,
+            )
+        except OSError as exc:
+            self.log.warning("udp socket open failed: %s; staying on SSH", exc)
+            self._transport_state = TRANSPORT_SSH
+            return
+        handshake = df_udp.handshake_line(transport.token, self.estop_port, self.cmd_port)
+        wrote_channel = self._atomic_write(CHANNEL_TMP_PATH, CHANNEL_PATH, handshake)
+        if not wrote_channel:
+            self.log.warning("handshake write failed; staying on SSH file path")
+            transport.close()
+            self._transport_state = TRANSPORT_SSH
+            return
+        # Register the uplink so the robot streams TEL2 back to our socket.
+        self._atomic_write(UPLINK_TMP_PATH, UPLINK_PATH, transport.uplink_value() + "\n")
+        self._udp = transport
+        self._transport_state = "probing"
+        self._probe_started = time.monotonic()
+        self.log.info(
+            "udp transport probing token=%s cmd=%d estop=%d uplink=%s",
+            transport.token, self.cmd_port, self.estop_port, transport.uplink_value(),
+        )
+
+    def pump(self) -> dict | None:
+        """Service the UDP socket once: drain ACK/TEL2, advance the auto state.
+
+        Returns the latest TEL2 dict if one arrived this cycle. Promotes
+        "probing" → "udp" on the first ACK; demotes "probing" → "ssh" (clearing
+        the handshake) once the probe window elapses with no ACK. Never raises.
+        """
+        if self._udp is None:
+            return None
+        tel = self._udp.pump()
+        if self._transport_state == "probing":
+            if self._udp.last_ack_at is not None:
+                self._transport_state = "udp"
+                self.log.info("udp transport active (rtt≈%s ms)", self._udp.last_rtt_ms)
+            elif (time.monotonic() - self._probe_started) * 1000.0 >= self.ack_probe_ms:
+                self.log.warning("no UDP ACK within %.0fms; falling back to SSH", self.ack_probe_ms)
+                self._teardown_udp()
+        return tel
+
+    def _teardown_udp(self) -> None:
+        """Close the UDP socket and clear the handshake (robot → file-poll)."""
+        if self._udp is not None:
+            self._udp.close()
+            self._udp = None
+        self._transport_state = TRANSPORT_SSH
+        # Clear the channel + uplink so the robot tears down its UDP threads and
+        # returns to the file-poll fallback (no stale listener / old token).
+        self._ssh(f"rm -f {CHANNEL_PATH} {UPLINK_PATH}")
+
+    @property
+    def udp_active(self) -> bool:
+        return self._transport_state == "udp"
+
+    @property
+    def streaming(self) -> bool:
+        """True when commands go out as a continuous UDP stream (udp or probing)
+        — the supervisor watchdog tiers are armed, so main streams at udp_send_hz
+        instead of the change+heartbeat debounce the SSH file path uses."""
+        return self._transport_state in {"udp", "probing"}
+
+    @property
+    def transport_label(self) -> str:
+        return "udp" if self._transport_state == "udp" else "ssh"
+
+    def current_send_hz(self) -> float:
+        """Send cadence for the active path: 20Hz UDP (incl. probing), 5Hz SSH."""
+        return self.udp_send_hz if self._transport_state in {"udp", "probing"} else self.ssh_send_hz
+
+    def udp_tel_fresh(self) -> bool:
+        if self._udp is None:
+            return False
+        age = self._udp.tel_age_s()
+        return age is not None and age <= self.udp_tel_fresh_s
+
+    def last_udp_tel(self) -> dict | None:
+        return self._udp.last_tel if self._udp is not None else None
+
+    def udp_metrics(self) -> dict | None:
+        return self._udp.metrics() if self._udp is not None else None
 
     def _write_pilot_mode(self) -> None:
         """Best-effort write of /tmp/df-pilot-mode == walklab (atomic temp+mv).
@@ -181,23 +338,45 @@ class SshControlClient:
         self._ssh(cmd, input_data="walklab")
 
     def send(self, command: MotionCommand) -> bool:
-        """Write the 14-token command line atomically over ssh.
+        """Send the 14-token command line over the active transport.
 
         Token order is pinned to WalkLabBrokerage.cpp::ParseAndApply:
           {cmd_id} {enabled} {x} {y} {a} {period} {foot} {hip}
           {bgain} {benable} {blevel} {headPan} {headTilt} {ballTrack}
-        Returns True on ssh exit 0.
+        - "udp"/"probing": DFCMD datagram only (cheap, non-blocking, 20Hz).
+        - "ssh": SSH file write only (the slow path we time-box the probe against).
+        Returns True when the chosen path accepted the line.
         """
         line = self._build_line(command)
-        return self._write_cmd_line(line)
+        return self._dispatch(line)
 
     def stop(self) -> bool:
         """Send enabled=0 with zeroed motion immediately (bypass debounce)."""
         line = self._build_line(self._zero_command())
+        return self._dispatch(line)
+
+    def _dispatch(self, line: str) -> bool:
+        """Route a built command line to UDP (while streaming) or the SSH file.
+
+        We never write the SSH file at the UDP rate — a file write is a full SSH
+        round trip (~50–120ms), exactly the cost the UDP path exists to avoid.
+        The probe is time-boxed instead (§G.1 accepts a fresh handshake in ≤1s):
+        if no ACK lands we demote to "ssh" and the file path resumes immediately.
+        """
+        if self._transport_state in {"udp", "probing"} and self._udp is not None:
+            self._udp.send_command(line)
+            return True
         return self._write_cmd_line(line)
 
     def estop(self) -> bool:
-        """Engage e-stop by creating the presence file. Returns True on exit 0."""
+        """Engage e-stop. UDP burst (§G.2) when available AND the SSH touch.
+
+        The estop FILE owns hold-stopped state (the 900ms re-contract is
+        unchanged); the UDP burst is an additive low-latency channel. We always
+        touch the file so a dropped burst can never leave the robot un-stopped.
+        """
+        if self._udp is not None:
+            self._udp.send_estop()
         result = self._ssh(f"touch {ESTOP_PATH}")
         return result is not None and result.returncode == 0
 
@@ -238,7 +417,13 @@ class SshControlClient:
         return _parse_command_status(result.stdout)
 
     def close(self) -> None:
-        """Tear down the ControlMaster socket (ssh -O exit), best-effort."""
+        """Tear down the UDP transport + ControlMaster socket, best-effort.
+
+        Clears the §G.1 handshake so the robot returns to file-poll with no stale
+        listener / old token (the contract's session-end requirement).
+        """
+        if self._udp is not None or self._transport_state != TRANSPORT_SSH:
+            self._teardown_udp()
         if not self.identity:
             self._connected = False
             return
@@ -320,8 +505,12 @@ class SshControlClient:
 
     def _write_cmd_line(self, line: str) -> bool:
         """Atomic temp+mv write of one command line via stdin piped to ssh."""
-        cmd = f"cat > {CMD_TMP_PATH} && mv -f {CMD_TMP_PATH} {CMD_PATH}"
-        result = self._ssh(cmd, input_data=line)
+        return self._atomic_write(CMD_TMP_PATH, CMD_PATH, line)
+
+    def _atomic_write(self, tmp_path: str, dst_path: str, body: str) -> bool:
+        """Atomic temp+mv write of `body` to `dst_path` via stdin piped to ssh."""
+        cmd = f"cat > {tmp_path} && mv -f {tmp_path} {dst_path}"
+        result = self._ssh(cmd, input_data=body)
         return result is not None and result.returncode == 0
 
     def _ssh(
