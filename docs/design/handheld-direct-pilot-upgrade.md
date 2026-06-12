@@ -177,6 +177,13 @@ timeout 3 od -An -tx1 /dev/input/eventN | wc -c
 
 ### Wave H3 — Switch 무선 경로 최적화 (S~M, O1 의존)
 
+> **구현 완료 (2026-06-12, `ae23e5c` · P10)** — 코드/테스트 완료, 실기(무선 실효율·
+> E-STOP) 별도 세션 대기. `tools/switch-pilot` SshControlClient + `df_udp`(신규)에 §G
+> UDP 패스트패스 소비: 핸드셰이크/DFCMD 20Hz/ACK·RTT/DF-ESTOP ×3연발+SSH touch
+> 병행/TEL2 30Hz 수신, `transport=auto` 폴백(ACK 무응답 1.5s→SSH 5Hz). 단위 +24,
+> 풀 스위트 237/237. 항목 ③ 단서: estop 재발화 간격은 900ms 유지(estop=로봇 래치,
+> edge 가 ×3연발+touch 발화; 워치독 정합은 20Hz 명령 스트림이 충족) — 실기에서 재평가.
+
 1. **O1 UDP 클라이언트**: SshControlClient 에 UDP transport 추가(V2 프로토콜, seq+토큰) —
    send_hz 5→**20**, E-STOP UDP ×3연발+SSH 병행(기존 파일 경로는 폴백 유지).
    기대: 명령 지연 200ms+RTT → ~50ms+RTT(무선 RTT 는 환경 의존이라 잔존).

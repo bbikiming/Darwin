@@ -250,7 +250,20 @@ walkAnimator 가 TEL2 위상 소비(화면=게이지=실모터 불변식의 완�
 SSH 폴 승격 동작 테스트(목 주입). 실기 30Hz 수신율 확인은 사용자 보고. README 갱신.
 ```
 
-## [ ] P10 — handheld H3: Switch 클라이언트 O1-UDP 화 · 전제 P3(권장 P9)
+## [x] P10 — handheld H3: Switch 클라이언트 O1-UDP 화 · 전제 P3(권장 P9) — 코드/테스트 완료, 실기(무선 실효율·E-STOP) 대기 (2026-06-12, ae23e5c)
+
+> 구현: `tools/switch-pilot` SshControlClient 에 ssh-parity-contract §G UDP 패스트패스
+> 추가(파일 경로 영구 폴백, 순수 가산 — 로봇·Mac 무변경). `df_udp`(신규) 순수 와이어
+> 계층: 핸드셰이크 §G.1·DFCMD §G.3(20Hz·seq·ACK/RTT)·DF-ESTOP §G.2 ×3연발
+> (0/50/100ms)+SSH touch 병행·TEL2 §A.2-TEL2 30Hz 수신(신선 시 cat 폴 1Hz 강등).
+> `transport=auto`(기본): probing→첫 ACK 시 udp 승격, ack_probe_ms(1.5s) 무응답 시
+> 핸드셰이크 clear→SSH 5Hz 폴백. config 신규 키 6종(transport·udp_send_hz·cmd/estop/
+> telemetry_port·ack_probe_ms·udp_tel_fresh_s) + stride 50→38mm 패리티. README §G 갱신.
+> **단위 +24(df_udp 14·auto 상태기계 10), 풀 스위트 237/237.**
+> 편차 1건(설계 의도 대비): H3 항목 ③ "estop 재계약 900ms→250ms"는 estop 재발화
+> 간격을 900ms 로 유지 — estop 은 로봇 측 래치(§G.2)이고 rising edge 가 이미 ×3연발+
+> 파일 touch 를 발화하므로, "워치독 티어 정합" 의도는 250ms 가 아닌 20Hz(50ms) 명령
+> 스트림이 더 촘촘히 충족. estop 재발화 간격은 실기 E-STOP 검증 세션에서 재평가.
 
 ```
 docs/design/handheld-direct-pilot-upgrade.md 의 Wave H3 을 구현해줘 (O1 머지 전제).
