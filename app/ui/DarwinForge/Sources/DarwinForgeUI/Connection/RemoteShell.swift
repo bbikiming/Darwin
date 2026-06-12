@@ -36,12 +36,19 @@ public final class RemoteShell: ObservableObject {
         public var error: String?
         public let sentAt: Date
         public var receivedAt: Date?
+        /// 원격 exit code — UX 리디자인(2026-06-13): 비-0 exit 를 성공으로 칠하던
+        /// 콘솔 표시 결함의 데이터 기반. SSHShell.run 이 이미 반환하던 값을 저장만 추가
+        /// (additive — 기존 소비처의 error==nil 의존 불변).
+        public var exitCode: Int32?
 
         public var elapsedMs: Int? {
             guard let r = receivedAt else { return nil }
             return Int(r.timeIntervalSince(sentAt) * 1000)
         }
     }
+
+    /// 히스토리 상한 — 장시간 세션 무한 증식 방지(oldest-drop 링버퍼).
+    public static let historyLimit = 200
 
     /// 사용 중인 채널 표시 — UI 에서 사용자에게 노출.
     public enum Channel: Equatable {
@@ -95,7 +102,10 @@ public final class RemoteShell: ObservableObject {
 
         var exchange = Exchange(command: trimmed, sentAt: Date())
         history.append(exchange)
-        let index = history.count - 1
+        // 링버퍼 절단 — 결과 갱신은 아래 id 매칭이라 인덱스 이동에 안전.
+        if history.count > Self.historyLimit {
+            history.removeFirst(history.count - Self.historyLimit)
+        }
         isSending = true
         defer { isSending = false }
 
@@ -116,7 +126,9 @@ public final class RemoteShell: ObservableObject {
                                             timeoutSeconds: timeoutSeconds)
             exchange.result = r.combined
             exchange.receivedAt = Date()
-            if index < history.count { history[index] = exchange }
+            exchange.exitCode = r.exitCode
+            // id 매칭 갱신 — 종전 위치 인덱스는 링버퍼 절단/동시 send 에서 어긋날 수 있다.
+            if let i = history.firstIndex(where: { $0.id == exchange.id }) { history[i] = exchange }
             activeChannel = .ssh
             // **2026-06-02 핵심 추가**: exit_code + ok. 종전엔 비-0 exit(로봇이 명령
             // 거부)도 "responded"로만 기록돼 성공으로 오인됐다. 이제 로봇 수락 여부 기록.
@@ -136,9 +148,9 @@ public final class RemoteShell: ObservableObject {
             }()
             exchange.error = isAuth
                 ? "SSH 키 인증 실패 — Mac 터미널에서 `ssh-copy-id -i ~/.ssh/id_rsa_darwin.pub robotis@\(host)` 1회 실행"
-                : "SSH 연결 실패: \(error.localizedDescription)"
+                : "로봇에 닿지 못했어요 — 로봇 전원과 유선 LAN 을 확인한 뒤 '채널 재탐색'을 눌러 주세요. (\(error.localizedDescription))"
             exchange.receivedAt = Date()
-            if index < history.count { history[index] = exchange }
+            if let i = history.firstIndex(where: { $0.id == exchange.id }) { history[i] = exchange }
             // **2026-06-02 강화**: elapsed_ms(종전 누락 — 실패까지 걸린 시간은 timeout
             // 진단의 핵심) + 4-way error_case(timeout/key_auth_required/spawn_failed/
             // generic) + multiplex(ControlMaster 재사용 여부). isAuth 는 위 사용자 메시지용.
