@@ -48,7 +48,10 @@ struct WalkLabSceneSection: View {
             footTrace: session.footTrailLefts,
             imuRollDeg: session.displayImuRollDeg,
             imuPitchDeg: session.displayImuPitchDeg,
-            preset: .walkLab
+            preset: .walkLab,
+            // **W3**: walkLab 기본 오버레이(CoM·FSR·수평선·한계경고) + ZMP verdict 주입.
+            // 지지 다각형 색이 안정성 판정을 따라간다(FSR 미연결 시 접지 휴리스틱).
+            overlayData: SceneOverlayData(zmpVerdict: session.zmpMonitor.lastVerdict)
         )
         // V284 (2026-05-24) — 사용자 요청 "3D 뷰 비율이 너무 작고 비효율적".
         // minHeight 360 → 600 (RobotScene3D 가 ScrollView 안에서 항상 충분 세로 확보).

@@ -249,7 +249,22 @@ config 기본값을 38mm 로 하향하고 주석으로 근거 기재(매핑 패�
 커밋: feat(switch).
 ```
 
-## [ ] P11 — 3D 뷰포트 W3: 로봇공학 오버레이 · W0 만 의존 · P9 후 실데이터
+## [x] P11 — 3D 뷰포트 W3: 로봇공학 오버레이 · W0 만 의존 · P9 후 실데이터 ✅ (2026-06-12, branch `claude/p11-3d-overlays`)
+
+> 구현: ① `protocol RigSkeleton` 선행 커밋(59c6501) — MeshRig·DarwinOP2Rig 양쪽 채택,
+> EmissionState 우선순위(warn95>warn85>highlight). ② 오버레이 7종(9471528) —
+> `Visualization/Overlays/` 신설, 0-alloc 풀·자체 타이머 0, ViewportControls 토글 팝오버.
+> ③ 테스트(SupportPolygonConsistency 5 + RigEmissionPriority 2 + RobotOverlaySnapshot 2)
+> + README 갱신. **swift test 전체 3408 통과(serial, 2 skip, 0 실패)**.
+> 실데이터: WalkLab 은 ZMP verdict 주입(FSR 미연결 시 sole y 휴리스틱) — P9 TEL2 머지 시
+> `SceneOverlayData.fsr*`/`comOverride` 결선만 추가하면 됨(API 자리 확보 완료).
+> 주의: Cockpit 열(footContact·horizon)은 별도 `CockpitChaseSceneView` 경로라 미결선(후속).
+>
+> **Instruments 풀링 확인 절차**: `bash scripts/run-app.sh` → WalkLab 진입(오버레이 ON)
+> → Instruments **Allocations** 부착 → 60초 보행 구동. 합격: persistent object 그래프가
+> 평탄(오버레이 노드 풀이 init 1회 alloc 후 증가 없음). **Time Profiler** 로 idle 시
+> (포즈 정지) main thread CPU 가 v1.14.8 기준선과 동일(자체 타이머 0 — applyPose 경로
+> 외 오버레이 tick 없음)인지 확인.
 
 ```
 docs/design/3d-viewport-enhancement.md 의 Wave 3 을 구현해줘. 첫 커밋은 반드시

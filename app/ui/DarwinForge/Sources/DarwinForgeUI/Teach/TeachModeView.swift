@@ -6,6 +6,8 @@ public struct TeachModeView: View {
     @EnvironmentObject var store: ConnectionStore
     @StateObject private var capture = TeachCapture()
     @StateObject private var camera = CameraController()
+    /// **W3**: 로봇공학 오버레이 토글 store(Teach 기본값).
+    @StateObject private var overlayStore = OverlayToggleStore(preset: .teach)
     @State private var snapshotName: String = ""
     @State private var selectedSnapshot: TeachCapture.PoseSnapshot?
     @State private var showComparison: Bool = false
@@ -95,13 +97,14 @@ public struct TeachModeView: View {
                          footTrace: [],
                          showAxes: true,
                          cameraController: camera,
-                         preset: .teach)
+                         preset: .teach,
+                         overlays: overlayStore.overlays)
                 .background(LinearGradient(
                     colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                     startPoint: .top, endPoint: .bottom))
             sceneOverlay
                 .padding(DFSpace.md)
-            ViewportControls(camera: camera)
+            ViewportControls(camera: camera, overlayStore: overlayStore)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topTrailing)
         }
