@@ -171,35 +171,89 @@ applyBalanceCorrectionIfEnabled 를 step(20ms)마다. 자이로 입력 1차 LPF(
 10분·진동 여부)는 멈추고 사용자 보고 — 크래들 게이트 절차 포함. README 갱신.
 ```
 
-## [ ] P7 — handheld H1+H2: 온보드 GamepadPilot + 소스 중재 · 전제 P1(권장 P3·P4)
+## [ ] P7 — handheld H1+H2: 온보드 GamepadPilot + 소스 중재 · 전제 P1 ✅·P3 ✅·P4 ✅ (2026-06-12 H0 실측 반영 개정)
 
 ```
-docs/design/handheld-direct-pilot-upgrade.md 의 Wave H1 과 H2 를 구현해줘.
-H0 프로브 보고서(docs/reports/ 의 rgg01-usb-probe)를 먼저 읽고 축/버튼 코드 테이블 상수를
-그 결과로 채울 것. O1 이 머지돼 있으면 latest-wins 슬롯에 source=local 로 합류, 아니면
-1차 버전은 ParseAndApply 동급 적용 함수 직접 호출(문서 §4 H1-5 명시).
+docs/design/handheld-direct-pilot-upgrade.md 의 Wave H1+H2 를 구현해줘 — 단,
+H0 실측 보고서(docs/reports/2026-06-12-rgg01-usb-probe.md)가 설계 가정 일부를
+반증했으므로 충돌 시 보고서가 설계보다 우선한다. O1(latest-wins 슬롯·워치독 티어
+600/2500ms)·O2(거버너)·O4(TEL2, active_source 자리 "-")는 머지돼 있다.
 
-H1: firmware-patches/walklab-brokerage/GamepadPilot.{h,cpp} 신설(C++03, pthread).
-/dev/input/event* 스캔+1s 재스캔(핫플러그/분리 겸용 — switch-pilot input_linux.py:211-375
-로직의 C 이식), blocking read 스레드, EVIOCGABS 정규화. 매핑은 콕핏 RG G01 프리셋과 1:1
-(ControllerBindingProfile.swift:184-230): LS=이동/횡, RS X=턴·Y=머리틸트, LT/RT=머리팬,
-B=E-STOP(rising edge, 읽기 스레드에서 즉시 Walking::Stop+토크OFF+estop 파일 set),
-Y=복구, X=볼트랙, LB=데드맨(이동/턴만 게이트), RB=터보. 성형: 데드존 0.10, 곡선 1.35,
-intensity^0.7→period/foot 스케줄(switch-pilot ssh_control_client.py:278-302 식 채택).
-클램프는 로봇 거버너(O2)가 최종 — 없으면 임시로 38/22/12 하드 클램프.
+[H0 확정 입력 — 코딩 전 보고서 §2~§5·부록 A 정독]
+- 장치: XInput 045e:028e, xpad 네이티브 바인딩(new_id 불요), 이름 "Microsoft X-Box
+  360 pad". 매칭은 이름+VID/PID 재스캔 — event 노드 번호 불변 가정 금지(재연결 시
+  input 번호 증가 실측, 노드 번호 재사용은 우연).
+- i686 struct input_event = 16B(timeval 8 + type 2 + code 2 + value 4) — 실측 검증.
+- 축 8종(보고서 §3 표를 상수로): 스틱 ±32768(fuzz 16/flat 128), 트리거 ABS_Z/ABS_RZ
+  0..255 **순수 아날로그(BTN_TL2/TR2 없음)**, D-pad ABS_HAT0X/Y ±1. ABS_Y/RY 아래=+.
+  ABS_X 부호만 표준 가정 잔존 — 실기 브링업 1단계에서 실측 확정.
+- 버튼: A=304(ARM) B=305(E-STOP) X=307(볼트랙) Y=308(복구) LB=310(데드맨)
+  RB=311(터보) Back/Start/Home=314/315/316(예약) 스틱클릭 317/318(예약).
+- 레이트 SYN ~422–442/s. 권한: event 노드 root 0640 — GamepadPilot 은 root demo
+  내부 스레드라 무문제. 절전: 무입력 ~10분 → 전원 OFF 와 동일 신호.
+- 유선 USB-C 불발 — 동글 단일 경로 전제로 구현.
 
-H2: 소스 우선순위 E-STOP(전 소스 상시) > local(최근 입력 ≤1s) > 네트워크. ARM 의미론
-(A 버튼 ARM 전 이동 게이트 잠금 — switch-pilot main.py:469-496 settle 규칙 이식).
-**분리 failsafe 는 동글 기준 3중(문서 §4 H2-2)**: 동글은 패드 전원 OFF 에도 event 노드가
-유지될 수 있음 — ① 단절 시 release 합성(H0 실측)이면 데드맨 해제가 1차 방어 ② EVIOCGKEY
-1s 상태 폴 실패/노드 소멸 → inputSourceLost 즉시 제자리 슬루 ③ 무신호 동글이면 데드맨
-마지막 확인 ≥1.5s 를 단절 간주(H0 절전 측정값으로 임계 보정) → 워치독 티어 합류.
-TEL 에 active_source 토큰 추가(Mac 파서 ≥11 완화 전제).
+[H1 — GamepadPilot.{h,cpp} 신설 (firmware-patches/walklab-brokerage/, C++03·pthread)]
+1. 획득: /dev/input/event* 스캔 → EVIOCGNAME/EVIOCGID 매칭, 미발견/소실 시 1s 재스캔
+   (핫플러그 겸용 — switch-pilot input_linux.py:211-375 로직 C 이식).
+2. 읽기 스레드: blocking read 16B 단위, EV_ABS/EV_KEY 누적 → EV_SYN(SYN_REPORT)에서
+   스냅샷 커밋(축 일관성 보장).
+3. 정규화·성형: 스틱 ±32768→[-1,1], 데드존 0.10, 곡선 1.35, intensity^0.7→period/foot
+   스케줄(switch-pilot ssh_control_client.py:278-302 식 채택). 트리거는 0..255→[0,1]
+   아날로그 — 머리팬은 RT−LT 차분 비례 제어(임계 토글 아님). D-pad 는 상수만 정의
+   (1차 미배선 가능).
+4. 매핑(콕핏 RG G01 프리셋 1:1 — ControllerBindingProfile.swift:184-230): LS=이동/횡,
+   RS X=턴·Y=머리틸트, LT/RT=머리팬, B=E-STOP, Y=복구, X=볼트랙, LB=데드맨(이동/턴만
+   게이트), RB=터보, A=ARM.
+5. 적용 경로: O1 latest-wins 슬롯에 source=local 합류(supervisor 20ms 소비) — 클램프는
+   거버너(O2)가 최종, 자체 하드클램프 불요(sanity 상한만). **E-STOP 만 예외**: 읽기
+   스레드에서 즉시(슬롯 경유 금지) Walking::Stop+토크OFF+estop 파일 set — 기존 estop
+   파일 set 경로(F1 fchown 포함, 3d2eb5e)를 헬퍼로 추출해 재사용, 중복 구현 금지.
 
-검증: 호스트 빌드 단위 테스트(매핑·정산·중재·3중 failsafe — Robot:: 스텁), 증거 제시.
-실기(크래들에서 E-STOP ≤20ms·패드 전원 OFF/동글 뽑기 failsafe·10분 CPU)는 멈추고 사용자
-보고. 동글 운용 체크리스트(충전·페어링·E-STOP 리허설)를 보고에 포함. README 갱신.
-커밋: feat(firmware).
+[H2 — 소스 중재 + failsafe (H0 교차 리뷰 정정 반영 — 원설계 §4 H2-2 를 다음으로 대체)]
+1. 우선순위: E-STOP(전 소스 상시) > local(최근 입력 ≤1s) > 네트워크(UDP/파일).
+2. ARM: A rising 전 이동 게이트 잠금(switch-pilot main.py:469-496 settle 규칙 이식).
+   노드 재획득 후 **재 ARM 필수**(재전원 ~1.3s 자동 복귀 실측과 결합).
+3. failsafe 3티어 — 의미 정정: release 합성과 노드 소멸은 **같은 USB disconnect 의
+   두 증상**(커널 input core 가 합성 — 독립 2중 아님). graceful(전원 OFF·절전)은 이
+   경로가 결정적으로 잡고, **비정상 단절(거리 이탈·배터리 탈락 — 미측정)의 1차 방어는
+   ③티어다(보험 아님)**:
+   ① release 합성 → 데드맨 해제가 이동 게이트 즉시 잠금
+   ② read ENODEV/노드 소멸 → inputSourceLost: 진폭 제자리 슬루 + 재스캔 전이
+   ③ 마지막 입력 이벤트 경과 ≥1.5s(초기값) → 단절 의심: 진폭 제자리 슬루(워치독 티어
+     합류). **EVIOCGKEY 폴은 생존 판정으로 사용 금지** — 단절 직전까지 stale "held"
+     반환이 실측 반증됨(설계 H1-1 가정 폐기).
+   ③티어 함정: 스틱을 레일에 고정한 정속 직진 중엔 evdev 이벤트가 0 일 수 있어
+   오발 가능 — 그래서 ③의 효과는 disarm 이 아닌 **슬루 정지**(오발 비용 = 완만한
+   정지, 미탐 비용 = 폭주 — 안전 측 편향). 임계 1.5s 는 실기에서 정속 보행 침묵
+   분포 실측 후 확정.
+4. active_source: TEL2 의 예약 자리("-")를 local/udp/file 로 채움. **TEL v1 파일
+   포맷은 불변**(P9 불변식 — 토큰 추가 금지. 원설계의 "TEL 토큰 추가"는 O4 로 대체됨).
+
+[빌드·배포 통합]
+demoBuildPatched 채널(RobotSetupCommand.swift:932-1034)에 GamepadPilot 소스 배치 +
+Makefile OBJECTS 등록(WalkLabBrokerage 방식 동일). C1 install-onboard.sh 폴백과 충돌
+없는지 확인. 컴파일 플래그 게이트(기본 ON 가능 — 패드 미연결 시 무동작이 자연 게이트).
+
+[검증]
+- 호스트 단위 테스트(기존 brokerage 호스트 테스트 스타일, Robot::/Walking:: 스텁):
+  16B 디코더·매핑 전수(부호·데드존·곡선·트리거 차분)·성형 스케줄·중재 우선순위·
+  ARM/재 ARM·3티어(시퀀스 시뮬: release→ENODEV / ENODEV 단독 / 무이벤트 1.5s 오발
+  시나리오 포함). checks 수 증거 제시. swift test(serial) 회귀 — RobotSetupCommand.
+- **실기 직전 정지 — 절차 보고 후 사용자 입회**: ① ABS_X 부호 확정 ② E-STOP ≤20ms
+  (B→Walking::Stop 타임스탬프) ③ 단절 매트릭스: 전원 OFF·절전·**거리 이탈·배터리
+  탈락(미측정 비정상 케이스 — ③티어 발화 확인)**·동글 뽑기 ④ 재전원→재획득→재 ARM
+  ⑤ 10분 CPU·loop_ms(카메라 펌프 스레드 동시 부하 포함) ⑥ 정속 직진 중 이벤트 침묵
+  분포 → ③티어 임계 확정. 동글 운용 체크리스트(충전·페어링·절전 10분·E-STOP 리허설)
+  포함.
+
+[불변식] E-STOP 은 모든 중재·게이트·데드맨보다 먼저, 전 소스 상시. 정지 DSP 게이팅·
+TEL v1 포맷·기존 UDP/파일 경로·Walking.cpp(O3 영역) 무변경. 실기 배포는 입회 게이트
+후에만 — 그 전까지 로봇 접근 금지(다른 세션이 점유 중일 수 있음, 시작 전 git status
+로 타 세션 미커밋 변경 확인·자기 파일만 커밋).
+
+커밋: feat(firmware) (+ Swift 변경 시 feat(connection) 분리). README·설계 H1/H2 체크
+갱신은 docs(harness) 별도. 완료 후 04 체크리스트 교차 리뷰 의뢰.
 ```
 
 ## [ ] P8 — 온보드 O3: 밸런스 피드백(FSR/IMU) · 전제 P3·P4 · 실기 비중 최대
