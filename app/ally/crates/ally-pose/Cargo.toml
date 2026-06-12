@@ -1,0 +1,12 @@
+[package]
+name = "ally-pose"
+description = "TEL2 phase → forge-core walk FK 합성 포즈 (W3 구현)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# W3 에서 forge-core cross-workspace path 의존 추가:
+#   forge-core = { path = "../../../core/forge-core" }
+# W0 에 미리 추가하지 않는 이유: 골격 단계의 `cargo test` 가 forge-core 전체를
+# 빌드하게 되어 무겁고, W3 전까지 소비 코드가 없다.
+[dependencies]

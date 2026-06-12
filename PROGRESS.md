@@ -20,6 +20,7 @@
 - [x] **Phase A — 안전 기반** (2026-05-11): 20 DOF + JointMap (Official/LegacyOp1) + 부위별 한계 + walkReady (`ini_pose.yaml` 1:1) + 토크 ramp (P_GAIN 0→8→16→32) + `forge walk-ready` CLI + 명세 정정 → **106 tests**.
 - [x] **Phase B — 모션 카탈로그** (2026-05-11): `motion_4096.bin` byte-identical 파서 + `SafetyClass {Safe, Caution, HighRisk}` + `Library::with_official_catalog` (11 Safe + 2 Caution + 3 HighRisk) + self-collision 룰 + `precheck_motion(confirm_risk)` → **125 tests**.
 - [x] **Phase D (walk 권외)** (2026-05-12): `CmController::detect_joint_map` + `forge connect` + `forge motion catalog` CLI → **127 tests**.
+- [x] **DARwIn FPV W0** (2026-06-13): ROG Ally 게임형 콕핏 앱 — 기획·PRD·UX·아키텍처·수용기준 문서 5종(`app/ally/docs/`) + 독립 Cargo workspace + `df-wire` 와이어 계약 포팅(Python↔Rust 골든 벡터 패리티, **21 tests GREEN**). 다음: W1 제어 코어(유선 실기 게이트).
 
 ## 🎉 MVP 달성 (2026-05-09)
 

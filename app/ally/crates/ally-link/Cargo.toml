@@ -1,0 +1,10 @@
+[package]
+name = "ally-link"
+description = "UDP 제어 전송 + ssh2 세션 + 핸드셰이크 + 유선/무선 듀얼 경로 (W1 구현)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# W1 에서 ssh2 추가 (OpenSSH 5.9 kex 호환이 W1 최우선 검증 — 실패 시 russh/plink 분기).
+[dependencies]
+df-wire = { path = "../df-wire" }

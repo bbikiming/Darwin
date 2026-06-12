@@ -1,0 +1,13 @@
+[package]
+name = "ally-cli"
+description = "헤드리스 수용시험 도구 — W1 유선 실기 게이트의 UI 없는 통과 수단"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+df-wire = { path = "../df-wire" }
+
+[[bin]]
+name = "ally-cli"
+path = "src/main.rs"

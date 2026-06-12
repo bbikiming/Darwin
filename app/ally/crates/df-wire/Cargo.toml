@@ -1,0 +1,10 @@
+[package]
+name = "df-wire"
+description = "WalkLab 브로커리지 와이어 계약(ssh-parity-contract §G/§C/§A.2-TEL2) 순함수 계층"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# 의존 크레이트 0 — 와이어 계약 계층은 소켓·런타임 없이 100% 호스트 테스트 가능해야
+# 하고, 골든 벡터 패리티(Python df_udp.py ↔ Rust)가 유일한 진실 검증이다.
+[dependencies]

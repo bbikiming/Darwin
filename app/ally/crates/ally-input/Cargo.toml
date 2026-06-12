@@ -1,0 +1,9 @@
+[package]
+name = "ally-input"
+description = "게임패드 입력(gilrs) + RG G01 동결 매핑 + 안전 게이트 상태머신 (W1 구현)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# W1 에서 gilrs 추가. W0 은 동결 매핑 상수 모듈만 수록한다.
+[dependencies]

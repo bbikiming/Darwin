@@ -1,0 +1,24 @@
+# DARwIn FPV — ROG Ally 콕핏 앱 워크스페이스.
+#
+# app/core 와는 의도적으로 분리된 독립 워크스페이스다: Windows 전용 의존
+# (gilrs·wgpu·ssh2·tauri 등)이 Mac/iOS 가 소비하는 검증된 코어 워크스페이스의
+# lock 파일·CI 표면을 오염시키지 않게 한다 (docs/03_ARCHITECTURE.md §6).
+# forge-core 가 필요한 크레이트(ally-pose, W3)는 cross-workspace path 의존으로 연결한다.
+#
+# darwin-fpv(Tauri bin)는 W1에서 멤버로 추가한다 — Tauri 의존이 무거워
+# W0 골격의 `cargo test`(macOS 호스트)를 가볍게 유지하기 위해 보류.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/df-wire",
+    "crates/ally-link",
+    "crates/ally-input",
+    "crates/ally-pose",
+    "crates/ally-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"

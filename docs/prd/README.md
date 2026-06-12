@@ -8,6 +8,7 @@
 | ID | 제목 | 상태 | 대상 스프린트 |
 |----|------|------|---------------|
 | PRD-001 | [Motion Synthesis Engine v1](motion-synthesis-v1.md) | Draft (구현 대기) | Sprint 9 ~ 12 |
+| PRD-002 | [DARwIn FPV — ROG Ally 콕핏 앱](../../app/ally/docs/01_PRD.md) | Draft (W0 골격 기진행) | Ally W0 ~ W4 |
 
 ## 상태 정의
 
