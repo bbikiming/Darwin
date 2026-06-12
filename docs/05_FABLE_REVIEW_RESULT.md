@@ -15,6 +15,17 @@
 
 ---
 
+## [P11+P12] 머지 확정 (2026-06-12) — **3D 트랙 전 웨이브(W0~W5) 완료**
+
+- P12 커밋: `62d18e6`(feat ① — W3 수렴 명시 포함, 검수 확인) · `26e9df4`(docs ②)
+- P12 풀 스위트의 결정적 실패 1건은 **P3 귀책**(O0 ≥11 완화 vs 레거시 12토큰 거부 테스트
+  — P12 세션의 "P9 귀책" 추정은 부정확하나 진단은 정확) → 검수 세션이 계약 결정
+  (파서가 옳음, contract §A.3) 후 테스트 갱신 `ef559c0` (12토큰=lastCmdId 수용·14+ 무시).
+- P11 머지: `b3906f9` — 충돌 5파일 해소(MeshRig=main 채택(superset 확인),
+  ViewportControls/Studio/Motion=W3+W4 union(showCinematic+overlayStore 공존),
+  README=union). 워크트리 /tmp/Darwin-p11 제거·브랜치 삭제.
+- **머지 게이트: 풀 스위트 3,461 테스트 · 2 skip · 0 실패** (serial, 119s) + 빌드 clean.
+
 ## [P12] 3D W4+W5 — 카메라 연출 + 성능 검증 — **통과 (커밋 대기)** (2026-06-12)
 
 - 구현: 메인 워크트리 미커밋(Visualization/·Pilot/Cockpit/ + 신규 SceneMath·
