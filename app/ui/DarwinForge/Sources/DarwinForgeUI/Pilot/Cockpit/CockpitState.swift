@@ -109,8 +109,12 @@ public final class CockpitState: ObservableObject {
     private var smoothedHeadPanNorm: Double = 0
     private var smoothedHeadTiltNorm: Double = 0
 
-    /// 명령 스무딩 EMA 계수 (30Hz). 0.25 ≈ 0.3s ramp — 반응성 유지하며 급변 완화.
-    private static let commandSmoothingAlpha: Double = 0.25
+    /// 명령 스무딩 EMA 계수 (30Hz). **O2 (2026-06-12, walklab-onboard-teleop-upgrade)**:
+    /// 0.25→0.5 로 완화 — 셰이핑(가속 제한) 책임을 로봇 supervisor 의 래치 단위 슬루
+    /// (`WalkLabTransport::SlewToward`, |ΔX|≤8mm 등)로 이관해 Mac/로봇 이중 스무딩의
+    /// 직렬 겹침을 제거했다. 0.5 ≈ 더 빠른 반응(로봇이 첫걸음 capturability 를 소유).
+    /// 시뮬 표시(chase 위치·머리 EMA)는 기존 계수 유지 — 본 계수는 모터 명령 추종 전용.
+    private static let commandSmoothingAlpha: Double = 0.5
     /// 머리 입력 스무딩 EMA 계수 — detented 휠 클릭을 부드러운 각속도 전환으로.
     /// 2026-06-02: 0.25→0.5 — 스무딩이 강하면 머리 반응이 "한참 뒤". 0.5 로 지연 감소.
     private static let headSmoothingAlpha: Double = 0.5

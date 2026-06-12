@@ -174,6 +174,184 @@ static void test_cmd_datagram() {
           "wrong token rejected");
 }
 
+// ---- O2: V2 twist protocol --------------------------------------------------
+
+static void test_parse_v2_twist() {
+    printf("test_parse_v2_twist\n");
+    // V2 seq t_tx flags vx vy wz period foot hip_cdeg blevel pan_cdeg tilt_cdeg
+    // flags = ENABLED(1) → enabled. vx=200mm/s, period=600ms → T=0.6, X=200*0.6/2=60? then
+    // governor not applied here (parse only). k_x=1.0.
+    WalkCommand c;
+    bool ok = ParseCommandLine(
+        "V2 42 1748736000000 1 200 0 0 600 40 1300 2 2000 -1000", &c);
+    CHECK(ok, "v2 line parses (12 tokens after V2)");
+    CHECK(c.enabled == 1, "v2 enabled from FLAG_ENABLED");
+    // X_MOVE = k_x · vx · T/2 = 1 · 200 · 0.6/2 = 60.0
+    CHECK_DEQ(c.x, 60.0, "v2 vx→X_MOVE (vx·T/2)");
+    CHECK_DEQ(c.y, 0.0, "v2 vy zero");
+    CHECK_DEQ(c.a, 0.0, "v2 wz zero → A zero");
+    CHECK_DEQ(c.period, 600.0, "v2 period passthrough");
+    CHECK_DEQ(c.foot, 40.0, "v2 foot passthrough");
+    CHECK_DEQ(c.hip, 13.0, "v2 hip_cdeg 1300 → 13.0deg");
+    CHECK_DEQ(c.head_pan, 20.0, "v2 pan_cdeg 2000 → 20.0deg");
+    CHECK_DEQ(c.head_tilt, -10.0, "v2 tilt_cdeg -1000 → -10.0deg");
+    CHECK(c.blevel == 2, "v2 blevel");
+    CHECK(strcmp(c.cmd_id, "v2#42") == 0, "v2 cmd_id = v2#seq");
+    CHECK(c.head_explicit, "v2 head_explicit when nonzero");
+}
+
+static void test_parse_v2_yaw_conversion() {
+    printf("test_parse_v2_yaw_conversion\n");
+    // wz = 1000 mrad/s = 1 rad/s, period 600 → T=0.6. A = 1·1·0.6/2·(180/π) = 0.3·57.2958 = 17.188deg
+    WalkCommand c;
+    bool ok = ParseCommandLine(
+        "V2 1 0 1 0 0 1000 600 40 1300 2 0 0", &c);
+    CHECK(ok, "v2 yaw line parses");
+    CHECK(c.a > 17.0 && c.a < 17.4, "v2 wz 1000mrad/s → A≈17.19deg");
+    // flags only ENABLED → balance off, balltrack off.
+    CHECK(c.benable == 0, "v2 balance off (no FLAG_BALANCE_ENABLE)");
+    CHECK(c.balltrack == 0, "v2 balltrack off");
+}
+
+static void test_parse_v2_flags() {
+    printf("test_parse_v2_flags\n");
+    WalkCommand c;
+    // flags = ENABLED|BALANCE_ENABLE|BALLTRACK|GATE_SCHED_OFF = 1|2|4|8 = 15
+    ParseCommandLine("V2 1 0 15 100 0 0 500 40 0 1 0 0", &c);
+    CHECK(c.enabled == 1, "flags enabled");
+    CHECK(c.benable == 1, "flags balance enable");
+    CHECK(c.balltrack == 1, "flags balltrack");
+    CHECK((c.flags & FLAG_GATE_SCHED_OFF) != 0, "flags gate-sched-off preserved");
+    // disabled: flags=0
+    WalkCommand c2;
+    ParseCommandLine("V2 2 0 0 100 0 0 500 40 0 2 0 0", &c2);
+    CHECK(c2.enabled == 0, "flags=0 → disabled");
+}
+
+static void test_parse_v2_rejects_short() {
+    printf("test_parse_v2_rejects_short\n");
+    WalkCommand c;
+    CHECK(!ParseCommandLine("V2 1 0 1 100 0 0 600", &c), "v2 partial (8 tok) rejected");
+    // v1 still works (no V2 prefix).
+    CHECK(ParseCommandLine("idX 1 28 0 0 600 40 13 1 0 2 0 0 0", &c), "v1 still parses");
+    CHECK_DEQ(c.x, 28.0, "v1 x intact after v2 branch added");
+    CHECK(c.flags == 0, "v1 flags default 0 (gate ON)");
+}
+
+// ---- O2: envelope governor --------------------------------------------------
+
+static void test_envelope_xmax_table() {
+    printf("test_envelope_xmax_table\n");
+    CHECK_DEQ(EnvelopeXMax(700), 40.0, "700ms → 40mm");
+    CHECK_DEQ(EnvelopeXMax(600), 38.0, "600ms → 38mm");
+    CHECK_DEQ(EnvelopeXMax(500), 32.0, "500ms → 32mm");
+    CHECK_DEQ(EnvelopeXMax(440), 28.0, "440ms → 28mm");
+    CHECK_DEQ(EnvelopeXMax(800), 40.0, "above 700 → clamp 40");
+    CHECK_DEQ(EnvelopeXMax(400), 28.0, "below 440 → clamp 28");
+    CHECK_DEQ(EnvelopeXMax(650), 39.0, "650ms → 39mm (interp 38..40)");
+    CHECK_DEQ(EnvelopeXMax(550), 35.0, "550ms → 35mm (interp 32..38)");
+}
+
+static void test_governor_scaledown() {
+    printf("test_governor_scaledown\n");
+    // period 600 → x_max=38, y_max=22, a_max=12. Under-budget passes unchanged.
+    double x = 19.0, y = 0.0, a = 0.0;  // 0.5 sum
+    GovernEnvelope(&x, &y, &a, 600);
+    CHECK_DEQ(x, 19.0, "under-budget x unchanged");
+
+    // Over-budget: x=38(1.0)+y=22(1.0)+a=12(1.0) = 3.0 → scale 1.15/3.0.
+    double x2 = 38.0, y2 = 22.0, a2 = 12.0;
+    GovernEnvelope(&x2, &y2, &a2, 600);
+    double sum = fabs(x2)/38.0 + fabs(y2)/22.0 + fabs(a2)/12.0;
+    CHECK(sum > 1.149 && sum < 1.151, "over-budget scaled to sum≈1.15");
+    CHECK(x2 > 14.5 && x2 < 14.7, "x scaled (38·1.15/3≈14.57)");
+
+    // Direction preserved (signs).
+    double x3 = -50.0, y3 = 0.0, a3 = 0.0;  // |x|/38 = 1.32 > 1.15
+    GovernEnvelope(&x3, &y3, &a3, 600);
+    CHECK(x3 < 0, "negative x stays negative");
+    CHECK(fabs(x3) < 50.0, "|x| reduced toward x_max·1.15");
+}
+
+// ---- O2: latch slew ---------------------------------------------------------
+
+static void test_slew_first_apply() {
+    printf("test_slew_first_apply\n");
+    SlewState st;
+    double x = 30.0, y = 10.0, a = 8.0, p = 600.0;
+    SlewToward(&st, &x, &y, &a, &p);
+    CHECK(st.valid, "first apply sets valid");
+    CHECK_DEQ(x, 30.0, "first apply accepts target (no slew)");
+    CHECK_DEQ(a, 8.0, "first apply a accepted");
+}
+
+static void test_slew_clamps_delta() {
+    printf("test_slew_clamps_delta\n");
+    SlewState st;
+    double x = 0, y = 0, a = 0, p = 600;
+    SlewToward(&st, &x, &y, &a, &p);   // seed at 0
+    // Step to large target — each axis clamped to its max delta.
+    double x2 = 40.0, y2 = 30.0, a2 = 20.0, p2 = 440.0;
+    SlewToward(&st, &x2, &y2, &a2, &p2);
+    CHECK_DEQ(x2, 8.0, "x slew +8mm max");
+    CHECK_DEQ(y2, 6.0, "y slew +6mm max");
+    CHECK_DEQ(a2, 4.0, "a slew +4deg max");
+    CHECK_DEQ(p2, 540.0, "period slew -60ms max (600→540)");
+    // Negative direction clamps too.
+    double x3 = -100, y3 = 0, a3 = 0, p3 = 600;
+    SlewToward(&st, &x3, &y3, &a3, &p3);
+    CHECK_DEQ(x3, 0.0, "x slew -8mm from 8 → 0");
+}
+
+static void test_slew_reaches_target() {
+    printf("test_slew_reaches_target\n");
+    SlewState st;
+    double x = 0, y = 0, a = 0, p = 600;
+    SlewToward(&st, &x, &y, &a, &p);   // seed
+    // Within delta — target reached in one step.
+    double x2 = 5.0, y2 = 0, a2 = 0, p2 = 600;
+    SlewToward(&st, &x2, &y2, &a2, &p2);
+    CHECK_DEQ(x2, 5.0, "small step reaches target");
+}
+
+// ---- O2: balance gain scale -------------------------------------------------
+
+static void test_balance_gain_scale() {
+    printf("test_balance_gain_scale\n");
+    CHECK_DEQ(BalanceGainScale(0), 0.0, "blevel 0 → 0 (off)");
+    CHECK_DEQ(BalanceGainScale(1), 0.5, "blevel 1 → 0.5");
+    CHECK_DEQ(BalanceGainScale(2), 1.0, "blevel 2 → 1.0 (default)");
+    CHECK_DEQ(BalanceGainScale(3), 1.5, "blevel 3 → 1.5");
+    CHECK_DEQ(BalanceGainScale(9), 1.5, "blevel >3 → 1.5 clamp");
+    CHECK_DEQ(BalanceGainScale(-2), 0.0, "blevel <0 → 0 clamp");
+    // base gains applied: knee 0.3 × 1.5 = 0.45.
+    CHECK_DEQ(BASE_BALANCE_KNEE_GAIN * BalanceGainScale(3), 0.45, "knee×1.5=0.45");
+}
+
+// ---- O2: gate schedule ------------------------------------------------------
+
+static void test_gate_schedule() {
+    printf("test_gate_schedule\n");
+    // period 600 → x_max 38. threshold 0.7 → 26.6mm. Below = no boost.
+    GateBoost low = GateSchedule(20.0, 600, 0);
+    CHECK_DEQ(low.z_move, 0.0, "below threshold → no z boost");
+    CHECK_DEQ(low.y_swap, 0.0, "below threshold → no y_swap boost");
+
+    // At x_max (ratio 1.0) → full boost.
+    GateBoost full = GateSchedule(38.0, 600, 0);
+    CHECK_DEQ(full.z_move, 5.0, "at x_max → +5mm Z_MOVE");
+    CHECK_DEQ(full.y_swap, 2.0, "at x_max → +2mm Y_SWAP");
+    CHECK_DEQ(full.hip, 1.5, "at x_max → +1.5deg HIP");
+
+    // Midway: ratio 0.85 (x=32.3) → t = (0.85-0.7)/0.3 = 0.5 → half boost.
+    GateBoost mid = GateSchedule(32.3, 600, 0);
+    CHECK(mid.z_move > 2.4 && mid.z_move < 2.6, "midway → ~half z boost");
+
+    // flags OFF → no boost regardless.
+    GateBoost off = GateSchedule(38.0, 600, FLAG_GATE_SCHED_OFF);
+    CHECK_DEQ(off.z_move, 0.0, "FLAG_GATE_SCHED_OFF → no boost");
+}
+
 int main() {
     printf("=== WalkLabTransport host unit tests ===\n");
     test_parse_full_line();
@@ -187,6 +365,17 @@ int main() {
     test_watchdog_stream_only();
     test_estop_datagram();
     test_cmd_datagram();
+    test_parse_v2_twist();
+    test_parse_v2_yaw_conversion();
+    test_parse_v2_flags();
+    test_parse_v2_rejects_short();
+    test_envelope_xmax_table();
+    test_governor_scaledown();
+    test_slew_first_apply();
+    test_slew_clamps_delta();
+    test_slew_reaches_target();
+    test_balance_gain_scale();
+    test_gate_schedule();
 
     printf("=== %d checks, %d failures ===\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

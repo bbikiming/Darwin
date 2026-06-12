@@ -26,20 +26,92 @@ struct WalkCommand {
     double period;        // PERIOD_TIME (ms)
     double foot;          // Z_MOVE_AMPLITUDE (mm)
     double hip;           // HIP_PITCH_OFFSET (deg) — clamp [0,20]
-    double bgain;         // balance gain (현재 미적용 — O2)
-    int    benable;       // balance enable (미적용 — O2)
-    int    blevel;        // balance level 0..3 (미적용 — O2)
+    double bgain;         // balance gain (deprecated — blevel 로 단일화, O2)
+    int    benable;       // balance enable → BALANCE_ENABLE (O2 결선)
+    int    blevel;        // balance level 0..3 → 게인 ×{0,.5,1,1.5} (O2 결선)
     double head_pan;      // deg, clamp [-90,90]
     double head_tilt;     // deg, clamp [-45,65]
     int    balltrack;     // 0/1
+    int    flags;         // V2 flags 비트필드(v1=0). FLAG_* 참조. 게이트 스케줄 OFF 등.
     bool   head_explicit; // 이 라인이 non-zero head 를 지시했는가
     WalkCommand();
 };
 
-// 명령 라인 1개 파싱 (cmd_id 포함 14-token / 미포함 13-token / 구형 6-token).
-// 안전 클램프(hip 0..20, head pan ±90, tilt -45..65) 적용. 토큰 부족(≥6 실패) 시 false
+// ===== V2 flags 비트 (twist 프로토콜) =======================================
+// v1 라인은 flags=0 → 보행 활성 토글은 v1 의 `enabled` 토큰이 담당(아래 enabled 그대로).
+// V2 는 boolean 토글을 flags 로 접는다(정수 프로토콜 — 부동소수 파싱 배제).
+static const int FLAG_ENABLED        = 0x01;  // 보행 활성.
+static const int FLAG_BALANCE_ENABLE = 0x02;  // 자이로 보정 on → BALANCE_ENABLE.
+static const int FLAG_BALLTRACK      = 0x04;  // 온보드 볼 트래킹 on.
+static const int FLAG_GATE_SCHED_OFF = 0x08;  // 속도 비례 게이트 스케줄 비활성(기본 0=ON).
+
+// 명령 라인 1개 파싱. 두 방언을 모두 수용:
+//  · v1: (cmd_id 포함 14-token / 미포함 13-token / 구형 6-token), mm/deg 혼합 — §C.
+//  · v2: "V2 {seq} {t_tx_ms} {flags} {vx_mms} {vy_mms} {wz_mrad_s} {period_ms} {foot_mm}
+//        {hip_cdeg} {blevel} {headPan_cdeg} {headTilt_cdeg}" — REP-103 SI 밀리단위 정수.
+//        로봇이 twist→진폭 변환을 소유(X≈k_x·vx·T/2, A≈k_a·wz·T/2). §G.8.
+// 안전 클램프(hip 0..20, head pan ±90, tilt -45..65) 적용. 파싱 실패 시 false
 // → 호출부는 이전 명령 유지(safety). out 은 항상 유효 기본값으로 시작.
 bool ParseCommandLine(const char* line, WalkCommand* out);
+
+// ===== O2 twist 변환 보정 계수 (벤치 후 확정) ===============================
+// REP-103 SI: vx,vy[mm/s], wz[mrad/s], T=period/1000[s].
+//   X_MOVE[mm] = TWIST_K_X · vx · T/2,  Y_MOVE = TWIST_K_Y · vy · T/2,
+//   A_MOVE[deg] = TWIST_K_A · (wz/1000) · T/2 · (180/π).
+// TODO(bench-O0): 스텝 응답 정착 거리/회전각 실측으로 k_x·k_y·k_a 보정. 초기값 1.0.
+static const double TWIST_K_X = 1.0;
+static const double TWIST_K_Y = 1.0;
+static const double TWIST_K_A = 1.0;
+
+// ===== O2 결합 엔벨로프 거버너 (G6) — 로봇이 소유하는 최종 클램프 ============
+// |x|/x_max + |y|/y_max + |a|/a_max ≤ ENVELOPE_SUM_MAX 초과 시 x/y/a 비례 스케일다운.
+// Switch(stride 50mm 무클램프)·핸드헬드 포함 **전 클라이언트의 안전 전제** — 로봇 최종판.
+// 단일 정의(bus-direct-teleop-upgrade D1 와 공유). Mac 클램프(38/22/12)는 UX 레이어로 유지.
+static const double ENVELOPE_SUM_MAX = 1.15;
+static const double ENVELOPE_Y_MAX   = 22.0;  // mm
+static const double ENVELOPE_A_MAX   = 12.0;  // deg
+// period 종속 x_max(mm) 스케줄 — 초기값(벤치로 갱신). 경계 밖 끝값 고정, 중간 선형 보간.
+//   700ms→40, 600→38, 500→32, 440→28.
+double EnvelopeXMax(double period_ms);
+// 비율합이 상한을 넘으면 x/y/a 를 동일 비율로 축소(방향 보존). 0 분모는 안전 처리.
+void GovernEnvelope(double* x, double* y, double* a, double period_ms);
+
+// ===== O2 래치 단위 슬루 (G5) — 셰이핑 일원화: 가속 제한 ====================
+// 인접 래치(반주기) 간 축당 최대 변화. 첫걸음 capturability 보호. 단일 정의(D1 공유).
+static const double SLEW_DX_MAX      = 8.0;   // mm
+static const double SLEW_DY_MAX      = 6.0;   // mm
+static const double SLEW_DA_MAX      = 4.0;   // deg
+static const double SLEW_DPERIOD_MAX = 60.0;  // ms
+// 슬루 상태(마지막 적용값). valid=false 면 첫 적용 — 슬루 없이 target 수용 후 valid.
+struct SlewState {
+    double x, y, a, period;
+    bool   valid;
+    SlewState();
+};
+// st 에서 target(*x/*y/*a/*period)으로 축당 SLEW_*_MAX 만큼만 전진. *값을 갱신 + st 저장.
+// 호출 cadence(래치당 1회)는 호출부가 결정 — 본 함수는 순수 1-스텝 클램프(호스트 테스트).
+void SlewToward(SlewState* st, double* x, double* y, double* a, double* period);
+
+// ===== O2 죽은 토큰 결선 (G7 일부) ==========================================
+// Walking 출하 밸런스 게인(단일 정의) — blevel 배율의 곱셈 기준.
+static const double BASE_BALANCE_KNEE_GAIN        = 0.3;
+static const double BASE_BALANCE_ANKLE_PITCH_GAIN = 0.9;
+static const double BASE_BALANCE_HIP_ROLL_GAIN    = 0.5;
+static const double BASE_BALANCE_ANKLE_ROLL_GAIN  = 1.0;
+// blevel(0..3) → 게인 배율 {0, 0.5, 1.0, 1.5}. 범위 밖은 끝값 클램프.
+double BalanceGainScale(int blevel);
+
+// ===== O2 속도 비례 게이트 스케줄 (역동성) ==================================
+// |x|/x_max 가 GATE_SPEED_THRESH(상위 30%) 초과 시 선형 가산 — 발 클리어런스·측면 안정.
+// FLAG_GATE_SCHED_OFF 이면 0. 기본 ON.
+static const double GATE_SPEED_THRESH  = 0.70;  // x_max 대비 비율 임계
+static const double GATE_ZMOVE_ADD_MAX = 5.0;   // mm (Z_MOVE_AMPLITUDE 가산)
+static const double GATE_YSWAP_ADD_MAX = 2.0;   // mm (Y_SWAP_AMPLITUDE 가산)
+static const double GATE_HIP_ADD_MAX   = 1.5;   // deg (HIP_PITCH_OFFSET 가산)
+static const double DEFAULT_Y_SWAP_AMPLITUDE = 20.0;  // Walking 출하값(가산 기준).
+struct GateBoost { double z_move, y_swap, hip; GateBoost(); };
+// x(슬루 후 진폭)·period·flags 로 가산량 산출. 임계 이하 또는 OFF 면 0 boost.
+GateBoost GateSchedule(double x, double period_ms, int flags);
 
 // ===== latest-wins 슬롯 (KEEP_LAST depth 1) =================================
 // transport 스레드가 Offer, supervisor 가 Take. mutex 보호 1칸.

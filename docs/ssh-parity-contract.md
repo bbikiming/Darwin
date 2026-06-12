@@ -191,6 +191,11 @@ enabled — the walklab injection already calls `Head::GetInstance()->m_Joint.Se
 If both head values are 0 AND robot has never received a non-zero head command, you may
 skip MoveByAngle to preserve the framework's default head pose; otherwise always apply.
 
+**O2 (2026-06-12)**: this v1 line is now ONE of two dialects — see **§G.8** for the v2
+twist line, the robot-owned governor/slew/gate-schedule pipeline that both dialects pass
+through, and the balance-token wiring decision (`BALANCE_ENABLE` from `blevel`, not
+`benable`). The v1 path here is unchanged and permanent.
+
 ---
 
 ## D. Swift interfaces (EXPOSES / CONSUMES)
@@ -499,3 +504,54 @@ Adds an **event-driven UDP transport** alongside the file-poll path. The file pa
 ### G.7 New ports (single source: `DFConnectionConstants` ↔ handshake file)
 `estopUDPPort=17372`, `commandUDPPort=17374` (telemetry stays 17371). Do not hard-code
 elsewhere — the handshake conveys them to the robot.
+
+### G.8 Command semantics v2 — twist SI + robot-owned shaping (2026-06-12, O2)
+
+Adds a **second command dialect** alongside v1 (§C). The robot accepts both forever
+(`ParseCommandLine` branches on the `"V2 "` prefix); v1 14-token path is permanent.
+
+**v2 line (REP-103 SI, all integers — float parsing excluded):**
+```
+V2 {seq} {t_tx_ms} {flags} {vx_mms} {vy_mms} {wz_mrad_s} {period_ms} {foot_mm} {hip_cdeg} {blevel} {pan_cdeg} {tilt_cdeg}
+```
+- `flags` bits (SINGLE DEFINITION, shared `WalkLabTransport.h FLAG_*` ↔ Swift
+  `WalkingEngineCommand.V2Flag`): `0x01` ENABLED, `0x02` BALANCE_ENABLE, `0x04` BALLTRACK,
+  `0x08` GATE_SCHED_OFF (default 0 = gate schedule ON). Booleans fold into `flags`.
+- **Robot owns twist→amplitude conversion** (`X_MOVE = k_x·vx·T/2`, `Y = k_y·vy·T/2`,
+  `A_deg = k_a·(wz/1000)·T/2·(180/π)`, `T = period_ms/1000`). `k_x/k_y/k_a = 1.0`
+  initial — **TODO(bench-O0): calibrate from step-response settle distance.**
+- `hip_cdeg`/`pan_cdeg`/`tilt_cdeg` = degrees ×100. `blevel` 0..3 (Mac 0..4 clamps).
+- ACK `cmd_id` for v2 = `"v2#{seq}"`.
+- Mac serializer `WalkingEngineCommand.serializedLineV2(seq:tTxMs:)` emits the inverse
+  (`vx = 2·X/T`). **Switchover is gated**: keep emitting v1 until every deployed robot is
+  O2-patched AND `k_x` is bench-fixed — emitting `"V2 …"` to an unpatched robot misparses.
+
+**Robot-owned shaping pipeline (the single apply point `ApplyCommandLine`, v1+v2, every
+client incl. Switch/handheld — robot owns the FINAL clamp):**
+1. **Combined-envelope governor** (G6): `|x|/x_max + |y|/y_max + |a|/a_max ≤ 1.15`, else
+   proportional scaledown. Period-dependent `x_max`: 700→40, 600→38, 500→32, 440→28mm
+   (interpolated; clamped outside). `y_max=22`, `a_max=12`. Mac clamps (38/22/12) stay as
+   a UX layer (double defense).
+2. **Latch-unit slew** (G5): per half-period, `|ΔX|≤8`, `|ΔY|≤6`mm, `|ΔA|≤4°`,
+   `|ΔPERIOD|≤60ms`. Re-seeded to 0 on idle→walk (first-step capturability) and on the
+   watchdog `SLEW_ZERO` tier (ramp from 0 on recovery).
+3. **Speed-proportional gate schedule** (dynamics): when `|x|/x_max > 0.70`, linearly add
+   `Z_MOVE +5mm`, `Y_SWAP +2mm`, `HIP_PITCH +1.5°` (full at `x_max`). `flags 0x08` = OFF.
+4. **Balance wiring** (G7): `blevel(0..3) → BALANCE_*_GAIN ×{0, 0.5, 1.0, 1.5}` off the
+   shipped base gains (0.3/0.9/0.5/1.0). **`BALANCE_ENABLE` is driven by `blevel`, NOT the
+   `benable` token** (`enable = scale>0`) — deployed Mac sends `benable=0` by default and
+   wiring it literally would disable gyro balance on every default command (fall regression
+   vs. the prior always-on Walking default). `blevel=0` is the explicit-off path; `bgain`
+   and `benable` are **deprecated** (single-sourced on `blevel`, design "blevel 로 단일화").
+
+**Constants single source**: all governor/slew/gate/twist-k constants live in
+`WalkLabTransport.h` and are **shared with `bus-direct-teleop-upgrade.md` D1** (mode parity).
+
+**Shaping moved off Mac**: Mac command EMA relaxed `α 0.25→0.5`
+(`CockpitState.commandSmoothingAlpha`) — the robot slew now owns acceleration limiting, so
+the prior Mac+robot double-smoothing serial overlap is removed. Sim-display smoothing
+(chase position, head EMA) unchanged.
+
+**Host tests** (`tests/test_transport.cpp`, 125 checks): v2 parse+conversion, envelope
+table+scaledown, slew first-apply/delta-clamp, balance gain scale, gate schedule. Mac
+serializer round-trip in `WalkLabO2TwistSerializerTests`.

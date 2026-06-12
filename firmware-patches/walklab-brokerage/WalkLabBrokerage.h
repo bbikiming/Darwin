@@ -107,12 +107,16 @@ public:
 private:
     /// CMD_PATH 한 줄 read → ApplyCommandLine 위임 (파일 경로 — 영구 폴백).
     /// @return true = 정상 parse, false = 파싱 실패 (이전 명령 유지).
-    bool ParseAndApply(Robot::Walking* walking, bool& walking_active);
+    bool ParseAndApply(Robot::Walking* walking, bool& walking_active, long long now_ms);
 
     /// **O1** — 명령 라인 1개를 파싱(WalkLabTransport::ParseCommandLine)·클램프·적용 +
     /// ACK write. 파일 경로와 UDP 슬롯 경로가 공유하는 단일 적용 함수(중복 제거).
+    /// **O2 (2026-06-12)**: 거버너(결합 엔벨로프)·래치 슬루·게이트 스케줄·밸런스 결선의
+    /// **단일 적용 지점** — v1/v2 양 방언, 전 클라이언트(Switch/핸드헬드)에 동일 적용.
+    /// @param now_ms 루프 시각(슬루 cadence = period/2 래치 게이팅).
     /// @return true = 적용됨, false = 파싱 실패(이전 명령 유지).
-    bool ApplyCommandLine(Robot::Walking* walking, bool& walking_active, const char* line);
+    bool ApplyCommandLine(Robot::Walking* walking, bool& walking_active,
+                          const char* line, long long now_ms);
 
     // ===== O1 transport (UDP 리스너 스레드 — 핸드셰이크 토큰 있을 때만 기동) =====
     /// CHANNEL_PATH 읽어 m_udp_token/포트 채움. 토큰 있으면 true.
@@ -172,6 +176,14 @@ private:
     Robotis::CommandSlot m_cmd_slot;   ///< latest-wins 명령 슬롯(transport 스레드↔supervisor).
     long long m_last_cmd_ms;           ///< 마지막 유효 명령 적용 시각(ms) — 워치독 티어.
     bool m_last_cmd_from_stream;       ///< 마지막 명령이 UDP 슬롯(스트림) 소스였나 — 티어 게이트.
+
+    // ===== O2 셰이핑 상태 (2026-06-12, walklab-onboard-teleop-upgrade Wave O2) =====
+    /// 거버너 적용 후의 명령 목표값(X/Y/A/period) — 슬루가 이 목표로 전진. 래치 사이엔 재적용.
+    double m_tgt_x, m_tgt_y, m_tgt_a, m_tgt_period;
+    /// 래치 단위 슬루 상태(마지막 적용 진폭) — supervisor 단일 지점에서만 갱신.
+    Robotis::SlewState m_slew;
+    /// 마지막 슬루 전진 시각(ms). now - this >= period/2 면 1스텝 전진(래치 cadence).
+    long long m_last_slew_ms;
     char  m_udp_token[64];             ///< 핸드셰이크 토큰("" = transport 비활성).
     int   m_estop_port;                ///< E-STOP UDP 포트(핸드셰이크).
     int   m_cmd_port;                  ///< 명령 UDP 포트(핸드셰이크).

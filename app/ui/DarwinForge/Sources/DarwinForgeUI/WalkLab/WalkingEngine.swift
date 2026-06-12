@@ -162,6 +162,46 @@ public struct WalkingEngineCommand: Equatable, Sendable {
                headPanDeg, headTiltDeg, ballTrackingEnabled ? 1 : 0)
     }
 
+    // ===== O2 프로토콜 v2 (twist SI, 2026-06-12 walklab-onboard-teleop-upgrade) =====
+
+    /// V2 flags 비트 — `WalkLabTransport.h` 의 `FLAG_*` 와 **단일 정의 공유**(ssh-parity §G.8).
+    public enum V2Flag {
+        public static let enabled: Int        = 0x01  // 보행 활성.
+        public static let balanceEnable: Int  = 0x02  // 자이로 보정 on.
+        public static let ballTrack: Int      = 0x04  // 온보드 볼 트래킹.
+        public static let gateSchedOff: Int   = 0x08  // 속도 비례 게이트 스케줄 OFF(기본 ON).
+    }
+
+    /// **프로토콜 v2 직렬화 (twist SI 밀리단위 정수)** — REP-103. 로봇이 변환을 소유하므로
+    /// (X≈k_x·vx·T/2) Mac 은 진폭→속도 **역변환**을 보낸다: vx = 2·X/T (k_x=1 기준).
+    /// 형식: `V2 {seq} {t_tx_ms} {flags} {vx_mms} {vy_mms} {wz_mrad_s} {period_ms} {foot_mm}
+    ///        {hip_cdeg} {blevel} {pan_cdeg} {tilt_cdeg}` — 전 필드 정수(부동소수 파싱 배제).
+    ///
+    /// **공존/게이팅**: v1 14토큰 경로는 영구 유지(로봇이 양 방언 수용). 로봇이 O2 패치
+    /// 보장 + 벤치(k_x 확정) 전까지 **송출 경로는 v1 유지** — 본 직렬화는 그 전환을 위한
+    /// 준비물(단위 테스트로 변환식 고정). 미패치 로봇에 "V2 …" 송출 금지(오파싱).
+    public func serializedLineV2(seq: UInt64, tTxMs: Int64) -> String {
+        var flags = 0
+        if enabled { flags |= V2Flag.enabled }
+        if balanceEnable { flags |= V2Flag.balanceEnable }
+        if ballTrackingEnabled { flags |= V2Flag.ballTrack }
+
+        // 진폭→twist 역변환. period 0(정지) 시 분모 0 → 속도 0 으로 안전 처리.
+        let T = periodMs / 1000.0                       // s
+        let vxMms: Int = T > 0 ? Int((2.0 * xMm / T).rounded()) : 0
+        let vyMms: Int = T > 0 ? Int((2.0 * yMm / T).rounded()) : 0
+        // A_deg = wz_rad·T/2·(180/π) → wz_mrad_s = 1000·2·(aDeg·π/180)/T.
+        let wzMradS: Int = T > 0
+            ? Int((2.0 * (aDeg * Double.pi / 180.0) / T * 1000.0).rounded()) : 0
+        let hipCdeg = Int((hipPitchOffsetDeg * 100.0).rounded())
+        let panCdeg = Int((headPanDeg * 100.0).rounded())
+        let tiltCdeg = Int((headTiltDeg * 100.0).rounded())
+
+        return "V2 \(seq) \(tTxMs) \(flags) \(vxMms) \(vyMms) \(wzMradS) " +
+               "\(Int(periodMs.rounded())) \(Int(footHeightMm.rounded())) " +
+               "\(hipCdeg) \(correctorIntensityLevel) \(panCdeg) \(tiltCdeg)"
+    }
+
     /// 정지 명령 — enabled=0, 나머지 0, hipPitchOffsetDeg=13 (기본 유지),
     /// balance default (1.0 / false / 2), head 0,0 (정면 — SSH parity W4),
     /// ballTracking off (정지 시 추적 해제).

@@ -577,6 +577,9 @@ namespace Robotis {
         // O1 transport — 멤버 초기화. 핸드셰이크는 루프의 RefreshHandshake 가 1s 내 수용.
         m_last_cmd_ms = 0;
         m_last_cmd_from_stream = false;
+        // O2 셰이핑 — 목표/슬루 초기화(첫 명령은 SlewState.valid=false 라 즉시 수용).
+        m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0; m_tgt_period = 600.0;
+        m_last_slew_ms = 0;
         m_udp_token[0] = '\0';
         m_estop_port = 0;
         m_cmd_port = 0;
@@ -716,7 +719,7 @@ namespace Robotis {
             {
                 char slot_line[256];
                 if (m_cmd_slot.Take(slot_line, sizeof(slot_line))) {
-                    if (ApplyCommandLine(walking, walking_active, slot_line)) {
+                    if (ApplyCommandLine(walking, walking_active, slot_line, now_ms)) {
                         last_cmd_time = time(NULL);
                         m_last_cmd_ms = now_ms;
                         m_last_cmd_from_stream = true;   // 스트림 소스 — 워치독 티어 대상.
@@ -742,7 +745,7 @@ namespace Robotis {
                         (current_stat.st_size != last_stat.st_size);
                     if (file_changed) {
                         last_stat = current_stat;
-                        if (ParseAndApply(walking, walking_active)) {
+                        if (ParseAndApply(walking, walking_active, now_ms)) {
                             last_cmd_time = time(NULL);
                             m_last_cmd_ms = now_ms;
                             m_last_cmd_from_stream = false;  // 파일 소스 — 티어 제외(5s STALE 만).
@@ -782,6 +785,9 @@ namespace Robotis {
                     walking->X_MOVE_AMPLITUDE = 0.0;
                     walking->Y_MOVE_AMPLITUDE = 0.0;
                     walking->A_MOVE_AMPLITUDE = 0.0;
+                    // O2 — 슬루 상태도 0 동기화: 명령 복귀 시 0 에서 다시 램프(급가속 방지).
+                    m_slew.x = 0.0; m_slew.y = 0.0; m_slew.a = 0.0;
+                    m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0;
                 } else if (wd == Robotis::WD_STOP) {
                     if (walking_active) {
                         printf("[WalkLabBrokerage] watchdog stale — auto stop (torque held)\n");
@@ -819,7 +825,8 @@ namespace Robotis {
         }
     }
 
-    bool WalkLabBrokerage::ParseAndApply(Robot::Walking* walking, bool& walking_active) {
+    bool WalkLabBrokerage::ParseAndApply(Robot::Walking* walking, bool& walking_active,
+                                         long long now_ms) {
         FILE* fp = fopen(CMD_PATH, "r");
         if (!fp) return false;
 
@@ -829,7 +836,7 @@ namespace Robotis {
             return false;
         }
         fclose(fp);
-        return ApplyCommandLine(walking, walking_active, line);
+        return ApplyCommandLine(walking, walking_active, line, now_ms);
     }
 
     // **O1 (2026-06-12)** — 파일 경로와 UDP 슬롯 경로가 공유하는 단일 적용 함수.
@@ -837,19 +844,68 @@ namespace Robotis {
     // 양 경로가 동일 의미로 적용됨을 보장(중복 제거). 명령 라인 형식(cmd_id 포함 14 token,
     // backward-compat 13/6 token)은 §C 와 동일.
     bool WalkLabBrokerage::ApplyCommandLine(Robot::Walking* walking, bool& walking_active,
-                                            const char* line) {
+                                            const char* line, long long now_ms) {
         Robotis::WalkCommand cmd;
         if (!Robotis::ParseCommandLine(line, &cmd)) {
             return false;   // 파싱 실패 — 이전 명령 유지(safety).
         }
 
-        // Walking 진폭/주기 직접 대입 (게이트는 PHASE1/3 경계에서 래치 — Walking.cpp).
-        walking->X_MOVE_AMPLITUDE = cmd.x;
-        walking->Y_MOVE_AMPLITUDE = cmd.y;
-        walking->A_MOVE_AMPLITUDE = cmd.a;
-        walking->Z_MOVE_AMPLITUDE = cmd.foot;
-        walking->PERIOD_TIME      = cmd.period;
-        walking->HIP_PITCH_OFFSET = cmd.hip;
+        // ── O2 (1) 결합 엔벨로프 거버너 — 로봇이 소유하는 **최종 클램프**(G6). v1/v2·전
+        //    클라이언트(Switch 50mm 무클램프 포함)에 동일 적용. 거버너 후 값이 목표가 된다.
+        double gx = cmd.x, gy = cmd.y, ga = cmd.a;
+        Robotis::GovernEnvelope(&gx, &gy, &ga, cmd.period);
+        m_tgt_x = gx; m_tgt_y = gy; m_tgt_a = ga; m_tgt_period = cmd.period;
+
+        // 정지→보행 전환이면 슬루를 0 에서 재시드 — 첫걸음을 SLEW_*_MAX 로 램프(정지 후
+        //    잔존 슬루값에서 출발해 즉시 풀스트라이드로 시작하는 capturability 위험 차단).
+        if ((cmd.enabled != 0) && !walking_active) {
+            m_slew.x = 0.0; m_slew.y = 0.0; m_slew.a = 0.0; m_slew.period = cmd.period;
+            m_slew.valid = true;
+            m_last_slew_ms = 0;   // 첫 전진 즉시 허용.
+        }
+
+        // ── O2 (2) 래치 단위 슬루 — 셰이핑 일원화(Mac EMA 완화분을 로봇이 흡수). 슬루는
+        //    래치(반주기) cadence 로만 1스텝 전진; 래치 사이의 명령은 직전 슬루값을 재적용.
+        //    (첫 적용은 SlewState.valid=false → 즉시 수용; 이후 SLEW_*_MAX 로 가속 제한.)
+        double half_period = (cmd.period > 0.0) ? (cmd.period / 2.0) : 300.0;
+        bool advance = (!m_slew.valid) || (m_last_slew_ms == 0) ||
+                       (now_ms - m_last_slew_ms >= (long long)half_period);
+        double sx = m_tgt_x, sy = m_tgt_y, sa = m_tgt_a, sp = m_tgt_period;
+        if (advance) {
+            Robotis::SlewToward(&m_slew, &sx, &sy, &sa, &sp);
+            m_last_slew_ms = now_ms;
+        } else {
+            // 전진 시점이 아니면 직전 슬루값 유지(목표는 갱신돼 있음 — 다음 래치에 반영).
+            sx = m_slew.x; sy = m_slew.y; sa = m_slew.a; sp = m_slew.period;
+        }
+
+        // ── O2 (5) 속도 비례 게이트 스케줄 — 슬루 후 진폭 기준 가산(발 클리어런스·측면 안정).
+        Robotis::GateBoost boost = Robotis::GateSchedule(sx, sp, cmd.flags);
+
+        // Walking 진폭/주기 대입 (게이트는 PHASE1/3 경계에서 래치 — Walking.cpp). supervisor
+        // 단일 writer(§c 스레드 안전). 셰이핑(거버너→슬루→게이트)을 통과한 값.
+        walking->X_MOVE_AMPLITUDE = sx;
+        walking->Y_MOVE_AMPLITUDE = sy;
+        walking->A_MOVE_AMPLITUDE = sa;
+        walking->Z_MOVE_AMPLITUDE = cmd.foot + boost.z_move;
+        walking->PERIOD_TIME      = sp;
+        walking->HIP_PITCH_OFFSET = cmd.hip + boost.hip;
+        walking->Y_SWAP_AMPLITUDE = Robotis::DEFAULT_Y_SWAP_AMPLITUDE + boost.y_swap;
+
+        // ── O2 (4) 죽은 토큰 결선 (G7 일부) — blevel(0..3)→게인 ×{0,0.5,1.0,1.5}.
+        //    출하 게인(BASE_*)에 배율 곱(누적 방지 — 현재값 곱하면 매 명령 발산).
+        //    **밸런스 enable = blevel 단일 소스**(설계 "blevel 로 단일화"): 배율>0 이면 ON.
+        //    benable/bgain 토큰은 deprecated — *enable 을 benable 에 직결하지 않는다*. 이유:
+        //    배포된 Mac 의 benable 기본값=0 이라 직결하면 매 기본 명령이 자이로 밸런스를 끄게
+        //    되는데, 종전엔 Walking 기본(BALANCE_ENABLE=true)으로 **항상 켜져** 있었다 →
+        //    직결은 보행 중 밸런스 OFF(낙상) 회귀. blevel 기본 2(×1.0)면 종전과 동일 게인·ON.
+        //    명시적 OFF 는 blevel=0(게인 0 → enable false). (cross-review 주목 지점.)
+        double bscale = Robotis::BalanceGainScale(cmd.blevel);
+        walking->BALANCE_ENABLE          = (bscale > 0.0);
+        walking->BALANCE_KNEE_GAIN        = Robotis::BASE_BALANCE_KNEE_GAIN * bscale;
+        walking->BALANCE_ANKLE_PITCH_GAIN = Robotis::BASE_BALANCE_ANKLE_PITCH_GAIN * bscale;
+        walking->BALANCE_HIP_ROLL_GAIN    = Robotis::BASE_BALANCE_HIP_ROLL_GAIN * bscale;
+        walking->BALANCE_ANKLE_ROLL_GAIN  = Robotis::BASE_BALANCE_ANKLE_ROLL_GAIN * bscale;
 
         // 볼 트래킹 토글 (edge 처리 — 종전과 동일).
         bool want_balltrack = (cmd.balltrack != 0);

@@ -103,12 +103,40 @@ echo "0 0 0 0 0 0 13" > /tmp/df-walklab-cmd
 sudo killall demo-pilot
 ```
 
+## 현황 — Wave O0·O1·O2 (walklab-onboard-teleop-upgrade)
+
+| Wave | 내용 | 상태 |
+|---|---|---|
+| O0 | 클럭 오프셋·TEL last_cmd_id/loop_ms·벤치 절차 | 구현 완료 (74fca94) |
+| O1 | 이벤트 구동 UDP 전송·latest-wins 슬롯·워치독 티어 | 구현 완료 (ad287e4) |
+| **O2** | **프로토콜 v2(twist SI)·결합 엔벨로프 거버너·래치 슬루·밸런스 결선·게이트 스케줄** | **구현 완료 (호스트 테스트 통과) — 실기 벤치 대기** |
+
+**O2 요약** (상세 계약 `docs/ssh-parity-contract.md` §G.8):
+- 명령 두 방언 — v1(14토큰, 영구) + **v2 twist**(`V2 seq t_tx flags vx_mms vy_mms wz_mrad_s
+  period foot hip_cdeg blevel pan_cdeg tilt_cdeg`, REP-103 SI 정수). 로봇이 변환 소유
+  (`X≈k_x·vx·T/2`, `k_x` 초기 1.0 — **벤치로 확정 TODO**).
+- **셰이핑은 로봇이 소유**(단일 적용 지점 `ApplyCommandLine`, v1/v2·전 클라이언트 공통):
+  ① 결합 엔벨로프 거버너(`|x|/x_max+|y|/y_max+|a|/a_max≤1.15`, period 종속 x_max
+  700→40/600→38/500→32/440→28mm) — **로봇이 최종 클램프 소유**(Switch 무클램프 포함),
+  ② 래치 단위 슬루(|ΔX|≤8·|ΔY|≤6mm·|ΔA|≤4°·|ΔT|≤60ms), ③ 속도 비례 게이트 스케줄
+  (|x|/x_max>0.7 시 Z_MOVE+5·Y_SWAP+2mm·HIP+1.5° 가산, flags 0x08=OFF).
+- **밸런스 결선**: `blevel(0..3)→게인 ×{0,.5,1,1.5}`. `BALANCE_ENABLE`은 **blevel 단일
+  소스**(배율>0)로 구동 — `benable` 직결 시 배포 Mac 기본값(0)이 매 명령마다 자이로 밸런스를
+  꺼 낙상 회귀가 되므로 의도적 비채택. `bgain`/`benable` deprecated.
+- 모든 거버너/슬루/게이트/twist-k 상수는 `WalkLabTransport.h` 단일 정의 —
+  `bus-direct-teleop-upgrade.md` D1 과 공유. 순수 로직 호스트 테스트
+  `tests/test_transport.cpp` **125 checks** (O1 63 → O2 125), Mac serializer 왕복은
+  `WalkLabO2TwistSerializerTests`.
+
 ## 안전 고려
 
 - **명령 파일 권한**: `/tmp/df-walklab-cmd` 가 0666 (Mac SSH user write 가능)
 - **sscanf 실패 시**: 이전 명령 유지 (silent ignore — 잘못된 line 으로 robot 폭주 방지)
-- **명령 stale**: Mac 측에서 5초 이상 명령 갱신 없으면 자동 stop (이 patch 가 timestamp 추적)
+- **명령 stale**: Mac 측에서 5초 이상 명령 갱신 없으면 자동 stop (이 patch 가 timestamp 추적;
+  O1 워치독 티어가 600ms 제자리/2.5s 정지로 선행, 5s 는 최후 방어)
 - **hip_pitch_deg clamp**: robot 측에서 `[0, 20]` 범위로 clamp 적용
+- **최종 클램프는 로봇 소유**(O2 거버너): 임의 클라이언트(모바일/Switch/핸드헬드)의 위험
+  명령도 결합 엔벨로프·슬루로 로봇이 직접 제한 — Mac 클램프는 UX 레이어(이중 방어)
 
 ## TODO (robot-side 실 적용 전 검증 필요)
 

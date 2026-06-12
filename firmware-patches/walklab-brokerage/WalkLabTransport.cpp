@@ -8,6 +8,11 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 namespace Robotis {
 
@@ -16,7 +21,7 @@ namespace Robotis {
 WalkCommand::WalkCommand()
     : enabled(0), x(0), y(0), a(0), period(0), foot(0), hip(13.0),
       bgain(1.0), benable(0), blevel(2),
-      head_pan(0), head_tilt(0), balltrack(0), head_explicit(false) {
+      head_pan(0), head_tilt(0), balltrack(0), flags(0), head_explicit(false) {
     strcpy(cmd_id, "no_id");
 }
 
@@ -25,8 +30,58 @@ WalkCommand::WalkCommand()
 static const double HIP_MIN = 0.0;
 static const double HIP_MAX = 20.0;
 
+// V2 twist 분기 — "V2 {seq} {t_tx_ms} {flags} {vx} {vy} {wz} {period} {foot} {hip_cdeg}
+//   {blevel} {pan_cdeg} {tilt_cdeg}". 정수 SI. 로봇이 변환 소유(§G.8). 클램프는 공용 적용.
+static bool ParseV2Line(const char* line, WalkCommand* out) {
+    long long seq = 0, t_tx = 0;
+    int flags = 0, blevel = 2;
+    long vx = 0, vy = 0, wz = 0;
+    long period = 0, foot = 0, hip_cdeg = 0, pan_cdeg = 0, tilt_cdeg = 0;
+    // "V2 " 접두는 호출부가 확인 — 여기선 그 뒤를 파싱.
+    int n = sscanf(line + 3, "%lld %lld %d %ld %ld %ld %ld %ld %ld %d %ld %ld",
+                   &seq, &t_tx, &flags, &vx, &vy, &wz,
+                   &period, &foot, &hip_cdeg, &blevel, &pan_cdeg, &tilt_cdeg);
+    if (n < 12) return false;   // V2 는 전 필드 필수(부분 라인 거부 → 이전 명령 유지).
+
+    WalkCommand c;
+    const double T = (double)period / 1000.0;            // s
+    c.x = TWIST_K_X * (double)vx * T / 2.0;              // mm
+    c.y = TWIST_K_Y * (double)vy * T / 2.0;              // mm
+    c.a = TWIST_K_A * ((double)wz / 1000.0) * T / 2.0 * (180.0 / M_PI);  // deg
+    c.period = (double)period;
+    c.foot   = (double)foot;
+    c.hip    = (double)hip_cdeg / 100.0;
+    c.head_pan  = (double)pan_cdeg / 100.0;
+    c.head_tilt = (double)tilt_cdeg / 100.0;
+    c.blevel = blevel;
+    c.flags  = flags;
+    // boolean 토글은 flags 로 접힘.
+    c.enabled   = (flags & FLAG_ENABLED) ? 1 : 0;
+    c.benable   = (flags & FLAG_BALANCE_ENABLE) ? 1 : 0;
+    c.balltrack = (flags & FLAG_BALLTRACK) ? 1 : 0;
+    c.bgain = 1.0;   // deprecated — blevel 로 단일화.
+
+    // 안전 클램프(공용).
+    if (c.hip < HIP_MIN) c.hip = HIP_MIN;
+    if (c.hip > HIP_MAX) c.hip = HIP_MAX;
+    if (c.head_pan < -90.0) c.head_pan = -90.0;
+    if (c.head_pan >  90.0) c.head_pan =  90.0;
+    if (c.head_tilt < -45.0) c.head_tilt = -45.0;
+    if (c.head_tilt >  65.0) c.head_tilt =  65.0;
+    c.head_explicit = (c.head_pan != 0.0) || (c.head_tilt != 0.0);
+
+    // cmd_id = "v2#{seq}" (ACK 상관용 — Mac 이 seq 로 매치).
+    snprintf(c.cmd_id, sizeof(c.cmd_id), "v2#%lld", seq);
+
+    *out = c;
+    return true;
+}
+
 bool ParseCommandLine(const char* line, WalkCommand* out) {
     if (!line || !out) return false;
+    // V2 방언 우선 분기(접두 "V2 " 검사).
+    if (strncmp(line, "V2 ", 3) == 0) return ParseV2Line(line, out);
+
     WalkCommand c;   // 기본값 시드(파싱 실패 필드는 기본 유지).
 
     char cmd_id[32] = "no_id";
@@ -137,6 +192,82 @@ WatchdogAction WatchdogDecision(long long elapsed_ms, bool walking_active, bool 
     if (elapsed_ms >= WATCHDOG_STOP_MS) return WD_STOP;
     if (elapsed_ms >= WATCHDOG_SLEW_MS) return WD_SLEW_ZERO;
     return WD_NONE;
+}
+
+// ===== O2 거버너 / 슬루 / 밸런스 / 게이트 스케줄 (순수 로직) =================
+
+double EnvelopeXMax(double period_ms) {
+    // period 종속 x_max 스케줄 — 구간 선형 보간(700→40, 600→38, 500→32, 440→28).
+    // 경계 밖은 끝값 고정(빠른 주기일수록 작은 보폭으로 안정 확보).
+    if (period_ms >= 700.0) return 40.0;
+    if (period_ms >= 600.0) return 38.0 + (period_ms - 600.0) * (40.0 - 38.0) / 100.0;
+    if (period_ms >= 500.0) return 32.0 + (period_ms - 500.0) * (38.0 - 32.0) / 100.0;
+    if (period_ms >= 440.0) return 28.0 + (period_ms - 440.0) * (32.0 - 28.0) / 60.0;
+    return 28.0;
+}
+
+void GovernEnvelope(double* x, double* y, double* a, double period_ms) {
+    if (!x || !y || !a) return;
+    double x_max = EnvelopeXMax(period_ms);
+    double y_max = ENVELOPE_Y_MAX;
+    double a_max = ENVELOPE_A_MAX;
+    if (x_max <= 0.0 || y_max <= 0.0 || a_max <= 0.0) return;
+    double sum = fabs(*x) / x_max + fabs(*y) / y_max + fabs(*a) / a_max;
+    if (sum > ENVELOPE_SUM_MAX) {
+        double scale = ENVELOPE_SUM_MAX / sum;   // 방향 보존 비례 축소.
+        *x *= scale;
+        *y *= scale;
+        *a *= scale;
+    }
+}
+
+SlewState::SlewState() : x(0), y(0), a(0), period(0), valid(false) {}
+
+static double SlewAxis(double prev, double target, double max_delta) {
+    double d = target - prev;
+    if (d >  max_delta) d =  max_delta;
+    if (d < -max_delta) d = -max_delta;
+    return prev + d;
+}
+
+void SlewToward(SlewState* st, double* x, double* y, double* a, double* period) {
+    if (!st || !x || !y || !a || !period) return;
+    if (!st->valid) {
+        // 첫 적용 — 슬루 없이 target 수용(정지→첫 명령 즉시 반영, 이후부터 제한).
+        st->x = *x; st->y = *y; st->a = *a; st->period = *period;
+        st->valid = true;
+        return;
+    }
+    *x      = SlewAxis(st->x, *x, SLEW_DX_MAX);
+    *y      = SlewAxis(st->y, *y, SLEW_DY_MAX);
+    *a      = SlewAxis(st->a, *a, SLEW_DA_MAX);
+    *period = SlewAxis(st->period, *period, SLEW_DPERIOD_MAX);
+    st->x = *x; st->y = *y; st->a = *a; st->period = *period;
+}
+
+double BalanceGainScale(int blevel) {
+    if (blevel <= 0) return 0.0;
+    if (blevel == 1) return 0.5;
+    if (blevel == 2) return 1.0;
+    return 1.5;   // blevel >= 3 → 1.5 (끝값 클램프).
+}
+
+GateBoost::GateBoost() : z_move(0), y_swap(0), hip(0) {}
+
+GateBoost GateSchedule(double x, double period_ms, int flags) {
+    GateBoost b;
+    if (flags & FLAG_GATE_SCHED_OFF) return b;   // 기본 ON, flags 비트로 OFF.
+    double x_max = EnvelopeXMax(period_ms);
+    if (x_max <= 0.0) return b;
+    double ratio = fabs(x) / x_max;
+    if (ratio <= GATE_SPEED_THRESH) return b;    // 상위 30% 구간에서만 가산.
+    // 임계~1.0 을 0~1 로 정규화(상한 클램프).
+    double t = (ratio - GATE_SPEED_THRESH) / (1.0 - GATE_SPEED_THRESH);
+    if (t > 1.0) t = 1.0;
+    b.z_move = GATE_ZMOVE_ADD_MAX * t;
+    b.y_swap = GATE_YSWAP_ADD_MAX * t;
+    b.hip    = GATE_HIP_ADD_MAX * t;
+    return b;
 }
 
 // ===== 데이터그램 파서 ======================================================
