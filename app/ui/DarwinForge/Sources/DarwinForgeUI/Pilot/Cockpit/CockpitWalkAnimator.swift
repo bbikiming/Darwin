@@ -71,11 +71,17 @@ public final class CockpitWalkAnimator {
     /// period (600ms) 를 나누어 cadence 를 derive. 신규: `periodMs` 를 직접 받음
     /// — Cockpit (CockpitState.periodMs) 와 실 motor (WalkLabSession.customPeriodMs)
     /// 가 동일 값. 시뮬 다리 swing 속도 = 실 robot 의 cadence (digital twin).
+    /// **O4 (2026-06-12)** — TEL2 위상 동기 보정 게인. 실로봇 위상(0..1 분율)으로 시뮬
+    /// cycleElapsed 를 매 tick 부분 보정해 "화면=실모터" 위상을 정렬한다. 저게인(0.15)이라
+    /// 이산 4-위상(30Hz)에도 점프 없이 수렴 — dt 누적이 부드러운 모션을 유지.
+    private static let phaseSyncGain: Double = 0.15
+
     public func update(commandStrideMm: Double,
                        commandSideMm: Double,
                        commandTurnDeg: Double,
                        periodMs: Double,
-                       enabled: Bool) {
+                       enabled: Bool,
+                       externalPhaseFraction01: Double? = nil) {
         let now = Date().timeIntervalSince1970
         let dt: TimeInterval
         if let last = lastTickAt {
@@ -151,6 +157,18 @@ public final class CockpitWalkAnimator {
             pose = plan.cycle.first?.toPose() ?? .walkReady
             return
         }
+
+        // **O4** — 실로봇 위상으로 부분 보정(디지털 트윈 위상 동기). 최단 방향으로 위상 오차를
+        // 게인만큼 끌어당겨 화면 다리 swing 을 실모터와 정렬(없으면 종전 자유 누적).
+        if let frac = externalPhaseFraction01 {
+            let target = max(0.0, min(1.0, frac)) * totalPeriod
+            let cur = cycleElapsed.truncatingRemainder(dividingBy: totalPeriod)
+            var err = target - cur
+            if err > totalPeriod / 2 { err -= totalPeriod }
+            if err < -totalPeriod / 2 { err += totalPeriod }
+            cycleElapsed += err * Self.phaseSyncGain
+        }
+
         let elapsedWrapped = cycleElapsed.truncatingRemainder(dividingBy: totalPeriod)
 
         // Find current segment.

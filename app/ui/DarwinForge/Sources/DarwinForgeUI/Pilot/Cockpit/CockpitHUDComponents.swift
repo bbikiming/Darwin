@@ -82,6 +82,72 @@ struct CockpitStatusBlock: View {
     }
 }
 
+// MARK: - Latch indicator (command vs robot-applied — O4 래칭 지연 가시화)
+
+/// **O4 (2026-06-12)** — "명령 vs 래치값" 마이크로 인디케이터. 콕핏이 보낸 명령(스무딩 후
+/// 모터 명령)과 로봇이 **실제로 적용 중인** 셰이핑 후 값(TEL2 래치)을 나란히 보여 래칭 지연을
+/// 시각화한다. 차이가 임계 이상이면 "적용 대기"(warn) — 명령이 게이트 위상 경계 채택을
+/// 기다리는 중. 온보드 TEL2 가 있을 때만 표시(직결/오프라인 시 호출부가 숨김).
+struct CockpitLatchIndicator: View {
+    let cmdStrideMm: Double
+    let cmdSideMm: Double
+    let cmdTurnDeg: Double
+    let latch: OnboardLatchSnapshot
+
+    private var pending: Bool {
+        abs(cmdStrideMm - latch.strideMm) > 3.0 ||
+        abs(cmdSideMm - latch.sideMm) > 3.0 ||
+        abs(cmdTurnDeg - latch.turnDeg) > 2.0
+    }
+
+    private func row(_ label: String, _ cmd: Double, _ lat: Double, _ unit: String,
+                     eps: Double) -> some View {
+        let tone: Color = abs(cmd - lat) > eps ? CockpitColors.warn : CockpitColors.live
+        return HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: CockpitMetrics.pillLabel, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(width: 52, alignment: .leading)
+            Text(String(format: "%.0f", cmd))
+                .font(.system(size: CockpitMetrics.pillValue, weight: .bold, design: .monospaced))
+                .foregroundStyle(CockpitColors.cyan)
+                .frame(width: 36, alignment: .trailing)
+            Image(systemName: "arrow.right").font(.system(size: 8)).foregroundStyle(.white.opacity(0.4))
+            Text(String(format: "%.0f%@", lat, unit))
+                .font(.system(size: CockpitMetrics.pillValue, weight: .bold, design: .monospaced))
+                .foregroundStyle(tone)
+                .frame(width: 46, alignment: .leading)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 7) {
+                Text("CMD → APPLIED")
+                    .font(.system(size: CockpitMetrics.pillLabel, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.7))
+                Spacer(minLength: 8)
+                Text(pending ? "적용 대기" : "동기")
+                    .font(.system(size: CockpitMetrics.pillLabel, weight: .bold, design: .monospaced))
+                    .foregroundStyle(pending ? CockpitColors.warn : CockpitColors.live)
+            }
+            row("STRIDE", cmdStrideMm, latch.strideMm, "", eps: 3.0)
+            row("SIDE", cmdSideMm, latch.sideMm, "", eps: 3.0)
+            row("TURN", cmdTurnDeg, latch.turnDeg, "°", eps: 2.0)
+            HStack(spacing: 6) {
+                Text("PH \(latch.phase.map(String.init) ?? "—")")
+                    .font(.system(size: CockpitMetrics.pillLabel, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.6))
+                Spacer(minLength: 8)
+                Text((latch.activeSource ?? "—").uppercased())
+                    .font(.system(size: CockpitMetrics.pillLabel, weight: .bold, design: .monospaced))
+                    .foregroundStyle(latch.activeSource == "udp" ? CockpitColors.live : CockpitColors.warn)
+            }
+        }
+        .cockpitPanel(tint: pending ? CockpitColors.warn : CockpitColors.live, strokeOpacity: 0.35)
+    }
+}
+
 // MARK: - Attitude indicator (top-right, artificial horizon)
 
 struct CockpitAttitudeIndicator: View {

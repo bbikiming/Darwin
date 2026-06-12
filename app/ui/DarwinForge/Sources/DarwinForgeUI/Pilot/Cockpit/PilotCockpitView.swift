@@ -146,6 +146,22 @@ public struct PilotCockpitView: View {
             cockpitContent
         }
         .overlay(alignment: .topTrailing) { controllerSettingsButton }
+        // **O4** — 온보드 TEL2 가 있을 때만 "명령 vs 래치값" 마이크로 인디케이터(래칭 지연 가시화).
+        .overlay(alignment: .bottomLeading) {
+            if let latch = store.onboardLatch {
+                CockpitLatchIndicator(
+                    cmdStrideMm: cockpit.motorCommand.strideMm,
+                    cmdSideMm: cockpit.motorCommand.sideMm,
+                    cmdTurnDeg: cockpit.motorCommand.turnDeg,
+                    latch: latch)
+                    .padding(12)
+                    .allowsHitTesting(false)
+            }
+        }
+        // **O4** — 실로봇 보행 위상(TEL2)으로 시뮬 walkAnimator 위상 동기(화면=게이지=실모터).
+        .onChange(of: store.onboardLatch) { _, latch in
+            cockpit.onboardPhaseFraction01 = latch?.phaseFraction01
+        }
         // 통합 컨트롤러 설정은 **독립 윈도우**로 띄운다 (.sheet 아님). .sheet 는 앱 메인
         // 창 크기를 절대 넘을 수 없어 작은 창(~1000×665)에선 1200×820 콘텐츠가 구조적으로
         // 잘렸다. 독립 윈도우는 화면 기준으로 크기·중앙배치가 자유 → 잘림 원천 차단.

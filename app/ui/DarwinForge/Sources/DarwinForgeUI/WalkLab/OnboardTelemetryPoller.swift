@@ -38,6 +38,15 @@ public final class OnboardTelemetryPoller: ObservableObject {
     /// 신선도 임계값(초). 이보다 오래된 샘플은 stale.
     private let staleThreshold: TimeInterval = 1.5
 
+    // MARK: - J6 적응형 폴러 (2026-06-12, cockpit-latency-hardening J6 / O4 ⑤)
+    /// **J6** — UDP TEL2(30Hz)가 신선하면 SSH 폴은 단순 폴백 하트비트로 강등(1Hz), UDP 가
+    /// 끊기면 5Hz(intervalMs)로 복귀. SSH subprocess 비용/ControlMaster 점유를 평시 1/5 로
+    /// 줄이면서, UDP 두절 즉시(≤1s) 폴백 송신율을 회복한다. 두절 판정은 호출부(ConnectionStore)
+    /// 가 UDP 수신 시각으로 제공하는 클로저(없으면 항상 false=5Hz 유지).
+    private let relaxedIntervalMs: Int
+    /// UDP 가 현재 신선한가 — true 면 다음 폴 sleep 을 relaxedIntervalMs(1Hz)로 늘린다.
+    public var udpFreshProvider: (@MainActor () -> Bool)?
+
     // MARK: - State
 
     private var pollTask: Task<Void, Never>?
@@ -52,10 +61,18 @@ public final class OnboardTelemetryPoller: ObservableObject {
     // 에서 폴-대기 지연 절반↓. 무선 경로면 RTT 가 자연 스로틀이라 과폴링 위험 없음.
     public init(remoteShell: RemoteShell,
                 intervalMs: Int = 200,
+                relaxedIntervalMs: Int = 1000,
                 pollCommand: String = "cat /tmp/df-walklab-telemetry 2>/dev/null") {
         self.remoteShell = remoteShell
         self.intervalMs = max(50, intervalMs)
+        self.relaxedIntervalMs = max(intervalMs, relaxedIntervalMs)
         self.pollCommand = pollCommand
+    }
+
+    /// **J6** — 다음 폴까지 sleep 할 간격(ms). UDP 신선 시 relaxedIntervalMs(1Hz), 아니면
+    /// intervalMs(5Hz). 순수 계산(테스트 주입 가능).
+    func nextIntervalMs() -> Int {
+        (udpFreshProvider?() == true) ? relaxedIntervalMs : intervalMs
     }
 
     // MARK: - Lifecycle
@@ -99,9 +116,10 @@ public final class OnboardTelemetryPoller: ObservableObject {
     // MARK: - Loop
 
     private func runLoop() async {
-        let nanos = UInt64(intervalMs) * 1_000_000
         while !Task.isCancelled {
             await pollOnce()
+            // **J6** — sleep 간격을 매 사이클 재평가(UDP 신선 → 1Hz 강등, 두절 → 5Hz 복귀).
+            let nanos = UInt64(nextIntervalMs()) * 1_000_000
             try? await Task.sleep(nanoseconds: nanos)
         }
     }

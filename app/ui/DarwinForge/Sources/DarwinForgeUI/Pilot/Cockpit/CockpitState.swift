@@ -189,6 +189,11 @@ public final class CockpitState: ObservableObject {
     /// 보행 pose stream 생성기. integrate() 가 매 tick 호출.
     private let walkAnimator = CockpitWalkAnimator()
 
+    /// **O4 (2026-06-12)** — 실로봇 보행 위상 분율(0..1, TEL2 phase 유래). 뷰가 온보드
+    /// 텔레메트리(`store.onboardLatch?.phaseFraction01`)에서 주입한다. nil 이면 시뮬이 자유
+    /// 누적(종전). 값이 있으면 walkAnimator 가 화면 다리 swing 을 실모터 위상에 정렬한다.
+    public var onboardPhaseFraction01: Double?
+
     public init() {}
 
     // MARK: - Sim lifecycle
@@ -280,7 +285,8 @@ public final class CockpitState: ObservableObject {
             commandSideMm: cmd.sideMm,
             commandTurnDeg: cmd.turnDeg,
             periodMs: periodMs,
-            enabled: !cmd.isStop)
+            enabled: !cmd.isStop,
+            externalPhaseFraction01: onboardPhaseFraction01)   // O4 — 실로봇 위상 동기.
         var pose = walkAnimator.pose
 
         // **머리 rate 적분** — sim 토글과 무관 (실 모터만 쓸 때도 머리는 돌아야 함).

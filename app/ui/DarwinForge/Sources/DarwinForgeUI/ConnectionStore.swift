@@ -197,6 +197,17 @@ public final class ConnectionStore: ObservableObject {
     /// onboard 신선도 임계(초) — poller staleThreshold(1.5s)와 정합.
     private let onboardStaleThreshold: TimeInterval = 1.5
 
+    /// **O4 (2026-06-12)** — 마지막 UDP TEL2 수신 시각. J6 적응형 폴러가 이 값으로 "UDP 신선"을
+    /// 판정해 SSH 폴을 1Hz 로 강등(두절 시 5Hz 복귀). UDP onSample 에서만 갱신(SSH 는 미갱신).
+    private var lastOnboardUdpAt: Date?
+    /// **O4** — UDP 신선 임계(초). 이보다 최근에 UDP 가 왔으면 SSH 폴 강등.
+    private let onboardUdpFreshThreshold: TimeInterval = 1.0
+
+    /// **O4 디지털 트윈 정합** — 마지막 TEL2 의 로봇 적용 상태(위상·래치 진폭·소스). 콕핏 HUD
+    /// "명령 vs 래치값" 인디케이터와 시뮬 walkAnimator 위상 동기가 소비. v1(파일) 텔레메트리는
+    /// 미갱신(nil 유지). 셰이핑(거버너→슬루→게이트) 후 **실제 모터에 간 값** — "화면=게이지=실모터".
+    @Published public private(set) var onboardLatch: OnboardLatchSnapshot?
+
     /// onboard e-stop / telemetry 송수신용 RemoteShell 핸들 (wiring 시점에 외부가 set).
     /// SSH e-stop 은 bus 가 아닌 SSH 측이므로 store 가 RemoteShell 에 도달할 seam 이 필요.
     /// RootView 가 strong 보유하는 `RemoteShell` 을 weak 으로 참조 (retain cycle 회피).
@@ -1957,6 +1968,11 @@ public final class ConnectionStore: ObservableObject {
             guard let self, gen == self.onboardTelemetryGeneration else { return }
             self.ingestOnboardTelemetry(sample)
         }
+        // **J6 (O4)** — UDP TEL2 가 신선하면 SSH 폴을 1Hz 로 강등(두절 시 5Hz 복귀).
+        onboardPoller?.udpFreshProvider = { [weak self] in
+            guard let self, let t = self.lastOnboardUdpAt else { return false }
+            return Date().timeIntervalSince(t) < self.onboardUdpFreshThreshold
+        }
         // **UDP push 수신기 (2026-06-03)** — primary 텔레메트리 경로(SSH 폴러와 동일 ingest).
         // 고정 포트라 shell 무관 — 최초만 생성, onSample 은 매 start 마다 새 gen 으로 재바인딩.
         // onSample 은 background queue → @MainActor hop 후 ingest(폴러 콜백과 동형).
@@ -1966,6 +1982,7 @@ public final class ConnectionStore: ObservableObject {
         onboardUDPReceiver?.onSample = { [weak self] sample in
             Task { @MainActor in
                 guard let self, gen == self.onboardTelemetryGeneration else { return }
+                self.lastOnboardUdpAt = Date()   // J6 — UDP 신선 앵커(SSH 폴 강등 판정).
                 self.ingestOnboardTelemetry(sample)
             }
         }
@@ -2016,6 +2033,8 @@ public final class ConnectionStore: ObservableObject {
         onboardUDPReceiver = nil
         lastOnboardFreshTsMs = nil
         lastOnboardFreshAt = nil
+        lastOnboardUdpAt = nil     // O4 — J6 UDP 신선 앵커 리셋.
+        onboardLatch = nil         // O4 — 래치/위상 표시 초기화(다음 세션 stale 표시 방지).
         onboardActiveHost = nil   // codex HIGH fix: 경로 종료 시 host 표기도 비움.
         if telemetryMode == .onboard || telemetryMode == .onboardStale {
             telemetryMode = .offline
@@ -2065,6 +2084,16 @@ public final class ConnectionStore: ObservableObject {
         lastTelemetry = TelemetrySnapshot(board: board, joints: [:], imu: imu)
         // codex HIGH fix: 로봇 낙상 표면화 + 재낙상 루프 차단 (아래 helper).
         updateOnboardFallen(sample.fallen)
+        // **O4** — TEL2(v2)면 디지털 트윈 정합: 래치/위상/소스 노출 + FSR 오버레이 주입.
+        //   (v1 라인은 isTel2=false → onboardLatch/FSR 미갱신, 종전 동작 보존.)
+        if sample.isTel2 {
+            onboardLatch = OnboardLatchSnapshot(
+                phase: sample.phase, seqApplied: sample.seqApplied,
+                strideMm: sample.latStrideMm ?? 0, sideMm: sample.latSideMm ?? 0,
+                turnDeg: sample.latTurnDeg ?? 0, periodMs: sample.latPeriodMs ?? 0,
+                activeSource: sample.activeSource, at: Date())
+            ingestOnboardFsr(sample)
+        }
         if telemetryMode != .onboard { telemetryMode = .onboard }
         if case .connected = status {
             // 이미 연결됨 — 유지.
@@ -2072,6 +2101,37 @@ public final class ConnectionStore: ObservableObject {
             let snap = board ?? BoardSnapshot(modelNumber: 740, version: 0, voltageRaw: 0, button: 0)
             status = .connected(snap)
         }
+    }
+
+    /// **O4** — TEL2 FSR 8셀(좌4+우4)을 발별 `FsrReading` 으로 만들어 3D 오버레이 데이터 소스
+    /// (`health.lastFsrLeft/Right`, WalkLabSceneSection 이 읽음)에 주입. 직결(bus) 경로가
+    /// 채우던 그 published 와 동일 — 온보드 모드도 동일 오버레이를 공급(P6 직결의 온보드 짝).
+    /// 발별 CoP(centerX/centerY)는 4셀에서 재구성(FSR MCU 와 동형: 우측 양수·앞 음수).
+    private func ingestOnboardFsr(_ sample: OnboardTelemetry) {
+        let left = sample.fsrLeftCells.flatMap { Self.makeFsrReading(id: 112, cells: $0) }
+        let right = sample.fsrRightCells.flatMap { Self.makeFsrReading(id: 111, cells: $0) }
+        if left != nil || right != nil {
+            health.updateFsr(left: left, right: right)
+        }
+    }
+
+    /// 4셀(wire 순서 [FL, FR, RR, RL]) → `FsrReading`. CoP 는 셀 압력 가중 재구성.
+    private static func makeFsrReading(id: UInt8, cells: [UInt16]) -> FsrReading? {
+        guard cells.count == 4 else { return nil }
+        let fl = Double(cells[0]), fr = Double(cells[1])
+        let rr = Double(cells[2]), rl = Double(cells[3])
+        let total = fl + fr + rr + rl
+        var cx = 0.0, cy = 0.0
+        if total > 0 {
+            cx = ((fr + rr) - (fl + rl)) / total * 127.0   // 우측 = 양수 (FsrReading 규약).
+            cy = ((rr + rl) - (fl + fr)) / total * 127.0   // 앞 = 음수.
+        }
+        let cxi = Int8(max(-127.0, min(127.0, cx.rounded())))
+        let cyi = Int8(max(-127.0, min(127.0, cy.rounded())))
+        return FsrReading(id: id,
+                          cellFrontLeft: cells[0], cellFrontRight: cells[1],
+                          cellRearRight: cells[2], cellRearLeft: cells[3],
+                          centerX: cxi, centerY: cyi)
     }
 
     /// **온보드 로봇 낙상 상태 (codex HIGH fix, 2026-06-02)** — 텔레메트리 `fallen`(-1/0/1).
