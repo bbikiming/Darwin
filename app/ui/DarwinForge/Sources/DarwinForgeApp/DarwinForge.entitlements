@@ -36,18 +36,12 @@
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
 
-    <!-- ===== Hardened Runtime (notarization 강제 요건) ===== -->
-    <!-- Speech.framework + GameController + Network 의 일부 API 가 JIT / runtime patch 사용 -->
-    <key>com.apple.security.cs.allow-jit</key>
-    <false/>
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <false/>
-    <key>com.apple.security.cs.disable-library-validation</key>
-    <false/>
-    <key>com.apple.security.cs.disable-executable-page-protection</key>
-    <false/>
-    <!-- DYLD_INSERT_LIBRARIES 같은 env 변수 무시 (보안 강화) -->
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-    <false/>
+    <!-- ===== Hardened Runtime =====
+         hardened runtime 은 codesign 의 runtime option (`options=runtime`) 으로 활성화. 예외
+         entitlement (cs.allow-jit 등) 는 부재 = 모든 예외 차단 (most secure).
+         App Store Review 2.4.5(i) 자동 검사가 false 값을 거부하므로 (QA1773)
+         명시 false 키 제거. DarwinForge 는 표준 Swift/AppKit/Speech/Network 만
+         사용하며 JIT / unsigned memory 예외가 필요 없다.
+         2026-06-11 App Store 반려 정정과 동일 정책. -->
 </dict>
 </plist>
