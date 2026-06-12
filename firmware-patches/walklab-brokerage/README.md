@@ -110,7 +110,21 @@ sudo killall demo-pilot
 | O0 | 클럭 오프셋·TEL last_cmd_id/loop_ms·벤치 절차 | 구현 완료 (74fca94) |
 | O1 | 이벤트 구동 UDP 전송·latest-wins 슬롯·워치독 티어 | 구현 완료 (ad287e4) |
 | **O2** | **프로토콜 v2(twist SI)·결합 엔벨로프 거버너·래치 슬루·밸런스 결선·게이트 스케줄** | **구현 완료 (호스트 테스트 통과) — 실기 벤치 대기** |
-| **H1+H2** | **RG G01 동글 직결 GamepadPilot + 소스 중재·3티어 failsafe** | **구현 완료 (호스트 138 checks) — 실기 입회 게이트 대기** |
+| **H1+H2** | **RG G01 동글 직결 GamepadPilot + 소스 중재·3티어 failsafe** | **실기 브링업 완료 (2026-06-13 입회, 호스트 163 checks)** — 잔여 게이트 `docs/reports/2026-06-13-rgg01-bringup.md` §5 |
+
+**실기 F9~F11 (2026-06-13 브링업 — 아래 H1 요약 중 데드맨/우스틱/트리거 매핑은 F10 으로 대체됨)**:
+- **F9 — estop 복구 관절 재enable (P1 결함 수정)**: 복구 후 ACK 정상·물리 무반응 —
+  `Walking::Start()` 는 joint enable 을 복구하지 않는다(MotionManager 는 enable==true 만
+  서보 기록). 재무장 분기에서 getup 반납 패턴으로 직접 재enable + stale cmd 가드(한 쌍).
+  동반: B E-STOP 스테일 면역(value==1 무조건 발화 — release 유실 영구 침묵 차단),
+  SYN_DROPPED 디코더 리셋, stdout 라인버퍼링·unlink 결과 로그(관측성).
+- **F10/F10b — 매핑 리디자인 (사용자 피드백, 콕핏 패리티 의도적 이탈)**: 데드맨(LB)
+  해제(`GP_DEADMAN_REQUIRED=false` — 이동 게이트는 ARM 단일, 단절 보호는 ②/③티어) ·
+  우스틱 = 헤드 레이트 제어(곡선 1.7 · 팬 150°/s·틸트 85°/s · dt 적분+±70/±35 클램프 ·
+  놓으면 유지) · LT/RT = 좌/우회전 아날로그(데드존 0.02 · 저압 부스트 ^0.65) ·
+  Y 복구 소프트 토크 램프(`SoftTorqueRearm` — Torque Limit 300→1023, ~0.6s, 스냅 제거).
+- **F11 — 레이턴시**: 패드 입력 신선(≤1s) 시 유휴 supervisor 루프 100→20ms(첫 입력 소비
+  평균 50→10ms), estop hold 폴 100→20ms(복구 감지 평균 50→10ms). 패드 유휴 시 100ms 유지.
 
 **H1+H2 요약** (`GamepadPilot.{h,cpp}` 신설 — H0 실측 `docs/reports/2026-06-12-rgg01-usb-probe.md` 기반):
 - **획득**: `/dev/input/event*` 스캔 → EVIOCGNAME(`Microsoft X-Box 360 pad`)+EVIOCGID

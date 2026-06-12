@@ -171,7 +171,7 @@ applyBalanceCorrectionIfEnabled 를 step(20ms)마다. 자이로 입력 1차 LPF(
 10분·진동 여부)는 멈추고 사용자 보고 — 크래들 게이트 절차 포함. README 갱신.
 ```
 
-## [x] P7 — handheld H1+H2: 온보드 GamepadPilot + 소스 중재 · 전제 P1 ✅·P3 ✅·P4 ✅ — 코드/테스트 완료, 실기 입회 게이트 대기 (2026-06-12, 8430f0a·bbde5ac)
+## [x] P7 — handheld H1+H2: 온보드 GamepadPilot + 소스 중재 · 전제 P1 ✅·P3 ✅·P4 ✅ — 코드/테스트 완료 + **실기 브링업 완료**(2026-06-13 입회 — 게이트 ①②④ 통과·③⑤⑥ 부분, P1 결함 F9 수정 + 매핑 리디자인 F10/F10b + 레이턴시 F11. 잔여는 `docs/reports/2026-06-13-rgg01-bringup.md` §5) (2026-06-12, 8430f0a·bbde5ac)
 
 > 구현: `GamepadPilot.{h,cpp}` 신설(순수 로직 Robot:: 의존 0 + __linux__ 장치 계층)
 > + 브로커리지 중재 결선(local ≤1s > 네트워크, TEL2 active_source=local/udp/file)
