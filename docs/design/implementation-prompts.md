@@ -10,7 +10,7 @@
 
 ---
 
-## [ ] P1 — RG G01 호환성 프로브 (H0) · 로봇 전원 필요 · 읽기 전용
+## [x] P1 — RG G01 호환성 프로브 (H0) · 로봇 전원 필요 · 읽기 전용 ✅ (2026-06-12 실측 — Track A 확정: 동글=xpad 네이티브 바인딩·graceful 단절시 release 합성+ENODEV(거리이탈 미측정)·절전~10분·유선 USB-C 불발. 보고서 docs/reports/2026-06-12-rgg01-usb-probe.md)
 
 ```
 docs/design/handheld-direct-pilot-upgrade.md 의 Wave H0 을 수행해줘.
