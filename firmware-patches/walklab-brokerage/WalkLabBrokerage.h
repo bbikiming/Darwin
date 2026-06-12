@@ -54,9 +54,13 @@ public:
     /// Telemetry write 는 ~200ms(5Hz) 로 gate (매 2 poll).
     static const int POLL_INTERVAL_MS = 100;
 
-    /// Telemetry write 주기 (ms). 200ms = 5Hz (§A.1). **파일 write 전용** — UDP push 는
-    /// 매 poll(10–30Hz) 전송하고, 파일만 이 주기로 gate 한다(SSH fallback·디스크 churn 억제).
+    /// Telemetry write 주기 (ms). 200ms = 5Hz (§A.1). **파일 write 전용** — 파일은 TEL v1
+    /// 형식 그대로 5Hz(SSH 폴백·구버전 Mac 호환, 영구 폴백 불변식). UDP 는 TEL2 로 30Hz.
     static const int TELEMETRY_INTERVAL_MS = 200;
+
+    /// **O4 (2026-06-12)** — UDP TEL2 push gate (ms). 30Hz(≥33ms) — 종전 매 poll(~50Hz) push
+    /// 를 정식화. supervisor 20ms 보다 느슨해 UDP 부하·대역(~140B×30 = 4.2KB/s)을 고정한다.
+    static const int TEL2_UDP_INTERVAL_MS = 33;
 
     /// **UDP 업링크 타깃 파일 재read 주기 (ms, 2026-06-03)**. 타깃은 거의 안 바뀌므로 1s throttle.
     static const int UPLINK_REFRESH_MS = 1000;
@@ -143,9 +147,13 @@ private:
     static void* CmdUdpThreadEntry(void* self);
     static void* EstopUdpThreadEntry(void* self);
 
-    /// **v1.12** — Telemetry 한 줄 (§A.2). 한 번 format 후: UDP push(매 poll) + (write_file
-    /// 면) 파일 atomic write(tmp+rename, 200ms gate). cm730 NULL 이면 MotionStatus fallback.
-    void WriteTelemetry(Robot::CM730* cm730, bool walking_active, bool write_file);
+    /// **v1.12 / O4** — Telemetry. **파일**(write_file=true, 5Hz gate)은 TEL v1 형식 그대로
+    /// (SSH 폴백·구버전 Mac 호환). **UDP**는 TEL2(v2) 형식을 30Hz(TEL2_UDP_INTERVAL_MS) gate 로
+    /// push — 위상(walking->GetCurrentPhase)·래치 진폭(m_lat_*)·FSR/CoP·seq_applied·
+    /// active_source 포함. cm730 NULL 이면 MotionStatus fallback(FSR 미가용 → "-").
+    /// walking NULL 이면 phase "-"(=-1)·래치 0 으로 graceful degrade.
+    void WriteTelemetry(Robot::CM730* cm730, Robot::Walking* walking,
+                        bool walking_active, bool write_file);
 
     /// **UDP 업링크 (2026-06-03)** — UPLINK_PATH("IP PORT")를 주기적(UPLINK_REFRESH_MS) read.
     void RefreshUplinkTarget(long long now_ms);
@@ -198,6 +206,16 @@ private:
     /// **[MEDIUM fix]** Y_SWAP_AMPLITUDE base — Run 진입 시 walking 의 config.ini 튜닝값을
     /// 1회 캡처(상수 20.0 하드코딩 회피). 게이트 부스트는 이 base 에 가산.
     double m_yswap_base;
+
+    // ===== O4 텔레메트리 v2 상태 (2026-06-12, walklab-onboard-teleop-upgrade Wave O4) =====
+    /// 마지막으로 Walking 에 대입한 셰이핑(거버너→슬루→게이트) 후 진폭/주기 — TEL2 x/y/a/
+    /// period_lat. WriteShapedCommand 단일 지점에서만 갱신("명령 vs 실제 적용" 가시화).
+    double m_lat_x, m_lat_y, m_lat_a, m_lat_period;
+    /// 마지막으로 적용한 명령의 수용 seq(스트림은 슬롯 카운터, UDP 는 datagram seq) — TEL2
+    /// seq_applied. 파일 소스 적용은 갱신하지 않음(seq 없음 → 직전값 유지, Mac 은 stream 폐루프용).
+    long long m_last_seq_applied;
+    /// 마지막 TEL2 UDP push 시각(ms) — 30Hz(TEL2_UDP_INTERVAL_MS) gate.
+    long long m_last_udp_tel_ms;
     char  m_udp_token[64];             ///< 핸드셰이크 토큰("" = transport 비활성).
     int   m_estop_port;                ///< E-STOP UDP 포트(핸드셰이크).
     int   m_cmd_port;                  ///< 명령 UDP 포트(핸드셰이크).

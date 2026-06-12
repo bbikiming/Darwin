@@ -134,7 +134,9 @@ public:
     bool Offer(const char* line, long long seq);
 
     // 미소비 명령이 있으면 out(capacity)에 복사 + pending 해제, true. 없으면 false.
-    bool Take(char* out, int capacity);
+    // seq_out(non-NULL)에는 그 명령이 수용된 seq 를 적재(스트림 소스는 내부 단조 카운터,
+    // UDP 소스는 datagram seq) — O4 TEL2 `seq_applied` 폐루프(Mac 이 적용 확인)용.
+    bool Take(char* out, int capacity, long long* seq_out = 0);
 
     long long LastSeq();
 
@@ -143,6 +145,7 @@ private:
     char            m_line[256];
     long long       m_last_seq;    // 마지막 수용 seq (UDP 역행 검사)
     long long       m_stream_seq;  // 스트림(seq==0) 내부 단조 카운터
+    long long       m_pending_seq; // 현재 pending 라인이 수용된 seq (O4 — Take seq_out).
     bool            m_pending;
 
     // 비복사 (C++03: private 선언만).
@@ -178,6 +181,25 @@ bool ParseEstopDatagram(const char* buf, int len, const char* token);
 // line_out 에 capacity 만큼 복사(널 종료). token 불일치/형식 오류 시 false.
 bool ParseCmdDatagram(const char* buf, int len, const char* token,
                       long long* seq_out, char* line_out, int line_cap);
+
+// ===== O4 TEL2 텔레메트리 v2 포맷터 (순수 — Robot:: 의존 0, 호스트 테스트) ======
+// 형식(ssh-parity-contract §A.2 TEL2):
+//   "TEL2 {ts} {seq_applied} {phase} {x_lat} {y_lat} {a_lat} {period_lat}
+//    {gx gy gz ax ay az} {fsr l1..l4 r1..r4 | -} {copx copy | -}
+//    {fallen} {risk|-} {vdV} {active_source} {loop_ms}\n"
+// 가변 토큰: FSR 미장착 시 그 그룹은 단일 "-", CoP 미가용 시 "-", risk 미가용(O3 미구현)
+//   시 "-". x/y/a/period_lat·risk 는 소수 2자리, FSR 셀·CoP·ADC·phase 는 정수.
+// fsr8 은 fsr_present 일 때만 8개(l1..l4 r1..r4) 정수를 읽는다. copx/copy 는 정수(FSR_X/Y
+//   바이트 평균 — 전신 균형 인디케이터; 발별 CoP 는 Mac 이 셀에서 재구성). active_source 는
+//   "udp"/"file". snprintf 의미(반환=기록 길이, 잘림 시 cap 으로 클램프는 호출부).
+int FormatTel2(char* out, int cap,
+               long long ts_ms, long long seq_applied, int phase,
+               double x_lat, double y_lat, double a_lat, double period_lat,
+               int gx, int gy, int gz, int ax, int ay, int az,
+               bool fsr_present, const int* fsr8,
+               bool cop_present, int copx, int copy,
+               int fallen, bool risk_present, double risk,
+               int vdV, const char* active_source, long long loop_ms);
 
 }  // namespace Robotis
 

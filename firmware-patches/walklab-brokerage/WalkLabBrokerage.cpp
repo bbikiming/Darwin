@@ -47,6 +47,7 @@
 #include "Walking.h"        // Robot::Walking::GetInstance()
 #include "Head.h"           // Robot::Head::GetInstance()
 #include "CM730.h"          // Robot::CM730 register map + bulk-read buffer
+#include "FSR.h"            // **O4** Robot::FSR — 발 압력센서(4셀+CoP), 벌크리드 버퍼에 이미 포함
 #include "MotionStatus.h"   // Robot::MotionStatus (IMU fallback + FALLEN)
 #include "MotionManager.h"
 #include "Action.h"         // **v1.13** Robot::Action (getup 모션 player)
@@ -203,7 +204,7 @@ namespace Robotis {
         while (walking->IsRunning()) {
             // 리뷰(codex C1) fix: getup 대기 중에도 e-stop 즉시 반응 — 정지 유지하고 복귀.
             if (EstopRequested()) { m_fall_count = 0; return true; }
-            WriteTelemetry(cm730, walking_active, true);  // getup 중 파일+UDP 계속 보고.
+            WriteTelemetry(cm730, walking, walking_active, true);  // getup 중 파일+UDP 계속 보고.
             usleep(8000);   // 공식 demo 와 동일 8ms.
         }
 
@@ -222,7 +223,7 @@ namespace Robotis {
         while (action->Start(page) == false) {
             // 리뷰(codex C1) fix: e-stop 시 getup 시작 중단 + body torque off.
             if (EstopRequested()) { action->m_Joint.SetEnableBody(false, true); m_fall_count = 0; return true; }
-            WriteTelemetry(cm730, walking_active, true);  // getup 중 파일+UDP 계속 보고.
+            WriteTelemetry(cm730, walking, walking_active, true);  // getup 중 파일+UDP 계속 보고.
             usleep(8000);
         }
 
@@ -230,7 +231,7 @@ namespace Robotis {
         while (action->IsRunning()) {
             // 리뷰(codex C1) fix: getup 모션 중 e-stop → 모션 중단(Stop) + body torque off.
             if (EstopRequested()) { action->Stop(); action->m_Joint.SetEnableBody(false, true); m_fall_count = 0; return true; }
-            WriteTelemetry(cm730, walking_active, true);  // getup 중 파일+UDP 계속 보고.
+            WriteTelemetry(cm730, walking, walking_active, true);  // getup 중 파일+UDP 계속 보고.
             usleep(8000);
         }
 
@@ -582,6 +583,10 @@ namespace Robotis {
         m_tgt_foot = 40.0; m_tgt_hip = 13.0; m_tgt_flags = 0;
         m_last_slew_ms = 0;
         m_yswap_base = Robotis::DEFAULT_Y_SWAP_AMPLITUDE;  // Run 진입 시 config 값으로 덮어씀.
+        // O4 — TEL2 래치/seq/UDP gate 초기화.
+        m_lat_x = 0.0; m_lat_y = 0.0; m_lat_a = 0.0; m_lat_period = 600.0;
+        m_last_seq_applied = 0;
+        m_last_udp_tel_ms = 0;
         m_udp_token[0] = '\0';
         m_estop_port = 0;
         m_cmd_port = 0;
@@ -691,7 +696,7 @@ namespace Robotis {
                     walking_active = false;
                     estop_latched = true;
                 }
-                WriteTelemetry(cm730, walking_active, true);  // Mac 에 정지 상태 계속 보고(파일+UDP).
+                WriteTelemetry(cm730, walking, walking_active, true);  // Mac 에 정지 상태 계속 보고(파일+UDP).
                 usleep(POLL_INTERVAL_MS * 1000);
                 continue;   // flag 가 있는 동안 명령 무시.
             } else if (estop_latched) {
@@ -727,11 +732,13 @@ namespace Robotis {
             //    슬롯은 항상 비어 no-op → 종전 파일 경로 동작 완전 보존.
             {
                 char slot_line[256];
-                if (m_cmd_slot.Take(slot_line, sizeof(slot_line))) {
+                long long slot_seq = 0;
+                if (m_cmd_slot.Take(slot_line, sizeof(slot_line), &slot_seq)) {
                     if (ApplyCommandLine(walking, walking_active, slot_line, now_ms)) {
                         last_cmd_time = time(NULL);
                         m_last_cmd_ms = now_ms;
                         m_last_cmd_from_stream = true;   // 스트림 소스 — 워치독 티어 대상.
+                        m_last_seq_applied = slot_seq;   // O4 — TEL2 seq_applied 폐루프.
                     }
                 }
             }
@@ -833,7 +840,7 @@ namespace Robotis {
             // gate(SSH fallback·디스크 churn 억제). now_ms 는 루프 상단에서 계산됨.
             bool write_tel_file = (now_ms - last_tel_ms >= TELEMETRY_INTERVAL_MS);
             if (write_tel_file) last_tel_ms = now_ms;
-            WriteTelemetry(cm730, walking_active, write_tel_file);
+            WriteTelemetry(cm730, walking, walking_active, write_tel_file);
 
             // **헤드 트래킹 30fps fix (2026-06-02)**: 볼 트래킹 중에는 ProcessBallTracking 의
             // LinuxCamera::CaptureFrame() 가 카메라 프레임레이트(~30fps ≈ 33ms)로 루프를 paces 한다
@@ -881,6 +888,9 @@ namespace Robotis {
         walking->PERIOD_TIME      = sp;
         walking->HIP_PITCH_OFFSET = m_tgt_hip + boost.hip;
         walking->Y_SWAP_AMPLITUDE = m_yswap_base + boost.y_swap;  // [MEDIUM fix] config base.
+        // O4 — 래치값 기록(TEL2 x/y/a/period_lat). 게이트 부스트는 측정 셰이핑 후 진폭만 표시
+        // (z_move/y_swap/hip 부스트는 별도 노출 안 함 — "명령 vs 적용" 차이는 x/y/a/period 로 충분).
+        m_lat_x = sx; m_lat_y = sy; m_lat_a = sa; m_lat_period = sp;
     }
 
     bool WalkLabBrokerage::ApplyCommandLine(Robot::Walking* walking, bool& walking_active,
@@ -996,11 +1006,15 @@ namespace Robotis {
         return true;
     }
 
-    // ===== Telemetry writer (§A) ================================================
-    // 매 ~200ms(5Hz) 호출. cm730 의 bulk-read 버퍼(motion loop 가 8ms 마다 갱신)에서
-    // voltage + 3축 raw IMU 를 추가 bus 트래픽 없이 read. cm730 NULL 이면 MotionStatus
-    // 로 graceful degrade. tmp + rename 으로 atomic write (부분 read 차단).
-    void WalkLabBrokerage::WriteTelemetry(Robot::CM730* cm730, bool walking_active, bool write_file) {
+    // ===== Telemetry writer (§A / O4 §A.2-TEL2) =================================
+    // cm730 의 bulk-read 버퍼(motion loop 가 8ms 마다 갱신)에서 voltage + 3축 raw IMU + FSR 을
+    // 추가 bus 트래픽 없이 read. cm730 NULL 이면 MotionStatus 로 graceful degrade.
+    //  · **파일**(write_file=true, 5Hz gate): TEL v1 형식 그대로 — SSH 폴백·구버전 Mac 호환
+    //    (영구 폴백 불변식). tmp + rename atomic.
+    //  · **UDP**(30Hz gate, TEL2_UDP_INTERVAL_MS): TEL2(v2) — 위상·래치 진폭·FSR/CoP·seq_applied·
+    //    active_source. 비차단·실패 무음. E-STOP·워치독 경로 무영향(여기선 read·송신만).
+    void WalkLabBrokerage::WriteTelemetry(Robot::CM730* cm730, Robot::Walking* walking,
+                                          bool walking_active, bool write_file) {
         int gx, gy, gz, ax, ay, az, vdV;
 
         if (cm730) {
@@ -1033,28 +1047,73 @@ namespace Robotis {
         clock_gettime(CLOCK_REALTIME, &ts);
         long long ts_ms = (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 
-        // §A.2 형식 (O0 확장): 종전 10 토큰(11 필드) + `{last_cmd_id} {loop_ms}` 2 토큰 APPEND.
+        // ── 파일: TEL v1 (5Hz gate) — 영구 폴백·구버전 호환(형식 무변경, §A.2 v1).
         //   "TEL {ts} {gx} {gy} {gz} {ax} {ay} {az} {vdV} {w} {fallen} {last_cmd_id} {loop_ms}\n"
-        // Mac 파서는 "≥11" 로 완화돼 추가 토큰을 선택 소비(구버전 파서 비호환 제거 — 완화 선배포).
-        // 한 번 format → UDP(매 poll) + (write_file 면) 파일. 두 경로가 동일 바이트열을 쓴다.
-        char buf[160];
-        int n = snprintf(buf, sizeof(buf), "TEL %lld %d %d %d %d %d %d %d %d %d %s %lld\n",
-                         ts_ms, gx, gy, gz, ax, ay, az, vdV, walking01, fallen,
-                         m_last_cmd_id, m_loop_ms);
-        if (n < 0) return;
-        if (n > (int)sizeof(buf)) n = (int)sizeof(buf);   // snprintf truncation guard.
-
-        // UDP push — 매 호출(매 poll). 비차단·실패 무음(타깃 미설정/소켓 실패면 no-op).
-        SendTelemetryUDP(buf, n);
-
-        // 파일 — write_file(200ms gate)일 때만. tmp + rename 으로 atomic(부분 read 차단).
         if (write_file) {
-            const char* tel_tmp = "/tmp/df-walklab-telemetry.tmp";
-            FILE* fp = fopen(tel_tmp, "w");
-            if (!fp) return;
-            fwrite(buf, 1, (size_t)n, fp);
-            fclose(fp);
-            rename(tel_tmp, TELEMETRY_PATH);   // atomic (같은 filesystem 보장).
+            char buf[160];
+            int n = snprintf(buf, sizeof(buf), "TEL %lld %d %d %d %d %d %d %d %d %d %s %lld\n",
+                             ts_ms, gx, gy, gz, ax, ay, az, vdV, walking01, fallen,
+                             m_last_cmd_id, m_loop_ms);
+            if (n > 0) {
+                if (n > (int)sizeof(buf)) n = (int)sizeof(buf);   // truncation guard.
+                const char* tel_tmp = "/tmp/df-walklab-telemetry.tmp";
+                FILE* fp = fopen(tel_tmp, "w");
+                if (fp) {
+                    fwrite(buf, 1, (size_t)n, fp);
+                    fclose(fp);
+                    rename(tel_tmp, TELEMETRY_PATH);   // atomic (같은 filesystem 보장).
+                }
+            }
+        }
+
+        // ── UDP: TEL2 (30Hz gate). 종전 매 poll(~50Hz) push 를 정식화.
+        if (ts_ms - m_last_udp_tel_ms < TEL2_UDP_INTERVAL_MS) return;
+        m_last_udp_tel_ms = ts_ms;
+
+        // FSR — m_BulkReadData[FSR::ID_L/R_FSR] (8ms 벌크리드에 이미 포함, 추가 버스 0).
+        //   error==0 = 유효 read(둘 다 장착·PING 성공). 미장착(OP1/PING 실패)·NULL → "-" 토큰.
+        bool fsr_present = false, cop_present = false;
+        int fsr8[8] = {0,0,0,0,0,0,0,0};
+        int copx = 0, copy = 0;
+        if (cm730) {
+            Robot::BulkReadData& fl = cm730->m_BulkReadData[Robot::FSR::ID_L_FSR];
+            Robot::BulkReadData& fr = cm730->m_BulkReadData[Robot::FSR::ID_R_FSR];
+            if (fl.error == 0 && fr.error == 0) {
+                fsr_present = true;
+                fsr8[0] = fl.ReadWord(Robot::FSR::P_FSR1_L);
+                fsr8[1] = fl.ReadWord(Robot::FSR::P_FSR2_L);
+                fsr8[2] = fl.ReadWord(Robot::FSR::P_FSR3_L);
+                fsr8[3] = fl.ReadWord(Robot::FSR::P_FSR4_L);
+                fsr8[4] = fr.ReadWord(Robot::FSR::P_FSR1_L);
+                fsr8[5] = fr.ReadWord(Robot::FSR::P_FSR2_L);
+                fsr8[6] = fr.ReadWord(Robot::FSR::P_FSR3_L);
+                fsr8[7] = fr.ReadWord(Robot::FSR::P_FSR4_L);
+                // 전신 CoP 근사 = 접지한 발의 FSR_X/Y 바이트 평균. 바이트 255 = 무접지 →
+                // 평균에서 제외(둘 다 무접지면 cop "-"). 발별 정밀 CoP 는 Mac 이 셀에서 재구성.
+                int lx = fl.ReadByte(Robot::FSR::P_FSR_X), ly = fl.ReadByte(Robot::FSR::P_FSR_Y);
+                int rx = fr.ReadByte(Robot::FSR::P_FSR_X), ry = fr.ReadByte(Robot::FSR::P_FSR_Y);
+                int cnt = 0, sxv = 0, syv = 0;
+                if (lx >= 0 && lx < 255) { sxv += lx; syv += ly; cnt++; }
+                if (rx >= 0 && rx < 255) { sxv += rx; syv += ry; cnt++; }
+                if (cnt > 0) { cop_present = true; copx = sxv / cnt; copy = syv / cnt; }
+            }
+        }
+
+        int phase = walking ? walking->GetCurrentPhase() : -1;   // 공식 getter(Walking.h:139).
+        const char* src = m_last_cmd_from_stream ? "udp" : "file";   // H2 active_source.
+
+        char tbuf[320];
+        int tn = Robotis::FormatTel2(tbuf, sizeof(tbuf),
+                                     ts_ms, m_last_seq_applied, phase,
+                                     m_lat_x, m_lat_y, m_lat_a, m_lat_period,
+                                     gx, gy, gz, ax, ay, az,
+                                     fsr_present, fsr8,
+                                     cop_present, copx, copy,
+                                     fallen, /*risk_present*/ false, 0.0,  // risk: O3 미구현 "-".
+                                     vdV, src, m_loop_ms);
+        if (tn > 0) {
+            if (tn > (int)sizeof(tbuf)) tn = (int)sizeof(tbuf);   // truncation guard.
+            SendTelemetryUDP(tbuf, tn);   // 비차단·실패 무음.
         }
     }
 

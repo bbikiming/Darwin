@@ -132,7 +132,7 @@ bool ParseCommandLine(const char* line, WalkCommand* out) {
 // ===== CommandSlot ==========================================================
 
 CommandSlot::CommandSlot()
-    : m_last_seq(0), m_stream_seq(0), m_pending(false) {
+    : m_last_seq(0), m_stream_seq(0), m_pending_seq(0), m_pending(false) {
     pthread_mutex_init(&m_mtx, 0);
     m_line[0] = '\0';
 }
@@ -145,32 +145,36 @@ bool CommandSlot::Offer(const char* line, long long seq) {
     if (!line) return false;
     pthread_mutex_lock(&m_mtx);
     bool accept;
+    long long accepted_seq = 0;
     if (seq == 0) {
         // 스트림 소스 — 순서 보장됨. 내부 카운터로 항상 수용.
         m_stream_seq += 1;
         m_last_seq = (m_last_seq > m_stream_seq) ? m_last_seq : m_stream_seq;
+        accepted_seq = m_stream_seq;
         accept = true;
     } else {
         // UDP 소스 — 역행 datagram 폐기(seq 단조).
         accept = (seq > m_last_seq);
-        if (accept) m_last_seq = seq;
+        if (accept) { m_last_seq = seq; accepted_seq = seq; }
     }
     if (accept) {
         strncpy(m_line, line, sizeof(m_line) - 1);
         m_line[sizeof(m_line) - 1] = '\0';
+        m_pending_seq = accepted_seq;
         m_pending = true;
     }
     pthread_mutex_unlock(&m_mtx);
     return accept;
 }
 
-bool CommandSlot::Take(char* out, int capacity) {
+bool CommandSlot::Take(char* out, int capacity, long long* seq_out) {
     if (!out || capacity <= 0) return false;
     pthread_mutex_lock(&m_mtx);
     bool had = m_pending;
     if (had) {
         strncpy(out, m_line, (size_t)capacity - 1);
         out[capacity - 1] = '\0';
+        if (seq_out) *seq_out = m_pending_seq;
         m_pending = false;
     }
     pthread_mutex_unlock(&m_mtx);
@@ -334,6 +338,57 @@ bool ParseCmdDatagram(const char* buf, int len, const char* token,
 
     *seq_out = seq;
     return true;
+}
+
+// ===== O4 TEL2 포맷터 =========================================================
+
+int FormatTel2(char* out, int cap,
+               long long ts_ms, long long seq_applied, int phase,
+               double x_lat, double y_lat, double a_lat, double period_lat,
+               int gx, int gy, int gz, int ax, int ay, int az,
+               bool fsr_present, const int* fsr8,
+               bool cop_present, int copx, int copy,
+               int fallen, bool risk_present, double risk,
+               int vdV, const char* active_source, long long loop_ms) {
+    if (!out || cap <= 0) return 0;
+
+    // FSR 그룹: 장착 시 8셀, 아니면 "-".
+    char fsr_buf[96];
+    if (fsr_present && fsr8) {
+        snprintf(fsr_buf, sizeof(fsr_buf), "%d %d %d %d %d %d %d %d",
+                 fsr8[0], fsr8[1], fsr8[2], fsr8[3],
+                 fsr8[4], fsr8[5], fsr8[6], fsr8[7]);
+    } else {
+        strcpy(fsr_buf, "-");
+    }
+
+    // CoP 그룹: 가용 시 정수 2개, 아니면 "-".
+    char cop_buf[32];
+    if (cop_present) {
+        snprintf(cop_buf, sizeof(cop_buf), "%d %d", copx, copy);
+    } else {
+        strcpy(cop_buf, "-");
+    }
+
+    // risk: O3 미구현 → 자리만 "-" (forward-compat: risk_present 시 소수 2자리).
+    char risk_buf[24];
+    if (risk_present) {
+        snprintf(risk_buf, sizeof(risk_buf), "%.2f", risk);
+    } else {
+        strcpy(risk_buf, "-");
+    }
+
+    const char* src = (active_source && active_source[0]) ? active_source : "file";
+
+    int n = snprintf(out, (size_t)cap,
+        "TEL2 %lld %lld %d %.2f %.2f %.2f %.2f %d %d %d %d %d %d %s %s %d %s %d %s %lld\n",
+        ts_ms, seq_applied, phase,
+        x_lat, y_lat, a_lat, period_lat,
+        gx, gy, gz, ax, ay, az,
+        fsr_buf, cop_buf,
+        fallen, risk_buf, vdV, src, loop_ms);
+    if (n < 0) return 0;
+    return n;
 }
 
 }  // namespace Robotis

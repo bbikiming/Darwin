@@ -407,6 +407,91 @@ static void test_gate_schedule() {
     CHECK_DEQ(off.z_move, 0.0, "FLAG_GATE_SCHED_OFF → no boost");
 }
 
+// ---- O4: CommandSlot.Take seq_out -------------------------------------------
+
+static void test_slot_take_seq_out() {
+    printf("test_slot_take_seq_out\n");
+    CommandSlot slot;
+    char out[256];
+    long long seq = -1;
+    // 스트림 소스(seq==0) — 내부 카운터가 적용 seq 를 부여(1,2,..).
+    slot.Offer("a", 0);
+    slot.Offer("b", 0);   // latest-wins, 카운터는 2.
+    CHECK(slot.Take(out, sizeof(out), &seq), "stream take true");
+    CHECK(strcmp(out, "b") == 0, "latest line");
+    CHECK(seq == 2, "stream seq_out = internal counter (2)");
+
+    // UDP 소스 — datagram seq 가 그대로.
+    CommandSlot slot2;
+    long long seq2 = -1; char out2[256];
+    slot2.Offer("u", 77);
+    CHECK(slot2.Take(out2, sizeof(out2), &seq2), "udp take true");
+    CHECK(seq2 == 77, "udp seq_out = datagram seq (77)");
+
+    // seq_out NULL 안전(기존 2-인자 호출 호환).
+    CommandSlot slot3;
+    char out3[256];
+    slot3.Offer("x", 0);
+    CHECK(slot3.Take(out3, sizeof(out3)), "2-arg take still works (default seq_out=0)");
+}
+
+// ---- O4: TEL2 formatter -----------------------------------------------------
+
+static void test_format_tel2_full() {
+    printf("test_format_tel2_full\n");
+    char buf[320];
+    int fsr8[8] = { 100, 110, 120, 130, 140, 150, 160, 170 };
+    int n = FormatTel2(buf, sizeof(buf),
+                       1748736000123LL, 42, 2,
+                       28.0, 10.0, 5.0, 600.0,
+                       511, 530, 498, 512, 489, 760,
+                       true, fsr8,
+                       true, 20, -5,
+                       0, false, 0.0,
+                       122, "udp", 18);
+    const char* expect =
+        "TEL2 1748736000123 42 2 28.00 10.00 5.00 600.00 "
+        "511 530 498 512 489 760 100 110 120 130 140 150 160 170 20 -5 0 - 122 udp 18\n";
+    CHECK(n == (int)strlen(expect), "tel2 full length matches");
+    CHECK(strcmp(buf, expect) == 0, "tel2 full line exact");
+}
+
+static void test_format_tel2_fsr_missing() {
+    printf("test_format_tel2_fsr_missing\n");
+    char buf[320];
+    // FSR 미장착(OP1/PING 실패) → fsr "-", cop "-". risk 미구현 "-". active=file.
+    int n = FormatTel2(buf, sizeof(buf),
+                       1000LL, 7, 0,
+                       0.0, 0.0, 0.0, 600.0,
+                       512, 512, 512, 512, 512, 700,
+                       false, 0,
+                       false, 0, 0,
+                       -1, false, 0.0,
+                       0, "file", 5);
+    const char* expect =
+        "TEL2 1000 7 0 0.00 0.00 0.00 600.00 "
+        "512 512 512 512 512 700 - - -1 - 0 file 5\n";
+    CHECK(n == (int)strlen(expect), "tel2 fsr-missing length");
+    CHECK(strcmp(buf, expect) == 0, "tel2 fsr/cop '-' fallback exact");
+}
+
+static void test_format_tel2_risk_present() {
+    printf("test_format_tel2_risk_present\n");
+    char buf[320];
+    int fsr8[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    // forward-compat: risk_present → 소수 2자리. (O3 결선 시 사용 — 자리 검증.)
+    FormatTel2(buf, sizeof(buf),
+               2000LL, 1, 1,
+               12.0, 0.0, 0.0, 500.0,
+               500, 500, 500, 500, 500, 700,
+               true, fsr8,
+               true, 0, 0,
+               0, true, 16.25,
+               120, "udp", 20);
+    CHECK(strstr(buf, " 16.25 ") != 0, "risk present → 16.25 formatted");
+    CHECK(strstr(buf, " - ") == 0, "no '-' tokens when fsr/cop/risk all present");
+}
+
 int main() {
     printf("=== WalkLabTransport host unit tests ===\n");
     test_parse_full_line();
@@ -434,6 +519,10 @@ int main() {
     test_slew_loop_progression_reaches_target();
     test_balance_gain_scale();
     test_gate_schedule();
+    test_slot_take_seq_out();
+    test_format_tel2_full();
+    test_format_tel2_fsr_missing();
+    test_format_tel2_risk_present();
 
     printf("=== %d checks, %d failures ===\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
