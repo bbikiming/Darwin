@@ -187,6 +187,12 @@ private:
     /// LinuxCM730 내부 우선순위 세마포어로 MotionManager 8ms 타이머와 직렬화.
     void SweepServoShutdown(Robot::CM730* cm730, const char* reason);
 
+    /// 실기 F10 (2026-06-13) — E-STOP 복구 소프트 토크 램프. 전 관절 Torque Limit 을
+    /// SG_SOFT_RAMP_VALUES 단계(300→1023, 150ms 간격)로 상승 — 재무장 순간 관절이
+    /// 목표 자세로 부드럽게 끌려간다(스냅/충격 방지). SweepServoShutdown 직후 호출
+    /// (래치 복원 → 램프 종값 1023 일관). 총 ~0.6s supervisor 블록(복구 순간 한정).
+    void SoftTorqueRearm(Robot::CM730* cm730);
+
     // ===== C1 카메라 스트림 펌프 (2026-06-12) =====
     /// 펌프 스레드 기동. m_streamer NULL / [Stream] enabled=0 / 카메라 미초기화면 no-op.
     void StartCameraPump();

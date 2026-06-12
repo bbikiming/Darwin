@@ -35,6 +35,9 @@ static const unsigned short GP_EV_SYN = 0x00;
 static const unsigned short GP_EV_KEY = 0x01;
 static const unsigned short GP_EV_ABS = 0x03;
 static const unsigned short GP_SYN_REPORT = 0;
+// 실기 F9 (2026-06-13): evdev 링 오버플로 통지 — 이 사이 이벤트(release 포함)가
+// 유실됐다는 뜻. 수신 시 디코더 리셋(스테일 押下 고착 → B E-STOP 영구 침묵 차단).
+static const unsigned short GP_SYN_DROPPED = 3;
 
 // 축 8종. 스틱 ±32768(fuzz 16/flat 128), 트리거 0..255 순수 아날로그(BTN_TL2/TR2
 // 없음 — 실측 교차확인), D-pad ±1. ABS_Y/RY 아래=+(실측). ABS_X 오른쪽=+ 는 표준
@@ -56,7 +59,7 @@ static const unsigned short GP_BTN_A      = 304;  // ARM
 static const unsigned short GP_BTN_B      = 305;  // E-STOP (rising, 데드맨 무시)
 static const unsigned short GP_BTN_X      = 307;  // 볼트랙 토글
 static const unsigned short GP_BTN_Y      = 308;  // 복구 (estop flag 해제 + ARM)
-static const unsigned short GP_BTN_LB     = 310;  // 데드맨 (이동/턴만 게이트)
+static const unsigned short GP_BTN_LB     = 310;  // 미사용 (실기 F10 — 데드맨 해제)
 static const unsigned short GP_BTN_RB     = 311;  // 터보
 static const unsigned short GP_BTN_BACK   = 314;  // 예약
 static const unsigned short GP_BTN_START  = 315;  // 예약
@@ -73,15 +76,31 @@ static const double GP_MAX_SIDE_MM   = 22.0;
 static const double GP_MAX_TURN_DEG  = 12.0;
 static const double GP_MAX_HEAD_PAN_DEG  = 70.0;  // Switch max_head_pan 패리티
 static const double GP_MAX_HEAD_TILT_DEG = 35.0;  // Switch max_head_tilt 패리티
-static const double GP_TRIGGER_DEADZONE  = 0.05;  // RT−LT 차분 휴지 노이즈 제거
+// 실기 F10b (2026-06-13): 데드존 0.05→0.02 — 트리거 살짝 눌러도 회전 시작.
+static const double GP_TRIGGER_DEADZONE  = 0.02;  // RT−LT 차분 휴지 노이즈 제거
+// 턴 응답 곡선 — 지수 <1 = 저압 부스트(살짝 눌러도 체감 회전, 풀프레스 1 불변).
+static const double GP_TURN_CURVE        = 0.65;
 
-// 부호 (실측/가정 — 보고서 §3 비고. 브링업 1단계에서 GP_SIGN_SIDE 확정).
+// ===== 실기 F10 (2026-06-13) — 사용자 매핑 리디자인 ==========================
+// 변경: ① 데드맨(LB) 해제 — 이동 게이트는 ARM(A)만. ② 우스틱 = 헤드 무빙
+// (레이트 제어 — 곡선 성형 후 °/s 적분, 클램프). ③ LT/RT = 좌/우회전(아날로그
+// 비례, RT−LT 차분). 콕핏 RG G01 프리셋 1:1 패리티에서 의도적으로 이탈 —
+// 실기 조종감 피드백 반영(ssh-parity-contract 매핑 표 후속 개정 필요).
+static const bool   GP_DEADMAN_REQUIRED    = false;  // true 로 되돌리면 LB 데드맨 복원
+// 실기 F10b — 최고속 상향(90→150 / 50→85), 곡선 1.35→1.7(가파르게)로 저속 구간은
+// 종전과 거의 동일 유지: 소폭 deflection 의 °/s 는 같고 풀스틱만 빨라진다.
+static const double GP_HEAD_PAN_RATE_DPS   = 150.0;  // 풀스틱 — 풀스윕(±70°) ~0.9s
+static const double GP_HEAD_TILT_RATE_DPS  = 85.0;   // 풀스틱 — 풀스윕(±35°) ~0.8s
+static const double GP_HEAD_CURVE          = 1.7;    // 헤드 전용 응답 곡선
+static const double GP_MAP_DT_MAX_MS       = 200.0;  // 적분 dt 상한(이벤트 공백 점프 방지)
+
+// 부호 (실측 — 보고서 §3 + 브링업 라운드4 GP_SIGN_SIDE 확정 2026-06-12).
 // 로봇 좌표: X_MOVE+=전진, Y_MOVE+=좌횡, A_MOVE+=좌회전, head pan+=좌, tilt+=상.
 static const double GP_SIGN_STRIDE = -1.0;  // ABS_Y 아래=+(실측) → 위=전진
-static const double GP_SIGN_SIDE   = -1.0;  // ABS_X 오른쪽=+(표준 가정) → 우=−Y(우횡)
-static const double GP_SIGN_TURN   = -1.0;  // ABS_RX 오른쪽=+(실측) → 우=−A(우회전)
+static const double GP_SIGN_SIDE   = -1.0;  // ABS_X 오른쪽=+(실측 확정) → 우=−Y(우횡)
+static const double GP_SIGN_TURN   = -1.0;  // RT(우)−LT(좌) 차분 → RT=−A(우회전) [F10]
 static const double GP_SIGN_TILT   = -1.0;  // ABS_RY 아래=+(실측) → 위=+tilt(머리들기)
-static const double GP_SIGN_PAN    = -1.0;  // RT(우)−LT(좌) 차분 → 우=−pan(robot pan+=좌)
+static const double GP_SIGN_PAN    = -1.0;  // ABS_RX 오른쪽=+(실측) → 우=−pan(robot pan+=좌) [F10]
 
 // 성형 스케줄 — switch-pilot ssh_control_client._gait_params 식 채택(검증된
 // 조종감): shaped=intensity^0.7, period 는 max→min, foot 는 min→max 선형 보간.
@@ -161,15 +180,23 @@ struct GamepadWalkFields {
 double GpApplyDeadzone(double v);
 // 데드존 → 곡선 1.35 (부호 보존) — switch _drive_axis 식.
 double GpShapeDriveAxis(double v);
+// F10b — 헤드 전용: 데드존 → 곡선 GP_HEAD_CURVE(1.7). 저속 미세 조작은 종전과
+// 동일, 풀스틱 최고속만 상향(RATE_DPS 와 한 쌍).
+double GpShapeHeadAxis(double v);
 // RT−LT 차분 [−1,1] — 차분에 GP_TRIGGER_DEADZONE 적용 후 재스케일.
 double GpTriggerDiff(double rt, double lt);
+// F10b — 턴 저압 부스트: |d|^GP_TURN_CURVE(0.65), 부호 보존. 살짝 눌러도 체감
+// 회전이 시작되고 풀프레스(±1)는 불변.
+double GpShapeTurn(double d);
 // intensity^0.7 → period/foot (switch _gait_params 식). enabled=0 이면 default.
 void GpGaitSchedule(double x_mm, double y_mm, double a_deg, int enabled,
                     double* period_ms, double* foot_mm);
-// 스냅샷 → 보행/머리 필드. armed && 데드맨(LB) && 이동입력 일 때만 enabled=1 —
-// 이동/턴만 게이트, 머리(틸트/팬)는 비게이트(전 소스 상시). 터보(RB)는 정규화
-// ×1.3 후 ±1 클램프(콕핏 패리티).
-void MapGamepad(const GamepadSnapshot& s, bool armed,
+// 스냅샷 → 보행/머리 필드. 실기 F10: armed && 이동입력 일 때만 enabled=1
+// (데드맨 해제 — GP_DEADMAN_REQUIRED). 이동/턴만 게이트, 머리는 비게이트.
+// 터보(RB)는 정규화 ×1.3 후 ±1 클램프. 머리 = 우스틱 레이트 제어:
+// 곡선 성형(GpShapeDriveAxis) × RATE_DPS × dt_ms 적분, ±MAX 클램프 —
+// dt_ms ≤ 0 이면 머리 적분 생략(레거시 호출/리셋 직후 안전).
+void MapGamepad(const GamepadSnapshot& s, bool armed, double dt_ms,
                 GamepadHeadHold* hold, GamepadWalkFields* out);
 
 // v1 14-token 명령 라인 빌더 — 형식 불변(P9: TEL v1/명령 토큰 추가 금지).
@@ -266,6 +293,7 @@ private:
     long long m_last_event_ms;     // 마지막 *이벤트* 수신 — HasControl/③티어 기준
     long long m_adopt_ms;          // 노드 획득 시각 — ③티어 즉발 방지(이벤트 전)
     long long m_last_offer_ms;     // refresh cadence
+    long long m_last_map_ms;       // F10 — 머리 레이트 적분 dt 기준(직전 매핑 시각)
     long long m_seq;               // cmd_id("gp{seq}") 단조
 
     bool m_pending_arm_edge;       // SYN 커밋까지 수집되는 edge (settle 입력)

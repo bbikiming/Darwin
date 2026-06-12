@@ -159,55 +159,63 @@ static void test_deadzone_curve() {
 }
 
 static void test_trigger_diff() {
-    printf("test_trigger_diff\n");
+    printf("test_trigger_diff (F10b — 데드존 0.02·저압 부스트)\n");
     CHECK_DEQ(GpTriggerDiff(0.0, 0.0), 0.0, "휴지 → 0");
     CHECK_DEQ(GpTriggerDiff(1.0, 0.0), 1.0, "RT 풀 → +1");
     CHECK_DEQ(GpTriggerDiff(0.0, 1.0), -1.0, "LT 풀 → -1");
-    CHECK_DEQ(GpTriggerDiff(0.52, 0.5), 0.0, "차분 0.02 < 데드존 0.05 → 0");
-    CHECK_NEAR(GpTriggerDiff(0.55, 0.0), (0.55 - 0.05) / 0.95, 1e-9, "차분 재스케일");
+    CHECK_DEQ(GpTriggerDiff(0.51, 0.5), 0.0, "차분 0.01 < 데드존 0.02 → 0");
+    CHECK_NEAR(GpTriggerDiff(0.55, 0.0), (0.55 - 0.02) / 0.98, 1e-9, "차분 재스케일");
     CHECK_DEQ(GpTriggerDiff(1.0, 1.0), 0.0, "양 트리거 풀 → 상쇄 0");
+    // F10b 저압 부스트: 살짝(0.10) 눌러도 체감 회전(≥0.2 정규값 = ≥2.4°).
+    double light = GpShapeTurn(GpTriggerDiff(0.10, 0.0));
+    CHECK(light > 0.15, "트리거 0.10 → 정규 턴 >0.15 (저압 부스트 — 종전 0.05 대비 ~3.7배)");
+    CHECK_DEQ(GpShapeTurn(1.0), 1.0, "풀프레스 불변 (=1)");
+    CHECK_DEQ(GpShapeTurn(-1.0), -1.0, "풀프레스 부호 보존");
 }
 
 // ---- 매핑: 부호·게이트·터보·hold ---------------------------------------------
 
 static void test_mapping_signs() {
-    printf("test_mapping_signs\n");
+    printf("test_mapping_signs (F10 — LT/RT=턴, RS=헤드 레이트)\n");
     GamepadSnapshot s;
     GamepadHeadHold hold;
     GamepadWalkFields f;
-    // 풀스틱 전진(위=raw −) + 우횡 + 우턴 + 머리들기(위=raw −) + RT 풀 — armed+LB.
+    // 풀스틱 전진(위=raw −) + 우횡 + RT 풀(우회전) + RS 우+위(헤드 우팬·들기).
     s.ly = -1.0; s.lx = 1.0; s.rx = 1.0; s.ry = -1.0; s.rt = 1.0; s.lt = 0.0;
-    s.btn_lb = true;
-    MapGamepad(s, true, &hold, &f);
-    CHECK(f.enabled == 1, "armed+데드맨+이동 → enabled");
+    MapGamepad(s, true, 1000.0, &hold, &f);   // dt=1s → 캡 200ms 적분
+    CHECK(f.enabled == 1, "armed+이동 → enabled (F10: 데드맨 불요)");
     CHECK_NEAR(f.x, GP_MAX_STRIDE_MM, 1e-6, "스틱 위 → 전진 +38 (ABS_Y 아래=+ 실측)");
     CHECK_NEAR(f.y, -GP_MAX_SIDE_MM, 1e-6, "스틱 우 → 우횡 −22 (Y_MOVE+=좌)");
-    CHECK_NEAR(f.a, -GP_MAX_TURN_DEG, 1e-6, "RS 우 → 우회전 −12 (A_MOVE+=좌)");
-    CHECK_NEAR(f.tilt, GP_MAX_HEAD_TILT_DEG, 1e-6, "RS 위 → 머리들기 +35");
-    CHECK_NEAR(f.pan, -GP_MAX_HEAD_PAN_DEG, 1e-6, "RT → 우팬 −70 (pan+=좌)");
+    CHECK_NEAR(f.a, -GP_MAX_TURN_DEG, 1e-6, "RT 풀 → 우회전 −12 (A_MOVE+=좌)");
+    // 헤드 레이트: dt 캡 200ms — 풀스틱 1콜 적분 = RATE × 0.2s.
+    CHECK_NEAR(f.tilt, GP_HEAD_TILT_RATE_DPS * 0.2, 1e-6,
+               "RS 위 → 틸트 +10 (50°/s × 0.2s 캡)");
+    CHECK_NEAR(f.pan, -GP_HEAD_PAN_RATE_DPS * 0.2, 1e-6,
+               "RS 우 → 팬 −18 (90°/s × 0.2s 캡, pan+=좌)");
     CHECK_DEQ(f.hip, GP_HIP_DEG, "hip 고정 13");
 }
 
 static void test_mapping_gates() {
-    printf("test_mapping_gates\n");
+    printf("test_mapping_gates (F10 — ARM 단일 게이트)\n");
     GamepadSnapshot s;
     GamepadHeadHold hold;
     GamepadWalkFields f;
     s.ly = -1.0; s.ry = -1.0;
-    // 데드맨 미홀드 — 이동 잠금, 머리는 비게이트(H1-4: 이동/턴만 게이트).
+    // F10: 데드맨(LB) 미홀드여도 armed+이동이면 enabled.
     s.btn_lb = false;
-    MapGamepad(s, true, &hold, &f);
-    CHECK(f.enabled == 0, "데드맨 해제 → 이동 게이트 잠금");
-    CHECK_DEQ(f.x, 0.0, "x=0");
-    CHECK_NEAR(f.tilt, GP_MAX_HEAD_TILT_DEG, 1e-6, "머리는 비게이트 — 틸트 통과");
-    // ARM 전 — 데드맨 홀드여도 이동 잠금 (H2-2).
-    s.btn_lb = true;
-    MapGamepad(s, false, &hold, &f);
+    MapGamepad(s, true, 100.0, &hold, &f);
+    CHECK(f.enabled == 1, "F10: LB 없이도 armed+이동 → enabled");
+    CHECK(f.x > 0.0, "전진 적용");
+    CHECK(hold.tilt > 0.0, "머리 비게이트 — 틸트 적분 진행");
+    // ARM 전 — 이동 잠금 (H2-2 유지). 머리는 비게이트.
+    GamepadHeadHold hold2;
+    MapGamepad(s, false, 100.0, &hold2, &f);
     CHECK(f.enabled == 0, "ARM 전 → 이동 게이트 잠금");
-    // armed+데드맨인데 스틱 중립 — enabled 0 (정지).
+    CHECK_DEQ(f.x, 0.0, "x=0");
+    CHECK(hold2.tilt > 0.0, "머리는 ARM 전에도 비게이트");
+    // armed 인데 스틱 중립 — enabled 0 (정지).
     GamepadSnapshot idle;
-    idle.btn_lb = true;
-    MapGamepad(idle, true, &hold, &f);
+    MapGamepad(idle, true, 100.0, &hold, &f);
     CHECK(f.enabled == 0, "이동 입력 없음 → enabled 0");
 }
 
@@ -216,32 +224,75 @@ static void test_mapping_turbo() {
     GamepadSnapshot s;
     GamepadHeadHold hold;
     GamepadWalkFields f;
-    s.ly = -0.55; s.btn_lb = true;
-    MapGamepad(s, true, &hold, &f);
+    s.ly = -0.55;
+    MapGamepad(s, true, 0.0, &hold, &f);
     double base_x = f.x;   // 0.39229 × 38 ≈ 14.91
     CHECK_NEAR(base_x, 0.39229 * GP_MAX_STRIDE_MM, 0.05, "터보 OFF 기준값");
     s.btn_rb = true;
-    MapGamepad(s, true, &hold, &f);
+    MapGamepad(s, true, 0.0, &hold, &f);
     CHECK_NEAR(f.x, 0.39229 * GP_TURBO_SCALE * GP_MAX_STRIDE_MM, 0.05,
                "터보 ×1.3 (콕핏 turboScale 패리티)");
     // 풀스틱 + 터보 — ±1 클램프로 38 초과 금지.
     s.ly = -1.0;
-    MapGamepad(s, true, &hold, &f);
+    MapGamepad(s, true, 0.0, &hold, &f);
     CHECK_NEAR(f.x, GP_MAX_STRIDE_MM, 1e-6, "터보 풀스틱 → ±1 클램프 (38 초과 금지)");
+    // F10: 턴(트리거)도 터보 적용 — RT 0.5 기준 비교.
+    GamepadSnapshot t;
+    t.rt = 0.5;
+    MapGamepad(t, true, 0.0, &hold, &f);
+    double base_a = f.a;
+    t.btn_rb = true;
+    MapGamepad(t, true, 0.0, &hold, &f);
+    CHECK_NEAR(f.a, base_a * GP_TURBO_SCALE, 1e-6, "턴 터보 ×1.3");
 }
 
-static void test_mapping_head_hold() {
-    printf("test_mapping_head_hold\n");
+static void test_mapping_head_rate() {
+    printf("test_mapping_head_rate (F10 — 우스틱 레이트 제어)\n");
     GamepadSnapshot s;
     GamepadHeadHold hold;
     GamepadWalkFields f;
-    s.rt = 1.0;
-    MapGamepad(s, true, &hold, &f);
-    CHECK_NEAR(f.pan, -GP_MAX_HEAD_PAN_DEG, 1e-6, "팬 명령");
-    // 트리거 해제 — 직전 각 유지(switch hold_head 패리티).
+    // RS 우 풀스틱 100ms — 팬 −9°(90°/s × 0.1s).
+    s.rx = 1.0;
+    MapGamepad(s, true, 100.0, &hold, &f);
+    CHECK_NEAR(f.pan, -GP_HEAD_PAN_RATE_DPS * 0.1, 1e-6, "RS 우 100ms → 팬 −9°");
+    // 추가 100ms — 적분 누적 −18°.
+    MapGamepad(s, true, 100.0, &hold, &f);
+    CHECK_NEAR(f.pan, -GP_HEAD_PAN_RATE_DPS * 0.2, 1e-6, "적분 누적 −18°");
+    // 절반 스틱 — 곡선 성형으로 절반보다 느리게(미세 조작 정밀). dt=100ms.
+    GamepadSnapshot half;
+    half.rx = 0.5;
+    GamepadHeadHold hold_half;
+    MapGamepad(half, true, 100.0, &hold_half, &f);
+    double half_shaped = GpShapeHeadAxis(0.5);
+    CHECK_NEAR(f.pan, -half_shaped * GP_HEAD_PAN_RATE_DPS * 0.1, 1e-6,
+               "절반 스틱 — 곡선 성형 레이트 (선형 절반보다 저속)");
+    CHECK(fabs(f.pan) < GP_HEAD_PAN_RATE_DPS * 0.5 * 0.1, "곡선 1.7 — 미세 정밀 확인");
+    // F10b — 저속 보존: 소폭(0.2) deflection 의 °/s 가 종전(곡선 1.35 × 90°/s)
+    // 대비 ±25% 안에 머무는지(저속 유지) + 풀스틱은 150°/s 로 상향됐는지.
+    double old_low = pow((0.2 - 0.1) / 0.9, 1.35) * 90.0;
+    double new_low = GpShapeHeadAxis(0.2) * GP_HEAD_PAN_RATE_DPS;
+    CHECK(fabs(new_low - old_low) / old_low < 0.25, "저속(0.2 스틱) 종전 ±25% 유지");
+    CHECK_NEAR(GpShapeHeadAxis(1.0) * GP_HEAD_PAN_RATE_DPS, 150.0, 1e-6,
+               "풀스틱 최고속 150°/s 상향");
+    // 스틱 해제 — 직전 각 유지(hold).
     GamepadSnapshot rest;
-    MapGamepad(rest, true, &hold, &f);
-    CHECK_NEAR(f.pan, -GP_MAX_HEAD_PAN_DEG, 1e-6, "트리거 해제 → 팬 유지");
+    double held = hold.pan;
+    MapGamepad(rest, true, 100.0, &hold, &f);
+    CHECK_NEAR(f.pan, held, 1e-6, "스틱 해제 → 팬 유지");
+    // dt=0 (레거시/획득 직후) — 적분 생략, 유지.
+    MapGamepad(s, true, 0.0, &hold, &f);
+    CHECK_NEAR(f.pan, held, 1e-6, "dt=0 → 적분 생략");
+    // dt 상한 — 1000ms 공백도 200ms 로 캡(점프 방지).
+    GamepadHeadHold hold_cap;
+    MapGamepad(s, true, 5000.0, &hold_cap, &f);
+    CHECK_NEAR(f.pan, -GP_HEAD_PAN_RATE_DPS * (GP_MAP_DT_MAX_MS / 1000.0), 1e-6,
+               "dt 상한 200ms 캡");
+    // 틸트 클램프 — 위로 계속 밀어도 +35 초과 금지.
+    GamepadSnapshot up;
+    up.ry = -1.0;
+    GamepadHeadHold hold_t;
+    for (int i = 0; i < 20; ++i) MapGamepad(up, true, 100.0, &hold_t, &f);
+    CHECK_NEAR(f.tilt, GP_MAX_HEAD_TILT_DEG, 1e-6, "틸트 클램프 +35");
 }
 
 // ---- 성형 스케줄 (intensity^0.7 → period/foot) -------------------------------
@@ -457,11 +508,12 @@ static void test_pilot_tier1_release_then_enodev() {
     p.InjectEventForTest(Syn(), 1010);
     WalkCommand c;
     CHECK(TakeParsed(p, &c) && c.enabled == 1, "주행 중");
-    // ①티어: 커널 release 합성(LB keyup) + SYN → 데드맨 해제 = 이동 게이트 즉시 잠금.
+    // F10: 데드맨 해제로 ①티어(LB release 합성)는 더 이상 이동을 막지 않는다 —
+    // 단절 보호는 ②티어(ENODEV, release 합성 +~1ms 후속 — H0 §5 공통원인)가 소화.
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 0), 2000);
     p.InjectEventForTest(Syn(), 2000);
     CHECK(TakeParsed(p, &c), "release 라인 발행");
-    CHECK(c.enabled == 0, "①티어: 데드맨 해제 → enabled=0 (즉시 정지)");
+    CHECK(c.enabled == 1, "F10: LB release 무영향 — 주행 유지 (②티어가 보호)");
     // ~1ms 뒤 ENODEV(②티어) — disarm + 최종 정지 라인 + SLEW_ZERO.
     p.InjectNodeLostForTest(2001);
     CHECK(!p.ArmedForTest(), "②티어: disarm (재 ARM 필수)");
@@ -584,6 +636,60 @@ static void test_pilot_adopt_grace() {
     p.Stop();
 }
 
+// ---- 실기 F9 (2026-06-13) — B E-STOP 스테일 면역 + SYN_DROPPED 리셋 --------
+
+static void test_pilot_estop_stale_pending_immune() {
+    printf("test_pilot_estop_stale_pending_immune\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, 0, false);
+    p.InjectAdoptForTest(1000);
+    // B press 가 커밋된 뒤 release 이벤트가 유실된 상황(링 오버플로 등) —
+    // pending btn_b 가 押下로 고착. 종전 rising 검사(!ButtonState)는 이때
+    // 두 번째 B press 를 영구 침묵시켰다(안전 임계).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(g_estop_calls == 1, "1차 B → estop 발화");
+    // release 유실 — pending btn_b == true 인 채로 다음 press 도착.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 1), 2000);
+    CHECK(g_estop_calls == 2, "release 유실 후 재 B → 그래도 발화 (스테일 면역)");
+    p.InjectEventForTest(Syn(), 2000);
+    CHECK(!p.ArmedForTest(), "estop 후 disarm 유지");
+    p.Stop();
+}
+
+static void test_pilot_syn_dropped_resets_decoder() {
+    printf("test_pilot_syn_dropped_resets_decoder\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, 0, false);
+    p.InjectAdoptForTest(1000);
+    // ARM + 데드맨 + 전진 주행 라인 확립.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -20000), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    WalkCommand c;
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "주행 라인 확립 (enabled=1)");
+    // SYN_DROPPED — 커널 링 오버플로 통지. pending 스냅샷 리셋(정지 측 편향).
+    p.InjectEventForTest(Ev(GP_EV_SYN, GP_SYN_DROPPED, 0), 1100);
+    p.InjectEventForTest(Syn(), 1100);
+    CHECK(TakeParsed(p, &c) && c.enabled == 0,
+          "SYN_DROPPED → 데드맨/스틱 리셋 — 정지 라인 (안전 편향)");
+    CHECK(p.ArmedForTest(), "SYN_DROPPED 는 disarm 아님 — 입력 재공급으로 즉시 재개");
+    // 입력 재공급 — 곧바로 주행 재개 가능(재 ARM 불요).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1150);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -20000), 1150);
+    p.InjectEventForTest(Syn(), 1150);
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "재공급 → 주행 재개");
+    // 스테일 면역과의 결합: SYN_DROPPED 리셋 후에도 B 는 즉시 발화.
+    p.InjectEventForTest(Ev(GP_EV_SYN, GP_SYN_DROPPED, 0), 1200);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 1), 1210);
+    CHECK(g_estop_calls == 1, "SYN_DROPPED 직후 B → 즉시 발화");
+    p.Stop();
+}
+
 // ---- main --------------------------------------------------------------------
 
 int main() {
@@ -597,7 +703,7 @@ int main() {
     test_mapping_signs();
     test_mapping_gates();
     test_mapping_turbo();
-    test_mapping_head_hold();
+    test_mapping_head_rate();
     test_gait_schedule();
     test_line_builder_roundtrip();
     test_settle();
@@ -613,6 +719,8 @@ int main() {
     test_pilot_tier3_silence_false_positive();
     test_pilot_balltrack_toggle();
     test_pilot_adopt_grace();
+    test_pilot_estop_stale_pending_immune();
+    test_pilot_syn_dropped_resets_decoder();
 
     printf("== %d checks, %d failures ==\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

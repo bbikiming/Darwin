@@ -634,7 +634,13 @@ namespace Robotis {
     void WalkLabBrokerage::ClearEstopFlag() {
         // 복구(Y) — switch-pilot recover(`rm -f ESTOP_PATH`) 패리티. 전 소스 상시
         // 유효(H2-1). 파일 제거 → supervisor 가 다음 poll 에 "E-STOP cleared" 재무장.
-        unlink(ESTOP_PATH);
+        // 실기 F9: unlink 결과를 남긴다 — 라운드6 사후 분석에서 "복구가 발화했는가"를
+        // 판별할 흔적이 전무했다(관측성). ENOENT(flag 없음)는 정상 no-op.
+        if (unlink(ESTOP_PATH) == 0) {
+            printf("[WalkLabBrokerage] recover — estop flag cleared\n");
+        } else if (errno != ENOENT) {
+            printf("[WalkLabBrokerage] recover — estop flag unlink FAILED errno=%d\n", errno);
+        }
     }
 
     void WalkLabBrokerage::GamepadEstopTrampoline(void* self) {
@@ -688,6 +694,25 @@ namespace Robotis {
         if (restored || hot || failed)
             printf("[WalkLabBrokerage] servo guard(%s): restored=%d hot-skip=%d"
                    " failed=%d\n", reason, restored, hot, failed);
+    }
+
+    // 실기 F10 (2026-06-13) — E-STOP 복구 소프트 토크 램프. 사용자 피드백: Y 복구
+    // 순간 관절이 목표 자세로 스냅(충격). Torque Limit 을 30%→100% 4단계로 올려
+    // 관절이 낮은 토크로 끌려가다 점차 정상 토크에 도달하게 한다. 쓰기는 Torque
+    // Limit 한정(enable 불변) — SweepServoShutdown 과 동일 버스 직렬화 경로.
+    void WalkLabBrokerage::SoftTorqueRearm(Robot::CM730* cm730) {
+        if (!cm730) return;
+        for (int step = 0; step < Robotis::SG_SOFT_RAMP_STEPS; ++step) {
+            int v = Robotis::SG_SOFT_RAMP_VALUES[step];
+            for (int id = Robotis::SG_JOINT_ID_MIN; id <= Robotis::SG_JOINT_ID_MAX; ++id) {
+                cm730->WriteWord(id, Robotis::SG_ADDR_TORQUE_LIMIT_L, v, 0);
+            }
+            if (step < Robotis::SG_SOFT_RAMP_STEPS - 1)
+                usleep(Robotis::SG_SOFT_RAMP_INTERVAL_MS * 1000);
+        }
+        printf("[WalkLabBrokerage] soft torque re-arm — ramp %d steps to %d\n",
+               Robotis::SG_SOFT_RAMP_STEPS,
+               Robotis::SG_SOFT_RAMP_VALUES[Robotis::SG_SOFT_RAMP_STEPS - 1]);
     }
 
     void WalkLabBrokerage::CmdUdpLoop() {
@@ -781,6 +806,10 @@ namespace Robotis {
     }
 
     void WalkLabBrokerage::Run(Robot::CM730* cm730, mjpg_streamer* streamer) {
+        // **실기 F9 (2026-06-13)** — stdout 라인버퍼링. nohup 리다이렉트(파일)에선 블록
+        // 버퍼링이라 estop/복구/획득 같은 안전 이벤트 로그가 수 시간 미flush 됐다
+        // (실기 라운드6 사후 분석 불능의 원인). 진단 가치 > 미세 I/O 비용.
+        setvbuf(stdout, NULL, _IOLBF, 0);
         // **실기 F7 (2026-06-12)** — 세션 파일 소유권 자가 치유. 부팅 rc.local 훅(root)이
         // 만든 /tmp/df-walklab-cmd 는 sticky /tmp 에서 Mac(SSH robotis)의 원자 교체
         // (mv = 대상 unlink)를 거부한다 → SSH 온보드 ACK 게이트 영구 실패. ACK 파일(root
@@ -954,17 +983,39 @@ namespace Robotis {
                     estop_latched = true;
                 }
                 WriteTelemetry(cm730, walking, walking_active, true);  // Mac 에 정지 상태 계속 보고(파일+UDP).
-                usleep(POLL_INTERVAL_MS * 1000);
+                // 실기 F11 — hold 중 20ms 폴: flag 해제(Y/rm) 감지가 종전 평균 50ms
+                // → 10ms. 복구 체감 반응성(estop hold 루프 부하는 무시 가능).
+                usleep(SUPERVISOR_WALK_MS * 1000);
                 continue;   // flag 가 있는 동안 명령 무시.
             } else if (estop_latched) {
-                // flag 제거됨 — re-arm 허용. body torque 는 다음 Start() 가 복구.
-                printf("[WalkLabBrokerage] E-STOP cleared — re-armed\n");
+                // flag 제거됨 — re-arm. **실기 F9 (2026-06-13, P7 브링업)**: 종전 주석
+                // "body torque 는 다음 Start() 가 복구"는 허위 — Walking::Start() 는
+                // m_Ctrl_Running/m_Real_Running 플래그만 세팅하고 joint enable 을 건드리지
+                // 않으며, MotionManager 는 GetEnable(id)==true 인 관절만 서보에 기록한다.
+                // 그래서 estop 의 SetEnableBody(false) 이후 복구하면 명령·ACK 는 정상인데
+                // 서보 기록이 0건(완전 무반응)이 됐다(실기 라운드6). getup 반납과 동일
+                // 패턴으로 여기서 직접 재-enable 한다.
+                printf("[WalkLabBrokerage] E-STOP cleared — re-armed (joints re-enabled)\n");
                 estop_latched = false;
-                memset(&last_stat, 0, sizeof(last_stat));  // 정지 후 첫 명령 강제 재처리.
+                Robot::Head* rearm_head = Robot::Head::GetInstance();
+                if (rearm_head) rearm_head->m_Joint.SetEnableHeadOnly(true, true);
+                walking->m_Joint.SetEnableBodyWithoutHead(true, true);
+                // 관절 re-enable 과 한 쌍: stale enabled=1 cmd 파일 재적용 차단(getup 의
+                // codex HIGH fix 패턴). 종전 memset(강제 재처리)은 관절이 살아난 뒤엔
+                // 무의도 즉시 재보행이 된다 — *새 명령*이 와야 보행 재개.
+                struct stat post_rearm = {};
+                if (stat(CMD_PATH, &post_rearm) == 0) {
+                    last_stat = post_rearm;
+                } else {
+                    memset(&last_stat, 0, sizeof(last_stat));
+                }
                 // 실기 F8 — 복구 시 서보 셧다운 스윕: 과부하 래치(빨간 LED·무토크)는
                 // estop 해제/getup 만으로 안 풀린다 — Torque Limit 재기록 필요.
                 // 보행 정지 상태(직전까지 hold-stopped)라 스윕 수십 ms 가 안전.
                 SweepServoShutdown(cm730, "re-arm");
+                // 실기 F10 — 소프트 토크 램프(300→1023, ~0.6s): 재무장 순간 관절이
+                // 목표 자세로 스냅하던 충격 제거. 스윕(래치 복원) 뒤에 둬 종값 일관.
+                SoftTorqueRearm(cm730);
             }
 
             // **v1.13 (2026-06-02)** — ONBOARD auto-getup. e-stop 검사 직후 (여기 도달 ==
@@ -1162,7 +1213,13 @@ namespace Robotis {
             // 볼 트래킹 OFF 일 때만 sleep. **O1**: 보행 중 20ms(SUPERVISOR_WALK_MS, 실효율
             // ≥20Hz) / 정지·유휴 100ms(CPU 절약). 볼트래킹은 카메라 페이스(usleep 생략).
             if (!m_balltrack_enabled) {
-                int sleep_ms = walking_active ? SUPERVISOR_WALK_MS : POLL_INTERVAL_MS;
+                // 실기 F11 (2026-06-13) — 레이턴시: 게임패드 입력이 신선(≤1s)하면
+                // 유휴에도 20ms 루프. 종전엔 정지 상태의 첫 스틱 입력이 평균 50ms
+                // (최대 100ms) 동안 슬롯에서 대기했다 — 기동 체감 지연의 주범.
+                // 패드 비활성(유휴) 시엔 100ms 유지(CPU 절약 불변).
+                bool local_fresh = m_gamepad.HasControl(now_ms);
+                int sleep_ms = (walking_active || local_fresh)
+                                   ? SUPERVISOR_WALK_MS : POLL_INTERVAL_MS;
                 usleep(sleep_ms * 1000);
             }
         }

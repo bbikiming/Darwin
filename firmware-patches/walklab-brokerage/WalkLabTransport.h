@@ -200,6 +200,14 @@ static const int SG_TEMP_SAFE_C          = 65;
 static const int SG_JOINT_ID_MIN         = 1;    // JointData::ID_R_SHOULDER_PITCH
 static const int SG_JOINT_ID_MAX         = 20;   // JointData::ID_HEAD_TILT
 
+// 실기 F10 (2026-06-13) — E-STOP 복구 소프트 토크 램프. 재무장 시 Torque Limit 을
+// 단계 상승시켜 관절이 목표 자세로 '부드럽게' 끌려가게 한다(스냅 방지). 시작값
+// 30%는 직립 자세 유지에 충분한 하한(접지 복구 시 무릎 붕괴 방지), 종값은 복원
+// 최대와 동일. 총 소요 ≈ 4×150ms = 0.6s — 복구 순간 supervisor 블록 허용 범위.
+static const int SG_SOFT_RAMP_STEPS = 4;
+static const int SG_SOFT_RAMP_VALUES[SG_SOFT_RAMP_STEPS] = { 300, 600, 900, 1023 };
+static const int SG_SOFT_RAMP_INTERVAL_MS = 150;
+
 // 판정. read_ok = Torque Limit read 성공(무응답이면 손대지 않는다),
 // temp_ok = 온도 read 성공(미상이면 보수적으로 SKIP_HOT — 복원 보류).
 ServoGuardAction ServoGuardDecide(bool read_ok, int torque_limit,

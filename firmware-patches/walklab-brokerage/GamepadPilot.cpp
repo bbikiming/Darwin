@@ -108,6 +108,13 @@ namespace Robotis {
             m_dirty = false;
             return GP_FEED_COMMITTED;
         }
+        if (ev.type == GP_EV_SYN && ev.code == GP_SYN_DROPPED) {
+            // 실기 F9: 링 오버플로 — 직전 이벤트들(release 포함) 유실. pending 을
+            // 리셋해 스테일 押下 고착을 끊는다(버튼 false 방향 = 정지 측 안전 편향;
+            // 실제로 눌려 있으면 다음 이벤트/press 가 다시 세운다).
+            Reset();
+            return 0;
+        }
         return 0;
     }
 
@@ -159,6 +166,23 @@ namespace Robotis {
         return (n >= 0.0) ? shaped : -shaped;
     }
 
+    double GpShapeHeadAxis(double v) {
+        // F10b — 곡선 1.7: 미세 deflection 의 °/s 는 종전(1.35×90)과 거의 동일,
+        // 풀스틱 최고속만 RATE_DPS 상향분만큼 빨라진다.
+        double n = GpApplyDeadzone(v);
+        if (n == 0.0) return 0.0;
+        double shaped = pow(fabs(n), GP_HEAD_CURVE);
+        return (n >= 0.0) ? shaped : -shaped;
+    }
+
+    double GpShapeTurn(double d) {
+        // F10b — 지수 0.65 저압 부스트: 트리거 살짝(0.1)에서도 ~0.2 의 체감 회전,
+        // 풀프레스 ±1 불변. GpTriggerDiff 의 데드존 통과 후 값에 적용.
+        if (d == 0.0) return 0.0;
+        double shaped = pow(fabs(d), GP_TURN_CURVE);
+        return (d >= 0.0) ? shaped : -shaped;
+    }
+
     double GpTriggerDiff(double rt, double lt) {
         double d = rt - lt;
         double mag = fabs(d);
@@ -191,20 +215,29 @@ namespace Robotis {
                    (GP_GAIT_FOOT_MAX_MM - GP_GAIT_FOOT_MIN_MM) * shaped;
     }
 
-    void MapGamepad(const GamepadSnapshot& s, bool armed,
+    static double ClampAbs(double v, double cap) {
+        if (v > cap) return cap;
+        if (v < -cap) return -cap;
+        return v;
+    }
+
+    void MapGamepad(const GamepadSnapshot& s, bool armed, double dt_ms,
                     GamepadHeadHold* hold, GamepadWalkFields* out) {
-        // 이동/턴 — 데드존 0.10 → 곡선 1.35 → (터보 ×1.3 클램프) → MAX 스케일.
+        // 이동 — 데드존 0.10 → 곡선 1.35 → (터보 ×1.3 클램프) → MAX 스케일.
+        // 실기 F10: 턴은 LT/RT 아날로그 차분(LT=좌회전, RT=우회전 — 비례).
         double fwd  = GP_SIGN_STRIDE * GpShapeDriveAxis(s.ly);
         double side = GP_SIGN_SIDE   * GpShapeDriveAxis(s.lx);
-        double turn = GP_SIGN_TURN   * GpShapeDriveAxis(s.rx);
+        double turn = GP_SIGN_TURN   * GpShapeTurn(GpTriggerDiff(s.rt, s.lt));
         if (s.btn_rb) {   // 터보 — 콕핏 패리티(정규화 ×1.3 후 ±1 클램프)
             fwd  = Clamp1(fwd * GP_TURBO_SCALE);
             side = Clamp1(side * GP_TURBO_SCALE);
             turn = Clamp1(turn * GP_TURBO_SCALE);
         }
         bool moving = (fwd != 0.0) || (side != 0.0) || (turn != 0.0);
-        // H2-2/H1-4 — ARM(A) 전·데드맨(LB) 미홀드 시 이동 게이트 잠금. 머리는 비게이트.
-        int enabled = (armed && s.btn_lb && moving) ? 1 : 0;
+        // H2-2 — ARM(A) 전 이동 게이트 잠금. 실기 F10: 데드맨(LB) 해제 —
+        // GP_DEADMAN_REQUIRED=true 로 되돌리면 종전 동작 복원. 머리는 비게이트.
+        bool deadman_ok = GP_DEADMAN_REQUIRED ? s.btn_lb : true;
+        int enabled = (armed && deadman_ok && moving) ? 1 : 0;
         out->enabled = enabled;
         out->x = enabled ? fwd  * GP_MAX_STRIDE_MM : 0.0;
         out->y = enabled ? side * GP_MAX_SIDE_MM   : 0.0;
@@ -212,12 +245,18 @@ namespace Robotis {
         GpGaitSchedule(out->x, out->y, out->a, enabled, &out->period, &out->foot);
         out->hip = GP_HIP_DEG;
 
-        // 머리 — RS Y=틸트, RT−LT 차분=팬(아날로그 비례 — H0: BTN_TL2/TR2 없음).
-        // 입력 0 이면 직전 각 유지(switch hold_head 패리티).
-        double tilt_in = GP_SIGN_TILT * GpApplyDeadzone(s.ry);
-        double pan_in  = GP_SIGN_PAN  * GpTriggerDiff(s.rt, s.lt);
-        if (tilt_in != 0.0) hold->tilt = tilt_in * GP_MAX_HEAD_TILT_DEG;
-        if (pan_in != 0.0)  hold->pan  = pan_in * GP_MAX_HEAD_PAN_DEG;
+        // 머리 — 실기 F10: 우스틱 레이트 제어. 곡선 성형(미세 조작 정밀·풀스틱
+        // 고속)된 입력을 °/s 로 적분 — "자연스러운 속도 조절". 입력 0 이면 직전
+        // 각 유지(hold). dt 는 호출자(이벤트/50ms 재공급)가 공급, 상한으로 점프 방지.
+        if (dt_ms > 0.0) {
+            double dt_s = (dt_ms > GP_MAP_DT_MAX_MS ? GP_MAP_DT_MAX_MS : dt_ms) / 1000.0;
+            double pan_rate  = GP_SIGN_PAN  * GpShapeHeadAxis(s.rx);
+            double tilt_rate = GP_SIGN_TILT * GpShapeHeadAxis(s.ry);
+            hold->pan  = ClampAbs(hold->pan  + pan_rate  * GP_HEAD_PAN_RATE_DPS  * dt_s,
+                                  GP_MAX_HEAD_PAN_DEG);
+            hold->tilt = ClampAbs(hold->tilt + tilt_rate * GP_HEAD_TILT_RATE_DPS * dt_s,
+                                  GP_MAX_HEAD_TILT_DEG);
+        }
         out->pan = hold->pan;
         out->tilt = hold->tilt;
     }
@@ -255,7 +294,8 @@ namespace Robotis {
           m_fd(-1), m_node_ok(false), m_had_device(false),
           m_armed(false), m_balltrack(0),
           m_decoder(), m_snap(), m_hold(), m_have_snap(false),
-          m_last_event_ms(0), m_adopt_ms(0), m_last_offer_ms(0), m_seq(0),
+          m_last_event_ms(0), m_adopt_ms(0), m_last_offer_ms(0),
+          m_last_map_ms(0), m_seq(0),
           m_pending_arm_edge(false), m_pending_estop_edge(false),
           m_pending_recover_edge(false),
           m_estop_cb(0), m_recover_cb(0), m_cb_ctx(0) {
@@ -339,6 +379,7 @@ namespace Robotis {
         m_pending_estop_edge = false;
         m_pending_recover_edge = false;
         m_adopt_ms = now_ms;        // ③티어 기준점(이벤트 전 즉발 방지)
+        m_last_map_ms = 0;          // F10 — 재획득 후 첫 매핑 dt=0(머리 점프 방지)
         pthread_mutex_unlock(&m_mtx);
         printf("[GamepadPilot] device acquired: %s (%04x:%04x) — ARM(A) required\n",
                GP_DEVICE_NAME, GP_VENDOR_ID, GP_PRODUCT_ID);
@@ -349,15 +390,18 @@ namespace Robotis {
         bool fire_recover = false;
         pthread_mutex_lock(&m_mtx);
         m_last_event_ms = now_ms;
-        if (ev.type == GP_EV_KEY && ev.value == 1 &&
-            !m_decoder.ButtonState(ev.code)) {
-            // rising edge — SYN 대기 없이 수집(B 는 즉시 발화).
-            if (ev.code == GP_BTN_B) {
-                // E-STOP — 모든 중재·게이트·데드맨보다 먼저(불변식). 즉시 disarm.
-                m_pending_estop_edge = true;
-                m_armed = false;
-                fire_estop = (m_estop_cb != 0);
-            } else if (ev.code == GP_BTN_A) {
+        if (ev.type == GP_EV_KEY && ev.value == 1 && ev.code == GP_BTN_B) {
+            // E-STOP — 모든 중재·게이트·데드맨보다 먼저(불변식). 즉시 disarm.
+            // 실기 F9: rising 검사(!ButtonState) 없이 value==1 이면 무조건 발화 —
+            // release 유실(링 오버플로 등)로 pending 이 押下 고착이면 종전 코드는
+            // B 를 영구 침묵시켰다. 중복 발화는 멱등(Stop+flag touch)이라 무해.
+            m_pending_estop_edge = true;
+            m_armed = false;
+            fire_estop = (m_estop_cb != 0);
+        } else if (ev.type == GP_EV_KEY && ev.value == 1 &&
+                   !m_decoder.ButtonState(ev.code)) {
+            // rising edge — SYN 대기 없이 수집.
+            if (ev.code == GP_BTN_A) {
                 m_pending_arm_edge = true;
             } else if (ev.code == GP_BTN_Y) {
                 // 복구 — estop flag 해제(switch recover 패리티) + ARM 의도(settle).
@@ -390,7 +434,12 @@ namespace Robotis {
     void GamepadPilot::OfferCurrentLocked(long long now_ms) {
         if (!m_have_snap) return;
         GamepadWalkFields f;
-        MapGamepad(m_snap, m_armed, &m_hold, &f);
+        // F10 — 머리 레이트 적분 dt: 직전 매핑 이후 경과(이벤트·50ms 재공급 공용).
+        // 첫 매핑(m_last_map_ms==0)은 dt=0 으로 적분 생략(획득 직후 점프 방지).
+        double dt_ms = (m_last_map_ms > 0 && now_ms > m_last_map_ms)
+                           ? (double)(now_ms - m_last_map_ms) : 0.0;
+        m_last_map_ms = now_ms;
+        MapGamepad(m_snap, m_armed, dt_ms, &m_hold, &f);
         char line[192];
         m_seq++;
         int n = BuildGamepadLine(line, sizeof(line), m_seq, f, m_balltrack);
