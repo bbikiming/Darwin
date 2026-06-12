@@ -338,6 +338,14 @@ public final class WalkLabSession {
 
     /// 가속도계 accelY 원시값 링 버퍼 (최대 30샘플 ≈ 3초 @ 10Hz).
     /// `isFallenAccelSustained` 의 입력 — 보행 스파이크 억제용 이동 평균.
+    ///
+    /// **D2 (2026-06-12) 설계 전제 정정**: 본 링은 `fallMonitorTimer`(고정 0.1s = 10Hz,
+    /// `WalkLabSession+AutoRecovery.swift`)가 매 틱 `store.lastImuRaw.accelY` 를 1개씩
+    /// 샘플링한다 — **IMU 폴 레이트(D2 에서 50Hz 로 증속)와 독립**이다. 따라서 IMU 를
+    /// 50Hz 로 올려도 윈도는 30샘플 @ 10Hz ≈ 3초로 **불변**이며(설계 §4-D2-4 의
+    /// "50Hz 입력이 윈도를 단축" 우려는 본 아키텍처엔 해당 없음), 스파이크 억제 특성이
+    /// 보존된다. 감지 지연 단축은 틱 레이트 변경이 필요하나 안전 핵심 경로라 실기 검증
+    /// 후 별도 판단(현 커밋은 동작 무변경).
     internal var accelYRing: [Int] = []
 
     /// accelY 링 버퍼 최대 크기 (ROBOTIS 공식 30-sample 평균 기반).
@@ -1767,6 +1775,9 @@ public final class WalkLabSession {
         // Baseline-aware gyro (P-control path): reset flag so next correction tick
         // seeds baseline from first IMU sample (no 5 s convergence lag per walk).
         balanceBaselineInitialized = false
+        // D2: 자이로 LPF reset(이전 walk 잔류 차단).
+        gyroLpfRoll.reset()
+        gyroLpfPitch.reset()
 
         // Phase 5b — WalkSessionLogger init (enableSessionLogging 시).
         swcInitSessionLogger(preset)
@@ -2523,6 +2534,11 @@ public final class WalkLabSession {
     /// alpha-filter state mutate.
     var correctorFilteredRoll: Double = 0
     var correctorFilteredPitch: Double = 0
+
+    /// **D2 (2026-06-12)**: 자이로 각속도 입력 1차 LPF(fc≈15Hz). 50Hz 보정 주입 시 raw
+    /// MEMS 노이즈가 D항을 지배해 진동을 부르는 것을 차단. 보행 시작마다 reset.
+    var gyroLpfRoll = FirstOrderLpf()
+    var gyroLpfPitch = FirstOrderLpf()
 
     /// v1.10 (2026-05-17) Hybrid B+A state — slow EMA pitch/roll baseline.
     /// `applyBalanceCorrectionIfEnabled` 가 매 tick mutate.

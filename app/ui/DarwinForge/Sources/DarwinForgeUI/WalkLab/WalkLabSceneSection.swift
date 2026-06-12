@@ -51,7 +51,12 @@ struct WalkLabSceneSection: View {
             preset: .walkLab,
             // **W3**: walkLab 기본 오버레이(CoM·FSR·수평선·한계경고) + ZMP verdict 주입.
             // 지지 다각형 색이 안정성 판정을 따라간다(FSR 미연결 시 접지 휴리스틱).
-            overlayData: SceneOverlayData(zmpVerdict: session.zmpMonitor.lastVerdict)
+            // **D2 (2026-06-12)**: 라이브 FSR(ID 111/112) 주입 — 발 압력/CoP 가시화.
+            // 제어 미개입(관측 전용). store 폴(보행 중 매 tick)이 lastFsr* 갱신.
+            overlayData: SceneOverlayData(
+                fsrLeft: session.store?.lastFsrLeft,
+                fsrRight: session.store?.lastFsrRight,
+                zmpVerdict: session.zmpMonitor.lastVerdict)
         )
         // V284 (2026-05-24) — 사용자 요청 "3D 뷰 비율이 너무 작고 비효율적".
         // minHeight 360 → 600 (RobotScene3D 가 ScrollView 안에서 항상 충분 세로 확보).

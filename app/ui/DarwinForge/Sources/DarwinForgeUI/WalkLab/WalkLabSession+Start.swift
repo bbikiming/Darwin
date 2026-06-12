@@ -234,6 +234,9 @@ extension WalkLabSession {
         pitchBaselineEma = 0
         rollBaselineEma = 0
         balanceBaselineInitialized = false
+        // D2: 자이로 LPF 도 walk 시작마다 reset(이전 walk 잔류 차단).
+        gyroLpfRoll.reset()
+        gyroLpfPitch.reset()
         // **Monitoring dashboard reset**: 시계열 buffer / 이전 상태 reset.
         // safetyEvents 는 유지 — 사용자가 이전 세션의 이벤트 확인 가능.
         safetyTimeline.removeAll()

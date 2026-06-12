@@ -148,6 +148,9 @@ extension WalkLabSession {
         cycleStartedAt = Date()
         // Baseline-aware gyro (P-control path): reset so next tick seeds baseline fresh.
         balanceBaselineInitialized = false
+        // D2: 자이로 LPF reset(이전 walk 잔류 차단).
+        gyroLpfRoll.reset()
+        gyroLpfPitch.reset()
         swcInitSessionLogger(preset)
         let (onPose, transformPose) = swcMakePoseCallbacks()
         spawnMobileFreeformTask(

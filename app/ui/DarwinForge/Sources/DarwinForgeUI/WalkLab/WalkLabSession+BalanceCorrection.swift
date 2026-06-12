@@ -239,6 +239,11 @@ extension WalkLabSession {
         let maxRateDps = 300.0
         rollRate = max(-maxRateDps, min(maxRateDps, rollRate))
         pitchRate = max(-maxRateDps, min(maxRateDps, pitchRate))
+        // **D2 (2026-06-12)**: 스파이크 클램프 뒤 1차 LPF(fc≈15Hz, dt=step 주기). 50Hz
+        // 보정 주입 시 raw ADC 노이즈 증폭을 막아 진동/limit-cycle 차단(설계 §4-D2-2).
+        // 보행 시작마다 reset(seeded=false) → 첫 샘플 그대로 수용(수렴 지연 0).
+        rollRate = gyroLpfRoll.update(rollRate, fcHz: GyroBalanceFilter.cutoffHz, dtMs: GyroBalanceFilter.nominalDtMs)
+        pitchRate = gyroLpfPitch.update(pitchRate, fcHz: GyroBalanceFilter.cutoffHz, dtMs: GyroBalanceFilter.nominalDtMs)
         return (rollRate: rollRate, pitchRate: pitchRate)
     }
 
