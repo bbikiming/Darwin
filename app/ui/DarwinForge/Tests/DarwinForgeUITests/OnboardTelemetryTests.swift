@@ -141,10 +141,24 @@ final class OnboardTelemetryTests: XCTestCase {
         XCTAssertNil(OnboardTelemetry.parse(line))
     }
 
-    func testParseTooManyTokensReturnsNil() {
-        // 12 토큰.
+    /// **O0 계약 정정 (2026-06-12, 교차 리뷰 결정)** — 종전 "정확히 11토큰" 계약의
+    /// `testParseTooManyTokensReturnsNil` 을 대체. O0(P3, contract §A.3)가 의도적으로
+    /// "≥11 + 추가 토큰 선택 소비"로 완화했으므로(구버전 파서의 신토큰 비호환 제거가 목적)
+    /// 12번째 토큰은 거부가 아니라 `lastCmdId` 로 수용되는 것이 올바른 동작이다.
+    func testParseExtraTokensAcceptedAsO0Fields() {
+        // 12 토큰 — 12번째("999")는 lastCmdId 로 소비, loopMs 는 미존재 → nil.
         let line = "TEL 1748736000123 511 530 498 512 489 760 122 1 0 999"
-        XCTAssertNil(OnboardTelemetry.parse(line))
+        let sample = OnboardTelemetry.parse(line)
+        XCTAssertNotNil(sample, "O0: ≥11 토큰은 유효 — 추가 토큰은 선택 소비")
+        XCTAssertEqual(sample?.lastCmdId, "999")
+        XCTAssertNil(sample?.loopMs)
+
+        // 14+ 토큰 — 13번째까지 소비(loop_ms), 그 이후 미지 토큰은 무시(미래 확장 안전).
+        let future = "TEL 1748736000123 511 530 498 512 489 760 122 1 0 c12_ab 18 7 extra"
+        let s2 = OnboardTelemetry.parse(future)
+        XCTAssertNotNil(s2)
+        XCTAssertEqual(s2?.lastCmdId, "c12_ab")
+        XCTAssertEqual(s2?.loopMs, 18)
     }
 
     func testParseNonNumericReturnsNil() {
