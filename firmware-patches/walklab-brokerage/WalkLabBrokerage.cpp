@@ -44,6 +44,7 @@
 #include <arpa/inet.h>      // inet_addr / htons / INADDR_NONE
 #include <fcntl.h>          // O_NONBLOCK (비차단 소켓)
 #include <errno.h>
+#include <pwd.h>            // 실기 F7 — getpwnam (세션 파일 소유권 자가 치유)
 #include "Walking.h"        // Robot::Walking::GetInstance()
 #include "Head.h"           // Robot::Head::GetInstance()
 #include "CM730.h"          // Robot::CM730 register map + bulk-read buffer
@@ -734,6 +735,19 @@ namespace Robotis {
     }
 
     void WalkLabBrokerage::Run(Robot::CM730* cm730, mjpg_streamer* streamer) {
+        // **실기 F7 (2026-06-12)** — 세션 파일 소유권 자가 치유. 부팅 rc.local 훅(root)이
+        // 만든 /tmp/df-walklab-cmd 는 sticky /tmp 에서 Mac(SSH robotis)의 원자 교체
+        // (mv = 대상 unlink)를 거부한다 → SSH 온보드 ACK 게이트 영구 실패. ACK 파일(root
+        // 생성)의 rm 도 동급. demo 는 root 로 돌므로 진입 시 robotis 로 chown 해 Mac 쪽
+        // 쓰기 경로를 복구한다(비root 실행/사용자 부재 시 무해 no-op).
+        if (geteuid() == 0) {
+            struct passwd* pw = getpwnam("robotis");
+            if (pw) {
+                if (chown(CMD_PATH, pw->pw_uid, pw->pw_gid) != 0) { /* 부재 시 무해 */ }
+                if (chmod(CMD_PATH, 0666) != 0) { /* 동상 */ }
+                if (chown(ACK_PATH, pw->pw_uid, pw->pw_gid) != 0) { /* 동상 */ }
+            }
+        }
         m_head_commanded = false;
         // O0 계측 — last_cmd_id/loop_ms 초기화.
         strcpy(m_last_cmd_id, "no_id");
@@ -1032,9 +1046,20 @@ namespace Robotis {
             //    (정속 직진 이벤트 침묵) 비용 = 완만한 정지. Stop 은 워치독 WD_STOP
             //    (2.5s)·5s STALE 이 이어받는다(티어 합류). ①티어(release 합성→데드맨
             //    해제)는 이벤트 경로(enabled=0 라인)가 즉시 소화.
+            //    **codex P2 fix (2026-06-12)**: 목표만 0 — 워치독 스냅(ForceSlewZero)과
+            //    달리 슬루 상태는 유지해 아래 "루프 측 슬루 전진"이 SLEW_*_MAX 로 램프
+            //    다운(스펙의 "완만한 정지" — 풀스트라이드 1루프 스냅 방지).
             if (m_active_source == SRC_LOCAL && walking_active &&
                 m_gamepad.PollFailsafe(now_ms) == Robotis::GP_FS_SLEW_ZERO) {
-                ForceSlewZero(walking);
+                m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0;
+                // **codex P2 fix**: local 신선 창까지 만료됐으면 파일 보유 명령의
+                // 재적용을 허용(소비 표시 리셋) — 파일(dedup) 소스는 변경이 없으면
+                // 재적용 기회가 없어 active_source 가 local 에 고착, Mac 의 보유
+                // 명령으로 제어가 복귀하지 못한다. 재적용되면 SRC_FILE 로 전환되며
+                // 이 블록은 자연히 비활성화(UDP 는 새 datagram 도착 즉시 전환).
+                if (!local_control) {
+                    memset(&last_stat, 0, sizeof(last_stat));
+                }
             }
 
             // ── O2 [HIGH fix] 루프 측 슬루 전진 — 슬루는 명령 도착(ApplyCommandLine)에서만
@@ -1094,8 +1119,9 @@ namespace Robotis {
         return ApplyCommandLine(walking, walking_active, line, now_ms);
     }
 
-    // **H2 (2026-06-12)** — 진폭 제자리 슬루: 워치독 WD_SLEW_ZERO 와 H2 ②③티어의
-    // 공유 적용 지점. 목표·슬루를 0 동기화 — 명령 복귀 시 0 에서 다시 램프(급가속 방지).
+    // 진폭 즉시 0 + 슬루 0 동기화 — 워치독 WD_SLEW_ZERO 전용(O1 기존 의미 그대로
+    // 추출). 명령 복귀 시 0 에서 다시 램프(급가속 방지). H2 ②③티어는 목표만 0 으로
+    // 두고 루프 슬루가 램프 다운한다(codex P2 fix — 동작 차이 의도적).
     void WalkLabBrokerage::ForceSlewZero(Robot::Walking* walking) {
         walking->X_MOVE_AMPLITUDE = 0.0;
         walking->Y_MOVE_AMPLITUDE = 0.0;

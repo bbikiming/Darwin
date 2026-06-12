@@ -421,11 +421,15 @@ namespace Robotis {
         m_pending_arm_edge = false;
         m_pending_estop_edge = false;
         m_pending_recover_edge = false;
-        if (m_have_snap) {
-            m_armed = false;            // H2-2 — 재획득 후 재 ARM 필수 (disarm 먼저)
-            OfferCurrentLocked(now_ms); // 최종 정지 라인(enabled=0 — armed 게이트)
+        m_armed = false;                // H2-2 — 재획득 후 재 ARM 필수
+        // **codex P1 fix (2026-06-12)**: 최종 정지 라인은 ①티어(데드맨 해제 관측 —
+        // graceful 단절의 release 합성)에만 발행. 데드맨이 여전히 눌린 채 노드만
+        // 소멸한 비정상 단절은 라인을 내지 않는다 — disarm 게이트 라인(enabled=0)이
+        // 즉시 Walking::Stop 을 유발해 ②티어 스펙("제자리 슬루 → WD_STOP")을
+        // 풀스트라이드에서 위반하기 때문. ②티어는 PollFailsafe(SLEW_ZERO)가 소화.
+        if (m_have_snap && !m_snap.btn_lb) {
+            OfferCurrentLocked(now_ms); // ①티어 — release 반영 정지 라인(enabled=0)
         }
-        m_armed = false;
         m_node_ok = false;
         m_have_snap = false;            // 재획득 전 refresh 발행 금지
         if (m_fd >= 0) { close(m_fd); m_fd = -1; }

@@ -490,14 +490,37 @@ static void test_pilot_tier2_enodev_without_release() {
     p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
     p.InjectEventForTest(Syn(), 1010);
     DrainSlot(p);
-    // release 이벤트가 SYN 없이 끊긴 케이스 — ForceCommit 이 pending 을 커밋.
+    // release 이벤트가 SYN 없이 끊긴 케이스 — ForceCommit 이 pending 을 커밋
+    // → 데드맨 해제 관측 = ①티어로 취급, 정지 라인 발행.
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 0), 2000);
     p.InjectNodeLostForTest(2001);
     WalkCommand c;
-    CHECK(TakeParsed(p, &c), "노드 소멸 시 최종 라인 발행 (강제 커밋)");
+    CHECK(TakeParsed(p, &c), "노드 소멸 시 최종 라인 발행 (강제 커밋 — release 관측)");
     CHECK(c.enabled == 0, "최종 라인 enabled=0 (disarm+release 반영)");
     CHECK(p.PollFailsafe(2100) == GP_FS_SLEW_ZERO, "②티어 SLEW_ZERO");
     CHECK(!p.DevicePresent(), "노드 미보유 — 재스캔 전이");
+    p.Stop();
+}
+
+static void test_pilot_tier2_enodev_deadman_held() {
+    printf("test_pilot_tier2_enodev_deadman_held (비정상 단절 — release 전무, codex P1 fix)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    DrainSlot(p);
+    // 데드맨이 눌린 채 노드만 소멸(거리 이탈·배터리 탈락 모사 — release 합성 없음).
+    // 정지 라인을 발행하면 supervisor 가 즉시 Walking::Stop — ②티어 스펙(제자리
+    // 슬루 → WD_STOP 2.5s) 위반이므로 라인 미발행이 정답.
+    p.InjectNodeLostForTest(2000);
+    char line[256];
+    CHECK(!p.TakeCommand(line, sizeof(line)), "②티어: 정지 라인 미발행 (슬루가 소화)");
+    CHECK(!p.ArmedForTest(), "②티어: disarm (재 ARM 필수)");
+    CHECK(p.PollFailsafe(2100) == GP_FS_SLEW_ZERO, "②티어: SLEW_ZERO 지속");
     p.Stop();
 }
 
@@ -586,6 +609,7 @@ int main() {
     test_pilot_refresh_cadence();
     test_pilot_tier1_release_then_enodev();
     test_pilot_tier2_enodev_without_release();
+    test_pilot_tier2_enodev_deadman_held();
     test_pilot_tier3_silence_false_positive();
     test_pilot_balltrack_toggle();
     test_pilot_adopt_grace();

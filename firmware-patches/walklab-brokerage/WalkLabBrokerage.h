@@ -173,8 +173,9 @@ private:
     /// GamepadPilot 콜백 trampolines (C++03).
     static void GamepadEstopTrampoline(void* self);
     static void GamepadRecoverTrampoline(void* self);
-    /// 진폭 제자리 슬루 — 워치독 WD_SLEW_ZERO 와 H2 ②③티어가 공유하는 단일
-    /// 적용 지점(목표·슬루를 0 동기화 → 명령 복귀 시 0 에서 재램프).
+    /// 진폭 즉시 0 + 슬루 0 동기화 — 워치독 WD_SLEW_ZERO 전용(O1 기존 의미 보존).
+    /// H2 ②③티어는 이걸 쓰지 않는다 — 목표만 0 으로 두고 루프 슬루가 램프 다운
+    /// (codex P2 fix 2026-06-12: 풀스트라이드 1루프 스냅 방지).
     void ForceSlewZero(Robot::Walking* walking);
 
     // ===== C1 카메라 스트림 펌프 (2026-06-12) =====
