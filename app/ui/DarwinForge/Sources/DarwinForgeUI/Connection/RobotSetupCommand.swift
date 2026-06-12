@@ -345,43 +345,35 @@ public enum RobotSetupCommand {
         echo "DF_READY_CAMERA_STOP=ok"
       fi
     }
-    start_camera_stream() {
-      CAM_DIR=""
-      for d in "$HOME/Framework/Linux/project/tutorial/camera" \
-               "$HOME/darwin/Linux/project/tutorial/camera" \
-               "/darwin/Linux/project/tutorial/camera" \
-               "/robotis/Linux/project/tutorial/camera"; do
-        if [ -d "$d" ]; then CAM_DIR="$d"; break; fi
-      done
-      if [ -z "$CAM_DIR" ]; then
-        echo "DF_READY_CAMERA=missing"
-        echo "camera tutorial directory not found"
+    check_camera_stream() {
+      # **C1 (2026-06-12)** — walklab demo 가 8080 MJPEG 를 **직접 스트리밍**한다
+      # (브로커리지 카메라 펌프, firmware-patches C1). demo 가 /dev/video0 을 쥔 동안
+      # camera_tutorial 은 뜰 수 없으므로 더는 시도하지 않는다. 또한 포트 LISTEN 만으로는
+      # 프레임이 보장되지 않으므로(과거 "열림·영상 없음" 오진의 원인) 스냅샷 1장을 실제로
+      # 받아 검증한다. 로봇엔 curl 이 없을 수 있어 wget 우선.
+      if ! camera_port_open; then
+        echo "DF_READY_CAMERA=port_closed"
+        echo "   8080 미오픈 — demo 의 mjpg httpd 가 안 떠 있습니다 (카메라 초기화 실패?)"
         return 0
       fi
-      cd "$CAM_DIR" || { echo "DF_READY_CAMERA=bad_dir"; return 0; }
-      if [ ! -x ./camera_tutorial ]; then
-        echo "DF_READY_CAMERA=build"
-        make >/tmp/df-camera-build.log 2>&1 || {
-          echo "DF_READY_CAMERA=build_failed"
-          tail -30 /tmp/df-camera-build.log 2>/dev/null
-          return 0
-        }
-      fi
-      if camera_port_open; then
-        echo "DF_READY_CAMERA=already_running"
-        return 0
-      fi
-      if sudo -n true 2>/dev/null; then
-        nohup sudo -n ./camera_tutorial >/tmp/df-camera.log 2>&1 &
+      rm -f /tmp/df-cam-health.jpg 2>/dev/null
+      if command -v wget >/dev/null 2>&1; then
+        wget -q -T 4 -O /tmp/df-cam-health.jpg "http://127.0.0.1:8080/?action=snapshot" 2>/dev/null
+      elif command -v curl >/dev/null 2>&1; then
+        curl -m 4 -fsS -o /tmp/df-cam-health.jpg "http://127.0.0.1:8080/?action=snapshot" 2>/dev/null
       else
-        nohup ./camera_tutorial >/tmp/df-camera.log 2>&1 &
+        echo "DF_READY_CAMERA=no_probe_tool"
+        echo "   wget/curl 이 없어 스냅샷 검증 불가 — 포트는 열려 있음"
+        return 0
       fi
-      for i in $(seq 1 10); do
-        camera_port_open && { echo "DF_READY_CAMERA=running"; return 0; }
-        sleep 0.2
-      done
-      echo "DF_READY_CAMERA=start_failed"
-      tail -40 /tmp/df-camera.log 2>/dev/null
+      if [ -s /tmp/df-cam-health.jpg ]; then
+        echo "DF_READY_CAMERA=running"
+        echo "   walklab demo 가 8080 에서 직접 스트리밍 중 (snapshot OK)"
+      else
+        echo "DF_READY_CAMERA=no_frames"
+        echo "   8080 은 열렸지만 프레임이 안 나옵니다 — C1 카메라 패치 이전 demo 입니다."
+        echo "   로봇 demo 폴더에서 install-onboard.sh 재빌드가 필요합니다 (조종은 가능)."
+      fi
       return 0
     }
     # === DarwinForge SSH parity (2026-06-01) — 시작 시 항상 re-arm ===
@@ -397,14 +389,19 @@ public enum RobotSetupCommand {
     BIN=""
     PATCHED=0
     OLD_PATCH=""
+    # **C1 (2026-06-12)**: switch-fix marker 만 있고 C1(카메라 스트림 펌프) marker 가 없는
+    # 구버전 binary 는 최후 폴백 — 조종은 되지만 영상이 안 나오므로 C1 binary 를 우선한다.
+    FALLBACK_BIN=""
     # 1) 별도 demo-pilot 바이너리 우선, 단 성공 버전 marker 가 있어야 한다.
     for d in "$HOME/Framework/Linux/project/demo/demo-pilot" \
              "$HOME/darwin/Linux/project/demo/demo-pilot" \
              "/darwin/Linux/project/demo/demo-pilot" \
              "/robotis/Linux/project/demo/demo-pilot"; do
       if [ -x "$d" ]; then
-        if grep -qa "ROBOTIS onboard brokerage, switch fix" "$d" 2>/dev/null; then BIN="$d"; PATCHED=1; break; fi
-        if grep -qa "df-walklab-cmd" "$d" 2>/dev/null; then OLD_PATCH="$d"; fi
+        if grep -qa "ROBOTIS onboard brokerage, switch fix" "$d" 2>/dev/null; then
+          if grep -qa "camera stream pump" "$d" 2>/dev/null; then BIN="$d"; PATCHED=1; break; fi
+          [ -z "$FALLBACK_BIN" ] && FALLBACK_BIN="$d"
+        elif grep -qa "df-walklab-cmd" "$d" 2>/dev/null; then OLD_PATCH="$d"; fi
       fi
     done
     # 2) 없으면 demo (이 로봇은 demo 자체에 성공 버전을 in-place patch 했을 수 있음).
@@ -414,10 +411,19 @@ public enum RobotSetupCommand {
                "/darwin/Linux/project/demo/demo" \
                "/robotis/Linux/project/demo/demo"; do
         if [ -x "$d" ]; then
-          if grep -qa "ROBOTIS onboard brokerage, switch fix" "$d" 2>/dev/null; then BIN="$d"; PATCHED=1; break; fi
-          if [ -z "$OLD_PATCH" ] && grep -qa "df-walklab-cmd" "$d" 2>/dev/null; then OLD_PATCH="$d"; fi
+          if grep -qa "ROBOTIS onboard brokerage, switch fix" "$d" 2>/dev/null; then
+            if grep -qa "camera stream pump" "$d" 2>/dev/null; then BIN="$d"; PATCHED=1; break; fi
+            [ -z "$FALLBACK_BIN" ] && FALLBACK_BIN="$d"
+          elif [ -z "$OLD_PATCH" ] && grep -qa "df-walklab-cmd" "$d" 2>/dev/null; then OLD_PATCH="$d"; fi
         fi
       done
+    fi
+    # C1 binary 가 없으면 switch-fix 구버전으로 폴백 (조종 가능, 카메라만 미지원 — 진실 보고).
+    if [ -z "$BIN" ] && [ -n "$FALLBACK_BIN" ]; then
+      BIN="$FALLBACK_BIN"
+      PATCHED=1
+      echo "DF_READY_CAMERA_HINT=binary_pre_c1"
+      echo "   ⚠ C1 카메라 패치 이전 binary 사용 — 영상이 필요하면 install-onboard.sh 재빌드"
     fi
     if [ -z "$BIN" ]; then
       if [ -n "$OLD_PATCH" ]; then
@@ -505,8 +511,8 @@ public enum RobotSetupCommand {
     echo "   WalkLab switch-fix brokerage 활성 — 14-token 명령/ACK 검증 완료"
     echo "   ack: $ACK"
     tail -10 /tmp/df-demo.log 2>/dev/null
-    echo "▶ 카메라 스트림 재시작 (조종 + 실시간 영상 동시 사용)"
-    start_camera_stream
+    echo "▶ 카메라 스트림 확인 (C1 — walklab demo 가 8080 직접 스트리밍)"
+    check_camera_stream
     """#
 
     /// **WalkLab Onboard mode 종료 명령** — demo-pilot 정지 + 명령 파일 정리 +
@@ -877,7 +883,10 @@ public enum RobotSetupCommand {
                 DF_PROGRESS("walklab-active");
                 unlink("/tmp/df-pilot-mode");
                 fprintf(stderr, "[df-pilot] entering WalkLabBrokerage.Run()\n");
-                Robotis::WalkLabBrokerage().Run(&cm730);   // 무한 루프 — SIGTERM 까지. SOCCER 루프 우회.
+                // C1 (2026-06-12) — DF_RUN_ARGS_PLACEHOLDER 는 demoBuildPatched 가 main.cpp
+                // 의 mjpg_streamer 변수 유무를 보고 sed 로 치환: 있으면 (&cm730, streamer)
+                // → walklab 중 8080 카메라 펌프 활성, 없으면 (&cm730) 폴백(컴파일 보장).
+                Robotis::WalkLabBrokerage().Run(DF_RUN_ARGS_PLACEHOLDER);   // 무한 루프 — SIGTERM 까지. SOCCER 루프 우회.
                 return 0;                            // 도달 불가(Run 무한). 방어적.
             }
 
@@ -998,6 +1007,17 @@ public enum RobotSetupCommand {
         cat > /tmp/df_inject.cpp << 'EOF_DF_INJECT'
         \#(demoInjectBlock)
         EOF_DF_INJECT
+
+        # 1b) **C1 (2026-06-12)** — 카메라 스트림: main.cpp 의 mjpg_streamer 지역변수
+        #     (streamer)를 brokerage 에 전달해 walklab 중에도 8080 MJPEG 펌프가 돈다.
+        #     streamer 변수가 없는 demo 변종은 종전 시그니처로 폴백 — 컴파일 항상 보장.
+        if grep -q 'mjpg_streamer\*[[:space:]]*streamer' "$SRC/main.cpp"; then
+          sed -i 's/Run(DF_RUN_ARGS_PLACEHOLDER)/Run(\&cm730, streamer)/' /tmp/df_inject.cpp
+          echo "   C1: Run(&cm730, streamer) — 카메라 스트림 펌프 활성 주입"
+        else
+          sed -i 's/Run(DF_RUN_ARGS_PLACEHOLDER)/Run(\&cm730)/' /tmp/df_inject.cpp
+          echo "   ⚠ C1: main.cpp 에 mjpg_streamer 변수 없음 — 스트림 없이 폴백"
+        fi
 
         # 2) main.cpp 변경 안 됐으면 — 이미 빌드된 demo-pilot 이 신선한지 확인.
         if [ -x "$SRC/demo-pilot" ] && [ "$SRC/demo-pilot" -nt /tmp/df_inject.cpp ]; then

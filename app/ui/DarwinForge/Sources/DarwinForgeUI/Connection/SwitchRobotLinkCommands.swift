@@ -51,8 +51,10 @@ public enum SwitchRobotLinkCommands {
 
     /// Switch 카메라 SSH 터널 systemd 서비스를 enable + 즉시 기동 + 상태 확인.
     ///
-    /// 2026-06-08 오늘 아침 실측: 로봇 측 `start-walklab` 은 demo 와 함께
-    /// `camera_tutorial` 까지 자동으로 띄우므로(REMOTE_START_WALKLAB_SCRIPT 참조),
+    /// **C1 (2026-06-12)**: walklab demo 가 8080 MJPEG 를 **직접 스트리밍**한다(브로커리지
+    /// 카메라 펌프 — firmware-patches C1). camera_tutorial 은 demo 가 /dev/video0 을 쥔
+    /// 동안 뜰 수 없으므로 더는 쓰지 않는다. 터널 헬퍼(darwin-switch-camera-tunnel)는
+    /// 스냅샷 헬스체크가 통과하면 아무것도 띄우지 않고 18080→8080 터널만 연다.
     /// **Switch 측에서 남은 일은 `darwin-switch-camera-tunnel.service` 를 enable + start
     /// 하는 한 줄뿐**이다. `sudo -n` 으로 NOPASSWD 전제(install.sh 가 sudoers 자동 적용).
     /// 끝에 `is-active` 로 결과를 echo — caller 가 출력 마커로 성공을 확정한다.

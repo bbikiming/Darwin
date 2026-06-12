@@ -320,9 +320,17 @@ final class PilotTests: XCTestCase {
         XCTAssertTrue(cmd.contains("DF_READY_START=ack_timeout"),
                       "최신 브로커리지 ACK 실패를 명확히 구분")
         XCTAssertTrue(cmd.contains("DF_READY_CAMERA_STOP=begin"),
-                      "WalkLab 초기화 전 camera_tutorial 을 내려 VIDIOC_S_FMT busy 를 방지")
+                      "WalkLab 초기화 전 잔여 camera_tutorial 을 내려 VIDIOC_S_FMT busy 를 방지")
+        // C1 (2026-06-12): walklab demo 가 8080 을 직접 스트리밍 — camera_tutorial 재기동
+        // 대신 스냅샷 실검증으로 카메라 상태를 보고한다.
         XCTAssertTrue(cmd.contains("DF_READY_CAMERA=running"),
-                      "WalkLab ACK 이후 camera_tutorial 을 다시 띄워 조종+영상 동시 사용")
+                      "C1: demo 자체 8080 스트림을 스냅샷으로 실검증한 성공 마커")
+        XCTAssertTrue(cmd.contains("DF_READY_CAMERA=no_frames"),
+                      "C1: 포트 열림·프레임 없음(패치 이전 demo)을 구분 — 포트 LISTEN 만으로 성공 보고 금지")
+        XCTAssertTrue(cmd.contains("camera stream pump"),
+                      "C1 marker 보유 binary 를 우선 선택 — 구버전 demo-pilot 이 카메라를 조용히 끄는 것 방지")
+        XCTAssertFalse(cmd.contains("nohup sudo -n ./camera_tutorial"),
+                      "C1: walklab 중 camera_tutorial 기동 시도 금지 — demo 가 /dev/video0 점유 중")
     }
 
     /// patched 상태 명령이 DF_PATCH=installed / DF_PATCH=missing marker 를 첫 줄로 출력.

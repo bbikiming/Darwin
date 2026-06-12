@@ -285,10 +285,22 @@ final class SwitchRobotLinkCommandsTests: XCTestCase {
 
     func testParseDemoSuiteRobotOutcomeCameraAlreadyRunningIsOK() {
         // 이미 카메라가 떠 있던 케이스도 진행 — 사용자가 재실행해도 OK.
+        // (C1 이후 새 start 스크립트는 already_running 을 내보내지 않지만, 구버전 스크립트
+        //  호환을 위해 파서는 계속 성공으로 취급한다.)
         let out = "DF_READY_START=walklab_running\nDF_READY_CAMERA=already_running"
         let parsed = SwitchRobotLinkCommands.parseDemoSuiteRobotOutcome(out)
         XCTAssertTrue(parsed.walkLabStarted)
         XCTAssertTrue(parsed.cameraStarted)
+    }
+
+    func testParseDemoSuiteRobotOutcomeNoFramesIsHonest() {
+        // C1 (2026-06-12): 포트는 열렸지만 프레임이 없는 패치 이전 demo — 카메라 성공으로
+        // 보고하지 않고 태그를 보존해 caller 가 재빌드 안내를 띄울 수 있게 한다.
+        let out = "DF_READY_START=walklab_running\nDF_READY_CAMERA=no_frames"
+        let parsed = SwitchRobotLinkCommands.parseDemoSuiteRobotOutcome(out)
+        XCTAssertTrue(parsed.walkLabStarted, "조종은 가능해야 함")
+        XCTAssertFalse(parsed.cameraStarted, "no_frames 는 카메라 성공이 아님")
+        XCTAssertEqual(parsed.cameraTag, "no_frames", "원시 태그가 진단용으로 보존")
     }
 
     func testParseDemoSuiteRobotOutcomeMissingPatch() {

@@ -703,14 +703,19 @@ public final class SwitchRobotLinkSession: ObservableObject {
                               fallback: switchFallback(startCmd))
         }
         // 부분 성공 메시지 — camera 까지 한 줄에 진실하게.
+        // C1 (2026-06-12): walklab demo 가 8080 을 직접 스트리밍 — camera_tutorial 미사용.
+        // cameraTag 는 start-walklab 의 스냅샷 헬스체크 결과(running/no_frames/port_closed…).
         let camLine: String = {
             if robotOutcome.cameraStarted {
-                return "demo 가동 + camera_tutorial \(robotOutcome.cameraTag)"
+                return "demo 가동 + 카메라 스트림 \(robotOutcome.cameraTag) (demo 직접 송출)"
             }
             if robotOutcome.cameraTag.isEmpty {
-                return "demo 가동 — camera_tutorial 응답 없음(로봇 측 camera 트리거 실패 가능)"
+                return "demo 가동 — 카메라 상태 응답 없음(구버전 start 스크립트 가능)"
             }
-            return "demo 가동 — camera_tutorial=\(robotOutcome.cameraTag) (로봇 카메라가 안 떠도 SSH 조종은 가능)"
+            if robotOutcome.cameraTag == "no_frames" {
+                return "demo 가동 — 8080 열림·프레임 없음: C1 카메라 패치 이전 demo (install-onboard.sh 재빌드 필요, 조종은 가능)"
+            }
+            return "demo 가동 — 카메라=\(robotOutcome.cameraTag) (영상이 안 떠도 SSH 조종은 가능)"
         }()
         mark(.startRobotDemo, robotOutcome.cameraStarted ? .success : .success, camLine)
         // 위는 의도적으로 camera 실패도 success 로 — 다음 스테이지를 막지 않는다.
