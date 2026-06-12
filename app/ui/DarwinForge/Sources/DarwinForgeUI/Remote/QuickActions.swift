@@ -132,6 +132,20 @@ public enum QuickActionCatalog {
                     detail: "8080 종료", icon: "camera.fill.badge.ellipsis",
                     command: RobotSetupCommand.cameraTutorialStop),
 
+        // 실기 F12 (2026-06-13) — RG G01 조종기 데모 원클릭. walkLabRobotisStart 는
+        // estop flag 해제 → demo(-pilot) 재시작 → walklab 진입 → ACK 게이트까지
+        // 하는 검증된 시작 경로(connectOnboard 자동 복구와 동일 스크립트).
+        // 진입 후 패드 A(ARM)만 누르면 조종 시작 — GamepadPilot 은 동글 자동 획득.
+        QuickAction(id: "gamepad-pilot-start", category: .robotis,
+                    label: "조종기 데모 시작",
+                    detail: "WalkLab + RG G01 패드 (A=ARM, B=E-STOP)",
+                    icon: "gamecontroller.fill",
+                    command: RobotSetupCommand.walkLabRobotisStart,
+                    requiresConfirm: true,
+                    confirmSummary: "데모를 재시작해 WalkLab 조종 모드로 진입합니다 — "
+                        + "기립+자이로 캘리브레이션(~20초) 후 패드 A(ARM)로 조종 시작. "
+                        + "로봇을 크래들에 거치하거나 평지에 세워 두세요."),
+
         // 볼 트래킹 / 걷기 / 액션 데모 — USB bus 점유, forge-bridge 와 양립 불가.
         QuickAction(id: "ball-tracker-start", category: .robotis, label: "공 추적 데모 시작",
                     detail: "ROBOTIS demo (vision/soccer)", icon: "target",
