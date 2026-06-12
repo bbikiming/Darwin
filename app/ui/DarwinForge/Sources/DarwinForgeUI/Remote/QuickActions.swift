@@ -51,10 +51,15 @@ public struct QuickAction: Identifiable, Hashable {
     public let icon: String
     public let command: String
     public let requiresConfirm: Bool
+    /// 확인 다이얼로그의 **영향 요약 한 줄** (실기 UI fix, 2026-06-12).
+    /// 다이얼로그 본문엔 스크립트 전문 대신 이 요약만 표시 — nil 이면 카테고리 기본 문구
+    /// (`QuickActionConfirmModel.summaryText`). `requiresConfirm` 액션은 지정 권장.
+    public let confirmSummary: String?
 
     public init(id: String, category: QuickActionCategory, label: String,
                 detail: String, icon: String, command: String,
-                requiresConfirm: Bool = false) {
+                requiresConfirm: Bool = false,
+                confirmSummary: String? = nil) {
         self.id = id
         self.category = category
         self.label = label
@@ -62,6 +67,7 @@ public struct QuickAction: Identifiable, Hashable {
         self.icon = icon
         self.command = command
         self.requiresConfirm = requiresConfirm
+        self.confirmSummary = confirmSummary
     }
 }
 
@@ -105,7 +111,8 @@ public enum QuickActionCatalog {
         QuickAction(id: "ssh-permanent", category: .service, label: "SSH 영구 활성",
                     detail: "설치 + 부팅 자동", icon: "key.horizontal.fill",
                     command: "sudo apt-get install -y --force-yes openssh-server && sudo service ssh start && sudo update-rc.d ssh defaults",
-                    requiresConfirm: true),
+                    requiresConfirm: true,
+                    confirmSummary: "openssh 설치 + 부팅 자동시작 등록 — 약 1분, 네트워크 구성 변경"),
         QuickAction(id: "smb-restart", category: .service, label: "Samba 재시작",
                     detail: "SMB share 갱신", icon: "externaldrive.connected.to.line.below",
                     command: "sudo service smbd restart && sudo service nmbd restart"),
@@ -148,7 +155,8 @@ public enum QuickActionCatalog {
                     detail: "demo 시작 시 SOCCER 자동 진입 (demo-pilot)",
                     icon: "hammer.fill",
                     command: RobotSetupCommand.demoBuildPatched,
-                    requiresConfirm: true),
+                    requiresConfirm: true,
+                    confirmSummary: "로봇에서 demo 를 재빌드합니다 — 약 1~2분, 빌드 후 원본 main.cpp 복구"),
         QuickAction(id: "demo-patch-status", category: .robotis,
                     label: "패치 demo 상태",
                     detail: "demo-pilot 설치 여부",
@@ -159,7 +167,8 @@ public enum QuickActionCatalog {
                     detail: "demo-pilot binary + 흔적 정리",
                     icon: "trash",
                     command: RobotSetupCommand.demoRemovePatched,
-                    requiresConfirm: true),
+                    requiresConfirm: true,
+                    confirmSummary: "demo-pilot 바이너리와 주입 흔적을 정리합니다 — 원본 demo 는 유지"),
 
         // 진단
         QuickAction(id: "fuser-ttyusb", category: .robotis, label: "ttyUSB 점유자",
@@ -184,15 +193,18 @@ public enum QuickActionCatalog {
         QuickAction(id: "reboot", category: .danger, label: "재부팅",
                     detail: "sudo reboot", icon: "arrow.triangle.2.circlepath",
                     command: "sudo reboot",
-                    requiresConfirm: true),
+                    requiresConfirm: true,
+                    confirmSummary: "로봇이 즉시 재부팅됩니다 — 약 1~2분 오프라인, 보행 중이면 정지"),
         QuickAction(id: "shutdown", category: .danger, label: "셧다운",
                     detail: "sudo poweroff", icon: "power",
                     command: "sudo poweroff",
-                    requiresConfirm: true),
+                    requiresConfirm: true,
+                    confirmSummary: "로봇 전원이 꺼집니다 — 물리 전원 버튼으로만 재시작 가능"),
         QuickAction(id: "killall-socat", category: .danger, label: "모든 socat 종료",
                     detail: "5530 강제 해제", icon: "xmark.octagon",
                     command: "sudo killall -9 socat 2>/dev/null && echo killed all",
-                    requiresConfirm: true),
+                    requiresConfirm: true,
+                    confirmSummary: "5530 브리지가 끊겨 LAN 연결이 즉시 끊어집니다"),
     ]
 
     public static func actions(in category: QuickActionCategory) -> [QuickAction] {

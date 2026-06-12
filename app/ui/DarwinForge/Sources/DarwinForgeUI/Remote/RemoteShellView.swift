@@ -58,14 +58,20 @@ public struct RemoteShellView: View {
                 }
             }
         }
-        .alert(item: $confirmAction) { action in
-            Alert(
-                title: Text("\(action.label) 실행?"),
-                message: Text(action.command),
-                primaryButton: .destructive(Text("실행"), action: {
+        // 실기 UI fix (2026-06-12): 종전 .alert 는 message 에 명령 *전문*을 넣어
+        // demoBuildPatched(수백 줄) 같은 액션에서 다이얼로그가 화면 세로를 넘어
+        // 실행/취소 버튼이 잘렸다(앱 채널 배포 불능). 시트는 요약만 본문에 표시하고
+        // 전문은 "명령 보기" 접기(고정 상한 ScrollView)로 분리 — 버튼은 항상 화면 안.
+        // destructive 스타일은 danger 카테고리만(빌드는 파괴적 아님). 실행 플로우
+        // (승인 → shell.send → 히스토리)는 종전과 동일.
+        .sheet(item: $confirmAction) { action in
+            QuickActionConfirmSheet(
+                model: QuickActionConfirmModel(action: action),
+                onRun: {
+                    confirmAction = nil
                     Task { await shell.send(action.command) }
-                }),
-                secondaryButton: .cancel(Text("취소"))
+                },
+                onCancel: { confirmAction = nil }
             )
         }
     }
