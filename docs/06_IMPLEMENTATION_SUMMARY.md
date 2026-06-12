@@ -3,7 +3,7 @@
 > 프로그램 진행의 누적 요약 — P 완료마다 1절 적립(최신이 위). 전체 프로젝트 이력은
 > `PROGRESS.md`, 웨이브 상태 표는 `docs/design/README.md` §1 참조.
 
-## 누계 현황 (2026-06-12 갱신 4차)
+## 누계 현황 (2026-06-12 갱신 5차)
 
 - 완료(머지·리뷰 통과): **P2**(3D W2), **P5**(bus D0), **P3**(전송 묶음, 2회전),
   **P12**(3D W4+W5), **P11**(3D W3 — 머지 b3906f9), **P4**(온보드 O2 — 39a613b+54e6246,
@@ -14,10 +14,29 @@
 - **P9 ✅**(온보드 O4 TEL2 — daa2550·998297a, 1회전 통과: 파일 TEL v1 폴백 불변·UDP
   TEL2 30Hz·FSR/CoP·phase·래치·J6 폴러·HUD/walkAnimator/오버레이 결선. 양 모드 FSR
   오버레이 대칭 완성)
-- 다음(로봇 불필요): **P10**(Switch UDP — 마지막 로봇-프리 P). bus 트랙은 D3(데모 운영)만 잔여
-- 온보드 트랙: **O0·O1·O2·O4 완료** — O3(밸런스 피드백, 실기 비중 최대)만 잔여
-- 로봇 대기: P1(프로브), P7, P8, 실기 벤치 누적분(05 의 "실기 보류" 항목들 + P3 배포·벤치
-  + P4 k_x 보정)
+- **P10 ✅**(Switch UDP — ae23e5c, 1회전 통과: df_udp §G 와이어층·transport=auto
+  폴백·estop 파일 상시 발화·stride 38 패리티. 관찰 1건 — probing ≤1.5s 명령 공백,
+  실기 체크리스트 이월) — **로봇-프리 P 전부 소진**. bus 트랙은 D3(데모 운영)만 잔여
+- 온보드 트랙: **O0·O1·O2·O4 완료** — O3(밸런스 피드백, 실기 비중 최대)만 잔여.
+  P8(O3) 코드 단계는 플래그 게이트 기본 OFF 라 로봇 없이 착수 가능(실기 튜닝만 대기)
+- 로봇 대기: P1(프로브), P7, P8 실기 튜닝, 실기 벤치 누적분(05 의 "실기 보류" 항목들
+  + P3 배포·벤치 + P4 k_x 보정 + P10 무선 실효율·E-STOP)
+
+---
+
+## [P10] handheld H3 — Switch 클라이언트 O1-UDP 화 (2026-06-12, ae23e5c)
+
+- `df_udp` 신설(356줄) — §G 와이어 순수 계층: 핸드셰이크·DFCMD·DF-ESTOP ×3(0/50/100ms)·
+  ACK·TEL2 파서 + `UdpControlTransport`(논블로킹 단일 소켓, RTT EMA·effective-Hz).
+- SshControlClient `transport=auto` 상태기계: probing(핸드셰이크 atomic 기록+UDP 송출)
+  → 첫 ACK 시 udp 승격, ack_probe_ms(1.5s) 무응답 시 teardown+핸드셰이크 clear →
+  SSH 파일 5Hz 폴백. estop 은 UDP burst + 파일 touch **병행**(파일 상시 발화).
+- main 루프: streaming 시 20Hz 연속 스트림(debounce 없음 — 스트림=생존신호),
+  TEL2 신선 시 cat 폴 1Hz 강등(J6 패리티), v1 이 v2 필드를 덮지 않음.
+- stride 기본 50→38mm(거버너 §G.8 최종 클램프 → 표시값=실제값 패리티, §5 통일안).
+  config 6키 신설(udp_send_hz·cmd/estop/telemetry_port·ack_probe_ms·udp_tel_fresh_s).
+- 검증: 신규 24 테스트, 풀 스위트 237/237(리뷰 세션 재실행). 실기(무선 실효율·
+  E-STOP·보행 중 재연결 probing 공백)는 이월.
 
 ---
 

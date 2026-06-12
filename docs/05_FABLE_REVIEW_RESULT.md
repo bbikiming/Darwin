@@ -15,6 +15,34 @@
 
 ---
 
+## [P10] handheld H3 — Switch 클라이언트 O1-UDP 화 — **통과** (2026-06-12)
+
+- 구현 커밋: `ae23e5c`(switch)·`c48f8e7`(docs) · 리뷰어: **Fable 교차**(별도 세션)
+- 증거(리뷰 세션 독립 재실행): switch-pilot **237 테스트 0 실패**
+  (`PYTHONPATH=src python3 -m unittest discover -s tests`)
+- **A 안전: 통과** — `estop()` 은 UDP ×3연발(0/50/100ms, off-thread)과 무관하게
+  **파일 touch 상시 발화**(burst 전량 유실해도 미정지 불가), 900ms 재계약 무변경.
+  teardown/close 시 채널·uplink rm → 로봇 file-poll 복귀(stale 리스너/구토큰 없음).
+  pump/send/parse 전부 루프로 raise 없음(논블로킹, 64 datagram 바운드 drain).
+- **B 계약: 통과** — §G.1/G.2/G.3/§A.2-TEL2 와이어 포맷 verbatim 소비(df_udp 순수
+  함수층), DFCMD line 은 §C v1 14토큰 유지(로봇 양 dialect 영구 수용). seq 단조증가
+  + `_sent_at` 256 바운드. TEL2 가변 "-" 그룹(FSR 8|CoP 2) 커서 파싱 — malformed 는
+  None 드롭. v1 cat 폴은 UDP 비신선 시에만 호출(v2 필드 덮어쓰기 방지, J6 패리티
+  1Hz 강등). 토큰 16 alnum shell-safe(secrets), 핸드셰이크 atomic tmp+mv.
+- **C 품질: 통과** — 신규 24 테스트(df_udp 14: 직렬화/TEL2 파서/UDP 루프백
+  seq·ACK·RTT + ssh_control_client 10: auto 상태기계·dispatch 분기·estop 병행·
+  tel-fresh·핸드셰이크). config 6키 범위 검증, stride 50→38mm 패리티(§5 통일안)
+  근거 주석. README §G 신설 + robot_udp 구계약 서술 정정.
+- **D 절차: 통과** — 커밋 2분할(feat/docs), 체크박스+해시, handheld §H3 완료 블록,
+  메모리 동기화.
+- 발견 이슈: 블로킹 0. **관찰 1건(기록)** — probing 창(≤1.5s) 동안 명령 파일 미기록:
+  connect/재연결 직후 로봇이 §G 미지원·미패치면 명령이 최대 1.5s 공백(설계 의도 —
+  파일 쓰기 = SSH 왕복이라 UDP 레이트 병행 불가. estop 파일 경로는 상시 생존, 만료 후
+  5Hz 폴백 자동 복귀). **보행 중 재연결** 시나리오를 실기 체크리스트에 포함할 것.
+- 실기 보류: Switch→로봇 무선 UDP 실효율(effective-Hz·RTT)·E-STOP 체감 지연·
+  ACK 무응답 폴백 전환 실관측·단일 조종자 운용(Mac↔Switch 핸드셰이크
+  last-writer-wins) 확인.
+
 ## [P9] 온보드 O4 — TEL2 30Hz 텔레메트리 v2 — **통과** (2026-06-12)
 
 - 구현 커밋: `daa2550`(firmware)·`998297a`(connection)·`980e2a6`(docs) ·
