@@ -305,6 +305,22 @@ final class PilotTests: XCTestCase {
                       "WalkLab 성공 버전 marker 를 binary 에 포함")
     }
 
+    /// **P7 (2026-06-12)** — demoBuildPatched 가 brokerage 6파일 전부를 배치하고
+    /// OBJECTS 에 3개 .o 를 등록하는지. WalkLabTransport 는 O1 이후 누락돼 있던
+    /// 잠복 버그(링크 실패) 정정 — 회귀 방지.
+    func testDemoBuildPatchedDeploysGamepadPilot() {
+        let cmd = RobotSetupCommand.demoBuildPatched
+        for f in ["WalkLabBrokerage.cpp", "WalkLabTransport.cpp", "GamepadPilot.cpp",
+                  "WalkLabBrokerage.h", "WalkLabTransport.h", "GamepadPilot.h"] {
+            XCTAssertTrue(cmd.contains(f), "brokerage 소스 \(f) 배치")
+        }
+        for o in ["WalkLabBrokerage.o", "WalkLabTransport.o", "GamepadPilot.o"] {
+            XCTAssertTrue(cmd.contains(o), "Makefile OBJECTS \(o) 등록")
+        }
+        XCTAssertTrue(cmd.contains("구버전"),
+                      "구버전 ~/walklab-brokerage(6파일 미만)를 명확한 메시지로 거부")
+    }
+
     func testWalkLabStartRequiresSwitchFixBinary() {
         let cmd = RobotSetupCommand.walkLabRobotisStart
         XCTAssertTrue(cmd.contains("ROBOTIS onboard brokerage, switch fix"),

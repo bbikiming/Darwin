@@ -990,6 +990,8 @@ public enum RobotSetupCommand {
         #    injection 블록의 walklab 분기가 Robotis::WalkLabBrokerage 를 참조하므로
         #    이 파일들 + include + OBJECTS 항목이 없으면 빌드 실패한다.
         #    INTEGRATION.md 의 scp 위치(~/walklab-brokerage/) 또는 SRC 에 이미 있으면 사용.
+        #    **P7 (2026-06-12)**: WalkLabTransport(O1 — 종전 누락 정정) + GamepadPilot(H1)
+        #    동반 배치 — 6파일 전부 있어야 빌드 가능(구버전 ~/walklab-brokerage 는 명확히 거부).
         WLB_SRC=""
         for d in "$HOME/walklab-brokerage" "$SRC"; do
           if [ -f "$d/WalkLabBrokerage.cpp" ] && [ -f "$d/WalkLabBrokerage.h" ]; then WLB_SRC="$d"; break; fi
@@ -999,9 +1001,17 @@ public enum RobotSetupCommand {
           echo "   Mac 에서 먼저: scp -r firmware-patches/walklab-brokerage/ darwin@<robot-ip>:~/walklab-brokerage/"
           exit 1
         fi
-        cp -f "$WLB_SRC/WalkLabBrokerage.h"   "$SRC/WalkLabBrokerage.h"
-        cp -f "$WLB_SRC/WalkLabBrokerage.cpp" "$SRC/WalkLabBrokerage.cpp"
-        echo "   WalkLab brokerage 소스 배치: $WLB_SRC → $SRC"
+        for f in WalkLabBrokerage.cpp WalkLabBrokerage.h \
+                 WalkLabTransport.cpp WalkLabTransport.h \
+                 GamepadPilot.cpp GamepadPilot.h; do
+          if [ ! -f "$WLB_SRC/$f" ]; then
+            echo "✗ $WLB_SRC/$f 없음 — ~/walklab-brokerage 가 구버전입니다."
+            echo "   Mac 에서 재복사: scp -r firmware-patches/walklab-brokerage/ darwin@<robot-ip>:~/walklab-brokerage/"
+            exit 1
+          fi
+          cp -f "$WLB_SRC/$f" "$SRC/$f"
+        done
+        echo "   WalkLab brokerage 소스 배치(6파일): $WLB_SRC → $SRC"
 
         # 1) injection 블록 작성.
         cat > /tmp/df_inject.cpp << 'EOF_DF_INJECT'
@@ -1047,8 +1057,13 @@ public enum RobotSetupCommand {
           cp main.cpp.df-orig main.cpp; exit 1
         fi
         # GNU Make 암묵 규칙(%.o:%.cpp, CXXFLAGS 에 INCLUDE_DIRS)이 컴파일 — OBJECTS 등록만.
+        # P7: WalkLabTransport.o(O1 — 종전 누락 정정) + GamepadPilot.o(H1) 동반 등록(멱등).
         grep -q 'WalkLabBrokerage.o' Makefile || \
           sed -i 's/^OBJECTS = \(.*\)$/OBJECTS = \1 WalkLabBrokerage.o/' Makefile
+        grep -q 'WalkLabTransport.o' Makefile || \
+          sed -i 's/^OBJECTS = \(.*\)$/OBJECTS = \1 WalkLabTransport.o/' Makefile
+        grep -q 'GamepadPilot.o' Makefile || \
+          sed -i 's/^OBJECTS = \(.*\)$/OBJECTS = \1 GamepadPilot.o/' Makefile
 
         # 4) make + binary 이름 보존.
         echo "▶ make"
@@ -1531,8 +1546,62 @@ public enum RobotSetupCommand {
     /// **E-stop flag 제거 (re-arm)** — 사용자가 명시적 복구/재무장 시 또는 onboard 재시작 시.
     /// `walkLabRobotisStart` 가 이미 시작 시 `rm -f` 를 수행하므로 이건 명시적 복구 버튼용.
     /// (contract §B REMOVER / §D.4 — 문자열 PINNED)
+    /// **실기 F1 (2026-06-12)**: rm 실패(타 소유자 flag — sticky /tmp)에도 무조건 CLEARED 를
+    /// echo 해 Mac 이 재무장 성공으로 오인했다. flag 가 *실제로 사라졌을 때만* CLEARED.
     public static let walkLabClearEstop: String =
-        "rm -f /tmp/df-walklab-estop 2>/dev/null; echo CLEARED"
+        "rm -f /tmp/df-walklab-estop 2>/dev/null; [ ! -f /tmp/df-walklab-estop ] && echo CLEARED || echo CLEAR_FAIL"
+
+    /// **bus 선점 (실기 F6, 2026-06-12)** — LAN(5530) 연결 직전 로봇측 버스 사용자 정리.
+    ///
+    /// 근거: CM730 시리얼은 단일 소유인데 demo(walklab 포함)가 8ms 벌크리드로 bus 를 읽는
+    /// 동안 Mac `boardSnapshot` 의 응답 바이트를 가로채 LAN 연결이 "연결 중"에서 사실상
+    /// 무한 대기했다(실기 재현). 마법사의 5530 TCP 프로브는 socat accept 만 봐서 초록 —
+    /// 버스 경합은 보이지 않는다. **DarwinForge 연결 시도가 최상위 소유자**: demo 류 전부
+    /// 정지 → forge-bridge(socat) 보장 → 그 다음에야 Bus open. (killall/service NOPASSWD
+    /// sudo 가정 — 마스터 셋업. SSH 미가용 환경은 호출측에서 best-effort 스킵.)
+    /// 출력 마커: `DF_BUS_PREEMPT=ok|busy_process_alive|bridge_down` → `parseBusPreempt`.
+    public static let busPreemptTakeover: String = #"""
+    set +e
+    echo "▶ DarwinForge bus 선점 — 로봇측 버스 사용자 정지"
+    sudo -n killall demo demo-pilot walk_demo walk_tuner action_editor ball_follower vision_demo camera_tutorial 2>/dev/null
+    for i in $(seq 1 20); do
+      pgrep -x demo >/dev/null 2>&1 || pgrep -x demo-pilot >/dev/null 2>&1 || break
+      sleep 0.2
+    done
+    if pgrep -x demo >/dev/null 2>&1 || pgrep -x demo-pilot >/dev/null 2>&1; then
+      echo "DF_BUS_PREEMPT=busy_process_alive"
+      exit 5
+    fi
+    if ! pgrep -f "socat.*5530" >/dev/null 2>&1; then
+      sudo -n service forge-bridge start >/dev/null 2>&1
+      sleep 0.5
+    fi
+    if pgrep -f "socat.*5530" >/dev/null 2>&1; then
+      echo "DF_BUS_PREEMPT=ok"
+    else
+      echo "DF_BUS_PREEMPT=bridge_down"
+      exit 6
+    fi
+    """#
+
+    /// `busPreemptTakeover` 출력 해석 결과.
+    public enum BusPreemptResult: String, Sendable {
+        case ok
+        case busyProcessAlive = "busy_process_alive"
+        case bridgeDown = "bridge_down"
+        case unknown
+    }
+
+    /// `busPreemptTakeover` stdout 의 마지막 `DF_BUS_PREEMPT=` 마커를 해석 (순수 함수).
+    public static func parseBusPreempt(_ output: String) -> BusPreemptResult {
+        for line in output.split(separator: "\n").reversed() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("DF_BUS_PREEMPT=") else { continue }
+            let value = String(trimmed.dropFirst("DF_BUS_PREEMPT=".count))
+            return BusPreemptResult(rawValue: value) ?? .unknown
+        }
+        return .unknown
+    }
 
     /// **walklab 모드 영구 표식 기록** — 재부팅 후에도 connect-time verify 가 모드를 알도록.
     /// PINNED marker file: `~/.config/darwinforge/pilot-mode`, 내용 `walklab`.
