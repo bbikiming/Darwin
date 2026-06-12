@@ -103,13 +103,35 @@ echo "0 0 0 0 0 0 13" > /tmp/df-walklab-cmd
 sudo killall demo-pilot
 ```
 
-## 현황 — Wave O0·O1·O2 (walklab-onboard-teleop-upgrade)
+## 현황 — Wave O0·O1·O2 (walklab-onboard-teleop-upgrade) + H1·H2 (handheld-direct-pilot)
 
 | Wave | 내용 | 상태 |
 |---|---|---|
 | O0 | 클럭 오프셋·TEL last_cmd_id/loop_ms·벤치 절차 | 구현 완료 (74fca94) |
 | O1 | 이벤트 구동 UDP 전송·latest-wins 슬롯·워치독 티어 | 구현 완료 (ad287e4) |
 | **O2** | **프로토콜 v2(twist SI)·결합 엔벨로프 거버너·래치 슬루·밸런스 결선·게이트 스케줄** | **구현 완료 (호스트 테스트 통과) — 실기 벤치 대기** |
+| **H1+H2** | **RG G01 동글 직결 GamepadPilot + 소스 중재·3티어 failsafe** | **구현 완료 (호스트 138 checks) — 실기 입회 게이트 대기** |
+
+**H1+H2 요약** (`GamepadPilot.{h,cpp}` 신설 — H0 실측 `docs/reports/2026-06-12-rgg01-usb-probe.md` 기반):
+- **획득**: `/dev/input/event*` 스캔 → EVIOCGNAME(`Microsoft X-Box 360 pad`)+EVIOCGID
+  (045e:028e) 매칭, 미발견/소실 시 1s 재스캔(핫플러그 겸용). 노드 번호 불변 가정 금지.
+- **읽기**: select(50ms)+read 16B 단위, EV_ABS/KEY 누적 → EV_SYN 커밋(축 일관성).
+  정적 홀드(이벤트 0) 중엔 50ms 재공급으로 스트림 워치독(600/2500ms) 정합.
+- **매핑**(콕핏 RG G01 프리셋 1:1): LS=이동/횡, RS X=턴·Y=머리틸트, LT/RT=머리팬
+  (RT−LT 차분 비례 — 트리거는 순수 아날로그), B=E-STOP, Y=복구(estop flag 해제),
+  X=볼트랙, LB=데드맨(이동/턴만 게이트), RB=터보(×1.3), A=ARM. 데드존 0.10·곡선
+  1.35·intensity^0.7→period 700–560/foot 18–40 스케줄.
+- **적용 경로**: 자체 latest-wins 슬롯 → supervisor 가 v1 14토큰 라인으로 소비
+  (`ApplyCommandLine` 단일 지점 — 거버너가 최종 클램프). **E-STOP 만 예외**: 읽기
+  스레드에서 즉시 `TriggerEstopImmediate()`(Walking::Stop+토크OFF+flag, UDP estop
+  와 공유 헬퍼).
+- **중재(H2)**: E-STOP(전 소스 상시) > local(최근 입력 ≤1s) > 네트워크(UDP/파일).
+  local 신선 창에는 네트워크 walk 명령 폐기(estop·복구는 별도 경로 — 상시 유효).
+  TEL2 `active_source` = local/udp/file.
+- **failsafe 3티어**: ① release 합성→데드맨 해제(즉시 enabled=0) ② ENODEV/노드
+  소멸→disarm+제자리 슬루+재스캔(재획득 후 재 ARM 필수) ③ 이벤트 침묵 ≥1.5s(초기값)
+  →제자리 슬루(disarm 아님 — 오발 비용=완만한 정지). EVIOCGKEY 생존 폴은 H0 실측
+  반증으로 폐기. 빌드 게이트 `-DDF_NO_GAMEPAD_PILOT`(기본 ON — 패드 미연결 시 무동작).
 
 **O2 요약** (상세 계약 `docs/ssh-parity-contract.md` §G.8):
 - 명령 두 방언 — v1(14토큰, 영구) + **v2 twist**(`V2 seq t_tx flags vx_mms vy_mms wz_mrad_s

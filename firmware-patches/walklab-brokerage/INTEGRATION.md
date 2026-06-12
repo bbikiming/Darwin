@@ -16,9 +16,10 @@ scp -r firmware-patches/walklab-brokerage/ \
 ssh darwin@<robot-ip>
 
 # 3) 헤더 + 구현 파일 + 볼 트래킹 config 를 demo 폴더에 복사
-cp ~/walklab-brokerage/WalkLabBrokerage.h \
-   ~/Framework/Linux/project/demo/
-cp ~/walklab-brokerage/WalkLabBrokerage.cpp \
+#    (O1 WalkLabTransport + H1 GamepadPilot 포함 — 6파일 전부 필요)
+cp ~/walklab-brokerage/WalkLabBrokerage.{h,cpp} \
+   ~/walklab-brokerage/WalkLabTransport.{h,cpp} \
+   ~/walklab-brokerage/GamepadPilot.{h,cpp} \
    ~/Framework/Linux/project/demo/
 # balltrack.ini = 볼 트래킹 HSV 색 + 헤드 tilt 상한 + 카메라 조도.
 # WalkLabBrokerage 가 런타임에 절대경로 /robotis/Linux/project/demo/balltrack.ini 로 읽음.

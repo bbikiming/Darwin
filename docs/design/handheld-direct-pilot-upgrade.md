@@ -132,7 +132,16 @@ timeout 3 od -An -tx1 /dev/input/eventN | wc -c
 
 ### Wave H1 — 온보드 게임패드 입력 소스 (M~L) — "직결"의 본체
 
-`firmware-patches/walklab-brokerage/` 에 `GamepadPilot.{h,cpp}` 신설(C++03, ~400줄):
+> **구현 완료 (2026-06-12, P7)** — `GamepadPilot.{h,cpp}` 신설 + 브로커리지 결선.
+> H0 실측(`docs/reports/2026-06-12-rgg01-usb-probe.md`)이 설계 가정을 반증한 부분은
+> 보고서 우선으로 구현: ① 아래 H1-1 의 "EVIOCGKEY 1s 상태 폴 = 패드 생존 판정"은
+> **폐기**(보고서 §5 함의 4 — 단절 직전까지 stale "held" 반환 실측) — 생존 판정은
+> "마지막 이벤트 수신 경과"로 대체. ② 트리거는 BTN_TL2/TR2 없는 순수 아날로그라
+> 머리팬은 RT−LT 차분 비례 제어. ③ blocking read 는 select(50ms)+read 로 구현 —
+> 정적 홀드(이벤트 0) 중 보유 상태 50ms 재공급(스트림 워치독 600/2500ms 정합)이
+> 필요해서이며, switch-pilot 의 selector 패턴과 동형. 적용 경로는 H1-5 의 "직접
+> 호출 폴백" 불요(O1 머지됨) — 자체 latest-wins 슬롯 → supervisor 소비.
+> 호스트 테스트 `tests/test_gamepad.cpp` 138 checks. 실기 검증은 입회 게이트 대기.
 
 1. **장치 스캔/핫플러그**: `/dev/input/event*` 글롭 → 이름/VID 매칭(H0 테이블), 1s 주기
    재스캔(동글/유선 분리 감지 겸용) — switch-pilot `input_linux.py:211-375` 로직의 C 이식.
@@ -159,6 +168,16 @@ timeout 3 od -An -tx1 /dev/input/eventN | wc -c
 - (e) M~L / 리스크 중 — 구형 커널 HID 양자화·이벤트 드랍은 H0 실측으로 조기 판정.
 
 ### Wave H2 — 소스 중재 + 안전 의미론 (S~M)
+
+> **구현 완료 (2026-06-12, P7)** — 우선순위 `E-STOP(전 소스 상시) > local(최근 입력
+> ≤1s) > 네트워크` supervisor 결선, TEL2 `active_source`=local/udp/file(O4 자리 채움
+> — TEL v1 파일 포맷 불변). failsafe 는 H0 정정 반영 3티어: ①release 합성→데드맨
+> 게이트 즉시 잠금(graceful 단절의 결정적 1차) ②ENODEV/노드 소멸→disarm+제자리
+> 슬루+1s 재스캔(재획득 후 재 ARM 필수 — H2-3) ③이벤트 침묵 ≥1.5s→제자리 슬루
+> (disarm 아님, 비정상 RF 단절의 1차 방어 — 임계는 실기 정속 보행 침묵 분포 후 확정).
+> 아래 H2-2 원문(EVIOCGKEY 폴 포함)은 H0 반증으로 **P7 프롬프트의 3티어 정의가 대체**.
+> 복구(Y)=estop flag 해제(switch recover `rm -f` 패리티)+ARM. 실기 단절 매트릭스
+> (전원 OFF·절전·거리 이탈·배터리 탈락·동글 뽑기)는 입회 게이트 대기.
 
 1. **소스 우선순위**: `E-STOP(모든 소스, 항상) > local 게임패드(최근 입력 ≤1s) > 네트워크
    (Mac/Switch)`. local 활성 중 네트워크 walk 명령은 무시하되 **estop·복구·모드 전환은 전

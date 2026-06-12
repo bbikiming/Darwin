@@ -171,7 +171,16 @@ applyBalanceCorrectionIfEnabled 를 step(20ms)마다. 자이로 입력 1차 LPF(
 10분·진동 여부)는 멈추고 사용자 보고 — 크래들 게이트 절차 포함. README 갱신.
 ```
 
-## [ ] P7 — handheld H1+H2: 온보드 GamepadPilot + 소스 중재 · 전제 P1 ✅·P3 ✅·P4 ✅ (2026-06-12 H0 실측 반영 개정)
+## [x] P7 — handheld H1+H2: 온보드 GamepadPilot + 소스 중재 · 전제 P1 ✅·P3 ✅·P4 ✅ — 코드/테스트 완료, 실기 입회 게이트 대기 (2026-06-12, 8430f0a·bbde5ac)
+
+> 구현: `GamepadPilot.{h,cpp}` 신설(순수 로직 Robot:: 의존 0 + __linux__ 장치 계층)
+> + 브로커리지 중재 결선(local ≤1s > 네트워크, TEL2 active_source=local/udp/file)
+> + E-STOP 공유 헬퍼 추출(TriggerEstopImmediate — UDP estop 과 공용) + 복구(Y)=
+> estop flag 해제. 3티어는 H0 정정대로(EVIOCGKEY 폐기, ③=이벤트 침묵 1.5s→제자리
+> 슬루·disarm 아님). demoBuildPatched 6파일 배치(+O1 이후 WalkLabTransport 누락
+> 잠복 버그 정정 — bbde5ac). 호스트 138 checks(+transport 154 회귀)·swift 3501/0.
+> 잔여 = [실기 직전 정지] 절차 전체(부호 확정·E-STOP ≤20ms·단절 매트릭스·재 ARM·
+> 10분 CPU·③ 임계 확정) — 사용자 입회 게이트.
 
 ```
 docs/design/handheld-direct-pilot-upgrade.md 의 Wave H1+H2 를 구현해줘 — 단,
