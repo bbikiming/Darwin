@@ -123,4 +123,5 @@ tmp/
 .codex-pet-runs/
 app/스토어 스크린샷/
 firmware-patches/walklab-brokerage/tests/test_transport
+firmware-patches/walklab-brokerage/tests/test_gamepad
 firmware-patches/walklab-brokerage/tests/*.dSYM/

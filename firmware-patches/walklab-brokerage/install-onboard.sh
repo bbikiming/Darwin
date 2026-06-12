@@ -2,8 +2,9 @@
 # DarwinForge — WalkLab 온보드 브로커리지 설치 (이 로봇의 demo main.cpp 전용, 2026-06-01)
 #
 # 사용법 (로봇 VNC 터미널에서):
-#   1) Mac 에서 SMB 로 이 폴더의 파일들(install-onboard.sh, WalkLabBrokerage.cpp,
-#      WalkLabBrokerage.h, balltrack.ini)을 로봇의 demo 폴더(/robotis/Linux/project/demo/)에 복사
+#   1) Mac 에서 SMB 로 이 폴더의 파일들(install-onboard.sh, WalkLabBrokerage.{cpp,h},
+#      WalkLabTransport.{cpp,h}, GamepadPilot.{cpp,h}, balltrack.ini)을 로봇의
+#      demo 폴더(/robotis/Linux/project/demo/)에 복사
 #      (balltrack.ini = 볼 트래킹 HSV 색 + 헤드 tilt 상한 + 카메라 조도. 없으면 공 검출 실패.)
 #   2) 로봇 VNC 터미널:  cd /robotis/Linux/project/demo && sudo bash install-onboard.sh
 #
@@ -19,7 +20,7 @@ fi
 echo "▶ demo: $DEMO"
 
 # 0) 브로커리지 소스 + 볼 트래킹 config 존재 확인
-for f in WalkLabBrokerage.cpp WalkLabBrokerage.h WalkLabTransport.cpp WalkLabTransport.h balltrack.ini; do
+for f in WalkLabBrokerage.cpp WalkLabBrokerage.h WalkLabTransport.cpp WalkLabTransport.h GamepadPilot.cpp GamepadPilot.h balltrack.ini; do
   if [ ! -f "$DEMO/$f" ]; then
     echo "✗ $f 없음 — Mac 에서 SMB 로 이 폴더에 복사하세요."
     exit 1
@@ -339,7 +340,7 @@ fi
 
 fi  # === end DF_BUTTON_MODE (후면 버튼 모드 — ROBOPLUS 데모에서만) ===
 
-# 4) Makefile OBJECTS 에 WalkLabBrokerage.o + WalkLabTransport.o 추가 (멱등)
+# 4) Makefile OBJECTS 에 WalkLabBrokerage.o + WalkLabTransport.o + GamepadPilot.o 추가 (멱등)
 if ! grep -q 'WalkLabBrokerage.o' Makefile; then
   sed -i 's/^OBJECTS = \(.*\)$/OBJECTS = \1 WalkLabBrokerage.o/' Makefile
 fi
@@ -347,10 +348,14 @@ fi
 if ! grep -q 'WalkLabTransport.o' Makefile; then
   sed -i 's/^OBJECTS = \(.*\)$/OBJECTS = \1 WalkLabTransport.o/' Makefile
 fi
+# H1 (2026-06-12) — RG G01 동글 직결 파일럿(GamepadPilot). 멱등.
+if ! grep -q 'GamepadPilot.o' Makefile; then
+  sed -i 's/^OBJECTS = \(.*\)$/OBJECTS = \1 GamepadPilot.o/' Makefile
+fi
 
-# 5) 빌드 (GNU make 암묵 규칙이 *.cpp 컴파일 — WalkLabTransport.o 도 자동)
+# 5) 빌드 (GNU make 암묵 규칙이 *.cpp 컴파일 — Transport/GamepadPilot .o 도 자동)
 echo "▶ make ..."
-rm -f main.o WalkLabBrokerage.o WalkLabTransport.o demo   # 강제 재컴파일 (구 바이너리 잔존 방지)
+rm -f main.o WalkLabBrokerage.o WalkLabTransport.o GamepadPilot.o demo   # 강제 재컴파일 (구 바이너리 잔존 방지)
 if make 2>build.log; then
   tail -8 build.log
   if [ ! -f demo ]; then

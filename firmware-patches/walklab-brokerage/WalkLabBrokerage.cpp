@@ -601,22 +601,46 @@ namespace Robotis {
                                     (struct sockaddr*)&src, &slen);
             if (len <= 0) continue;   // 타임아웃/에러 — 종료 플래그 재검사.
             if (!Robotis::ParseEstopDatagram(buf, len, m_udp_token)) continue;
-            // 즉시 정지(~1–5ms): Walking::Stop + body torque off.
-            Robot::Walking* w = Robot::Walking::GetInstance();
-            if (w) { w->Stop(); w->m_Joint.SetEnableBody(false); }
-            // flag 파일 touch — 기존 latch/re-arm(EstopRequested) 경로가 hold-stopped 소유.
-            // UDP estop 은 일회성 datagram → 파일이 상태를 소유(Mac 이 rm 할 때까지 정지 유지).
-            // 실기 F1(2026-06-12): demo 는 root 라 flag 가 root 소유로 생기면 sticky /tmp
-            // 에서 Mac(SSH robotis)의 rm 재무장이 영구 차단된다 → 세션 사용자로 chown.
-            int fd = open(ESTOP_PATH, O_CREAT | O_WRONLY, 0644);
-            if (fd >= 0) {
-                if (m_session_uid >= 0 &&
-                    fchown(fd, (uid_t)m_session_uid, (gid_t)m_session_gid) != 0) {
-                    // chown 실패(비 root 실행 등)는 무해 — flag 자체는 유효.
-                }
-                close(fd);
-            }
+            // 즉시 정지(~1–5ms) + flag set — H1 공유 헬퍼(GamepadPilot B 버튼과 공용).
+            TriggerEstopImmediate();
         }
+    }
+
+    // ===== H1/H2 E-STOP·복구 공유 헬퍼 (2026-06-12, P7) =========================
+    // UDP estop 리스너(EstopUdpLoop)와 GamepadPilot B 버튼(읽기 스레드 콜백)이
+    // 공유하는 단일 즉시-정지 경로 — 중복 구현 금지. 어느 스레드에서든 호출 가능.
+    void WalkLabBrokerage::TriggerEstopImmediate() {
+        Robot::Walking* w = Robot::Walking::GetInstance();
+        if (w) { w->Stop(); w->m_Joint.SetEnableBody(false); }
+        TouchEstopFlag();
+    }
+
+    void WalkLabBrokerage::TouchEstopFlag() {
+        // flag 파일 touch — 기존 latch/re-arm(EstopRequested) 경로가 hold-stopped 소유.
+        // 일회성 신호(UDP datagram·버튼 edge) → 파일이 상태를 소유(해제 전까지 정지 유지).
+        // 실기 F1(2026-06-12): demo 는 root 라 flag 가 root 소유로 생기면 sticky /tmp
+        // 에서 Mac(SSH robotis)의 rm 재무장이 영구 차단된다 → 세션 사용자로 chown.
+        int fd = open(ESTOP_PATH, O_CREAT | O_WRONLY, 0644);
+        if (fd >= 0) {
+            if (m_session_uid >= 0 &&
+                fchown(fd, (uid_t)m_session_uid, (gid_t)m_session_gid) != 0) {
+                // chown 실패(비 root 실행 등)는 무해 — flag 자체는 유효.
+            }
+            close(fd);
+        }
+    }
+
+    void WalkLabBrokerage::ClearEstopFlag() {
+        // 복구(Y) — switch-pilot recover(`rm -f ESTOP_PATH`) 패리티. 전 소스 상시
+        // 유효(H2-1). 파일 제거 → supervisor 가 다음 poll 에 "E-STOP cleared" 재무장.
+        unlink(ESTOP_PATH);
+    }
+
+    void WalkLabBrokerage::GamepadEstopTrampoline(void* self) {
+        ((WalkLabBrokerage*)self)->TriggerEstopImmediate();
+    }
+    void WalkLabBrokerage::GamepadRecoverTrampoline(void* self) {
+        ((WalkLabBrokerage*)self)->ClearEstopFlag();
     }
 
     void WalkLabBrokerage::CmdUdpLoop() {
@@ -717,6 +741,8 @@ namespace Robotis {
         // O1 transport — 멤버 초기화. 핸드셰이크는 루프의 RefreshHandshake 가 1s 내 수용.
         m_last_cmd_ms = 0;
         m_last_cmd_from_stream = false;
+        // H2-4 — TEL2 active_source 초기값(종전 "file" 표시와 동일).
+        m_active_source = SRC_FILE;
         // O2 셰이핑 — 목표/슬루 초기화(첫 명령은 SlewState.valid=false 라 즉시 수용).
         m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0; m_tgt_period = 600.0;
         m_tgt_foot = 40.0; m_tgt_hip = 13.0; m_tgt_flags = 0;
@@ -810,6 +836,14 @@ namespace Robotis {
         // no-op). supervisor 루프와 분리된 스레드라 보행 제어 타이밍엔 영향 없음.
         StartCameraPump();
 
+        // H1 (2026-06-12) — RG G01 동글 직결 파일럿 기동. 패드 미연결 시 1s 재스캔만
+        // 도는 무동작 스레드(자연 게이트). E-STOP(B)은 읽기 스레드에서 즉시 공유 헬퍼,
+        // 복구(Y)는 estop flag 해제. 빌드 게이트: -DDF_NO_GAMEPAD_PILOT 로 제외 가능.
+#ifndef DF_NO_GAMEPAD_PILOT
+        m_gamepad.Start(&WalkLabBrokerage::GamepadEstopTrampoline,
+                        &WalkLabBrokerage::GamepadRecoverTrampoline, this, true);
+#endif
+
         while (true) {
             // **2026-06-08 후면 MODE 버튼 정지** — 사용자가 데모 후면 패널의 MODE
             // 버튼을 다시 누르면 `StatusCheck::Check()` 가 m_is_started=0,
@@ -825,6 +859,7 @@ namespace Robotis {
                 Robot::Head::GetInstance()->m_Joint.SetEnableHeadOnly(false);
                 StopTransportThreads();   // O1 — UDP 리스너 정리 후 정상 종료.
                 StopCameraPump();         // C1 — 카메라 펌프 정리 (정상 종료 경로).
+                m_gamepad.Stop();         // H1 — 읽기 스레드 정리 (미기동이면 no-op).
                 break;
             }
 
@@ -886,17 +921,38 @@ namespace Robotis {
                 continue;
             }
 
-            // ── O1: UDP latest-wins 슬롯 우선 소비 (이벤트 구동). transport 미기동이면
+            // ── H1/H2 (2026-06-12): local 게임패드 소스. 우선순위 = E-STOP(전 소스
+            //    상시 — 콜백/flag 경로, 여기 비경유) > local(최근 입력 ≤1s) > 네트워크.
+            //    슬롯은 항상 drain(스테일 잔존 방지)하되 적용은 신선 창 안에서만.
+            //    local 라인도 ApplyCommandLine 단일 지점 통과 — 거버너(O2)가 최종 클램프.
+            bool local_control = m_gamepad.HasControl(now_ms);
+            {
+                char gp_line[256];
+                if (m_gamepad.TakeCommand(gp_line, sizeof(gp_line)) && local_control) {
+                    if (ApplyCommandLine(walking, walking_active, gp_line, now_ms)) {
+                        last_cmd_time = time(NULL);
+                        m_last_cmd_ms = now_ms;
+                        m_last_cmd_from_stream = true;   // 연속 재공급(≤50ms) — 티어 대상.
+                        m_active_source = SRC_LOCAL;     // H2-4 — TEL2 active_source.
+                    }
+                }
+            }
+
+            // ── O1: UDP latest-wins 슬롯 소비 (이벤트 구동). transport 미기동이면
             //    슬롯은 항상 비어 no-op → 종전 파일 경로 동작 완전 보존.
+            //    H2-1: local 신선 창에는 네트워크 walk 명령 폐기(drain 만 — estop·복구는
+            //    별도 경로라 영향 없음).
             {
                 char slot_line[256];
                 long long slot_seq = 0;
-                if (m_cmd_slot.Take(slot_line, sizeof(slot_line), &slot_seq)) {
+                if (m_cmd_slot.Take(slot_line, sizeof(slot_line), &slot_seq) &&
+                    !local_control) {
                     if (ApplyCommandLine(walking, walking_active, slot_line, now_ms)) {
                         last_cmd_time = time(NULL);
                         m_last_cmd_ms = now_ms;
                         m_last_cmd_from_stream = true;   // 스트림 소스 — 워치독 티어 대상.
                         m_last_seq_applied = slot_seq;   // O4 — TEL2 seq_applied 폐루프.
+                        m_active_source = SRC_UDP;       // H2-4.
                     }
                 }
             }
@@ -919,10 +975,13 @@ namespace Robotis {
                         (current_stat.st_size != last_stat.st_size);
                     if (file_changed) {
                         last_stat = current_stat;
-                        if (ParseAndApply(walking, walking_active, now_ms)) {
+                        // H2-1 — local 신선 창에는 파일 walk 명령도 폐기(소비 표시만).
+                        if (!local_control &&
+                            ParseAndApply(walking, walking_active, now_ms)) {
                             last_cmd_time = time(NULL);
                             m_last_cmd_ms = now_ms;
                             m_last_cmd_from_stream = false;  // 파일 소스 — 티어 제외(5s STALE 만).
+                            m_active_source = SRC_FILE;      // H2-4.
                         }
                     }
 
@@ -938,7 +997,8 @@ namespace Robotis {
                     // 파일 없음 — Mac 측 미연결. transport 가 없으면 정지(종전 동작).
                     // transport 활성이면 UDP 가 명령을 공급하므로 파일 부재로 정지하지 않는다
                     // (정지는 워치독 티어가 명령 stale 기준으로 판정).
-                    if (!m_transport_running) {
+                    // H1: local 게임패드가 조종 중일 때도 파일 부재로 정지하지 않는다.
+                    if (!m_transport_running && !local_control) {
                         if (walking_active) {
                             walking->Stop();
                             walking_active = false;
@@ -956,12 +1016,7 @@ namespace Robotis {
                 Robotis::WatchdogAction wd = Robotis::WatchdogDecision(
                     now_ms - m_last_cmd_ms, walking_active, m_last_cmd_from_stream);
                 if (wd == Robotis::WD_SLEW_ZERO) {
-                    walking->X_MOVE_AMPLITUDE = 0.0;
-                    walking->Y_MOVE_AMPLITUDE = 0.0;
-                    walking->A_MOVE_AMPLITUDE = 0.0;
-                    // O2 — 슬루 상태도 0 동기화: 명령 복귀 시 0 에서 다시 램프(급가속 방지).
-                    m_slew.x = 0.0; m_slew.y = 0.0; m_slew.a = 0.0;
-                    m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0;
+                    ForceSlewZero(walking);
                 } else if (wd == Robotis::WD_STOP) {
                     if (walking_active) {
                         printf("[WalkLabBrokerage] watchdog stale — auto stop (torque held)\n");
@@ -969,6 +1024,17 @@ namespace Robotis {
                         walking_active = false;
                     }
                 }
+            }
+
+            // ── H2 ②③티어 (2026-06-12) — local 노드 소멸(inputSourceLost)/이벤트 침묵
+            //    ≥1.5s(단절 의심): 진폭 제자리 슬루. local 이 마지막 활성 소스일 때만
+            //    (유휴 패드가 Mac/Switch 주행을 정지시키지 않도록). disarm 아님 — 오발
+            //    (정속 직진 이벤트 침묵) 비용 = 완만한 정지. Stop 은 워치독 WD_STOP
+            //    (2.5s)·5s STALE 이 이어받는다(티어 합류). ①티어(release 합성→데드맨
+            //    해제)는 이벤트 경로(enabled=0 라인)가 즉시 소화.
+            if (m_active_source == SRC_LOCAL && walking_active &&
+                m_gamepad.PollFailsafe(now_ms) == Robotis::GP_FS_SLEW_ZERO) {
+                ForceSlewZero(walking);
             }
 
             // ── O2 [HIGH fix] 루프 측 슬루 전진 — 슬루는 명령 도착(ApplyCommandLine)에서만
@@ -1026,6 +1092,16 @@ namespace Robotis {
         }
         fclose(fp);
         return ApplyCommandLine(walking, walking_active, line, now_ms);
+    }
+
+    // **H2 (2026-06-12)** — 진폭 제자리 슬루: 워치독 WD_SLEW_ZERO 와 H2 ②③티어의
+    // 공유 적용 지점. 목표·슬루를 0 동기화 — 명령 복귀 시 0 에서 다시 램프(급가속 방지).
+    void WalkLabBrokerage::ForceSlewZero(Robot::Walking* walking) {
+        walking->X_MOVE_AMPLITUDE = 0.0;
+        walking->Y_MOVE_AMPLITUDE = 0.0;
+        walking->A_MOVE_AMPLITUDE = 0.0;
+        m_slew.x = 0.0; m_slew.y = 0.0; m_slew.a = 0.0;
+        m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0;
     }
 
     // **O1 (2026-06-12)** — 파일 경로와 UDP 슬롯 경로가 공유하는 단일 적용 함수.
@@ -1258,7 +1334,9 @@ namespace Robotis {
         }
 
         int phase = walking ? walking->GetCurrentPhase() : -1;   // 공식 getter(Walking.h:139).
-        const char* src = m_last_cmd_from_stream ? "udp" : "file";   // H2 active_source.
+        // H2-4 — active_source: 마지막 적용 소스(local/udp/file). TEL v1 파일 포맷 불변.
+        const char* src = (m_active_source == SRC_LOCAL) ? "local"
+                          : (m_active_source == SRC_UDP) ? "udp" : "file";
 
         char tbuf[320];
         int tn = Robotis::FormatTel2(tbuf, sizeof(tbuf),

@@ -12,6 +12,7 @@
 
 #include <pthread.h>          // O1 transport 스레드
 #include "WalkLabTransport.h" // O1 — latest-wins 슬롯·워치독·파서(Robot:: 의존 0)
+#include "GamepadPilot.h"     // H1 — RG G01 동글 직결 파일럿(자체 슬롯·읽기 스레드)
 
 // 공식 ROBOTIS 프레임워크의 Walking/CM730 클래스는 namespace Robot 에 있음 (Robotis 아님).
 namespace Robot { class Walking; }
@@ -157,6 +158,25 @@ private:
     static void* CmdUdpThreadEntry(void* self);
     static void* EstopUdpThreadEntry(void* self);
 
+    // ===== H1/H2 게임패드 직결 (2026-06-12, handheld-direct-pilot-upgrade) =====
+    /// E-STOP 즉시 실행 공유 헬퍼 — Walking::Stop + body torque off + estop flag
+    /// set(F1 fchown). UDP estop 리스너(EstopUdpLoop)와 GamepadPilot B 버튼(읽기
+    /// 스레드 콜백)이 공유 — 중복 구현 금지(P7). 어느 스레드에서든 호출 가능
+    /// (기존 EstopUdpLoop 전례).
+    void TriggerEstopImmediate();
+    /// estop flag 파일 set — 세션 사용자 chown(실기 F1, 3d2eb5e 계보) 포함.
+    void TouchEstopFlag();
+    /// 복구(Y) — estop flag 해제(switch-pilot recover 의 `rm -f` 패리티). estop
+    /// 파일이 상태를 소유하므로 해제 즉시 supervisor 의 estop_latched 가 풀린다.
+    /// 복구는 전 소스 상시 유효(H2-1).
+    void ClearEstopFlag();
+    /// GamepadPilot 콜백 trampolines (C++03).
+    static void GamepadEstopTrampoline(void* self);
+    static void GamepadRecoverTrampoline(void* self);
+    /// 진폭 제자리 슬루 — 워치독 WD_SLEW_ZERO 와 H2 ②③티어가 공유하는 단일
+    /// 적용 지점(목표·슬루를 0 동기화 → 명령 복귀 시 0 에서 재램프).
+    void ForceSlewZero(Robot::Walking* walking);
+
     // ===== C1 카메라 스트림 펌프 (2026-06-12) =====
     /// 펌프 스레드 기동. m_streamer NULL / [Stream] enabled=0 / 카메라 미초기화면 no-op.
     void StartCameraPump();
@@ -211,7 +231,16 @@ private:
     // ===== O1 transport 상태 =====
     Robotis::CommandSlot m_cmd_slot;   ///< latest-wins 명령 슬롯(transport 스레드↔supervisor).
     long long m_last_cmd_ms;           ///< 마지막 유효 명령 적용 시각(ms) — 워치독 티어.
-    bool m_last_cmd_from_stream;       ///< 마지막 명령이 UDP 슬롯(스트림) 소스였나 — 티어 게이트.
+    bool m_last_cmd_from_stream;       ///< 마지막 명령이 스트림(UDP 슬롯/local) 소스였나 — 티어 게이트.
+
+    // ===== H1/H2 게임패드 직결 상태 (2026-06-12) =====
+    /// RG G01 동글 직결 파일럿 — 자체 읽기 스레드 + local 슬롯. supervisor 가
+    /// HasControl(최근 입력 ≤1s)로 우선권을 판정해 소비한다. -DDF_NO_GAMEPAD_PILOT
+    /// 빌드 시 Start 를 생략(멤버는 무해한 유휴 객체).
+    Robotis::GamepadPilot m_gamepad;
+    /// H2-4 — TEL2 active_source: 마지막으로 명령을 적용한 소스.
+    enum ActiveSource { SRC_FILE = 0, SRC_UDP = 1, SRC_LOCAL = 2 };
+    int m_active_source;
 
     // ===== O2 셰이핑 상태 (2026-06-12, walklab-onboard-teleop-upgrade Wave O2) =====
     /// 거버너 적용 후의 명령 목표값(X/Y/A/period) — 슬루가 이 목표로 전진. 래치 사이엔 재적용.

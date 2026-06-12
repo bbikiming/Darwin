@@ -3,19 +3,23 @@
 @@ -18,7 +18,7 @@ LFLAGS += -lpthread -ljpeg -lrt
 
 -OBJECTS = VisionMode.o StatusCheck.o main.o
-+OBJECTS = VisionMode.o StatusCheck.o main.o WalkLabBrokerage.o WalkLabTransport.o
++OBJECTS = VisionMode.o StatusCheck.o main.o WalkLabBrokerage.o WalkLabTransport.o GamepadPilot.o
 
  all: $(TARGET)
 
-@@ -38,3 +38,13 @@ libdarwin:
+@@ -38,3 +38,17 @@ libdarwin:
  $(TARGET): libdarwin $(OBJECTS)
  	$(CXX) -o $(TARGET) $(OBJECTS) ../../build/darwin.a $(LFLAGS)
  	chmod 755 $(TARGET)
 
 +# **v1.11.7 (DarwinForge)** — WalkLabBrokerage 모듈.
-+WalkLabBrokerage.o: WalkLabBrokerage.cpp WalkLabBrokerage.h WalkLabTransport.h
++WalkLabBrokerage.o: WalkLabBrokerage.cpp WalkLabBrokerage.h WalkLabTransport.h GamepadPilot.h
 +	$(CXX) $(CXXFLAGS) -c WalkLabBrokerage.cpp
 +
 +# **O1 (2026-06-12)** — 순수 transport 로직(Robot:: 의존 0). 호스트 단위 테스트 대상.
 +WalkLabTransport.o: WalkLabTransport.cpp WalkLabTransport.h
 +	$(CXX) $(CXXFLAGS) -c WalkLabTransport.cpp
++
++# **H1 (2026-06-12)** — RG G01 동글 직결 파일럿(GamepadPilot). 호스트 단위 테스트 대상.
++GamepadPilot.o: GamepadPilot.cpp GamepadPilot.h WalkLabTransport.h
++	$(CXX) $(CXXFLAGS) -c GamepadPilot.cpp
