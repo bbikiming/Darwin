@@ -136,7 +136,18 @@ FTDI latency 1ms(미지원 어댑터 no-op). FFI 시그니처 변경 시 make he
 커밋: feat(serial)/feat(walklab). README 현황 갱신.
 ```
 
-## [ ] P6 — bus D1+D2: 50Hz 연속 스트리밍 + 밸런스 50Hz + FSR 관측 · 전제 P4·P5
+## [x] P6 — bus D1+D2: 50Hz 연속 스트리밍 + 밸런스 50Hz + FSR 관측 · 전제 P4·P5 ✅ (2026-06-12)
+
+> **완료**: D1 `5ff5873`(feat walklab — 시간 기반 50Hz 공유 샘플러+래치, 두 송출
+> 루프 모두), D2 `e940e63`(feat walklab — IMU 50Hz·자이로 LPF·FSR 오버레이).
+> 풀 스위트 serial 3491 tests / 0 failures, 신규 19개(동치·래칭·LPF·FSR).
+> **사용자 결정**: 프롬프트는 runContinuousWalk 명시였으나 라이브 컨트롤러 조종은
+> runMobileFreeformWalk 경로 → 공유 샘플러로 **양 루프 모두** 적용.
+> **설계 대비 편차(보고됨)**: ① FSR 유선 5Hz(telemetry tick 200ms; 진10Hz 는 전용
+> 폴 루프 필요 → 50Hz 보행 중 버스 경쟁 회피차 보류, 관측 전용이라 무해). ② 낙상
+> 윈도는 IMU 레이트와 독립(고정 10Hz 틱 공급)이라 50Hz 증속이 윈도 단축 안 함 →
+> 동작 무변경(설계 전제 정정, 코드에 명시). ③ 실기 검증(직진 5m·서보 온도·진동·
+> 20ms 추종)은 사용자 보고 대기.
 
 ```
 docs/design/bus-direct-teleop-upgrade.md 의 Wave D1 과 D2 를 구현해줘 (D0 머지 전제,
