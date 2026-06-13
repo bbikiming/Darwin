@@ -1,15 +1,20 @@
 import Foundation
 
-/// B2 — relay server-side walk conflation slot (cockpit-latency-hardening).
+/// B2 — relay walk conflation slot: a **two-lane drain buffer** (cockpit-latency-hardening).
 ///
-/// 비유: 우체통 두 개. 하나는 "최신 속도" 칸 — 새 편지가 오면 이전 편지를 버리고
-/// 갈아 끼운다(latest-wins). 다른 하나는 "긴급" 칸 — 들어온 순서대로 차곡차곡
-/// 쌓이고 절대 버리지 않는다(STOP/E-STOP/disable). 집배원(drain)은 긴급 칸을
-/// **먼저** 순서대로 비우고, 그 다음 최신 속도 한 통을 가져간다.
+/// 비유: 우체통 두 개. 하나는 "최신 속도" 칸 — 새 편지가 오면 이전 편지를 갈아 끼운다
+/// (latest-wins). 다른 하나는 "긴급" 칸 — 들어온 순서대로 차곡차곡 쌓이고 절대 버리지
+/// 않는다(STOP/E-STOP/disable). 집배원(drain)은 긴급 칸을 **먼저** 순서대로 비우고,
+/// 그 다음 최신 속도 한 통을 가져간다. → **안전 프레임은 늦은 walk 보다 항상 앞서고
+/// 절대 누락되지 않는다**. 이게 이 타입의 살아있는(항상 유효한) 안전 속성이다.
 ///
-/// 왜? 보행 중 iPhone 이 50Hz 로 보내는 moving WalkPayload 를 actor 가 프레임마다
-/// await 하면 큐가 밀려 정지 명령이 인질이 된다. moving 속도는 어차피 최신 한 장만
-/// 의미가 있으니 합치고(conflate), 안전 프레임은 never-drop·ordered 로 분리한다.
+/// **coalescing 의 현실(SDD bounce HIGH)**: 실제 conflation(여러 moving 프레임을 한
+/// 장으로 합침)은 슬롯에 두 장 이상이 쌓일 때만 일어난다. 그러나 현 production 경로는
+/// MobileRelayServer(actor) 가 프레임마다 await 하고 transport(WSChannel.taskChain)도
+/// 프레임을 직렬 전달하므로, `handleWalk` 는 매번 한 장 offer → 즉시 drain 한다 →
+/// **coalescing 은 현 모델에서 no-op**(supersededWalkFrames 는 사실상 0). 이 타입은
+/// 미래에 ingest/drain 을 분리해 합칠 수 있도록 conflation-ready 로 설계됐지만, 지금
+/// 켜져 있는 가치는 "두 레인 분리 + 순서 보장"이다. 합쳐진다고 주장하지 않는다.
 ///
 /// 불변성: 모든 변형은 새 값을 반환한다(in-place mutation 없음). 단일 writer 가
 /// `offering(_:)` 로 누적하고, drain 시점에 한 번 `draining()` 으로 소비한다.

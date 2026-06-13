@@ -51,16 +51,16 @@ public struct PilotDiagnosticsPanel: View {
 
     /// **A1 (cockpit-latency-hardening §6)** — 진단 패널이 사라질 때(세션 종료) tracer
     /// 활성 시에만 6채널 요약을 Application Support 에 JSON 으로 1회 떨군다.
-    /// 비활성이면 즉시 반환(robot-deferred 측정값이라 비활성 세션은 기록 가치 없음).
-    /// 파일 I/O 는 detached 백그라운드 Task — UI teardown 블로킹 방지.
+    ///
+    /// 활성/비활성 게이트 결정은 `PilotLatencyJSONSink.persistIfEnabled` 단일 지점으로
+    /// 일원화(테스트 가능) — 비활성이면 sink 가 파일을 쓰지 않고 nil 반환. report 스냅샷도
+    /// detached Task 안에서 떠 read-only 호출(`*Stats()`)이 UI teardown 을 막지 않는다.
     private func persistLatencySessionIfEnabled() {
         let tracer = PilotLatencyTracer.shared
-        guard tracer.isEnabled else { return }
-        let sink = PilotLatencyJSONSink()
-        let report = sink.report(from: tracer)
         guard let dir = PilotLatencyJSONSink.defaultDirectory() else { return }
+        let sink = PilotLatencyJSONSink()
         Task.detached(priority: .utility) {
-            try? sink.persist(report, into: dir)
+            try? sink.persistIfEnabled(tracer: tracer, into: dir)
         }
     }
 

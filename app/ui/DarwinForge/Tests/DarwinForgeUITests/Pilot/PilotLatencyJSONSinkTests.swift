@@ -106,4 +106,41 @@ final class PilotLatencyJSONSinkTests: XCTestCase {
             LatencySessionReport.self, from: Data(contentsOf: url))
         XCTAssertEqual(decoded, report)
     }
+
+    // MARK: - isEnabled gate (SDD bounce MEDIUM)
+
+    /// Disabled tracer → persistIfEnabled writes NOTHING and returns nil.
+    /// Proves the gate lives in the sink (single testable decision point), not
+    /// just in the panel call site.
+    func testPersistIfEnabledWritesNothingWhenTracerDisabled() throws {
+        let tracer = PilotLatencyTracer(capacity: 64, enabled: false)
+        tracer.recordWriteLatency(ms: 9.0)   // ignored — tracer is disabled anyway
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let url = try sink.persistIfEnabled(tracer: tracer, into: dir)
+        XCTAssertNil(url, "disabled tracer must not produce a file URL")
+
+        // Directory must not contain any artifact (nothing written at all).
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil)) ?? []
+        XCTAssertTrue(contents.isEmpty,
+                      "no file may be written when tracer.isEnabled == false")
+    }
+
+    /// Enabled tracer → persistIfEnabled writes exactly one file and returns its URL.
+    func testPersistIfEnabledWritesWhenTracerEnabled() throws {
+        let tracer = PilotLatencyTracer(capacity: 64, enabled: true)
+        tracer.recordWriteLatency(ms: 5.0)
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let url = try sink.persistIfEnabled(tracer: tracer, into: dir)
+        XCTAssertNotNil(url, "enabled tracer must produce a file URL")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url!.path))
+    }
 }

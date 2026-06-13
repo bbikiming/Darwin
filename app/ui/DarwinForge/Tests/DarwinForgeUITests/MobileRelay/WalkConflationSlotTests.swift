@@ -1,14 +1,20 @@
 import XCTest
 @testable import DarwinForgeUI
 
-/// B2 — relay server-side walk conflation slot (cockpit-latency-hardening).
+/// B2 — `WalkConflationSlot` **value-type unit** tests (cockpit-latency-hardening).
 ///
-/// Invariant under test: conflation is **latest-wins for MOVING walk velocity
-/// ONLY**. estop / stop / enabled=false frames live in a SEPARATE never-dropped,
-/// ORDERED lane — never coalesced or reordered. A safety frame interleaved between
-/// walk frames must be delivered AND ordered ahead of any later walk.
+/// SCOPE (SDD bounce HIGH): these exercise the slot data structure in isolation —
+/// multiple offers then one drain. That offer-pile-up sequence is what proves the
+/// slot's *own* latest-wins + ordered-safety-lane logic. It does NOT prove the
+/// production relay routing: under the actor + transport serialization,
+/// `handleWalk` offers exactly one frame then drains, so the slot never holds >1
+/// frame between drains. The STOP-ordered-ahead / never-dropped property *through
+/// the real path* is proven separately by
+/// `WalkConflationRoutingIntegrationTests.test_stopInterleavedBetweenWalkFrames_reachesSendWalkOrderedAhead`.
 ///
-/// These tests prove the CODE behaves; no ms value is asserted.
+/// Invariant under test (slot unit only): latest-wins for MOVING walk velocity;
+/// stop / enabled=false frames in a SEPARATE never-dropped, ORDERED lane.
+/// No ms value is asserted.
 final class WalkConflationSlotTests: XCTestCase {
 
     // MARK: - Helpers
@@ -48,9 +54,14 @@ final class WalkConflationSlotTests: XCTestCase {
         XCTAssertEqual(payload.xMm, 30, "latest moving velocity wins")
     }
 
-    // MARK: - test_stopInterleavedBetweenWalkFrames_isDeliveredAndOrdered (MANDATORY)
+    // MARK: - slot-unit ordering (NOT the production-path proof — see class doc)
 
-    func test_stopInterleavedBetweenWalkFrames_isDeliveredAndOrdered() {
+    /// SLOT UNIT ONLY: a [walk,walk,STOP,walk] offer sequence into the value type
+    /// keeps STOP ordered ahead of the later walk on drain. This is the data
+    /// structure's contract — the real relay path is proven in
+    /// WalkConflationRoutingIntegrationTests (the production routing never produces
+    /// this 4-offers-1-drain sequence).
+    func test_slotUnit_stopInterleavedBetweenWalkFrames_orderedAhead() {
         // [walk, walk, STOP, walk]
         var slot = WalkConflationSlot()
         slot = slot.offering(.walk(movingWalk(xMm: 10)))

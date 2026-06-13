@@ -837,9 +837,14 @@ public actor MobileRelayServer {
                                           commandType: "walk") { return }
         // V297-4: 프로토콜 §7.1 — accepted 선발사.
         await sendCommandAccepted(commandId: env.id)
-        // **B2** — 분류: enabled=false 또는 preset==.stop 은 SAFETY(never-conflate·
-        // ordered), 그 외 MOVING velocity 는 latest-wins. 슬롯에 offer 후 drain 해
-        // 안전 프레임이 늦은 walk 보다 항상 먼저 적용되도록 순서를 보장한다.
+        // **B2** — 분류 후 두 레인 슬롯에 offer → drain. enabled=false 또는
+        // preset==.stop 은 SAFETY(never-drop·ordered), 그 외 MOVING velocity 는
+        // walk 레인. 안전 프레임은 drain 시 늦은 walk 보다 항상 앞서 dispatch 된다.
+        //
+        // ⚠️ 현 모델에서 coalescing 은 no-op: actor 가 프레임마다 await 하고 transport
+        // 가 직렬 전달하므로 매 호출이 한 장 offer → 즉시 drain 이다(슬롯에 두 장 이상
+        // 쌓이지 않음). 살아있는 가치는 분류·순서 보장이지 합치기가 아니다. 합치기는
+        // 향후 ingest/drain 분리 시 자동 활성화된다(슬롯이 이미 conflation-ready).
         let isSafety = !env.payload.enabled || env.payload.preset == .stop
         walkConflationSlot = walkConflationSlot.offering(
             isSafety ? .safety(env.payload) : .walk(env.payload))

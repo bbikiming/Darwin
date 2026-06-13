@@ -96,4 +96,19 @@ public struct PilotLatencyJSONSink: Sendable {
         try data.write(to: url, options: .atomic)
         return url
     }
+
+    /// **A1 게이트(테스트 가능 단일 결정점)** — tracer 가 활성일 때만 요약을 떨군다.
+    ///
+    /// 비활성(`!tracer.isEnabled`)이면 **아무 파일도 쓰지 않고** `nil` 을 반환한다.
+    /// robot-deferred 측정값이라 비활성 세션은 기록 가치가 없고, 게이트가 sink
+    /// 내부에 있으므로 호출처(패널 onDisappear)는 이 한 줄만 호출하면 된다. read-only:
+    /// `report(from:)` 가 `*Stats()` 접근자만 호출하므로 tracer 상태는 불변.
+    ///
+    /// - Returns: 기록된 파일 URL, 또는 tracer 비활성 시 `nil`.
+    @discardableResult
+    public func persistIfEnabled(tracer: PilotLatencyTracer, into dir: URL) throws -> URL? {
+        guard tracer.isEnabled else { return nil }
+        let report = report(from: tracer)
+        return try persist(report, into: dir)
+    }
 }
