@@ -152,6 +152,10 @@ public actor MobileRelayServer {
     private var lastRobotRttMs: Int?
     /// V297-4 — 마지막 RTT 갱신 시각. 5초 이상 stale 이면 게이트가 무시.
     private var lastRobotRttAt: Date?
+    /// **B2 (cockpit-latency-hardening)** — walk 프레임 conflation 슬롯.
+    /// MOVING walk velocity 는 latest-wins 로 합치고, STOP/enabled=false 는 별도
+    /// never-drop·ordered 안전 레인으로 분리한다. handleWalk 가 분류 후 offer/drain.
+    private var walkConflationSlot = WalkConflationSlot()
 
     public init(configuration: Configuration = .init(),
                 pairing: MobileRelayPairing,
@@ -833,23 +837,15 @@ public actor MobileRelayServer {
                                           commandType: "walk") { return }
         // V297-4: 프로토콜 §7.1 — accepted 선발사.
         await sendCommandAccepted(commandId: env.id)
+        // **B2** — 분류: enabled=false 또는 preset==.stop 은 SAFETY(never-conflate·
+        // ordered), 그 외 MOVING velocity 는 latest-wins. 슬롯에 offer 후 drain 해
+        // 안전 프레임이 늦은 walk 보다 항상 먼저 적용되도록 순서를 보장한다.
+        let isSafety = !env.payload.enabled || env.payload.preset == .stop
+        walkConflationSlot = walkConflationSlot.offering(
+            isSafety ? .safety(env.payload) : .walk(env.payload))
+        let (frames, _) = walkConflationSlot.draining()
         do {
-            let result = try await port.sendWalk(payload: env.payload)
-            recordRobotRtt(result.latencyMs)
-            // P1-3 fix (truth-gap report, 2026-05-25): track active walk
-            // server-side so the watchdog can stop even if iOS heartbeat
-            // never arrives. Stop preset / enabled=false → clear immediately.
-            if env.payload.enabled && env.payload.preset != .stop {
-                self.session?.activeCommandId = env.id
-            } else {
-                self.session?.activeCommandId = nil
-            }
-            await sendCommandAck(commandId: env.id, latencyMs: result.latencyMs,
-                                 robotAckId: result.robotAckId)
-            await emitTelemetry(.mobilePilotCommandAccepted, level: .info, actor: .user,
-                                data: ["commandType": "walk",
-                                       "commandId": AnyCodable(env.id),
-                                       "latencyMs": AnyCodable(result.latencyMs)])
+            try await dispatchConflatedWalk(frames: frames, commandId: env.id)
         } catch let RelayServerError.rejected(reason) {
             await sendCommandRejected(commandId: env.id, reason: reason, message: nil)
             await emitTelemetry(.mobilePilotCommandRejected, level: .warn, actor: .user,
@@ -863,6 +859,43 @@ public actor MobileRelayServer {
                                 data: ["commandType": "walk",
                                        "commandId": AnyCodable(env.id),
                                        "reason": "noAck"])
+        }
+    }
+
+    /// **B2** — drain 된 walk 프레임을 순서대로(안전 먼저, 그 다음 최신 moving)
+    /// `port.sendWalk` 로 송출하고, 마지막으로 적용된 프레임의 결과로 ack 한다.
+    ///
+    /// activeCommandId 정책은 종전과 동일: enabled && preset != .stop 이면 set,
+    /// 아니면(STOP/disable) clear — 마지막 적용 프레임 기준. RTT 캐시는 적용된
+    /// 마지막 결과로 갱신. handleStop/handleEstop 은 본 경로와 무관(untouched).
+    private func dispatchConflatedWalk(frames: [WalkConflationSlot.Frame],
+                                       commandId: String) async throws {
+        var lastResult: (latencyMs: Int, robotAckId: String?)?
+        var lastPayloadMoving = false
+        for frame in frames {
+            let payload: WalkPayload
+            switch frame {
+            case .walk(let p): payload = p
+            case .safety(let p): payload = p
+            }
+            let result = try await port.sendWalk(payload: payload)
+            recordRobotRtt(result.latencyMs)
+            lastResult = result
+            lastPayloadMoving = payload.enabled && payload.preset != .stop
+        }
+        // P1-3 fix: track active walk server-side. Stop/disable → clear.
+        if lastPayloadMoving {
+            self.session?.activeCommandId = commandId
+        } else {
+            self.session?.activeCommandId = nil
+        }
+        if let result = lastResult {
+            await sendCommandAck(commandId: commandId, latencyMs: result.latencyMs,
+                                 robotAckId: result.robotAckId)
+            await emitTelemetry(.mobilePilotCommandAccepted, level: .info, actor: .user,
+                                data: ["commandType": "walk",
+                                       "commandId": AnyCodable(commandId),
+                                       "latencyMs": AnyCodable(result.latencyMs)])
         }
     }
 
