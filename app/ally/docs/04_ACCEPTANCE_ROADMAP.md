@@ -137,7 +137,10 @@ ally-cli 4 = **58 passed**, `clippy -D warnings`·`fmt` clean). 위 게이트 �
 
 - **메커니즘 자기검증(로봇 없이)**: `ally-cli loopback` 이 페이크 로봇(ACK 회신 + TEL2 30Hz +
   estop 카운트)으로 핸드셰이크→프로브→20Hz→eff_hz→TEL2→RTT→estop 전 경로를 통과.
-  Ally 실측(6s): 채택 1ms · eff_hz 20.00 · ACK RTT p50/p95 1.64/1.73ms · estop 3발 — PASS.
+  Ally 실측(release, 게이트 동일 60s): 채택 1ms · **eff_hz 20.00**(1200 ACK) · TEL2 23.6Hz ·
+  ACK RTT p50/p95 **1.60/1.72ms** · estop 3발 — PASS. 실제 `accept`(로봇 부재)는 SSH 도달성
+  실패로 fail-fast(exit 1) 정상. `axis-dump` 로 **gilrs 가 Ally 내장 패드 감지·250Hz 폴링**
+  확인(GamepadId(0) Connected, 무입력 시 드리프트 0) — 축 방향 실값은 게이트에서 스틱 조작.
 - **게이트에서 측정만 하면 되는 것**: 위 메커니즘을 실로봇에 연결해 ① 핸드셰이크 채택 ②
   60s eff_hz ③ B→DF-ESTOP 내부 지연(`accept --estop`) ④ TEL2 수신율(방화벽 규칙 후) ⑤
   RTT 베이스라인. 코드 경로는 준비됨.
