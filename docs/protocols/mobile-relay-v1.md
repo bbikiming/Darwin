@@ -276,6 +276,23 @@ turnRight, stop). free-form param 은 인터페이스만 정의하고 서버가 
 - preset 이름이 있으면 numeric 값은 무시하고 서버가 위 표를 권위로 사용한다.
 - 동일 preset 연속 호출은 server 가 5Hz 이하로 dedup 한다.
 
+#### 6.7.1 Walk conflation (freeform 분석 스틱 경로)
+
+게임패드(외부 컨트롤러) 분석 스틱이 만드는 연속 freeform walk 프레임은 preset dedup(위 5Hz)과 **별개**의 throttle/conflation 경로를 거친다. 이 절은 **클라이언트가 관찰하는 동작**을 규정한다(서버 내부 구현은 §12 권위).
+
+**클라이언트(iOS) 송신 측 — throttle:**
+
+- 게임패드 어댑터는 30Hz로 폴링하지만 **MOVING walk 프레임만 ~10Hz(100ms 간격) latest-wins 로 다운샘플**하여 송신한다. window 안에서 도착한 중간 프레임은 큐에 쌓지 않고 버리고, 항상 가장 최신 스틱 값 한 장만 송신한다(latest-wins). 이는 터치 조이스틱 경로(`scheduleStream` 100ms)와 패리티다.
+- **STOP / release(enabled=false, preset==stop)는 절대 throttle 하지 않는다.** 정지 프레임은 즉시 송신되고 throttle window를 재무장(re-arm)하므로 다음 이동이 지연 없이 나간다.
+- 모든 walk 프레임(이동·정지)은 **단일 FIFO 채널로 직렬 디스패치**된다. 따라서 release(정지)는 직전에 큐된 이동 프레임을 **추월하지 않는다** — 사용자가 스틱을 중립화하면 정지가 항상 마지막 이동 뒤에 도착한다(E-STOP은 이 직렬 채널과 무관한 즉시 경로 유지).
+
+**서버(Mac relay) 수신 측 — two-lane 슬롯:**
+
+- 서버는 수신 walk 프레임을 `enabled`/`preset` 으로 분류한다. `enabled==false` 또는 `preset==stop` 은 **SAFETY 레인**(never-drop·ordered), 그 외 이동 속도는 **MOVING 레인**(latest-wins)에 들어간다.
+- drain 시 **안전 프레임이 항상 먼저**(들어온 순서대로), 그 다음 최신 이동 프레임 한 장이 로봇에 적용된다. 즉 `[walk, walk, STOP, walk]` 순서에서 STOP 은 늦은 walk 보다 항상 앞서 적용되고 절대 누락되지 않는다.
+- **supersede 시 ACK 규칙(중요):** MOVING 레인에서 새 이동 프레임이 이전 이동 프레임을 밀어내면(superseded), **밀려난 프레임은 개별 `command.ack` 를 받지 못한다.** drain 후 실제 로봇에 적용된(살아남은) 프레임만 `command.ack` 를 송신한다. 밀려난 수는 audit 카운트로만 추적된다(클라이언트에 별도 통지 없음). 안전 프레임(STOP/disable)은 supersede/conflate 대상이 아니며 적용 후 정상 ACK 된다.
+- **현 구현 주의(정직한 한계):** 현재 production 전송 경로는 프레임마다 직렬화(서버 actor가 프레임마다 await, transport가 직렬 전달)되어 슬롯에 두 장 이상이 동시에 쌓이는 창이 거의 없다. 따라서 **실제 coalescing(여러 이동 프레임을 한 장으로 합침)은 사실상 발생하지 않으며(superseded 카운트 ≈ 0)**, 현재 살아있는 보장은 'MOVING/SAFETY 두 레인 분리 + 순서 보장'이다. 클라이언트는 conflation 으로 프레임이 합쳐질 것이라 가정하면 안 된다.
+
 ### 6.8 pilot.stop
 
 walk 또는 motion 즉시 중단. ARM 은 유지된다 (E-stop 과 차이).
@@ -632,6 +649,18 @@ MVP 보안 모델:
 | pilot.walk | preset 매핑은 schema 기준 송신 | 실제 robot 명령 변환 권위 |
 | sim/review mode | UI badge | `command.rejected(reason=simulated)` |
 
+### 12.1 레이턴시 JSON sink (Mac 전용, 진단)
+
+Mac 앱은 텔레옵 진단 세션이 끝날 때 레이턴시 tracer 의 요약을 디스크에 1회 떨군다. 이는 프로토콜 wire 메시지가 아니라 **Mac 로컬 진단 산물**이며, iOS 는 관여하지 않는다(여기 기록은 분석 도구·CI 가 같은 포맷을 읽기 위함).
+
+- **트리거·게이트:** 진단 패널이 사라질 때(세션 종료) `tracer.isEnabled` 인 경우에만 기록한다. tracer 비활성이면 **아무 파일도 쓰지 않는다**(robot-deferred 측정값이라 비활성 세션은 기록 가치 없음). 파일 I/O 는 detached 백그라운드 Task — UI teardown 을 블로킹하지 않는다.
+- **경로:** `<Application Support>/DarwinForge/latency/<endedAtEpochMs>.json` (도메인 조회 실패 시 미기록). 세션당 파일 1개, 파일명은 종료 epoch-ms.
+- **포맷:** **줄단위(JSONL)가 아니라 세션당 단일 JSON 객체** 1개. atomic write + sorted keys. 최상위 키:
+  - `channels` — 채널명 → `{ "count": int, "p50Ms": double, "p95Ms": double, "maxAbsMs": double }`. 채널 6종: `jitter`, `write`, `imuRead`, `inputToSent`, `inputToAck`, `estopToSent`.
+  - `startedAtEpochMs` — int64 (현 구현은 종료 시각으로 채워짐).
+  - `endedAtEpochMs` — int64 (파일명과 동일).
+- **read-only 불변식:** sink 는 tracer 의 PUBLIC `*Stats()` 접근자만 호출하고 tracer 상태를 변경하지 않는다. 측정값(ms)의 정확성은 robot-deferred — 현 단계는 구조 충실성만 보장(수치는 unverified).
+
 ## 13. 변경 이력
 
 - 2026-05-25 — v1 초안 (이 문서)
@@ -659,3 +688,6 @@ MVP 보안 모델:
   - **transport.warning(highLatency) (§8.5)**: reject 임계의 2/3 도달시 informational warning.
   - **E-stop verification (§6.5)**: server 가 torque-off 검증 후에만 `command.ack`. 검증 실패시
     `command.failed(reason=safetyAbort)`.
+- 2026-06-14 — v1.3 walk conflation + 레이턴시 sink 문서화 (b1fb37b · ddfc498 · 7a4ffb1 · 05ce002):
+  - **§6.7.1 walk conflation 신설**: 게임패드 freeform 경로 클라이언트측 ~10Hz latest-wins throttle(STOP 무throttle·throttle window 재무장), 단일 FIFO 직렬 디스패치(release가 in-flight move 미추월), 서버측 MOVING/SAFETY two-lane 슬롯(안전 ordered-ahead·never-drop). **supersede 된 이동 프레임은 개별 ACK 미수신 — 살아남은 프레임만 `command.ack`**. 현 production 경로에서 실제 coalescing 은 구조적 no-op(supersededWalkFrames ≈ 0)임을 정직하게 명시.
+  - **§12.1 레이턴시 JSON sink 신설**: Mac 전용 진단 산물. `<Application Support>/DarwinForge/latency/<endedAtEpochMs>.json`, 세션당 단일 JSON 객체(JSONL 아님), 키 `channels`(6채널 count/p50Ms/p95Ms/maxAbsMs)·`startedAtEpochMs`·`endedAtEpochMs`. `tracer.isEnabled` 일 때만 진단 패널 onDisappear 에서 1회 기록(비활성 시 무기록). read-only(*Stats() 만 호출). 측정 수치는 robot-deferred(unverified).
