@@ -1,14 +1,11 @@
 [package]
 name = "ally-link"
-description = "UDP 제어 전송 + ssh2 세션 + 핸드셰이크 + 유선/무선 듀얼 경로 (W1 구현)"
+description = "UDP 제어 전송 + subprocess-ssh 세션 + 핸드셰이크 + 유선/무선 듀얼 경로 (W1)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# W1: SSH 백엔드는 시스템 ssh.exe 서브프로세스(사용자 결정 2026-06-13 — 빌드 신뢰성
-# + 검증된 ssh_control_client.py 경로 일치). 라이브러리(ssh2/russh)는 C 의존·레거시
-# 협상 리스크로 보류, RobotShell 트레잇 뒤에서 추후 교체 가능.
+# subprocess-ssh(시스템 ssh 에 레거시 +ssh-rsa 플래그) 채택 — OpenSSH 5.9 kex 협상
+# 리스크 회피 + 외부 크레이트 0. 실기에서 5Hz 폴백 성능 필요 시 ssh2/russh 분기.
 [dependencies]
 df-wire = { path = "../df-wire" }
-# 서브프로세스 하드 타임아웃(C 의존 0, 순수 Rust).
-wait-timeout = "0.2"

@@ -8,7 +8,6 @@ license.workspace = true
 [dependencies]
 df-wire = { path = "../df-wire" }
 ally-link = { path = "../ally-link" }
-ally-input = { path = "../ally-input" }
 
 [[bin]]
 name = "ally-cli"

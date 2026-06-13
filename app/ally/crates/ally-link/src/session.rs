@@ -1,330 +1,141 @@
-//! 제어 세션 — 핸드셰이크 → 프로브 → UDP/파일-폴백 상태머신.
+//! 세션 상태·전이 — §7 시퀀스의 순수 결정 로직 (소켓/SSH 없음, 테스트 가능).
 //!
-//! `ssh_control_client.py` 의 auto/fallback 상태기계를 Rust 로 옮긴 것:
-//! UDP 가 1차(20Hz), SSH 파일이 영구 폴백(5Hz, INV-3). 핸드셰이크를 쓰고 첫 ACK 가
-//! 프로브 창(1.5s) 안에 오면 `Udp`, 없으면 핸드셰이크를 철회하고 `Ssh` 파일 경로로
-//! 강등한다. 세션 종료 시 핸드셰이크를 제거해 로봇을 파일 폴백으로 되돌린다
-//! (스테일 토큰 금지 §G.1 — 타 세션 UDP 즉사 방지).
+//! 실제 I/O(프로브·SSH·UDP)는 `ssh`/`udp` 모듈이, 스레드 구동은 darwin-fpv(W1)가
+//! 소유한다. 여기는 "지금 어떤 경로/전송이어야 하는가"만 판정한다.
 
-use std::io;
-use std::time::{Duration, Instant};
+use crate::{ACK_PROBE_MS, WIRED_HOST, WIRELESS_HOST};
 
-use df_wire::{build_line, gen_token, GaitConfig, MotionCommand, Tel2};
-
-use crate::ssh::RobotShell;
-use crate::udp::UdpControlTransport;
-use crate::{ACK_PROBE_MS, DEFAULT_CMD_PORT, DEFAULT_ESTOP_PORT};
-
-/// 활성 명령 전송 경로.
+/// 로봇 도달 경로 — 유선 우선, 무선 폴백 (§7-1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransportState {
-    /// SSH 파일 폴백만(5Hz) — UDP 없음/강등.
-    Ssh,
-    /// 핸드셰이크 기록, UDP 송신 중, 첫 ACK 대기.
-    Probing,
-    /// ACK 확인 — UDP 단독(20Hz).
-    Udp,
+pub enum Path {
+    /// USB-C LAN 직결 192.168.123.1 — 무선 대비 ~166배.
+    Wired,
+    /// 공유 AP 192.168.0.33.
+    Wireless,
+    /// 미연결.
+    None,
 }
 
-/// 한 명령 송신이 실제로 탄 경로(보고·표시용).
+impl Path {
+    /// 경로의 로봇 호스트 IP. `None` 은 호스트 없음.
+    pub fn host(self) -> Option<&'static str> {
+        match self {
+            Path::Wired => Some(WIRED_HOST),
+            Path::Wireless => Some(WIRELESS_HOST),
+            Path::None => None,
+        }
+    }
+
+    /// UI `conn.path` 문자열 (§3 state 스키마).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Path::Wired => "wired",
+            Path::Wireless => "wireless",
+            Path::None => "none",
+        }
+    }
+}
+
+/// 활성 명령 전송 경로 (§7-6 폴백 표기).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dispatch {
+pub enum Transport {
+    /// 20Hz DFCMD UDP (주 경로).
     Udp,
+    /// 5Hz SSH 파일 (/tmp/df-walklab-cmd) — ACK 침묵 시 폴백.
     SshFile,
 }
 
-/// 제어 세션 — 셸(SSH) + UDP 전송 + 폴백 상태머신을 묶는다.
-pub struct ControlSession<S: RobotShell> {
-    shell: S,
-    udp: Option<UdpControlTransport>,
-    state: TransportState,
-    probe_started: Option<Instant>,
-    ack_probe: Duration,
-    gait: GaitConfig,
-}
-
-impl<S: RobotShell> ControlSession<S> {
-    /// 세션 개시 — 도달성 확인 → 핸드셰이크/업링크 → UDP 프로브.
-    ///
-    /// SSH 협상 실패는 Err 로 멈춘다(04 게이트: ssh2↔OpenSSH 5.9 실패 시 분기 결정).
-    /// 핸드셰이크 쓰기 실패는 치명이 아니라 파일 폴백(Ssh)으로 시작한다.
-    pub fn start(shell: S, host: &str, gait: GaitConfig) -> io::Result<Self> {
-        Self::start_with_ports(shell, host, gait, DEFAULT_CMD_PORT, DEFAULT_ESTOP_PORT)
-    }
-
-    pub fn start_with_ports(
-        shell: S,
-        host: &str,
-        gait: GaitConfig,
-        cmd_port: u16,
-        estop_port: u16,
-    ) -> io::Result<Self> {
-        if !shell.verify_reachable() {
-            return Err(io::Error::new(
-                io::ErrorKind::ConnectionRefused,
-                "SSH 도달성 확인 실패 — OpenSSH 5.9 협상/키/네트워크 점검 (게이트에서 russh/plink 분기 결정)",
-            ));
+impl Transport {
+    /// UI `conn.transport` 문자열.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Transport::Udp => "udp",
+            Transport::SshFile => "ssh_file",
         }
-
-        let token = gen_token();
-        let transport = UdpControlTransport::new(host, cmd_port, estop_port, token.clone())?;
-
-        let mut session = ControlSession {
-            shell,
-            udp: None,
-            state: TransportState::Ssh,
-            probe_started: None,
-            ack_probe: Duration::from_millis(ACK_PROBE_MS),
-            gait,
-        };
-
-        // 핸드셰이크 + 업링크 기록 → 프로브 진입. 실패 시 파일 폴백으로 시작.
-        if session.shell.write_handshake(&token, estop_port, cmd_port) {
-            session.shell.write_uplink(&transport.uplink_value());
-            session.udp = Some(transport);
-            session.state = TransportState::Probing;
-            session.probe_started = Some(Instant::now());
-        }
-        Ok(session)
-    }
-
-    pub fn state(&self) -> TransportState {
-        self.state
-    }
-
-    /// 명령이 UDP 스트림으로 나가는가(udp 또는 probing — 워치독 티어 무장).
-    pub fn streaming(&self) -> bool {
-        matches!(self.state, TransportState::Udp | TransportState::Probing)
-    }
-
-    /// 현재 경로의 송신 케이던스 — UDP(프로브 포함) 20Hz, SSH 파일 5Hz.
-    pub fn current_send_hz(&self) -> f64 {
-        if self.streaming() {
-            crate::UDP_SEND_HZ
-        } else {
-            crate::SSH_SEND_HZ
-        }
-    }
-
-    /// 명령 1개 송신 — 경로에 맞게 라우팅. df-wire 가 라인을 직렬화(골든 벡터 검증).
-    pub fn send_command(&mut self, cmd: &MotionCommand) -> Dispatch {
-        let cmd_id = df_wire::gen_cmd_id();
-        let line = build_line(&cmd_id, &self.gait, cmd);
-        if self.streaming() {
-            if let Some(u) = self.udp.as_mut() {
-                u.send_command(&line);
-                return Dispatch::Udp;
-            }
-        }
-        // SSH 파일 폴백 — 전체 ssh 왕복(느림). 케이던스는 호출부가 5Hz 로 제한.
-        self.shell.write_command_file(&line);
-        Dispatch::SshFile
-    }
-
-    /// UDP 소켓 서비스 + 상태머신 전진. 이번 사이클 최신 TEL2 를 반환.
-    /// Probing → Udp(첫 ACK) / → Ssh(프로브 창 만료, 핸드셰이크 철회).
-    pub fn pump(&mut self) -> Option<Tel2> {
-        let tel = self.udp.as_mut().and_then(|u| u.pump());
-        if self.state == TransportState::Probing {
-            let acked = self.udp.as_ref().and_then(|u| u.ack_age()).is_some();
-            let expired = self
-                .probe_started
-                .is_some_and(|t| t.elapsed() >= self.ack_probe);
-            if acked {
-                self.state = TransportState::Udp;
-            } else if expired {
-                self.fallback_to_ssh();
-            }
-        }
-        tel
-    }
-
-    /// 핸드셰이크 철회 → 로봇 파일-폴백 복귀. UDP 소켓 닫음.
-    fn fallback_to_ssh(&mut self) {
-        self.udp = None;
-        self.state = TransportState::Ssh;
-        self.probe_started = None;
-        self.shell.clear_handshake();
-    }
-
-    /// 복구 — estop flag 제거(재무장 허용). Y 복구 경로.
-    pub fn recover(&self) -> bool {
-        self.shell.clear_estop()
-    }
-
-    /// E-STOP 즉시 발화 — UDP offset-0 **동기 송신만**(버스트·SSH 스폰 없음). 반환 =
-    /// UDP 로 발화했는가. "입력→소켓 write 내부 지연" 측정은 이 호출 직후 시각을
-    /// 기준점으로 삼는다(스폰 오버헤드 미포함). 보조 경로는 [`Self::estop_followup`].
-    pub fn estop_immediate(&self) -> bool {
-        self.udp
-            .as_ref()
-            .map(|u| u.send_estop_immediate().is_ok())
-            .unwrap_or(false)
-    }
-
-    /// 전송 메트릭 접근(eff_hz·RTT·TEL2 수신율) — 보고용.
-    pub fn transport_mut(&mut self) -> Option<&mut UdpControlTransport> {
-        self.udp.as_mut()
-    }
-
-    pub fn transport(&self) -> Option<&UdpControlTransport> {
-        self.udp.as_ref()
-    }
-
-    pub fn shell(&self) -> &S {
-        &self.shell
-    }
-
-    /// 세션 정리 — 핸드셰이크 제거(스테일 토큰 금지 §G.1). UDP 소켓 닫음.
-    pub fn close(&mut self) {
-        self.shell.clear_handshake();
-        self.udp = None;
-        self.state = TransportState::Ssh;
     }
 }
 
-impl<S: RobotShell + Clone + Send + 'static> ControlSession<S> {
-    /// E-STOP 보조 발화 — UDP 50/100ms 버스트 + SSH touch 병행(보조 스레드).
-    /// 즉시 발화([`Self::estop_immediate`]) 이후 호출. 호출자를 블록하지 않는다.
-    pub fn estop_followup(&self) {
-        if let Some(u) = self.udp.as_ref() {
-            u.send_estop_burst(); // 50/100ms 보조
-        }
-        // SSH flag touch — 느린 왕복이라 별도 스레드(estop 즉시 경로를 블록하지 않음).
-        let shell = self.shell.clone();
-        std::thread::Builder::new()
-            .name("ally-estop-ssh".into())
-            .spawn(move || {
-                shell.touch_estop();
-            })
-            .ok();
+/// §7-6 폴백 판정: ACK 마지막 수신 후 경과로 UDP↔SSH파일 결정.
+///
+/// - ACK 한 번이라도 신선(≤ACK_PROBE_MS)하면 UDP 유지.
+/// - ACK_PROBE_MS 초과(또는 ACK 전무) → SSH 파일 폴백.
+///
+/// 히스테리시스 없음(단조 판정) — 호출자가 전환 시 토큰 철회/복원을 책임진다(§7).
+pub fn decide_transport(ack_age_ms: Option<i64>) -> Transport {
+    match ack_age_ms {
+        Some(age) if age <= ACK_PROBE_MS as i64 => Transport::Udp,
+        _ => Transport::SshFile,
     }
+}
 
-    /// E-STOP — 즉시(동기, INV-1) + 보조(버스트 + SSH touch). UDP 없으면 SSH touch 만.
-    pub fn estop(&self) {
-        self.estop_immediate();
-        self.estop_followup();
+/// 선호 경로 → 프로브 시도 순서 (§7-1: 유선 우선이 기본, 명시 무선 선호도 허용).
+pub fn probe_order(prefer: Path) -> [Path; 2] {
+    match prefer {
+        Path::Wireless => [Path::Wireless, Path::Wired],
+        // Wired 또는 None(기본) → 유선 우선.
+        _ => [Path::Wired, Path::Wireless],
+    }
+}
+
+/// 연결 상태 스냅샷 — §3 `state.conn` 부분집합. darwin-fpv 가 StateHub 로 확장한다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkSnapshot {
+    pub path: Path,
+    pub transport: Transport,
+    pub rtt_ms: Option<f64>,
+    pub eff_hz: f64,
+    /// 마지막 TEL2 경과(ms) — None 이면 아직 수신 전. >1500 이면 UI 채도 저하.
+    pub tel_age_ms: Option<i64>,
+    /// 마지막 ACK 경과(ms).
+    pub ack_age_ms: Option<i64>,
+    pub connected: bool,
+}
+
+impl LinkSnapshot {
+    pub fn disconnected() -> Self {
+        LinkSnapshot {
+            path: Path::None,
+            transport: Transport::Udp,
+            rtt_ms: None,
+            eff_hz: 0.0,
+            tel_age_ms: None,
+            ack_age_ms: None,
+            connected: false,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ssh::ShellResult;
-    use std::sync::{Arc, Mutex};
 
-    /// 명령을 기록하는 목 셸 — 도달성/핸드셰이크 결과를 주입한다.
-    #[derive(Clone, Default)]
-    struct MockShell {
-        calls: Arc<Mutex<Vec<String>>>,
-        reachable: bool,
-        handshake_ok: bool,
-    }
-
-    impl RobotShell for MockShell {
-        fn run(&self, command: &str, _input: Option<&[u8]>) -> ShellResult {
-            self.calls.lock().unwrap().push(command.to_string());
-            ShellResult {
-                code: Some(0),
-                stdout: String::new(),
-                stderr: String::new(),
-                timed_out: false,
-            }
-        }
-        fn verify_reachable(&self) -> bool {
-            self.reachable
-        }
-        fn write_handshake(&self, _t: &str, _e: u16, _c: u16) -> bool {
-            self.calls.lock().unwrap().push("write_handshake".into());
-            self.handshake_ok
-        }
-        fn write_uplink(&self, _v: &str) -> bool {
-            self.calls.lock().unwrap().push("write_uplink".into());
-            true
-        }
-        fn clear_handshake(&self) -> bool {
-            self.calls.lock().unwrap().push("clear_handshake".into());
-            true
-        }
+    #[test]
+    fn path_hosts() {
+        assert_eq!(Path::Wired.host(), Some(WIRED_HOST));
+        assert_eq!(Path::Wireless.host(), Some(WIRELESS_HOST));
+        assert_eq!(Path::None.host(), None);
+        assert_eq!(Path::Wired.as_str(), "wired");
     }
 
     #[test]
-    fn unreachable_shell_errors_out() {
-        let shell = MockShell {
-            reachable: false,
-            ..Default::default()
-        };
-        let r = ControlSession::start(shell, "127.0.0.1", GaitConfig::default());
-        assert!(r.is_err(), "도달성 실패 → Err(게이트에서 분기 결정)");
+    fn probe_prefers_wired_by_default() {
+        assert_eq!(probe_order(Path::None), [Path::Wired, Path::Wireless]);
+        assert_eq!(probe_order(Path::Wired), [Path::Wired, Path::Wireless]);
+        assert_eq!(probe_order(Path::Wireless), [Path::Wireless, Path::Wired]);
     }
 
     #[test]
-    fn handshake_success_enters_probing() {
-        let shell = MockShell {
-            reachable: true,
-            handshake_ok: true,
-            ..Default::default()
-        };
-        let calls = shell.calls.clone();
-        let session = ControlSession::start(shell, "127.0.0.1", GaitConfig::default()).unwrap();
-        assert_eq!(session.state(), TransportState::Probing);
-        assert!(session.streaming());
-        assert!((session.current_send_hz() - crate::UDP_SEND_HZ).abs() < 1e-9);
-        let recorded = calls.lock().unwrap();
-        assert!(recorded.iter().any(|c| c == "write_handshake"));
-        assert!(recorded.iter().any(|c| c == "write_uplink"));
-    }
-
-    #[test]
-    fn handshake_failure_starts_on_ssh_fallback() {
-        let shell = MockShell {
-            reachable: true,
-            handshake_ok: false,
-            ..Default::default()
-        };
-        let mut session = ControlSession::start(shell, "127.0.0.1", GaitConfig::default()).unwrap();
-        assert_eq!(session.state(), TransportState::Ssh);
-        assert!(!session.streaming());
-        assert!((session.current_send_hz() - crate::SSH_SEND_HZ).abs() < 1e-9);
-        // 폴백 상태에서 명령은 SSH 파일로 간다.
+    fn transport_falls_back_on_ack_silence() {
+        // 신선 → UDP
+        assert_eq!(decide_transport(Some(0)), Transport::Udp);
+        assert_eq!(decide_transport(Some(ACK_PROBE_MS as i64)), Transport::Udp); // 경계 포함
+        // 침묵 초과 → SSH 파일
         assert_eq!(
-            session.send_command(&MotionCommand::zero()),
-            Dispatch::SshFile
+            decide_transport(Some(ACK_PROBE_MS as i64 + 1)),
+            Transport::SshFile
         );
-    }
-
-    #[test]
-    fn probe_timeout_demotes_to_ssh_and_clears_handshake() {
-        let shell = MockShell {
-            reachable: true,
-            handshake_ok: true,
-            ..Default::default()
-        };
-        let calls = shell.calls.clone();
-        let mut session = ControlSession::start(shell, "127.0.0.1", GaitConfig::default()).unwrap();
-        // 프로브 창을 0 으로 강제 — 다음 pump 에서 ACK 없으면 즉시 강등.
-        session.ack_probe = Duration::from_millis(0);
-        let _ = session.pump();
-        assert_eq!(session.state(), TransportState::Ssh);
-        assert!(calls.lock().unwrap().iter().any(|c| c == "clear_handshake"));
-        // 강등 후 send 는 SSH 파일.
-        assert_eq!(
-            session.send_command(&MotionCommand::zero()),
-            Dispatch::SshFile
-        );
-    }
-
-    #[test]
-    fn close_clears_handshake() {
-        let shell = MockShell {
-            reachable: true,
-            handshake_ok: true,
-            ..Default::default()
-        };
-        let calls = shell.calls.clone();
-        let mut session = ControlSession::start(shell, "127.0.0.1", GaitConfig::default()).unwrap();
-        session.close();
-        assert_eq!(session.state(), TransportState::Ssh);
-        assert!(calls.lock().unwrap().iter().any(|c| c == "clear_handshake"));
+        // ACK 전무 → SSH 파일
+        assert_eq!(decide_transport(None), Transport::SshFile);
+        assert_eq!(Transport::SshFile.as_str(), "ssh_file");
     }
 }

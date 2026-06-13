@@ -6,7 +6,6 @@ version = 4
 name = "ally-cli"
 version = "0.1.0"
 dependencies = [
- "ally-input",
  "ally-link",
  "df-wire",
 ]
@@ -24,7 +23,6 @@ name = "ally-link"
 version = "0.1.0"
 dependencies = [
  "df-wire",
- "wait-timeout",
 ]
 
 [[package]]
@@ -288,15 +286,6 @@ name = "vec_map"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
-
-[[package]]
-name = "wait-timeout"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "wasm-bindgen"
