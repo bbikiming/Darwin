@@ -24,6 +24,21 @@ FIXTURES = ALLY_ROOT / "crates/df-wire/tests/fixtures"
 
 sys.path.insert(0, str(REPO_ROOT / "tools/switch-pilot/src"))
 
+# Windows 호환 심: switch-pilot 패키지는 Linux 전용 모듈(fcntl)과 POSIX 전용
+# os.getuid 를 모듈 레벨에서 참조한다(입력 백엔드·SSH ControlPath — 이 생성기는
+# 순함수만 쓰므로 둘 다 실행 경로에 없다). Ally(Windows)에서 픽스처를 재생성할
+# 수 있도록 import 전에 무해한 스텁을 깔아 둔다.
+import os  # noqa: E402
+import types  # noqa: E402
+
+if "fcntl" not in sys.modules:
+    try:
+        import fcntl  # noqa: F401
+    except ModuleNotFoundError:
+        sys.modules["fcntl"] = types.ModuleType("fcntl")
+if not hasattr(os, "getuid"):
+    os.getuid = lambda: 0  # type: ignore[attr-defined]
+
 from darwin_switch_agent import df_udp  # noqa: E402
 from darwin_switch_agent.mapping import MotionCommand  # noqa: E402
 from darwin_switch_agent.ssh_control_client import SshControlClient  # noqa: E402
