@@ -2386,13 +2386,13 @@ public final class WalkLabSession {
     /// `tick()` 의 매 호출을 Instruments 에서 `walk_tick` interval 로 시각화. simTimer 의
     /// 10Hz fire rate × ~50ms tick budget → ADR-002 의 5ms P99 threshold 검증.
     ///
-    /// **OSLog 카테고리**: subsystem `com.robotis.darwinforge`, category `walk_tick`.
+    /// **OSLog 카테고리**: subsystem `com.yuseokkim.darwinforge`, category `walk_tick`.
     /// Instruments Custom Intervals 에서 filter 가능.
     ///
     /// **성능**: release build 에서도 signposter 활성. interval begin/end ~10-30ns.
     /// 10Hz × 30ns = 0.00003% CPU overhead — tick budget 영향 무시 가능.
     private static let walkTickSignposter = OSSignposter(
-        subsystem: "com.robotis.darwinforge",
+        subsystem: "com.yuseokkim.darwinforge",
         category: "walk_tick"
     )
 

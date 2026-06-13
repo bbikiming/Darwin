@@ -43,7 +43,7 @@ DarwinForge 는 SwiftPM 기반 macOS 앱이라 `.xcodeproj` 가 없다. Apple �
 ### 1.3 App Store Connect 에 앱 등록
 
 1. <https://appstoreconnect.apple.com/apps> → **+** → **신규 App** → macOS
-2. Bundle ID: `com.robotis.darwinforge` (Identifier 등록 안 됐으면 Developer 사이트 → Identifiers 에서 먼저 등록)
+2. Bundle ID: `com.yuseokkim.darwinforge` (Identifier 등록 안 됐으면 Developer 사이트 → Identifiers 에서 먼저 등록)
 3. SKU: 임의 (예: `DARWINFORGE-MAC`)
 4. 권한: 본인 또는 팀
 
@@ -182,7 +182,7 @@ Mac Installer Distribution 인증서 미발급. Xcode → Settings → Accounts 
 
 ### 5.3 altool 업로드 실패: "Invalid bundle identifier"
 
-App Store Connect 에 bundle id (`com.robotis.darwinforge`) 등록 안 됨.
+App Store Connect 에 bundle id (`com.yuseokkim.darwinforge`) 등록 안 됨.
 <https://appstoreconnect.apple.com/apps> → **+** → 신규 App → bundle id 선택.
 
 ### 5.4 notarytool 실패: "Status: Invalid" + log 에 "hardened runtime"

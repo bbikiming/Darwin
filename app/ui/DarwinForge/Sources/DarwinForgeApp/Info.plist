@@ -27,7 +27,7 @@
 
     <!-- 표준 app 메타데이터 -->
     <key>CFBundleIdentifier</key>
-    <string>com.robotis.darwinforge</string>
+    <string>com.yuseokkim.darwinforge</string>
     <key>CFBundleName</key>
     <string>DarwinForge</string>
     <key>CFBundleDisplayName</key>
@@ -51,7 +51,7 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
-    <string>© 2026 ROBOTIS. All rights reserved.</string>
+    <string>© 2026 YUSEOK KIM. All rights reserved.</string>
 
     <!-- App Store 카테고리 (notarization 외에 launchctl-based 자동 실행 시 경고 회피) -->
     <key>LSApplicationCategoryType</key>

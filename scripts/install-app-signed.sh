@@ -3,8 +3,8 @@
 #
 # 왜 (2026-06-12 실기 F9): dev 번들은 ad-hoc 서명 + com.bbikiming.darwinforge 식별자라
 # 재빌드할 때마다 macOS TCC(로컬 네트워크 등) 권한이 무효화되고, 기존 허용은
-# com.robotis.darwinforge 에 묶여 있어 dev 번들의 모든 로봇 연결이 조용히 차단됐다.
-# 이 스크립트는 ① 식별자를 정규(com.robotis.darwinforge)로 통일, ② 실제 개발자
+# com.yuseokkim.darwinforge 에 묶여 있어 dev 번들의 모든 로봇 연결이 조용히 차단됐다.
+# 이 스크립트는 ① 식별자를 정규(com.yuseokkim.darwinforge)로 통일, ② 실제 개발자
 # identity 로 서명(DR 이 팀 anchored → 재빌드해도 권한 유지), ③ entitlements
 # (마이크/음성) 보존, ④ /Applications 설치까지 한 번에 처리한다.
 #
@@ -17,7 +17,7 @@ PKG="$ROOT/app/ui/DarwinForge"
 APP_NAME="DarwinForge"
 DEV_APP="$PKG/.build/$APP_NAME.app"
 DEST="/Applications/$APP_NAME.app"
-BUNDLE_ID="com.robotis.darwinforge"
+BUNDLE_ID="com.yuseokkim.darwinforge"
 # 실기 F9: 공증용(DarwinForge.entitlements)은 app-sandbox=true — 로컬 설치에 부착하면
 # ssh 키 접근·Application Support 가 차단돼 연결이 전면 불능. 로컬은 dev entitlements.
 ENTITLEMENTS="$PKG/Sources/DarwinForgeApp/DarwinForge.dev.entitlements"

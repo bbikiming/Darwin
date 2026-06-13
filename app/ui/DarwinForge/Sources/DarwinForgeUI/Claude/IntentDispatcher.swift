@@ -255,7 +255,7 @@ public final class IntentDispatcher: ObservableObject {
         // Idempotent guard: 이미 e-stop 발화됐으면 no-op.
         if _emergencyStopFired {
             os_log("E-STOP already fired — no-op",
-                   log: OSLog(subsystem: "com.robotis.darwinforge", category: "safety"),
+                   log: OSLog(subsystem: "com.yuseokkim.darwinforge", category: "safety"),
                    type: .info)
             return ExecutionResult(speak: KoreanUX.Safety.estopTriggered)
         }
@@ -273,7 +273,7 @@ public final class IntentDispatcher: ObservableObject {
 
         // Step 6: system log (Console.app 에서 safety 카테고리로 검색 가능).
         os_log("E-STOP fired — 6-step chain executed",
-               log: OSLog(subsystem: "com.robotis.darwinforge", category: "safety"),
+               log: OSLog(subsystem: "com.yuseokkim.darwinforge", category: "safety"),
                type: .fault)
 
         // Step 7 (V291-12): 비동기 torque 검증 — E-Stop ACK 는 즉시 반환, 검증은 후속 실행.

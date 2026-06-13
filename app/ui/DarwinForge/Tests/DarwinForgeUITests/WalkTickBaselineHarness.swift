@@ -53,7 +53,7 @@
 ///
 /// # 비교 reference (V286-2 권고)
 ///
-/// - Apple OSLog signposter (`com.robotis.darwinforge` subsystem) 는 이미 emit 중.
+/// - Apple OSLog signposter (`com.yuseokkim.darwinforge` subsystem) 는 이미 emit 중.
 ///   xctrace 로 GUI 시작 → Walk Lab "보통 속도" preset 시작 후 30초 capture 가능.
 ///   본 harness 는 GUI 자동화 불가능 환경 대응 floor measurement.
 /// - Google SRE Book — SLI 은 user-facing latency. `walk_tick` 은 robot 안전 loop
@@ -210,7 +210,7 @@ final class WalkTickBaselineHarness: XCTestCase {
         return """
         {
           "schema_version": 1,
-          "subsystem": "com.robotis.darwinforge",
+          "subsystem": "com.yuseokkim.darwinforge",
           "interval": "walk_tick",
           "measured_at": "\(measuredAt)",
           "tool": "WalkTickBaselineHarness (DispatchTime.now, direct call)",

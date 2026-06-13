@@ -11,6 +11,9 @@
 > 핵심 스택: **Rust 코어 (`app/core/`) + SwiftUI UI (`app/ui/`)**. ADR-009~013 참조.
 >
 > 비공식(unofficial) 도구 — ROBOTIS와 직접 제휴 관계 없음. 자세한 브랜드 자산은 [`docs/assets/README.md`](docs/assets/README.md).
+>
+> *상표 고지*: "ROBOTIS", "DARwIn-OP", "DARWIN-OP" 는 ROBOTIS Co., Ltd. 의 상표이며,
+> 본 앱은 해당 로봇과 함께 쓰는 **비공식 서드파티 도구**입니다. © 2026 YUSEOK KIM.
 
 ## 빠른 시작
 

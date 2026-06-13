@@ -2914,14 +2914,14 @@ public final class ConnectionStore: ObservableObject {
     /// W4.1.4 (TelemetryPoller actor 추출) 진입 전 P50/P95/P99 baseline 기록 → actor
     /// 추출 후 동일 측정 → P99 < 5ms regression 가드.
     ///
-    /// **OSLog 카테고리**: subsystem `com.robotis.darwinforge`, category `imu_loop`.
+    /// **OSLog 카테고리**: subsystem `com.yuseokkim.darwinforge`, category `imu_loop`.
     /// Instruments Custom Intervals 에서 filter 가능.
     ///
     /// **성능**: release build 에서도 signposter 활성. interval begin/end ~10-30ns
     /// (Instruments capture 없을 때 거의 zero overhead). 20Hz polling × 30ns =
     /// 0.0001% CPU overhead — ADR-002 의 50Hz freshness gate 영향 없음.
     private static let imuLoopSignposter = OSSignposter(
-        subsystem: "com.robotis.darwinforge",
+        subsystem: "com.yuseokkim.darwinforge",
         category: "imu_loop"
     )
 

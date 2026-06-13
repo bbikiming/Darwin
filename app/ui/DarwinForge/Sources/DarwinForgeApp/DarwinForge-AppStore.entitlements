@@ -20,9 +20,9 @@
 
     <!-- V297-10 TestFlight fix (warning 90886) — provisioning profile 의 application-identifier
          와 일치하는 키가 codesign entitlements 에도 반드시 있어야 TestFlight 분배 가능.
-         Team ID + Bundle ID 조합으로 명시 (JM4LJMU49Q.com.robotis.darwinforge). -->
+         Team ID + Bundle ID 조합으로 명시 (JM4LJMU49Q.com.yuseokkim.darwinforge). -->
     <key>com.apple.application-identifier</key>
-    <string>JM4LJMU49Q.com.robotis.darwinforge</string>
+    <string>JM4LJMU49Q.com.yuseokkim.darwinforge</string>
     <key>com.apple.developer.team-identifier</key>
     <string>JM4LJMU49Q</string>
 
