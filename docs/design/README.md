@@ -16,7 +16,9 @@
 | [walklab-onboard-teleop-upgrade.md](walklab-onboard-teleop-upgrade.md) | 로봇 측 코드·알고리즘 + 명령/텔레메트리 계약 | 2507be6 | **O0 코드 ✅**(TEL ≥11+last_cmd_id/loop_ms·RobotClockSync·tracer ackReceived, P3) · **O1 코드 ✅**(WalkLabTransport 순수 로직+호스트 테스트 63 checks·브로커리지 UDP 리스너 17372/17374·supervisor 20ms·워치독 티어 600/2500ms 스트림 소스 전용·RefreshHandshake·파일 폴백 보존, P3) · **O2 코드 ✅**(거버너·슬루·게이트 스케줄·twist v2·밸런스 결선, 호스트 154 checks) · **O4 코드 ✅**(TEL2 30Hz UDP/파일 TEL v1 5Hz·FSR/CoP·phase·래치·seq_applied·active_source·J6 적응형 폴러·콕핏 명령vs래치 HUD·walkAnimator 위상동기·3D FSR 오버레이, P9 `daa2550`·`998297a`) · 실기 배포(demoBuildPatched)·벤치(≥20Hz·E-STOP p95·30Hz 수신율) ⬜ · O3(FSR/IMU 밸런스 피드백) ⬜ |
 | [bus-direct-teleop-upgrade.md](bus-direct-teleop-upgrade.md) | 직결(bus) 조종 — 50Hz 연속 스트리밍 | b54daff | **D0 ✅**(J4·J13·계측) · **D1 ✅ 5ff5873**(시간 기반 50Hz 공유 샘플러+래치, 양 송출 루프) · **D2 ✅ e940e63**(IMU 50Hz·자이로 LPF·FSR 오버레이; FSR 유선 5Hz·낙상 윈도 IMU레이트 독립은 보고됨) · D3 ⬜ — 실기(드리프트·온도·진동·20ms 추종) 사용자 보고 대기 |
 | [handheld-direct-pilot-upgrade.md](handheld-direct-pilot-upgrade.md) | RG G01 **2.4G 동글** 직결(USB HID, 유선은 폴백) + Switch 무선 최적화 | f157c06 (동글 기본 개정 2026-06-11) | **H0 ✅ 실측 완료**(2026-06-12, [보고서](../reports/2026-06-12-rgg01-usb-probe.md) — Track A 확정, graceful 단절=release 합성+노드 소멸(거리이탈 미측정), 유선 폴백 불발) · H3 코드 ✅(P10) · **H1·H2 코드 ✅**(P7 — 8430f0a·bbde5ac, 실기 입회 게이트 대기) |
-| [app/ally/docs/](../../app/ally/docs/) (**DARwIn FPV**) | ROG Ally 게임형 콕핏 — Tauri 2 하이브리드 (Rust 안전코어 + WebView2), 기획·PRD·UX·아키텍처·수용기준 5종 | 2026-06-13 | **W0 ✅**(독립 workspace + df-wire 와이어 순함수 + Python↔Rust 골든 벡터 패리티 21 tests) · W1 제어 코어(유선 실기 게이트) ⬜ · W2 콕핏+카메라 ⬜ · W3 3D 합성 포즈 ⬜ · W4 게임화·패키징 ⬜ |
+| [app/ally/docs/](../../app/ally/docs/) (**DARwIn FPV**) | ROG Ally 게임형 콕핏 — Tauri 2 하이브리드 (Rust 안전코어 + WebView2), 기획·PRD·UX·아키텍처·수용기준 5종 | 2026-06-13 | **W0 ✅**(독립 workspace + df-wire 와이어 순함수 + Python↔Rust 골든 벡터 패리티 21 tests) · **W1 코드 ✅**(ally-link ssh/udp/metrics/session, `d00b8ca`·macOS selftest GREEN) + Mac 'FPV 조종' 탭 런처(`40434a0`) — 유선 실기 게이트 ⬜ · W2 콕핏+카메라 ⬜ · W3 3D 합성 포즈 ⬜ · W4 게임화·패키징 ⬜ |
+| [anbernic-gait-upgrade.md](anbernic-gait-upgrade.md) | Anbernic 조종 보행 고도화 — 좌우 고속·회전 연속/대각·복합 블렌딩 | ea5bbb9 | **코드 ✅**(P0~P6, 호스트 test_transport 187/test_gamepad 216 GREEN) · P7(좌우 32·회전 20·L2 엔벨로프) 온스탠드 스윕 ⬜ · 실기 게이트 ⬜ |
+| [gamepad-kick-motion.md](gamepad-kick-motion.md) | 게임패드 LB/RB 공식 킥 모션(온보드 단독, getup 패턴 복제) | f2e9fae·58efaa8 | **코드 ✅**(F12 킥 + 안정성: 사커킥 스냅 감속·착지 settle·사후낙상 즉시 getup) · K3 실기 게이트 ⬜ |
 
 ## 2. 의존 그래프
 
@@ -48,6 +50,8 @@ cockpit-latency-hardening (Mac 공통 전송·계측)
 - Swift 테스트 serial 실행(UserDefaults 공유), 실기는 크래들+다리 토크 해제+배터리 차단.
 
 ## 4. 권장 착수 순서 (2026-06-11 시점)
+
+> **2026-06-14 갱신**: 아래 순서는 대부분 실행됨 — 3D W2~W5 · 레이턴시 W1 · 온보드 O0~O2·O4 · bus D1·D2 · handheld H1~H3 코드 완료. 잔여는 실기 게이트(벤치·필드)와 O3(FSR/IMU 밸런스 피드백). 아래는 원래 권장 순서의 기록.
 
 1. ~~**H0 — RG G01 2.4G 동글 호환성 프로브**~~ ✅ 2026-06-12 실측 완료 — Track A 확정,
    H1 코드 테이블·failsafe 거동 확보 ([보고서](../reports/2026-06-12-rgg01-usb-probe.md)).

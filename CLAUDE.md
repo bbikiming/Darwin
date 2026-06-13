@@ -72,6 +72,15 @@ MainActor concurrency patterns), builds the Rust vendor lib, then `swift build` 
   SwiftPM Sources/Tests). Relays cockpit telemetry/control over a WebSocket relay to
   the Mac app. Build IPA via `app/mobile/.../Xcode/` ExportOptions plists.
 - `app/motion-engine/`, `app/walk-engine/` — engine specs/work.
+- `app/ally/` — ROG Ally FPV 앱. **app/core 와 분리된 독립 Cargo workspace** (Tauri 2,
+  Windows 전용 의존을 코어 lock/CI 에서 격리). 멤버 크레이트: `df-wire`(와이어 계약),
+  `ally-link`(ssh/udp/metrics/session), `ally-input`, `ally-pose`, `ally-cli`. `darwin-fpv`
+  (Tauri bin)는 W1 보류 — 현재 디렉터리·README 자리만, 워크스페이스 멤버 미등록.
+  `ally-pose`→forge-core cross-workspace path 의존은 W3 에서 연결(현재 보류). 설계
+  `app/ally/docs/`.
+- `tools/` — `switch-pilot`(앱)·`switch-appliance`(봉인 어플라이언스). 전부 하드웨어 미검증.
+- `firmware-patches/` — `walklab-brokerage`(온보드 C++ 브로커리지·GamepadPilot)·`tools`(실기
+  벤치 py: onboard-bench·dxl-temp-tcp).
 - `docs/decisions/` ADRs · `docs/reports/` sprint reports · `docs/protocols/`
   Dynamixel 1.0/2.0 + CM-730/740 · `motions/` motion library · `harness/` BOM/wiring.
 - `PROGRESS.md` (living status), `ROADMAP.md`, `BLOCKERS.md`.

@@ -5,8 +5,8 @@
 # lock 파일·CI 표면을 오염시키지 않게 한다 (docs/03_ARCHITECTURE.md §6).
 # forge-core 가 필요한 크레이트(ally-pose, W3)는 cross-workspace path 의존으로 연결한다.
 #
-# darwin-fpv(Tauri bin)는 W1에서 멤버로 추가한다 — Tauri 의존이 무거워
-# W0 골격의 `cargo test`(macOS 호스트)를 가볍게 유지하기 위해 보류.
+# darwin-fpv(Tauri bin)는 W2(Tauri 콕핏)에서 멤버로 추가한다 — Tauri 의존이 무거워
+# W0/W1 골격의 `cargo test`(macOS 호스트)를 가볍게 유지하기 위해 보류(W1 d00b8ca 시점 미등록 확인).
 
 [workspace]
 resolver = "2"

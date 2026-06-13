@@ -20,7 +20,16 @@
 - [x] **Phase A — 안전 기반** (2026-05-11): 20 DOF + JointMap (Official/LegacyOp1) + 부위별 한계 + walkReady (`ini_pose.yaml` 1:1) + 토크 ramp (P_GAIN 0→8→16→32) + `forge walk-ready` CLI + 명세 정정 → **106 tests**.
 - [x] **Phase B — 모션 카탈로그** (2026-05-11): `motion_4096.bin` byte-identical 파서 + `SafetyClass {Safe, Caution, HighRisk}` + `Library::with_official_catalog` (11 Safe + 2 Caution + 3 HighRisk) + self-collision 룰 + `precheck_motion(confirm_risk)` → **125 tests**.
 - [x] **Phase D (walk 권외)** (2026-05-12): `CmController::detect_joint_map` + `forge connect` + `forge motion catalog` CLI → **127 tests**.
+- [x] **2026-05 후반 사이클 (V280~V297) — UI 하드닝 + iOS Mobile Pilot MVP** (2026-05-13~25): WalkLabView Progressive Disclosure 15→5(`b894baa`) · KoreanUX Voice&Tone + DFNotification taxonomy(`273f353`) · Code coverage + fitness function 자동화(`3d42ca0`) · STPA + RobotPort + ZMP + xctrace baseline + Mutation pilot(`f977d90`) · iPhone Mobile Pilot MVP + Mac relay + safety hardening(`fab4338`) · App Store Connect 배포 인프라(`fb7514d`) + TestFlight 첫 화면 fatalError 수정(`f4f2faf`). 상세 보고서 다수 `docs/handoff/`·`docs/reports/`.
+- [x] **온보드 비전·원격 콘솔·UDP 업링크** (2026-06): C1 카메라 스트림 — walklab 중 8080 MJPEG 라이브뷰 실기검증(`3d2eb5e`) · 온보드 볼 트래킹 헤드모션 on/off + 버튼 매핑(`da2506e`) · RemoteShell exit code 캡처·히스토리 링버퍼(`2dbab85`) · 원격 데모 메뉴 감사 13→9 + 명령 화면 UX 리디자인(`76edbf6`·`66a9443`) · UDP 푸시 업링크 robot→Mac 1 RTT + SSH 폴링 폴백(`f9c7978`).
 - [x] **DARwIn FPV W0** (2026-06-13): ROG Ally 게임형 콕핏 앱 — 기획·PRD·UX·아키텍처·수용기준 문서 5종(`app/ally/docs/`) + 독립 Cargo workspace + `df-wire` 와이어 계약 포팅(Python↔Rust 골든 벡터 패리티, **21 tests GREEN**). 다음: W1 제어 코어(유선 실기 게이트).
+- [x] **DARwIn FPV W1 — ally-link 연결 계층** (2026-06-13, `d00b8ca`): `app/ally/crates/ally-link/` (ssh/udp/metrics/session) 구현 + macOS selftest GREEN(ACK eff_hz≈20.0, clippy -D warnings 0). W1 이어가기 핸드오프 문서(`4c89353`, ROG Ally 로컬 Claude Code용). **유선 실기 게이트(Ally 기기) 대기**.
+- [x] **Mac 'FPV 조종' 탭** (2026-06-13, `40434a0`): 전문가 탭에 ROG Ally FPV 데모 런처(AllyFpvCommands/Session/View, probe/connect/fpv 명령 생성·파싱). 기존 '스위치 연결' 탭 개편 흡수.
+- [x] **iOS Mobile Relay 고도화** (2026-06-13~14): walk 30→10Hz latest-wins throttle(`b1fb37b`), 디스패치 직렬화(release가 in-flight move 추월 차단, `ddfc498`), Mac 릴레이 walk conflation 슬롯 + 레이턴시 JSON sink(`7a4ffb1`), 텔레메트리 @Published 게이트 + 유선 재프로브 배너(`f1af504`), 릴레이 conflation 실측·통합테스트 + isEnabled 게이트 테스트(`05ce002`).
+- [x] **WalkLab 텔레옵·킥** (2026-06): Anbernic 보행 고도화 P0~P6(`ea5bbb9`, 호스트 test_transport 187/test_gamepad 216 GREEN), 게임패드 LB/RB 공식 킥 F12(`f2e9fae`·`cb0a964`, 온보드 단독), 킥 안정성 감속·착지 settle·사후낙상 인계(`58efaa8`). P7(32/20/L2)·킥 K3 실기 게이트 대기.
+- [x] **실기 브링업 RG G01** (2026-06-13 입회, 보고서 `docs/reports/2026-06-13-rgg01-bringup.md`): F6/F7 버스 선점·하드 타임아웃(`465b7d9`), F9 E-STOP 복구 관절 재enable 결함 수정 + F10b 조작계 리디자인 + F11 레이턴시(`1d8c6ff`), 실기 벤치 도구(`6df967d`). 단절 매트릭스·10분 분포 등 잔여.
+- [x] **App Store 심사 대응 코드** (2026-06-11~13): hardened runtime 예외 제거(`8d62550`, PR #43), device.serial entitlement + CFBundleVersion 자동 bump(`be8ab20`), Claude/Synth App Store 빌드 숨김(`48365e4`), bundle ID·저작권 com.yuseokkim 시나리오 B(`8cee624`), 마스터 플랜(`645a571`, `docs/app-review/2026-06-13-pass-master-plan.md`). **잔여 = 개발자 포털(새 App ID·profile 재발급·새 앱 레코드)·아카이브 실기 검증·데모 영상**.
+- [x] **콕핏 레이턴시/3D 뷰포트** (2026-06): 콕핏 HUD 아코디언 + 3D 오버레이 기본 OFF·머리 장식 제거(`9ad2563`). 콕핏 레이턴시 Wave 0~2·부분 W3, 3D 뷰포트 W0~W5 설계는 `docs/design/` 참조(실기 벤치 잔여).
 
 ## 🎉 MVP 달성 (2026-05-09)
 
@@ -45,9 +54,10 @@ ROADMAP §5 MVP 정의 100% 충족:
 
 ## 직전 체크포인트
 
-- 커밋: `<latest> sprint-6: vision & strategy MVP`
+- 커밋: `05ce002` fix(mobile-relay): B2 실제 conflation/통합테스트 + A1 isEnabled 게이트 테스트 — 2026-06-14
 - 브랜치: `claude/robotis-darwin-op-setup-oyzTi`
 - PR: #1 (draft, MVP 완료 후 갱신)
+> 직전 체크포인트가 sprint-6 placeholder(`<latest>`)로 고정돼 있던 것을 2026-06-14 현행 HEAD로 갱신.
 
 ## Sprint 7 — SwiftUI Studio (2026-05-10)
 
@@ -255,11 +265,24 @@ PR #2 (Remote Teleop v1 PRD) + PR #3 (커뮤니티 모션 DB + Walk Lab 슬라�
 | ADR | 14 (ADR-014 Motion Synthesis Architecture 추가) |
 | PRD | 1 (PRD-001 Motion Synthesis v1) |
 
+### 통계 (2026-06-14 실측 갱신)
+
+| 항목 | 값 | 근거 |
+|------|-----|------|
+| Rust workspace tests | **382 / 382 통과** (+ doc-test 2 ignored) | `cargo test --workspace` exit 0 실측 (forge-cli 13, forge-core 322+15, forge-mcp-synth 32) |
+| Rust crates | 4 (`forge-core`, `forge-cli`, `forge-ffi`, `forge-mcp-synth`) | `app/core/Cargo.toml` members |
+| Rust MSRV | 1.78 (`Cargo.toml rust-version`) — 로컬 toolchain 1.95.0 | README는 'Rust 1.78+ (MSRV; 권장 toolchain 1.94+)'로 정합 |
+| Swift 테스트 (선언) | UI 3577 + iOS(app/mobile) 151 `func test*` 선언 — **통과 수 unverified** (swift test 미실행) | 정적 카운트, .build 제외 |
+| Mac 앱 버전 | 1.24.0 (`Info.plist` CFBundleShortVersionString) | `scripts/run-app.sh`가 이번 변경으로 Info.plist의 CFBundleShortVersionString을 PlistBuddy(+grep/sed 폴백)로 읽어 번들에 스탬프 — 이전 1.11.2 하드코딩 제거, 드리프트 해소 |
+| ally 워크스페이스 | 독립 Cargo workspace, 멤버 5크레이트(df-wire/ally-link/ally-input/ally-pose/ally-cli). `darwin-fpv`(Tauri bin)는 디렉터리·README 자리만·워크스페이스 멤버 미등록(W1 보류) | `app/ally/Cargo.toml` |
+| ADR | 14 (ADR-014 `ADR-014-motion-synthesis.md` 포함) | `docs/decisions/` 실측 |
+
+주의: PROGRESS.md의 과거 'NN tests' 수치는 스프린트별 누적 기록이며 워크스페이스 단일 합계가 아니다. 그라운드트루스는 위 382(Rust 실측)/3577 선언(Swift, 통과 수 unverified)를 사용.
+
 ## 다음 단계 (사용자 결정)
 
-1. **Sprint 11 — SwiftUI Synth Palette** (Pending — 다른 worktree GUI 작업 조율 후)
-2. **Validator calibration** — V1/V2 임계 보정 (PRD §17.4 후속, 실 robot 데이터 필요)
-3. **실기기 검증** — Mac에서 USB 연결 → Studio 자동 연결 → 슬라이더 → 모션 재생까지 E2E
-4. **P1 (1주)**: Sync_Write FFI 노출 (16관절 1패킷 ≈ 12 ms), walking IK + 실 모터 발행 토글
-5. **P2 (2주)**: AVFoundation 카메라 → forge-core::vision 라이브, SQLite persistence
-6. **PR #1 ready for review 전환** — 문서 + 코드 리뷰
+1. **App Store 재제출** — 코드는 P0/P1 시나리오 B까지 완료(`8d62550`·`be8ab20`·`48365e4`·`8cee624`). 잔여 = 개발자 포털(새 App ID·provisioning profile 재발급·App Store Connect 새 앱 레코드)·아카이브 실기 검증·데모 영상. 플랜 `docs/app-review/2026-06-13-pass-master-plan.md`.
+2. **DARwIn FPV W2+** — W0·W1 코드 완료, Ally 기기 유선 실기 게이트 → W2 Tauri 콕핏 → W3(ally-pose↔forge-core)·W4 내구.
+3. **WalkLab 실기 게이트** — P7(Anbernic 32/20/L2 온스탠드 스윕), 킥 K3, D1/D2·H1/H2 필드 검증, O3(FSR/IMU 밸런스 피드백) 미착수.
+4. **레이턴시/E-STOP 하드닝** — UDP 명령/E-STOP 패스트레인 완비됐으나 Mac 핸드셰이크 미사용으로 100% 미배선. 계측 0샘플·무선 고착(166x) → 설계 `docs/design/cockpit-latency-hardening.md`.
+5. (보존) Sprint 11 SwiftUI Synth Palette 통합, V1/V2 validator 실 robot calibration, AVFoundation 카메라 라이브.

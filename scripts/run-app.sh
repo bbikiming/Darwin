@@ -9,6 +9,12 @@ PKG="$ROOT/app/ui/DarwinForge"
 APP_NAME="DarwinForge"
 APP_PATH="$PKG/.build/$APP_NAME.app"
 
+# 앱 버전은 권위 있는 소스 Info.plist 에서 읽어 드리프트 방지 (하드코딩 금지).
+SRC_INFO_PLIST="$PKG/Sources/DarwinForgeApp/Info.plist"
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SRC_INFO_PLIST" 2>/dev/null \
+    || grep -A1 'CFBundleShortVersionString' "$SRC_INFO_PLIST" | grep -m1 -oE '<string>[^<]+</string>' | sed -E 's#</?string>##g')"
+APP_VERSION="${APP_VERSION:-0.0.0}"
+
 # 1) Rust 코어 + Vendor + Swift 빌드 (이미 되어 있으면 빠름)
 echo "▶ Rust + Swift 빌드…"
 bash "$ROOT/scripts/build-mac.sh" --swift >/dev/null
@@ -80,7 +86,7 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.11.2</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleVersion</key>
     <string>$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "dev")</string>
     <key>LSMinimumSystemVersion</key>
