@@ -16,10 +16,11 @@
 //! 세션·walklab 모드를 선검증한 뒤에만 띄운다(런타임은 mode/incumbent 가드를 반복하지
 //! 않는다). 헤드리스 검증은 `Endpoint::Loopback`(에코 로봇, SSH 미기동)으로 한다.
 
+use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -162,6 +163,9 @@ impl Runtime {
         let (bus, bus_rx) = EstopBus::channel();
         let heartbeat = Heartbeat::new();
         let last_ack = Arc::new(AtomicI64::new(0));
+        // seq → 로컬 송신 시각(ms). RTT = ACK 수신 - 이 송신시각(같은 단조 시계).
+        // 로봇의 t_rx(CLOCK_REALTIME epoch ms)는 시계 도메인이 달라 빼면 garbage → 무시.
+        let sent_at: Arc<Mutex<HashMap<i64, i64>>> = Arc::new(Mutex::new(HashMap::new()));
         let mut threads: Vec<JoinHandle<()>> = Vec::new();
 
         // ── ssh-session: 블로킹 SSH 부수효과(폴백 cmd 파일·복구 rm·estop touch)를 제어
@@ -206,6 +210,7 @@ impl Runtime {
             let stop = stop.clone();
             let hb = heartbeat.clone();
             let last_ack = last_ack.clone();
+            let sent_at = sent_at.clone();
             let ssh_jobs = ssh_jobs.clone();
             let sink = sink.clone();
             let tick = cfg.tick;
@@ -237,7 +242,17 @@ impl Runtime {
                     let transport = decide_transport(age);
                     match transport {
                         Transport::Udp => {
-                            let _ = udp.send_cmd(seq, &out.line);
+                            if udp.send_cmd(seq, &out.line).is_ok() {
+                                // RTT 산출용 로컬 송신시각 기록(seq별). 유실 ACK 누적 방지로
+                                // 256 초과 시 오래된 seq 정리.
+                                if let Ok(mut m) = sent_at.lock() {
+                                    m.insert(seq as i64, t);
+                                    if m.len() > 256 {
+                                        let cut = seq as i64 - 256;
+                                        m.retain(|&k, _| k >= cut);
+                                    }
+                                }
+                            }
                         }
                         Transport::SshFile => {
                             // 비차단 위임 — 워커가 최신승으로 5Hz 기록(블로킹은 워커에서).
@@ -287,6 +302,7 @@ impl Runtime {
             let state = state.clone();
             let stop = stop.clone();
             let last_ack = last_ack.clone();
+            let sent_at = sent_at.clone();
             let sink = sink.clone();
             threads.push(spawn_named("udp-rx", move || {
                 let mut rtt = RttEma::new();
@@ -294,9 +310,12 @@ impl Runtime {
                 let mut last_emit = 0i64;
                 while !stop.load(Ordering::Relaxed) {
                     match udp.recv() {
-                        Ok(Some(Inbound::Ack { t_rx, .. })) => {
+                        Ok(Some(Inbound::Ack { seq, .. })) => {
                             let t = now_ms();
-                            rtt.update((t - t_rx).max(0) as f64);
+                            // RTT = 수신 - 로컬 송신시각(같은 단조 시계). 로봇 t_rx 무시.
+                            if let Some(s) = sent_at.lock().ok().and_then(|mut m| m.remove(&seq)) {
+                                rtt.update((t - s).max(0) as f64);
+                            }
                             eff.record(t);
                             last_ack.store(t, Ordering::Relaxed);
                             let hz = eff.rate(t);

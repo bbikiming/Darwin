@@ -9,6 +9,7 @@
 //! W1 게이트(docs/04_ACCEPTANCE_ROADMAP.md §2): 핸드셰이크 → 20Hz 영명령(eff_hz ≥19)
 //! → E-STOP 버스트 → 메트릭 덤프. `selftest` 는 그 파이프라인을 소프트웨어로 회귀 검증한다.
 
+use std::collections::HashMap;
 use std::io;
 use std::net::UdpSocket;
 use std::process::ExitCode;
@@ -152,6 +153,8 @@ fn selftest() -> io::Result<()> {
     let start = Instant::now();
     let mut seq: u64 = 0;
     let mut acks = 0u64;
+    // RTT = ACK 수신 - 로컬 송신시각(seq별). 로봇/에코의 t_rx 는 시계 도메인이 달라 무시.
+    let mut sent_at: HashMap<u64, i64> = HashMap::new();
     let tick_dur = tick();
 
     // ~2s 동안 20Hz 영명령 스트림 + ACK 드레인 (데드라인 스케줄·틱당 상한).
@@ -160,14 +163,19 @@ fn selftest() -> io::Result<()> {
         seq += 1;
         let deadline = start + tick_dur * (seq as u32);
         let line = build_line(&gen_cmd_id(), &cfg, &MotionCommand::zero());
-        if let Err(e) = tx.send_cmd(seq, &line) {
-            eprintln!("⚠ UDP 송신 실패(seq {seq}): {e}");
+        match tx.send_cmd(seq, &line) {
+            Ok(_) => {
+                sent_at.insert(seq, now_ms);
+            }
+            Err(e) => eprintln!("⚠ UDP 송신 실패(seq {seq}): {e}"),
         }
         // 이번 틱에 도착한 ACK 드레인 (상한 MAX_DRAIN).
         for _ in 0..MAX_DRAIN {
             match tx.recv()? {
-                Some(Inbound::Ack { t_rx, .. }) => {
-                    rtt.update((now_ms - t_rx).max(0) as f64); // 루프백이라 ~0(합성)
+                Some(Inbound::Ack { seq: ack_seq, .. }) => {
+                    if let Some(s) = sent_at.remove(&(ack_seq as u64)) {
+                        rtt.update((now_ms - s).max(0) as f64);
+                    }
                     eff.record(now_ms);
                     acks += 1;
                 }
@@ -326,6 +334,8 @@ fn connect(args: &[String]) -> io::Result<()> {
     let mut last_ack_ms: Option<i64> = None;
     let mut tel_count = 0u64;
     let mut fell_back = false;
+    // RTT = ACK 수신 - 로컬 송신시각(seq별). 로봇 t_rx(epoch ms)는 도메인이 달라 무시.
+    let mut sent_at: HashMap<u64, i64> = HashMap::new();
     let tick_dur = tick();
 
     println!("  20Hz 영명령 스트림 {seconds}s …");
@@ -339,11 +349,16 @@ fn connect(args: &[String]) -> io::Result<()> {
         // →SshFile 함정 회피 — 시작부터 ACK_PROBE_MS 동안 UDP 를 시도하고 그 이후의
         // 침묵만 폴백으로 본다(없으면 tick1 에 핸드셰이크 철회·eff_hz 0 으로 게이트 오탈락).
         match decide_transport(Some(last_ack_ms.map_or(now_ms, |t| now_ms - t))) {
-            Transport::Udp => {
-                if let Err(e) = tx.send_cmd(seq, &line) {
-                    eprintln!("⚠ UDP 송신 실패(seq {seq}): {e}"); // 한 발 손실 — 계속.
+            Transport::Udp => match tx.send_cmd(seq, &line) {
+                Ok(_) => {
+                    sent_at.insert(seq, now_ms);
+                    if sent_at.len() > 256 {
+                        let cut = seq.saturating_sub(256);
+                        sent_at.retain(|&k, _| k >= cut);
+                    }
                 }
-            }
+                Err(e) => eprintln!("⚠ UDP 송신 실패(seq {seq}): {e}"), // 한 발 손실 — 계속.
+            },
             Transport::SshFile => {
                 // §7-6 폴백 진입 시 1회 핸드셰이크 철회(로봇 UDP 리스너 정리).
                 if !fell_back {
@@ -362,8 +377,10 @@ fn connect(args: &[String]) -> io::Result<()> {
         // ACK/TEL2 드레인 — 틱당 상한(폭주 방어, df_udp pump=64).
         for _ in 0..MAX_DRAIN {
             match tx.recv()? {
-                Some(Inbound::Ack { t_rx, .. }) => {
-                    rtt.update((now_ms - t_rx).max(0) as f64);
+                Some(Inbound::Ack { seq: ack_seq, .. }) => {
+                    if let Some(s) = sent_at.remove(&(ack_seq as u64)) {
+                        rtt.update((now_ms - s).max(0) as f64);
+                    }
                     eff.record(now_ms);
                     last_ack_ms = Some(now_ms);
                 }
