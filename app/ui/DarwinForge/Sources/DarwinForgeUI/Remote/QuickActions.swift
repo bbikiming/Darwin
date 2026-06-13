@@ -113,13 +113,14 @@ public enum QuickActionCatalog {
         // ── robotis (로봇 데모) — 핵심 업무, 조종기 데모가 첫 행(발견성) ──────
         QuickAction(id: "gamepad-pilot-start", category: .robotis,
                     label: "조종기 데모 시작",
-                    detail: "RG G01 패드로 보행 조종 (A=ARM·B=E-STOP)",
+                    detail: "RG G01 패드로 보행 조종 (A=ARM·B=E-STOP·LB/RB=킥)",
                     icon: "gamecontroller.fill",
                     command: RobotSetupCommand.walkLabRobotisStart,
                     requiresConfirm: true,
                     confirmSummary: "데모를 재시작해 WalkLab 조종 모드로 들어갑니다 — "
                         + "기립과 자이로 캘리브레이션에 약 20초 걸립니다. 로봇을 크래들에 "
-                        + "거치하거나 평지에 세운 뒤, 패드 A(ARM)로 조종을 시작하세요.",
+                        + "거치하거나 평지에 세운 뒤, 패드 A(ARM)로 조종을 시작하세요. "
+                        + "LB=왼발 킥 / RB=오른발 킥 — ARM 후 STANDUP 상태에서만 발화합니다.",
                     confirmTitle: "조종기 데모를 시작할까요?",
                     confirmVerb: "데모 시작"),
         QuickAction(id: "camera-start", category: .robotis, label: "카메라 데모 시작",

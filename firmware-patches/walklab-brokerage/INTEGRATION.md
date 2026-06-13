@@ -72,6 +72,31 @@ sudo killall demo
 4. preset / tuning 슬라이더 조정 → robot 가 ~200ms 안에 반영
 5. **ROBOTIS 측 종료** 버튼 → demo 정지 + forge-bridge 복구
 
+## F12 — 게임패드 킥 모션 (LB=왼발 page13 / RB=오른발 page12) 실기 브링업
+
+> 설계·근거: `docs/design/gamepad-kick-motion.md`. 호스트 검출 로직은 213/0 통과.
+> **온보드 실행(CheckAndExecuteKick)은 호스트 컴파일 불가** — 아래 8항을 실기에서
+> 입회 검증해야 고토크 킥을 신뢰할 수 있다(요람 거치·다리 토크 차단 가능 상태에서).
+
+선행(코딩 전제 — 실기 1회):
+- [ ] **킥 자산**: `forge-cli motion play --slot 12 --dry-run --follow-chain` 및 `--slot 13`
+      으로 온디바이스 `/robotis/Data/motion_4096.bin` 의 page 12=Right/13=Left 가
+      이름·7스텝·체크섬 정상인지 확인(LoadPage 는 체크섬 실패 시 조용히 ResetPage→무동작).
+- [ ] **motion_4096.bin** 128KB(256×512) 존재 확인.
+- [ ] **evdev 코드**: 실패드에 `evtest`로 LB=`BTN_TL`(310)·RB=`BTN_TR`(311) 확인.
+
+거동(요람 거치 → 다리 토크 OFF 시작):
+- [ ] **킥 발화**: ARM(A) → LB → 좌측 page 13 / RB → 우측 page 12 재생. 콘솔
+      `[WalkLabBrokerage] KICK LEFT/RIGHT — page N` 확인.
+- [ ] **미ARM 거부**: disarmed 에서 LB/RB → 무동작(콜백 게이트).
+- [ ] **STANDUP 게이트**: 저속 보행이 STANDUP 으로 읽혀 정당 킥을 막지 않는지 / 킥
+      와인드업이 FALLEN 으로 오독되지 않는지 실측(`MotionStatus::FALLEN`).
+- [ ] **E-STOP 중 킥**: 킥 모션 중 B → Action 즉시 중단 + body 토크 OFF(≤~10ms,
+      reader 즉시 + supervisor 8ms 백스톱). 1~2s 잔여 모션 없어야.
+- [ ] **킥↔보행 전이**: 보행 중 LB → 보행 정지(IsRunning false 수렴 <1s) → 킥 →
+      완료 후 idle → 스틱 재입력 시 보행 재개(F9 ACK≠서보 행 없이 정상 재무장).
+- [ ] **낙상 비간섭**: 킥 직후 착지 transient 가 auto-getup 오발 안 함(m_fall_count 리셋).
+
 ## 회귀 위험
 
 - **patch 적용 안 한 robot 에 Mac 측 ROBOTIS onboard 시작** → `demo-pilot` 가

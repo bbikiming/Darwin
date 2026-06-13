@@ -70,10 +70,11 @@ public struct WalkingEnginePicker: View {
                 .foregroundStyle(DFColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // ROBOTIS onboard 시 안전 경고 + 시작/종료 버튼
+            // ROBOTIS onboard 시 안전 경고 + 시작/종료 버튼 + 온보드 패드 조작 안내
             if session.walkingEngine == .robotisOnboard {
                 onboardWarning
                 onboardActions
+                onboardGamepadReference
             }
         }
         .padding(DFSpace.xs2)
@@ -189,6 +190,60 @@ public struct WalkingEnginePicker: View {
             }
             .toggleStyle(.switch)
             .controlSize(.mini)
+        }
+    }
+
+    // MARK: - 온보드 패드 (RG G01) 조작 안내 (F12, 2026-06-13)
+
+    /// 온보드 demo 가 직접 읽는 RG G01 동글 매핑 — Mac 측 GCController 어댑터와 별개
+    /// (이 패드는 로봇에 직결, 킥은 온보드 펌웨어 전용). 매핑은 펌웨어
+    /// `GamepadPilot.h` 가 정본 — 여기는 그 표시 미러. 킥(LB/RB)을 강조.
+    @ViewBuilder
+    private var onboardGamepadReference: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "gamecontroller.fill")
+                    .font(DFFont.micro)
+                    .foregroundStyle(engineTint)
+                Text("온보드 패드 (RG G01) 조작")
+                    .font(DFFont.sectionLabel)
+                    .foregroundStyle(DFColor.textPrimary)
+                Spacer()
+                Text("로봇 직결")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+            mappingRow("LB", "왼발 킥", highlight: true)
+            mappingRow("RB", "오른발 킥", highlight: true)
+            mappingRow("A", "ARM (이동 게이트)")
+            mappingRow("B", "E-STOP (즉시 정지)")
+            mappingRow("Y", "복구 (E-STOP 해제)")
+            mappingRow("X", "볼 트래킹 토글")
+            mappingRow("LS", "이동 · 횡")
+            mappingRow("RS", "머리 제어")
+            mappingRow("LT / RT", "좌 / 우 회전")
+            Text("킥은 ARM 후 STANDUP(서 있는) 상태에서만 발화. 킥 중 B = 즉시 중단.")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+        }
+        .padding(DFSpace.xs2)
+        .background(DFColor.warning.opacity(DFOpacity.o06))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+    }
+
+    private func mappingRow(_ button: String, _ action: String,
+                            highlight: Bool = false) -> some View {
+        HStack(spacing: DFSpace.xs2) {
+            Text(button)
+                .font(DFFont.micro)
+                .foregroundStyle(highlight ? DFColor.warning : DFColor.textPrimary)
+                .frame(width: 48, alignment: .leading)
+            Text(action)
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+            Spacer()
         }
     }
 }

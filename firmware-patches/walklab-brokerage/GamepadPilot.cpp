@@ -145,12 +145,6 @@ namespace Robotis {
           period(GP_GAIT_PERIOD_DEFAULT), foot(GP_GAIT_FOOT_DEFAULT),
           hip(GP_HIP_DEG), pan(0.0), tilt(0.0) {}
 
-    static double Clamp1(double v) {
-        if (v > 1.0) return 1.0;
-        if (v < -1.0) return -1.0;
-        return v;
-    }
-
     double GpApplyDeadzone(double v) {
         double mag = fabs(v);
         if (mag < GP_DEADZONE) return 0.0;
@@ -223,16 +217,13 @@ namespace Robotis {
 
     void MapGamepad(const GamepadSnapshot& s, bool armed, double dt_ms,
                     GamepadHeadHold* hold, GamepadWalkFields* out) {
-        // 이동 — 데드존 0.10 → 곡선 1.35 → (터보 ×1.3 클램프) → MAX 스케일.
+        // 이동 — 데드존 0.10 → 곡선 1.35 → MAX 스케일. (F12: 터보 제거.)
         // 실기 F10: 턴은 LT/RT 아날로그 차분(LT=좌회전, RT=우회전 — 비례).
         double fwd  = GP_SIGN_STRIDE * GpShapeDriveAxis(s.ly);
         double side = GP_SIGN_SIDE   * GpShapeDriveAxis(s.lx);
         double turn = GP_SIGN_TURN   * GpShapeTurn(GpTriggerDiff(s.rt, s.lt));
-        if (s.btn_rb) {   // 터보 — 콕핏 패리티(정규화 ×1.3 후 ±1 클램프)
-            fwd  = Clamp1(fwd * GP_TURBO_SCALE);
-            side = Clamp1(side * GP_TURBO_SCALE);
-            turn = Clamp1(turn * GP_TURBO_SCALE);
-        }
+        // F12 (2026-06-13) — 터보(RB ×1.3) 제거: LB/RB 는 킥 전용(ProcessEvent). LT/RT
+        // 아날로그 턴 + 풀스틱 스트라이드로 ×1.3 부스트는 중복이라 단순화. (s.btn_rb 미관여)
         bool moving = (fwd != 0.0) || (side != 0.0) || (turn != 0.0);
         // H2-2 — ARM(A) 전 이동 게이트 잠금. 실기 F10: 데드맨(LB) 해제 —
         // GP_DEADMAN_REQUIRED=true 로 되돌리면 종전 동작 복원. 머리는 비게이트.
@@ -298,7 +289,8 @@ namespace Robotis {
           m_last_map_ms(0), m_seq(0),
           m_pending_arm_edge(false), m_pending_estop_edge(false),
           m_pending_recover_edge(false),
-          m_estop_cb(0), m_recover_cb(0), m_cb_ctx(0) {
+          m_pending_left_kick_edge(false), m_pending_right_kick_edge(false),
+          m_estop_cb(0), m_recover_cb(0), m_kick_cb(0), m_cb_ctx(0) {
         pthread_mutex_init(&m_mtx, 0);
     }
 
@@ -308,10 +300,12 @@ namespace Robotis {
     }
 
     void GamepadPilot::Start(void (*estop_cb)(void*), void (*recover_cb)(void*),
+                             void (*kick_cb)(void*, int side),
                              void* cb_ctx, bool with_thread) {
         if (m_running) return;
         m_estop_cb = estop_cb;
         m_recover_cb = recover_cb;
+        m_kick_cb = kick_cb;
         m_cb_ctx = cb_ctx;
         m_running = true;
 #ifdef __linux__
@@ -378,6 +372,8 @@ namespace Robotis {
         m_pending_arm_edge = false;
         m_pending_estop_edge = false;
         m_pending_recover_edge = false;
+        m_pending_left_kick_edge = false;    // F12
+        m_pending_right_kick_edge = false;
         m_adopt_ms = now_ms;        // ③티어 기준점(이벤트 전 즉발 방지)
         m_last_map_ms = 0;          // F10 — 재획득 후 첫 매핑 dt=0(머리 점프 방지)
         pthread_mutex_unlock(&m_mtx);
@@ -388,6 +384,8 @@ namespace Robotis {
     void GamepadPilot::ProcessEvent(const GpEvent& ev, long long now_ms) {
         bool fire_estop = false;
         bool fire_recover = false;
+        bool fire_kick_left = false;    // F12
+        bool fire_kick_right = false;
         pthread_mutex_lock(&m_mtx);
         m_last_event_ms = now_ms;
         if (ev.type == GP_EV_KEY && ev.value == 1 && ev.code == GP_BTN_B) {
@@ -409,7 +407,19 @@ namespace Robotis {
                 m_pending_recover_edge = true;
             } else if (ev.code == GP_BTN_X) {
                 m_balltrack = m_balltrack ? 0 : 1;
+            } else if (ev.code == GP_BTN_LB) {
+                m_pending_left_kick_edge = true;   // F12 — 왼발 킥(ARM/estop 게이트는 SYN 커밋)
+            } else if (ev.code == GP_BTN_RB) {
+                m_pending_right_kick_edge = true;  // F12 — 오른발 킥
             }
+        }
+        // F12 — 링 오버플로(SYN_DROPPED): 보류 킥 edge 폐기. 고토크 HighRisk 액션은
+        // 입력 스트림 무결성 손실 시 발화 금지가 안전 편향(사용자 재누름). 디코더 버튼
+        // 상태 리셋은 FeedEvent 가 수행(정지 측 편향과 일관). arm/recover edge 와 달리
+        // 킥은 의도적으로 더 보수적 — 오발 비용(킥)이 미발(재누름)보다 크다.
+        if (ev.type == GP_EV_SYN && ev.code == GP_SYN_DROPPED) {
+            m_pending_left_kick_edge = false;
+            m_pending_right_kick_edge = false;
         }
         GamepadSnapshot snap;
         int fr = m_decoder.FeedEvent(ev, &snap);
@@ -420,15 +430,26 @@ namespace Robotis {
             if (m_pending_recover_edge && !m_pending_estop_edge) {
                 fire_recover = (m_recover_cb != 0);
             }
+            // F12 킥 — estop 동률 패(억제) + ARM 게이트(settle 후 armed 필요). 콜백은
+            // brokerage 플래그만 세팅(비블로킹) → supervisor 가 getup 패턴으로 실행.
+            if (!m_pending_estop_edge && m_armed && m_kick_cb != 0) {
+                if (m_pending_left_kick_edge)  fire_kick_left = true;
+                if (m_pending_right_kick_edge) fire_kick_right = true;
+            }
             m_pending_arm_edge = false;
             m_pending_estop_edge = false;
             m_pending_recover_edge = false;
+            m_pending_left_kick_edge = false;
+            m_pending_right_kick_edge = false;
             OfferCurrentLocked(now_ms);
         }
         pthread_mutex_unlock(&m_mtx);
         // 콜백은 락 밖 — estop 은 Walking::Stop+토크OFF+flag(브로커리지 공유 헬퍼).
         if (fire_estop) m_estop_cb(m_cb_ctx);
         if (fire_recover) m_recover_cb(m_cb_ctx);
+        // F12 — 킥: brokerage 가 m_pending_kick_side 세팅 후 즉시 반환(supervisor 실행).
+        if (fire_kick_left)  m_kick_cb(m_cb_ctx, GP_KICK_LEFT);
+        if (fire_kick_right) m_kick_cb(m_cb_ctx, GP_KICK_RIGHT);
     }
 
     void GamepadPilot::OfferCurrentLocked(long long now_ms) {
@@ -470,6 +491,8 @@ namespace Robotis {
         m_pending_arm_edge = false;
         m_pending_estop_edge = false;
         m_pending_recover_edge = false;
+        m_pending_left_kick_edge = false;    // F12 — 단절 시 보류 킥 폐기
+        m_pending_right_kick_edge = false;
         m_armed = false;                // H2-2 — 재획득 후 재 ARM 필수
         // **codex P1 fix (2026-06-12)**: 최종 정지 라인은 ①티어(데드맨 해제 관측 —
         // graceful 단절의 release 합성)에만 발행. 데드맨이 여전히 눌린 채 노드만

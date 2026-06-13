@@ -132,6 +132,12 @@ namespace Robotis {
             walking->Stop();
             walking->m_Joint.SetEnableBody(false);
         }
+        // F12 — 킥(Action) 진행 중 SIGTERM/Ctrl-C 시 모션도 즉시 중단. 없으면 body
+        // 토크 차단 후에도 Action 이 ~1~2s 더 서보를 구동(불안전). TriggerEstopImmediate·
+        // MODE 종료와 동일 계약(설계 §7). Stop()은 멱등 플래그 셋(stdio 없음)이라 위
+        // Walking::Stop 과 동일 클래스로 async-signal 안전.
+        Robot::Action* action = Robot::Action::GetInstance();
+        if (action && action->IsRunning()) action->Stop();
         _exit(0);
     }
 
@@ -272,6 +278,107 @@ namespace Robotis {
         m_fall_count = 0;   // 복구 완료 — 카운터 reset.
         printf("[WalkLabBrokerage] getup complete — joints returned to Walking, idle\n");
         return true;   // 보행은 정지 유지 — 다음 Mac 명령까지 대기.
+    }
+
+    // ===== F12 (2026-06-13) — 게임패드 LB/RB 킥 모션 ============================
+    // getup(CheckAndRecoverFall)과 동일한 walk↔action 모듈 스왑을 복제하되, getup
+    // page(10/11) 대신 공식 킥 page(LEFT=13 / RIGHT=12)를 재생한다. getup 과의 2가지
+    // 차이: ① 게이트가 반대 — getup 은 FALLEN 일 때, 킥은 STANDUP 일 때만 발동.
+    // ② 완료 후 m_fall_count 리셋 — 킥 착지 transient(순간 FALLEN)가 다음 poll 의
+    // auto-getup 을 오발하지 않게. 절차·8ms 대기·estop 즉시 반응·joint 반납(F9 명시
+    // 재enable)은 getup 과 동일(프로덕션 검증 패턴). 블로킹(~1~2s) — 그 사이 estop·
+    // 낙상 감지는 루프 상단에서 이미 처리됨, 새 walk 명령은 킥 후로 미뤄진다.
+    bool WalkLabBrokerage::CheckAndExecuteKick(Robot::Walking* walking,
+                                               Robot::CM730* cm730,
+                                               bool& walking_active) {
+        // 1) 보류 킥 요청 take (읽기 스레드와 배타). 없으면 즉시 복귀.
+        pthread_mutex_lock(&m_kick_mtx);
+        int side = m_pending_kick_side;
+        m_pending_kick_side = -1;
+        pthread_mutex_unlock(&m_kick_mtx);
+        if (side < 0) return false;   // 요청 없음
+
+        // 2) 단절 가드 — 패드가 사라졌으면 폐기. 읽기 스레드 단절(HandleNodeLost)은
+        //    m_pending_kick_side(별 객체)를 비우지 못하므로 supervisor 가 여기서 막아
+        //    "LB 누름 → 곧바로 단절" 시 stale 킥 발화를 차단한다(리뷰 concurrency-2).
+        if (!m_gamepad.DevicePresent()) {
+            printf("[WalkLabBrokerage] kick 무시 — gamepad 미연결(stale)\n");
+            return false;
+        }
+
+        // 3) 안전 게이트 — estop 중이면 폐기(복구 전까지 모든 모션 금지). caller 가
+        //    이미 estop 을 처리하지만 호출 순서 무관하게 안전하도록 재확인.
+        if (EstopRequested()) return false;
+
+        // 4) 안전 게이트 — STANDUP 아니면 폐기. 낙상/불안정 중 킥 금지(getup 이 우선).
+        int fallen = Robot::MotionStatus::FALLEN;
+        if (fallen != Robot::STANDUP) {
+            printf("[WalkLabBrokerage] kick 무시 — not STANDUP (FALLEN=%d)\n", fallen);
+            return false;
+        }
+
+        // 5) side → page (비대칭: LEFT→13, RIGHT→12). 단일 매핑 지점 + 방어적 검증
+        //    (콜백은 0/1 만 넘기지만 예상밖 값에 fail-fast — 비대칭 실수 차단).
+        if (side != Robotis::GP_KICK_LEFT && side != Robotis::GP_KICK_RIGHT) {
+            fprintf(stderr, "[WalkLabBrokerage] kick invalid side=%d — 무시\n", side);
+            return false;
+        }
+        int page = (side == Robotis::GP_KICK_RIGHT) ? KICK_PAGE_RIGHT : KICK_PAGE_LEFT;
+        const char* name = (side == Robotis::GP_KICK_RIGHT) ? "RIGHT" : "LEFT";
+        printf("[WalkLabBrokerage] KICK %s — page %d\n", name, page);
+
+        // 6) getup 과 동일 모듈 스왑 (검증된 패턴) ─────────────────────────────
+        // 6-1) 보행 중단 + 완전 정지 대기(안정 스탠스로 수렴). telemetry 계속.
+        walking->Stop();
+        walking_active = false;
+        while (walking->IsRunning()) {
+            if (EstopRequested()) { m_fall_count = 0; return true; }
+            WriteTelemetry(cm730, walking, walking_active, true);
+            usleep(8000);   // 공식 demo 와 동일 8ms.
+        }
+        // 보행 완전 정지 후 STANDUP 재확인 — 안정 시점 1회(감속 중 자이로 transient 로
+        // 인한 오발 회피, 리뷰 R2-FIX-3). 정지 대기 사이 실제 낙상이면 여기서 Action::Start
+        // 를 막고 getup 에 인계(쓰러진 채 킥 금지, 리뷰 safety-1). Action 시작 *후*엔 킥
+        // 모션 자체가 자세를 바꾸므로 FALLEN 검사 안 함(estop 만 중단). return true =
+        // 보행 정지함→이번 poll 명령 skip(getup 의 estop-대기-bail 과 동일 계약, 안전).
+        if (Robot::MotionStatus::FALLEN != Robot::STANDUP) {
+            printf("[WalkLabBrokerage] kick 중단 — 정지 후 낙상 감지 → getup 인계\n");
+            m_fall_count = 0;
+            return true;
+        }
+        // 6-2) body joint 을 Action 모듈에 인계.
+        Robot::Action* action = Robot::Action::GetInstance();
+        if (!action) {
+            fprintf(stderr, "[WalkLabBrokerage] Action::GetInstance()==NULL — kick skip\n");
+            m_fall_count = 0;
+            return true;   // 보행은 멈춘 상태 — 이번 poll 명령 skip.
+        }
+        action->m_Joint.SetEnableBody(true, true);
+        // 6-3) 킥 모션 재생. Start() false 면 모듈 busy — 재시도(estop bail + 토크 off).
+        //   getup 패리티: Start()가 false 면 아직 미시작 → Stop() 불요(중단할 모션 없음).
+        while (action->Start(page) == false) {
+            if (EstopRequested()) { action->m_Joint.SetEnableBody(false, true); m_fall_count = 0; return true; }
+            WriteTelemetry(cm730, walking, walking_active, true);
+            usleep(8000);
+        }
+        // 6-4) 모션 완료 대기. estop → 모션 중단(Stop) + body torque off.
+        while (action->IsRunning()) {
+            if (EstopRequested()) { action->Stop(); action->m_Joint.SetEnableBody(false, true); m_fall_count = 0; return true; }
+            WriteTelemetry(cm730, walking, walking_active, true);
+            usleep(8000);
+        }
+        // 7) joint 을 Walking/Head 로 반납 — ★F9: Walking::Start()는 enable 복구 안 함★
+        //    (MotionManager 는 enable==true 만 서보 기록). getup 반납과 동일 패턴.
+        //    (estop bail 경로는 의도적으로 반납 안 함 — estop=토크 OFF 유지, 재enable 은
+        //     Y 복구 경로가 SoftTorqueRearm+getup 패턴으로 수행. getup estop bail 과 동일.)
+        Robot::Head* head = Robot::Head::GetInstance();
+        if (head) head->m_Joint.SetEnableHeadOnly(true, true);
+        walking->m_Joint.SetEnableBodyWithoutHead(true, true);
+
+        // 킥 착지 transient(순간 FALLEN)가 다음 poll auto-getup 을 오발하지 않게 리셋.
+        m_fall_count = 0;
+        printf("[WalkLabBrokerage] kick complete — joints returned to Walking, idle\n");
+        return true;   // 보행 정지 유지 — 다음 명령까지 idle(getup 과 동일).
     }
 
     // ===== 볼 트래킹 (2026-06-02) — 온보드 자동 헤드 추적 =====================
@@ -612,7 +719,26 @@ namespace Robotis {
     // 공유하는 단일 즉시-정지 경로 — 중복 구현 금지. 어느 스레드에서든 호출 가능.
     void WalkLabBrokerage::TriggerEstopImmediate() {
         Robot::Walking* w = Robot::Walking::GetInstance();
+        // body 토크는 여기서 즉시 OFF — 킥 중이라 body joint 가 Action 소유여도, 같은
+        // 물리 joint 의 enable 비트를 끄므로 로봇은 Action 상태와 무관하게 즉시 limp.
         if (w) { w->Stop(); w->m_Joint.SetEnableBody(false); }
+        // F12 (2026-06-13) — 킥(Action) 진행 중이면 즉시 중단. 종전엔 Walking 만 멈춰
+        // 킥 중 B 를 눌러도 모션이 1~2s 계속됐다(결함).
+        // [스레드 안전] Stop()은 m_StopPlaying=true 멱등 플래그 셋이고, Action 을 실제로
+        // 처리하는 건 MotionManager 의 별도 8ms 타이머 스레드(다음 tick 에 플래그 읽음).
+        // reader/UDP/supervisor 어느 스레드가 호출해도 같은 값(true)을 쓰므로 torn write
+        // 불가(단일 바이트 bool). supervisor 의 킥/getup 대기 루프도 EstopRequested()로
+        // 동일 Stop 을 백스톱(≤8ms). 본 호출은 그보다 빠른 즉시 중단 — mutex 는 미설치:
+        // 타이머 스레드(프레임워크 미계측)와는 동기화 불가라 효과 없고, getup 이 이미
+        // supervisor↔타이머 동일 패턴으로 프로덕션 검증됨(리뷰 concurrency-1 판정).
+        Robot::Action* a = Robot::Action::GetInstance();
+        if (a && a->IsRunning()) a->Stop();
+        // F12 — estop 시 보류 킥 요청 폐기(리뷰 R2-FIX-4). armed 상태에서 킥 직전 B 를
+        // 누르면 큐된 m_pending_kick_side 가 Y 복구 후 깜짝 발화할 수 있다. m_kick_mtx 는
+        // estop 호출 스레드(reader/UDP) 기동 전 Run() init(L1014)에서 초기화됨(순서 보장).
+        pthread_mutex_lock(&m_kick_mtx);
+        m_pending_kick_side = -1;
+        pthread_mutex_unlock(&m_kick_mtx);
         TouchEstopFlag();
     }
 
@@ -648,6 +774,23 @@ namespace Robotis {
     }
     void WalkLabBrokerage::GamepadRecoverTrampoline(void* self) {
         ((WalkLabBrokerage*)self)->ClearEstopFlag();
+    }
+
+    // F12 (2026-06-13) — 킥 트램펄린. GamepadPilot 읽기 스레드가 LB/RB rising(ARM·
+    // estop 게이트 통과) 시 호출. **블로킹 금지** — m_pending_kick_side 만 세팅하고
+    // 즉시 반환(estop_cb 처럼 가볍게). 실제 모듈 스왑(1~2s 블로킹)은 supervisor 의
+    // CheckAndExecuteKick 이 수행 — 읽기 스레드를 막으면 E-STOP(B) 응답이 죽는다.
+    void WalkLabBrokerage::GamepadKickTrampoline(void* self, int side) {
+        ((WalkLabBrokerage*)self)->RequestKick(side);
+    }
+    void WalkLabBrokerage::RequestKick(int side) {
+        // 비블로킹 — 플래그만 세팅(읽기 스레드 막으면 E-STOP 응답 죽음). supervisor 가
+        // 다음 poll(유휴 100ms→입력 신선 시 20ms, F11)에 소비 → 킥은 ≤1 poll 지연으로
+        // 발화(즉발 아님 — 비블로킹 콜백 설계의 본질적 비용, 손실 아님). 콜백이 supervisor
+        // 의 take 직후 도착하면 그 poll 을 놓치고 다음 poll 에 발화(여전히 단조 1회).
+        pthread_mutex_lock(&m_kick_mtx);
+        m_pending_kick_side = side;   // last-wins(동시 LB+RB 극히 드묾 — 무해)
+        pthread_mutex_unlock(&m_kick_mtx);
     }
 
     // ===== 실기 F8 (2026-06-12) — 서보 알람 셧다운 스윕·복원 ====================
@@ -879,6 +1022,10 @@ namespace Robotis {
         m_camera_running = false;
         pthread_mutex_init(&m_cam_mutex, 0);
         m_stream_skip = 0;
+        // F12 (2026-06-13) — 킥 요청 상태 (게임패드 읽기 스레드 ↔ supervisor 배타).
+        // 게임패드 Start(읽기 스레드 기동) 이전에 init 되어야 한다(아래 m_gamepad.Start).
+        m_pending_kick_side = -1;
+        pthread_mutex_init(&m_kick_mtx, 0);
         {
             minIni sini(BALLCOLOR_INI);
             m_stream_enabled = sini.geti("Stream", "enabled", 1) != 0;
@@ -930,7 +1077,8 @@ namespace Robotis {
         // 복구(Y)는 estop flag 해제. 빌드 게이트: -DDF_NO_GAMEPAD_PILOT 로 제외 가능.
 #ifndef DF_NO_GAMEPAD_PILOT
         m_gamepad.Start(&WalkLabBrokerage::GamepadEstopTrampoline,
-                        &WalkLabBrokerage::GamepadRecoverTrampoline, this, true);
+                        &WalkLabBrokerage::GamepadRecoverTrampoline,
+                        &WalkLabBrokerage::GamepadKickTrampoline, this, true);   // F12
 #endif
 
         // 실기 F8 (2026-06-12) — 기동 스윕: demo 재시작(전원 유지)으로 이월된 서보
@@ -948,6 +1096,9 @@ namespace Robotis {
                 walking->Stop();
                 while (walking->IsRunning()) usleep(8000);
                 walking->m_Joint.SetEnableBody(false);
+                // F12 — 잔여 킥 모션 정리(정상 종료 경로에서도 Action 미잔존 보장).
+                Robot::Action* kick_a = Robot::Action::GetInstance();
+                if (kick_a && kick_a->IsRunning()) kick_a->Stop();
                 // 헤드도 정지 + 토크 풀어 사용자가 들고 내릴 수 있게.
                 Robot::Head::GetInstance()->m_Joint.SetEnableHeadOnly(false);
                 StopTransportThreads();   // O1 — UDP 리스너 정리 후 정상 종료.
@@ -1032,6 +1183,23 @@ namespace Robotis {
                 struct stat post_getup = {};
                 if (stat(CMD_PATH, &post_getup) == 0) {
                     last_stat = post_getup;
+                } else {
+                    memset(&last_stat, 0, sizeof(last_stat));
+                }
+                last_cmd_time = time(NULL);
+                usleep(POLL_INTERVAL_MS * 1000);
+                continue;
+            }
+
+            // F12 (2026-06-13) — 게임패드 LB/RB 킥. getup 직후·명령 적용 직전(여기 도달 ==
+            // e-stop flag 없음). 보류 킥(읽기 스레드가 m_pending_kick_side 세팅)을 STANDUP
+            // 게이트 통과 시 getup 과 동일 모듈 스왑으로 실행. 킥 후 보행 정지 유지 →
+            // getup 과 동일하게 stale 명령 재적용 방지(다음 새 명령까지 정지). 우선순위:
+            // estop(위) > getup(위) > kick(여기) > 보행 명령(아래).
+            if (CheckAndExecuteKick(walking, cm730, walking_active)) {
+                struct stat post_kick = {};
+                if (stat(CMD_PATH, &post_kick) == 0) {
+                    last_stat = post_kick;
                 } else {
                     memset(&last_stat, 0, sizeof(last_stat));
                 }

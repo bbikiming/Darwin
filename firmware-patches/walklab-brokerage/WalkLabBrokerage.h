@@ -95,6 +95,13 @@ public:
     static const int GETUP_PAGE_FORWARD = 10;
     static const int GETUP_PAGE_BACKWARD = 11;
 
+    /// **F12 (2026-06-13)** — 공식 킥 모션 page 번호 (motion_4096.bin 내장).
+    /// ⚠️ 비대칭: RIGHT=12 · LEFT=13 (demo main.cpp:271/276 RIGHT KICK=Start(12)·
+    /// LEFT KICK=Start(13) · forge-core library.rs:169-177 4중 교차검증). side
+    /// (GP_KICK_LEFT/RIGHT) → page 매핑은 CheckAndExecuteKick 단일 지점이 소유.
+    static const int KICK_PAGE_RIGHT = 12;
+    static const int KICK_PAGE_LEFT  = 13;
+
     /// HIP_PITCH_OFFSET 안전 clamp 범위 (°). (C++03: .cpp 에서 정의)
     static const double HIP_PITCH_MIN;
     static const double HIP_PITCH_MAX;
@@ -173,6 +180,12 @@ private:
     /// GamepadPilot 콜백 trampolines (C++03).
     static void GamepadEstopTrampoline(void* self);
     static void GamepadRecoverTrampoline(void* self);
+    /// **F12** — 킥 트램펄린(C++03). side=GP_KICK_LEFT/RIGHT. 읽기 스레드에서 호출 —
+    /// m_pending_kick_side 만 세팅(비블로킹 — E-STOP 응답성 보존). 실행은 supervisor
+    /// 의 CheckAndExecuteKick(블로킹 모듈 스왑).
+    static void GamepadKickTrampoline(void* self, int side);
+    /// **F12** — 보류 킥 요청 세팅(m_kick_mtx 배타, last-wins). 읽기 스레드 전용.
+    void RequestKick(int side);
     /// 진폭 즉시 0 + 슬루 0 동기화 — 워치독 WD_SLEW_ZERO 전용(O1 기존 의미 보존).
     /// H2 ②③티어는 이걸 쓰지 않는다 — 목표만 0 으로 두고 루프 슬루가 램프 다운
     /// (codex P2 fix 2026-06-12: 풀스트라이드 1루프 스냅 방지).
@@ -235,6 +248,21 @@ private:
     bool CheckAndRecoverFall(Robot::Walking* walking, Robot::CM730* cm730,
                              bool& walking_active);
 
+    /// **F12 (2026-06-13)** — 게임패드 LB/RB 킥 트리거. 매 poll 호출(getup 직후·명령
+    /// 적용 직전). 보류된 킥 요청(m_pending_kick_side — 읽기 스레드 세팅)을 take 하여
+    /// 안전 게이트(non-estop · MotionStatus::STANDUP) 통과 시 getup 과 동일한 모듈
+    /// 스왑으로 공식 킥 모션(LEFT→page13 / RIGHT→page12)을 재생한다. 절차(getup 복제):
+    /// Walking::Stop()→정지 대기→Action 인계→Action::Start(page)→완료 대기→joint 반납
+    /// (F9: 명시 재enable). 킥 동안 telemetry 계속 write, e-stop 즉시 Action::Stop.
+    /// 완료 후 m_fall_count 리셋(착지 transient 의 auto-getup 오발 방지). 보행은 정지
+    /// 유지 — 다음 명령까지 idle(getup 과 동일).
+    /// @param walking          Walking 싱글톤 (non-NULL 보장; caller 가 확인).
+    /// @param cm730            telemetry 용 (킥 중 계속 write). NULL 허용.
+    /// @param walking_active   [in/out] 킥 발동 시 false 로 갱신 (보행 중단됨).
+    /// @return true = 킥을 수행함 (이번 poll 의 명령 처리는 skip 권장).
+    bool CheckAndExecuteKick(Robot::Walking* walking, Robot::CM730* cm730,
+                             bool& walking_active);
+
     /// **v1.12** — head 가 한 번이라도 non-zero 명령을 받았는지 (default pose 보존용).
     bool m_head_commanded;
 
@@ -257,6 +285,11 @@ private:
     /// H2-4 — TEL2 active_source: 마지막으로 명령을 적용한 소스.
     enum ActiveSource { SRC_FILE = 0, SRC_UDP = 1, SRC_LOCAL = 2 };
     int m_active_source;
+    /// **F12 (2026-06-13)** — 보류 킥 요청 side(-1=없음, GP_KICK_LEFT=0/RIGHT=1).
+    /// 게임패드 읽기 스레드(RequestKick)가 세팅, supervisor(CheckAndExecuteKick)가
+    /// take+clear. m_kick_mtx 로 배타. last-wins(동시 LB+RB 극히 드묾 — 무해).
+    int m_pending_kick_side;
+    pthread_mutex_t m_kick_mtx;
 
     // ===== O2 셰이핑 상태 (2026-06-12, walklab-onboard-teleop-upgrade Wave O2) =====
     /// 거버너 적용 후의 명령 목표값(X/Y/A/period) — 슬루가 이 목표로 전진. 래치 사이엔 재적용.

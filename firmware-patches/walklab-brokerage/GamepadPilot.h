@@ -59,18 +59,26 @@ static const unsigned short GP_BTN_A      = 304;  // ARM
 static const unsigned short GP_BTN_B      = 305;  // E-STOP (rising, 데드맨 무시)
 static const unsigned short GP_BTN_X      = 307;  // 볼트랙 토글
 static const unsigned short GP_BTN_Y      = 308;  // 복구 (estop flag 해제 + ARM)
-static const unsigned short GP_BTN_LB     = 310;  // 미사용 (실기 F10 — 데드맨 해제)
-static const unsigned short GP_BTN_RB     = 311;  // 터보
+static const unsigned short GP_BTN_LB     = 310;  // 왼발 킥 (F12 — rising, ARM 게이트)
+static const unsigned short GP_BTN_RB     = 311;  // 오른발 킥 (F12 — 터보 제거 후 재할당)
 static const unsigned short GP_BTN_BACK   = 314;  // 예약
 static const unsigned short GP_BTN_START  = 315;  // 예약
 static const unsigned short GP_BTN_HOME   = 316;  // 예약
 static const unsigned short GP_BTN_THUMBL = 317;  // 예약
 static const unsigned short GP_BTN_THUMBR = 318;  // 예약
 
+// ===== 킥 — F12 (2026-06-13): LB=왼발·RB=오른발 ==============================
+// rising edge + ARM 게이트(SYN 커밋) → kick_cb(ctx, side). 페이지 매핑(LEFT→13,
+// RIGHT→12)은 brokerage 단일 지점(KICK_PAGE_*)이 소유 — 비대칭(R=12/L=13) 실수 차단.
+// 콜백은 brokerage 플래그만 세팅(비블로킹) — 실행은 supervisor 루프(getup 패턴 복제).
+static const int GP_KICK_LEFT  = 0;
+static const int GP_KICK_RIGHT = 1;
+
 // ===== 매핑·성형 상수 (콕핏 RG G01 프리셋 1:1 + §5 통일안) ===================
 static const double GP_DEADZONE    = 0.10;  // 통일안 (콕핏 0.10)
 static const double GP_DRIVE_CURVE = 1.35;  // 통일안 (Switch drive_curve)
-static const double GP_TURBO_SCALE = 1.3;   // 콕핏 ControllerDriveModifiers.turboScale
+// F12 (2026-06-13): 터보(GP_TURBO_SCALE ×1.3) 제거 — RB 를 오른발 킥에 재할당.
+// LT/RT 아날로그 턴 + 풀스틱 스트라이드로 ×1.3 부스트는 중복이라 단순화.
 static const double GP_MAX_STRIDE_MM = 38.0;  // UI 클램프 — 최종은 거버너(O2)
 static const double GP_MAX_SIDE_MM   = 22.0;
 static const double GP_MAX_TURN_DEG  = 12.0;
@@ -193,9 +201,9 @@ void GpGaitSchedule(double x_mm, double y_mm, double a_deg, int enabled,
                     double* period_ms, double* foot_mm);
 // 스냅샷 → 보행/머리 필드. 실기 F10: armed && 이동입력 일 때만 enabled=1
 // (데드맨 해제 — GP_DEADMAN_REQUIRED). 이동/턴만 게이트, 머리는 비게이트.
-// 터보(RB)는 정규화 ×1.3 후 ±1 클램프. 머리 = 우스틱 레이트 제어:
-// 곡선 성형(GpShapeDriveAxis) × RATE_DPS × dt_ms 적분, ±MAX 클램프 —
-// dt_ms ≤ 0 이면 머리 적분 생략(레거시 호출/리셋 직후 안전).
+// F12: 터보 제거 — LB/RB 는 킥 전용(MapGamepad 비관여, ProcessEvent 처리).
+// 머리 = 우스틱 레이트 제어: 곡선 성형(GpShapeDriveAxis) × RATE_DPS × dt_ms 적분,
+// ±MAX 클램프 — dt_ms ≤ 0 이면 머리 적분 생략(레거시 호출/리셋 직후 안전).
 void MapGamepad(const GamepadSnapshot& s, bool armed, double dt_ms,
                 GamepadHeadHold* hold, GamepadWalkFields* out);
 
@@ -229,9 +237,11 @@ public:
 
     /// 읽기 스레드 기동. estop_cb = B rising 즉시(슬롯 경유 금지) — 브로커리지
     /// TriggerEstopImmediate. recover_cb = Y 복구(estop flag 해제 — switch recover
-    /// 패리티). with_thread=false 는 호스트 테스트(주입 구동) 전용.
-    void Start(void (*estop_cb)(void*), void (*recover_cb)(void*), void* cb_ctx,
-               bool with_thread);
+    /// 패리티). kick_cb = LB/RB rising(ARM·estop 게이트 후) — side=GP_KICK_LEFT/RIGHT.
+    /// 킥 콜백은 **플래그만 세팅하고 즉시 반환**(블로킹 금지 — E-STOP 응답성 보존).
+    /// with_thread=false 는 호스트 테스트(주입 구동) 전용.
+    void Start(void (*estop_cb)(void*), void (*recover_cb)(void*),
+               void (*kick_cb)(void*, int side), void* cb_ctx, bool with_thread);
     /// 스레드 정지+합류 (MODE 버튼 정상 종료 경로). 미기동이면 no-op.
     void Stop();
 
@@ -299,9 +309,12 @@ private:
     bool m_pending_arm_edge;       // SYN 커밋까지 수집되는 edge (settle 입력)
     bool m_pending_estop_edge;
     bool m_pending_recover_edge;
+    bool m_pending_left_kick_edge;  // F12 — LB rising(왼발 킥). SYN 커밋서 ARM/estop 게이트.
+    bool m_pending_right_kick_edge; // F12 — RB rising(오른발 킥).
 
     void (*m_estop_cb)(void*);
     void (*m_recover_cb)(void*);
+    void (*m_kick_cb)(void*, int side);   // F12 — 킥(side: GP_KICK_LEFT/RIGHT). 락 밖 발화.
     void* m_cb_ctx;
 
     // 비복사 (C++03).

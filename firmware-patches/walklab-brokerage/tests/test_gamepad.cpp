@@ -47,10 +47,18 @@ static GpEvent Syn() { return Ev(GP_EV_SYN, GP_SYN_REPORT, 0); }
 
 static int g_estop_calls = 0;
 static int g_recover_calls = 0;
+static int g_kick_calls = 0;       // F12 — 킥 콜백 발화 횟수
+static int g_kick_last_side = -1;  // F12 — 마지막 킥 side (GP_KICK_LEFT/RIGHT)
 static void OnEstop(void*) { g_estop_calls++; }
 static void OnRecover(void*) { g_recover_calls++; }
+static void OnKick(void*, int side) { g_kick_calls++; g_kick_last_side = side; }
 
-static void ResetCallbacks() { g_estop_calls = 0; g_recover_calls = 0; }
+static void ResetCallbacks() {
+    g_estop_calls = 0;
+    g_recover_calls = 0;
+    g_kick_calls = 0;
+    g_kick_last_side = -1;
+}
 
 // 슬롯에서 라인 take + 파싱. 라인이 없으면 false.
 static bool TakeParsed(GamepadPilot& p, WalkCommand* out) {
@@ -219,31 +227,32 @@ static void test_mapping_gates() {
     CHECK(f.enabled == 0, "이동 입력 없음 → enabled 0");
 }
 
-static void test_mapping_turbo() {
-    printf("test_mapping_turbo\n");
+static void test_mapping_turbo_removed() {
+    printf("test_mapping_turbo_removed (F12 — 터보 제거, RB 는 킥 전용)\n");
     GamepadSnapshot s;
     GamepadHeadHold hold;
     GamepadWalkFields f;
     s.ly = -0.55;
     MapGamepad(s, true, 0.0, &hold, &f);
-    double base_x = f.x;   // 0.39229 × 38 ≈ 14.91
-    CHECK_NEAR(base_x, 0.39229 * GP_MAX_STRIDE_MM, 0.05, "터보 OFF 기준값");
+    double base_x = f.x;   // 0.39229 × 38 ≈ 14.91 (터보 없음)
+    CHECK_NEAR(base_x, 0.39229 * GP_MAX_STRIDE_MM, 0.05, "기준값 (터보 없음)");
+    // F12: RB 눌러도 전진 스케일 불변 — 터보 제거.
     s.btn_rb = true;
     MapGamepad(s, true, 0.0, &hold, &f);
-    CHECK_NEAR(f.x, 0.39229 * GP_TURBO_SCALE * GP_MAX_STRIDE_MM, 0.05,
-               "터보 ×1.3 (콕핏 turboScale 패리티)");
-    // 풀스틱 + 터보 — ±1 클램프로 38 초과 금지.
-    s.ly = -1.0;
-    MapGamepad(s, true, 0.0, &hold, &f);
-    CHECK_NEAR(f.x, GP_MAX_STRIDE_MM, 1e-6, "터보 풀스틱 → ±1 클램프 (38 초과 금지)");
-    // F10: 턴(트리거)도 터보 적용 — RT 0.5 기준 비교.
+    CHECK_NEAR(f.x, base_x, 1e-9, "F12: RB 눌러도 전진 스케일 불변 (터보 제거)");
+    // 턴(트리거)도 RB 무관 — RT 0.5 기준 비교.
     GamepadSnapshot t;
     t.rt = 0.5;
     MapGamepad(t, true, 0.0, &hold, &f);
     double base_a = f.a;
     t.btn_rb = true;
     MapGamepad(t, true, 0.0, &hold, &f);
-    CHECK_NEAR(f.a, base_a * GP_TURBO_SCALE, 1e-6, "턴 터보 ×1.3");
+    CHECK_NEAR(f.a, base_a, 1e-9, "F12: RB 눌러도 턴 스케일 불변");
+    // LB 도 매핑(이동)엔 무관 — 킥 전용.
+    GamepadSnapshot l;
+    l.ly = -0.55; l.btn_lb = true;
+    MapGamepad(l, true, 0.0, &hold, &f);
+    CHECK_NEAR(f.x, base_x, 1e-9, "F12: LB 눌러도 전진 스케일 불변 (킥 전용)");
 }
 
 static void test_mapping_head_rate() {
@@ -384,7 +393,7 @@ static void test_pilot_arm_and_estop() {
     printf("test_pilot_arm_and_estop\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     CHECK(!p.ArmedForTest(), "획득 직후 — ARM 전 잠금");
     CHECK(p.DevicePresent(), "노드 보유");
@@ -411,7 +420,7 @@ static void test_pilot_estop_wins_same_tick() {
     printf("test_pilot_estop_wins_same_tick\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     // 같은 SYN 배치에 A 와 B — settle 규칙: estop 승리.
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
@@ -426,7 +435,7 @@ static void test_pilot_recover() {
     printf("test_pilot_recover\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     // Y — 복구(estop flag 해제 콜백) + ARM 의도(settle 이식).
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_Y, 1), 1010);
@@ -448,7 +457,7 @@ static void test_pilot_line_flow_and_arbitration_window() {
     printf("test_pilot_line_flow_and_arbitration_window\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
     p.InjectEventForTest(Syn(), 1010);
@@ -475,7 +484,7 @@ static void test_pilot_refresh_cadence() {
     printf("test_pilot_refresh_cadence\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
@@ -500,7 +509,7 @@ static void test_pilot_tier1_release_then_enodev() {
     printf("test_pilot_tier1_release_then_enodev (graceful 단절 — H0 §5 실측 시퀀스)\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
@@ -535,7 +544,7 @@ static void test_pilot_tier2_enodev_without_release() {
     printf("test_pilot_tier2_enodev_without_release (release 미합성 — SYN 유실)\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
@@ -558,7 +567,7 @@ static void test_pilot_tier2_enodev_deadman_held() {
     printf("test_pilot_tier2_enodev_deadman_held (비정상 단절 — release 전무, codex P1 fix)\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
@@ -580,7 +589,7 @@ static void test_pilot_tier3_silence_false_positive() {
     printf("test_pilot_tier3_silence_false_positive (정속 직진 이벤트 침묵 — 오발 시나리오)\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1100);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1100);
@@ -605,7 +614,7 @@ static void test_pilot_balltrack_toggle() {
     printf("test_pilot_balltrack_toggle\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_X, 1), 1010);
     p.InjectEventForTest(Syn(), 1010);
@@ -625,7 +634,7 @@ static void test_pilot_adopt_grace() {
     printf("test_pilot_adopt_grace\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     // 획득 직후 무입력 — ③티어 기준은 max(이벤트, 획득)이라 1.5s 유예.
     CHECK(p.PollFailsafe(2000) == GP_FS_NONE, "획득 +1.0s 무입력 → 유예");
@@ -642,7 +651,7 @@ static void test_pilot_estop_stale_pending_immune() {
     printf("test_pilot_estop_stale_pending_immune\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     // B press 가 커밋된 뒤 release 이벤트가 유실된 상황(링 오버플로 등) —
     // pending btn_b 가 押下로 고착. 종전 rising 검사(!ButtonState)는 이때
@@ -662,7 +671,7 @@ static void test_pilot_syn_dropped_resets_decoder() {
     printf("test_pilot_syn_dropped_resets_decoder\n");
     ResetCallbacks();
     GamepadPilot p;
-    p.Start(OnEstop, OnRecover, 0, false);
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     // ARM + 데드맨 + 전진 주행 라인 확립.
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
@@ -690,6 +699,315 @@ static void test_pilot_syn_dropped_resets_decoder() {
     p.Stop();
 }
 
+// ---- F12 (2026-06-13) — 킥 모션 트리거 (LB=왼발 page13, RB=오른발 page12) -------
+
+static void test_pilot_kick_left_right() {
+    printf("test_pilot_kick_left_right\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    // ARM 먼저.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(p.ArmedForTest(), "ARM");
+    // LB rising → 왼발 킥 (SYN 커밋서 발화).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    CHECK(g_kick_calls == 0, "SYN 전 — 킥 미발화 (rising 수집만)");
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_kick_calls == 1, "LB → 킥 1회 (SYN 커밋)");
+    CHECK(g_kick_last_side == GP_KICK_LEFT, "LB → side=LEFT (page 13)");
+    // LB release.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 0), 1030);
+    p.InjectEventForTest(Syn(), 1030);
+    // RB rising → 오른발 킥.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_RB, 1), 1040);
+    p.InjectEventForTest(Syn(), 1040);
+    CHECK(g_kick_calls == 2, "RB → 킥 2회");
+    CHECK(g_kick_last_side == GP_KICK_RIGHT, "RB → side=RIGHT (page 12)");
+    CHECK(p.ArmedForTest(), "킥은 disarm 아님 — ARM 유지");
+    p.Stop();
+}
+
+static void test_pilot_kick_requires_arm() {
+    printf("test_pilot_kick_requires_arm\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    // 미ARM(획득 직후) 상태에서 LB → 킥 금지(사고 방지).
+    CHECK(!p.ArmedForTest(), "획득 직후 — 미ARM");
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(g_kick_calls == 0, "미ARM LB → 킥 무시");
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_RB, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_kick_calls == 0, "미ARM RB → 킥 무시");
+    p.Stop();
+}
+
+static void test_pilot_kick_estop_wins() {
+    printf("test_pilot_kick_estop_wins\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    // 같은 SYN 배치에 LB(킥) + B(estop) — estop 승리: 킥 억제.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_estop_calls == 1, "estop 발화");
+    CHECK(g_kick_calls == 0, "같은 틱 LB+B → 킥 억제 (estop 승리)");
+    CHECK(!p.ArmedForTest(), "estop → disarm");
+    p.Stop();
+}
+
+static void test_pilot_kick_debounce() {
+    printf("test_pilot_kick_debounce (rising-edge only — 홀드/오토리피트 재발화 금지)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    // LB press → 1회.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_kick_calls == 1, "1차 press → 킥 1회");
+    // 홀드 유지(추가 SYN, release 없음) — 재발화 금지.
+    p.InjectEventForTest(Syn(), 1030);
+    p.InjectEventForTest(Syn(), 1040);
+    CHECK(g_kick_calls == 1, "홀드 유지 → 재발화 없음 (rising-edge only)");
+    // 오토리피트(value=2) — 여전히 재발화 금지(rising 은 value==1 만).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 2), 1050);
+    p.InjectEventForTest(Syn(), 1050);
+    CHECK(g_kick_calls == 1, "오토리피트(value=2) → 재발화 없음");
+    // release 후 재press → 2회.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 0), 1060);
+    p.InjectEventForTest(Syn(), 1060);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1070);
+    p.InjectEventForTest(Syn(), 1070);
+    CHECK(g_kick_calls == 2, "release 후 재press → 킥 2회");
+    p.Stop();
+}
+
+static void test_pilot_kick_walk_line_intact() {
+    printf("test_pilot_kick_walk_line_intact (킥은 walk 라인 비간섭)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    DrainSlot(p);
+    // LB 킥 + 풀스틱 전진 동시 — walk 라인은 스틱 상태 그대로(enabled=1), 킥은 별개.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_kick_calls == 1, "킥 발화");
+    CHECK(g_kick_last_side == GP_KICK_LEFT, "side=LEFT");
+    WalkCommand c;
+    CHECK(TakeParsed(p, &c), "walk 라인 발행 (킥과 독립)");
+    CHECK(c.enabled == 1, "walk 라인 enabled=1 (스틱 반영 — 킥 비간섭)");
+    CHECK_NEAR(c.x, GP_MAX_STRIDE_MM, 0.01, "x=+38 (전진 유지)");
+    // 킥만(스틱 중립) — walk 라인 enabled=0.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 0), 1030);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, 0), 1030);
+    p.InjectEventForTest(Syn(), 1030);
+    DrainSlot(p);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_RB, 1), 1040);
+    p.InjectEventForTest(Syn(), 1040);
+    CHECK(g_kick_calls == 2, "RB 킥 발화");
+    CHECK(TakeParsed(p, &c) && c.enabled == 0, "스틱 중립 — walk 라인 enabled=0 (킥만)");
+    p.Stop();
+}
+
+static void test_pilot_kick_arm_same_tick() {
+    printf("test_pilot_kick_arm_same_tick (A+LB 같은 틱 — settle 후 armed → 킥 발화)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    // 미ARM 상태에서 A(arm)+LB(kick) 같은 SYN — settle 로 armed=true 후 킥 게이트 통과.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(p.ArmedForTest(), "A → armed");
+    CHECK(g_kick_calls == 1, "A+LB 같은 틱 → armed 후 킥 발화");
+    CHECK(g_kick_last_side == GP_KICK_LEFT, "side=LEFT");
+    p.Stop();
+}
+
+static void test_pilot_kick_disarmed_after_estop() {
+    printf("test_pilot_kick_disarmed_after_estop (estop 후 재ARM 전 킥 금지)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    // E-STOP → disarm.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(!p.ArmedForTest(), "estop → disarm");
+    // B·A release (재ARM 은 A rising-edge 필요 — 기존 estop 복구 패턴).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 0), 1030);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 0), 1030);
+    p.InjectEventForTest(Syn(), 1030);
+    // 재ARM 전 LB → 킥 금지.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1040);
+    p.InjectEventForTest(Syn(), 1040);
+    CHECK(g_kick_calls == 0, "estop 후 미ARM — LB 킥 금지");
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 0), 1050);
+    p.InjectEventForTest(Syn(), 1050);
+    // 재ARM(A rising) 후 LB → 킥 정상.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1060);
+    p.InjectEventForTest(Syn(), 1060);
+    CHECK(p.ArmedForTest(), "A rising → 재ARM");
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1070);
+    p.InjectEventForTest(Syn(), 1070);
+    CHECK(g_kick_calls == 1, "재ARM 후 LB → 킥 정상");
+    p.Stop();
+}
+
+static void test_pilot_kick_null_cb_safe() {
+    printf("test_pilot_kick_null_cb_safe (kick_cb=NULL 안전)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    // kick_cb=0 — 콜백 미설정이어도 크래시/오동작 없어야.
+    p.Start(OnEstop, OnRecover, 0, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_kick_calls == 0, "kick_cb=NULL — 발화 없음(크래시 없음)");
+    CHECK(p.ArmedForTest(), "상태 정상");
+    p.Stop();
+}
+
+// ── F12 적대적 리뷰 보강 (2026-06-13 — 동시성/엣지케이스 6종) ─────────────────
+
+static void test_pilot_kick_both_pressed_same_syn() {
+    printf("test_pilot_kick_both_pressed_same_syn (LB+RB 동시 SYN — 양 콜백, last-wins)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    // 같은 SYN 배치에 LB+RB rising — 양쪽 콜백 독립 발화(LEFT 먼저, RIGHT 나중).
+    // brokerage RequestKick 은 last-wins → RIGHT 로 수렴(단일 킥).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_RB, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_kick_calls == 2, "LB+RB 동시 → 양 콜백 발화(2회)");
+    CHECK(g_kick_last_side == GP_KICK_RIGHT, "마지막 = RB(RIGHT) → brokerage last-wins");
+    p.Stop();
+}
+
+static void test_pilot_kick_disarmed_edge_not_stale() {
+    printf("test_pilot_kick_disarmed_edge_not_stale (미ARM LB edge → ARM 후 스테일 미발화)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    // 미ARM 상태 LB press → edge 수집되나 SYN 커밋서 게이트(미armed) → 미발화 + edge clear.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(g_kick_calls == 0, "미ARM → LB 킥 미발화");
+    // 이제 ARM. 직전 LB edge 가 스테일로 남아 발화하면 안 됨(SYN 커밋서 이미 clear).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(p.ArmedForTest(), "A → armed");
+    CHECK(g_kick_calls == 0, "ARM 시 직전 LB edge 스테일 미발화");
+    p.Stop();
+}
+
+static void test_pilot_kick_during_silence_tier() {
+    printf("test_pilot_kick_during_silence_tier (③티어 침묵 중 LB → 킥 발화)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    // ③티어 진입(침묵 ≥1.5s) — walk amplitude 슬루-제로.
+    CHECK(p.PollFailsafe(2600) == GP_FS_SLEW_ZERO, "③티어 진입");
+    // ③티어 중에도 LB → 킥 발화(킥은 failsafe 와 독립 — estop 만 게이트).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 2700);
+    p.InjectEventForTest(Syn(), 2700);
+    CHECK(g_kick_calls == 1, "③티어 중 LB → 킥 발화(failsafe 와 독립)");
+    CHECK(g_kick_last_side == GP_KICK_LEFT, "side=LEFT");
+    p.Stop();
+}
+
+static void test_pilot_kick_syn_dropped_clears_edge() {
+    printf("test_pilot_kick_syn_dropped_clears_edge (SYN_DROPPED → 보류 킥 폐기, 안전 편향)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    // LB rising 수집 → SYN 커밋 전 SYN_DROPPED(링 오버플로) → 보류 킥 폐기.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectEventForTest(Ev(GP_EV_SYN, GP_SYN_DROPPED, 0), 1030);
+    p.InjectEventForTest(Syn(), 1030);
+    CHECK(g_kick_calls == 0, "SYN_DROPPED → 보류 킥 미발화 (고토크 액션 안전 편향)");
+    // 재누름은 정상 발화(rising — 디코더 리셋으로 ButtonState=false).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1040);
+    p.InjectEventForTest(Syn(), 1040);
+    CHECK(g_kick_calls == 1, "재누름 → 킥 정상 발화");
+    p.Stop();
+}
+
+static void test_pilot_kick_with_balltrack() {
+    printf("test_pilot_kick_with_balltrack (X 볼트랙 + LB 킥 동시 — 비간섭)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    DrainSlot(p);
+    // 같은 SYN 에 X(볼트랙 토글) + LB(킥) — 독립 처리.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_X, 1), 1020);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_kick_calls == 1, "LB → 킥 발화");
+    CHECK(g_kick_last_side == GP_KICK_LEFT, "side=LEFT");
+    CHECK(p.BalltrackForTest() == 1, "X → 볼트랙 ON(독립)");
+    WalkCommand c;
+    CHECK(TakeParsed(p, &c) && c.balltrack == 1, "walk 라인에 balltrack=1 반영");
+    p.Stop();
+}
+
+static void test_pilot_kick_lost_on_device_reacquire() {
+    printf("test_pilot_kick_lost_on_device_reacquire (device 유실 → 보류 킥 폐기)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    // LB rising 수집(SYN 커밋 전) → 장치 유실.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1020);
+    p.InjectNodeLostForTest(1021);
+    CHECK(g_kick_calls == 0, "유실 전 SYN 미발화 → 콜백 0");
+    // 재획득 → disarm. 재 ARM 후 스틱만 — 스테일 킥 미발화(Adopt/HandleNodeLost edge clear).
+    p.InjectAdoptForTest(2000);
+    CHECK(!p.ArmedForTest(), "재획득 → disarm");
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 2010);
+    p.InjectEventForTest(Syn(), 2010);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 2020);
+    p.InjectEventForTest(Syn(), 2020);
+    CHECK(g_kick_calls == 0, "재획득 후 → 스테일 킥 미발화");
+    p.Stop();
+}
+
 // ---- main --------------------------------------------------------------------
 
 int main() {
@@ -702,7 +1020,7 @@ int main() {
     test_trigger_diff();
     test_mapping_signs();
     test_mapping_gates();
-    test_mapping_turbo();
+    test_mapping_turbo_removed();
     test_mapping_head_rate();
     test_gait_schedule();
     test_line_builder_roundtrip();
@@ -721,6 +1039,22 @@ int main() {
     test_pilot_adopt_grace();
     test_pilot_estop_stale_pending_immune();
     test_pilot_syn_dropped_resets_decoder();
+    // F12 — 킥 트리거 (LB=왼발/RB=오른발)
+    test_pilot_kick_left_right();
+    test_pilot_kick_requires_arm();
+    test_pilot_kick_estop_wins();
+    test_pilot_kick_debounce();
+    test_pilot_kick_walk_line_intact();
+    test_pilot_kick_arm_same_tick();
+    test_pilot_kick_disarmed_after_estop();
+    test_pilot_kick_null_cb_safe();
+    // F12 적대적 리뷰 보강 — 동시성/엣지케이스
+    test_pilot_kick_both_pressed_same_syn();
+    test_pilot_kick_disarmed_edge_not_stale();
+    test_pilot_kick_during_silence_tier();
+    test_pilot_kick_syn_dropped_clears_edge();
+    test_pilot_kick_with_balltrack();
+    test_pilot_kick_lost_on_device_reacquire();
 
     printf("== %d checks, %d failures ==\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
