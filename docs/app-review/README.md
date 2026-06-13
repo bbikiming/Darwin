@@ -15,6 +15,7 @@ DarwinForge 의 Mac App Store / Developer ID 심사 이력 + 미해결 조치 �
 | 파일 | 내용 |
 |---|---|
 | `README.md` (이 파일) | 심사 이력 요약 + 현황 dashboard |
+| **`2026-06-13-pass-master-plan.md`** | **★ 심사 통과 마스터 플랜 — 전체 수정 항목 상세 (구현 터미널용)** |
 | `2026-06-11-rejection-2.4.5-entitlements.md` | 반려 #1 상세 (entitlements) + 조치 |
 | `resubmission-checklist.md` | 재제출 전 체크리스트 (반복 사용) |
 | `app-review-notes-template.md` | App Review 팀 전달 노트 템플릿 (하드웨어 의존성) |
@@ -31,38 +32,29 @@ DarwinForge 의 Mac App Store / Developer ID 심사 이력 + 미해결 조치 �
 
 ## 현재 미해결 조치 사항
 
-### 🔴 P0 — 재제출 차단 (해결됨, merge + archive 대기)
+> **★ 전체 상세는 `2026-06-13-pass-master-plan.md` 참조** — 아래는 요약 dashboard.
 
-1. **[2026-06-11 반려] entitlements 5개 false 제거**
-   - 상세: `2026-06-11-rejection-2.4.5-entitlements.md`
-   - 조치: PR #43 (`claude/fix-appstore-entitlements`)
-   - 남은 작업: PR merge → CFBundleVersion bump → archive → 재업로드
+### 🔴 P0 — 재제출 차단 / 핵심 기능 파손
 
-### 🟡 P1 — 재제출 시 함께 준비 (잠재 반려 위험)
+1. **[2026-06-11 반려] entitlements 5개 false 제거** — ✅ 조치됨 (PR #43), merge 대기
+2. **`com.apple.security.device.serial` 부재** — ⬜ 미조치. sandbox 에서 `/dev/cu.*` open 거부 → **robot 연결 자체 불가** (마스터 플랜 §1)
+3. **CFBundleVersion 자동 bump 부재** — ⬜ 미조치. 소스=2, 반려 build=579 → 업로드 거부 (마스터 플랜 §2)
+4. **sandbox 활성 상태 기능 검증 0회** — ⬜ 미조치. 12항목 체크리스트 (마스터 플랜 §3)
 
-2. **USB 외부 하드웨어 의존성 (Guideline 2.4.5 / 2.1)**
-   - `com.apple.security.device.usb` entitlement 사용
-   - App Review 는 실 ROBOTIS-OP2 robot 없이 검토 불가능
-   - **조치 필요**: App Review Notes 에 "하드웨어 없이 동작하는 시뮬레이션 모드" 명시
-     + 데모 영상 첨부 권장
-   - 템플릿: `app-review-notes-template.md`
+### 🟡 P1 — 휴먼 리뷰 반려 위험
 
-3. **음성 인식 / 마이크 권한 (Guideline 5.1.1)**
-   - `NSSpeechRecognitionUsageDescription` / `NSMicrophoneUsageDescription` 존재 ✓
-   - usage description 명확함 ✓ — 추가 조치 불필요 (기록만)
+5. **ROBOTIS 상표/사칭 (5.2.1)** — ⬜ **사용자 의사결정 필요**. bundle ID `com.robotis.*` + 저작권 "© ROBOTIS" vs README "unofficial" 모순 (마스터 플랜 §5)
+6. **Claude CLI 외부 프로세스 의존 기능** — ⬜ 미조치. 리뷰어 환경에서 깨진 기능으로 보임 → gate/숨김 (마스터 플랜 §4)
+7. **SynthBridge `cargo` 의존** — ⬜ 미조치. production 확정 실패 → gate (마스터 플랜 §4)
+8. **SSH/scp/ping 서브프로세스** — ⬜ sandbox 검증 필요 (마스터 플랜 §4)
+9. **ComingSoonOverlay placeholder** — ⬜ 사용처 조사 + 정리 (마스터 플랜 §7)
+10. **하드웨어 의존 Review Notes + 데모 영상** — ⬜ 템플릿 ✓, 영상 미제작 (마스터 플랜 §6)
+11. **App Privacy 라벨** — ⬜ 음성 데이터 선언 필요 (마스터 플랜 §8)
 
-4. **Local Network 권한 (Guideline 5.1.1)**
-   - `NSLocalNetworkUsageDescription` 존재 ✓ (Pilot Relay + Tello)
-   - 추가 조치 불필요
+### 🟢 P2 — 확인 완료 / 방어적
 
-### 🟢 P2 — 확인 완료 (조치 불필요)
-
-5. **암호화 수출 규정 (Export Compliance)**
-   - `ITSAppUsesNonExemptEncryption = false` ✓ — HTTPS 표준만 사용
-6. **App Sandbox**
-   - `com.apple.security.app-sandbox = true` ✓
-7. **카메라 권한**
-   - `NSCameraUsageDescription` 의도적 누락 (현재 미사용) ✓
+12. Export Compliance ✓ · App Sandbox ✓ · 카메라 의도적 누락 ✓ · NSBonjourServices ✓ · 카테고리 ✓ · 아이콘 1254px ✓ · provisioning 자동 embed ✓
+13. NSAllowsLocalNetworking 명시 — 권장 (IP literal 은 ATS 면제라 현재도 동작, 마스터 플랜 §9.1)
 
 ---
 
