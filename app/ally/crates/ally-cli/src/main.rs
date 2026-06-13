@@ -272,20 +272,30 @@ fn connect(args: &[String]) -> io::Result<()> {
         .ok_or_else(|| io::Error::other("로봇 미도달(유선·무선 :22 무응답)"))?;
     println!("▶ 경로 {} ({host})", path.as_str());
 
-    // §7-2/3 SSH + 브로커리지 모드 확인 (미실행 vs 다른 모드 구분).
+    // §7-2/3 SSH + walklab 실행 확인.
+    //
+    // 펌웨어(firmware-patches install-onboard.sh)는 walklab 진입 시 df-pilot-progress 를
+    // 단계별로 쓰고(walklab-init→walk-ready→gyro-calibration→walklab-active), 마지막에
+    // **df-pilot-mode 를 unlink(소비)** 한 뒤 WalkLabBrokerage.Run() 에 든다. 따라서 정상
+    // 가동 중인 walklab 은 df-pilot-mode 가 **없다** — df-pilot-mode 만 검사하면 살아있는
+    // walklab 을 "미실행"으로 오탈락시킨다(d00b8ca 버그, 실기 미검증). "실행 중"의 정본
+    // 신호는 df-pilot-progress == "walklab-active" 다.
     let ssh = SshClient::new(host, identity);
-    let mode = ssh.pilot_mode()?;
-    if mode.is_empty() {
-        return Err(io::Error::other(
-            "브로커리지 미실행(df-pilot-mode 없음) — DarwinForge '조종기 데모 시작' 또는 robot_ready start-walklab 후 재시도",
-        ));
+    let progress = ssh
+        .run("cat /tmp/df-pilot-progress 2>/dev/null || true")?
+        .trim()
+        .to_string();
+    if progress != "walklab-active" {
+        let mode = ssh.pilot_mode()?; // 소비 전 '대기' 표식.
+        return Err(io::Error::other(if progress.starts_with("walk") || progress.starts_with("gyro") {
+            format!("walklab 기동 중(progress='{progress}') — walklab-active 될 때까지 잠시 후 재시도")
+        } else if mode == "walklab" {
+            "walklab 대기(df-pilot-mode=walklab, 데모 미소비) — 데모가 픽업할 때까지 대기 후 재시도".to_string()
+        } else {
+            format!("walklab 미실행(progress='{progress}', mode='{mode}') — DarwinForge '조종기 데모 시작' 또는 robot_ready start-walklab 후 재시도")
+        }));
     }
-    if mode != "walklab" {
-        return Err(io::Error::other(format!(
-            "브로커리지가 walklab 아닌 '{mode}' 모드 — 데모를 walklab 으로 재시작 후 재시도"
-        )));
-    }
-    println!("  브로커리지 walklab 확인");
+    println!("  walklab-active 확인(df-pilot-progress)");
 
     // 단일 세션 가드 — 기존 핸드셰이크가 있으면 이 connect 가 토큰을 회전시켜 그 세션을
     // 끊는다(§G.1). --force 없으면 중단(Mac/Switch/타 Ally 와의 동시 제어 사고 방지).
