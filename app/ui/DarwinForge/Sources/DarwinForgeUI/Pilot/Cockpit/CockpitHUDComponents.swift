@@ -121,16 +121,14 @@ struct CockpitLatchIndicator: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 7) {
-                Text("CMD → APPLIED")
-                    .font(.system(size: CockpitMetrics.pillLabel, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.7))
-                Spacer(minLength: 8)
-                Text(pending ? "적용 대기" : "동기")
-                    .font(.system(size: CockpitMetrics.pillLabel, weight: .bold, design: .monospaced))
-                    .foregroundStyle(pending ? CockpitColors.warn : CockpitColors.live)
-            }
+        // 사용자 요청(2026-06-12): 하단 HUD 가 장면을 가리지 않게 — 아코디언으로 접고
+        // 펼 수 있게, 기본 접힘. 접힌 상태에서도 헤더 칩이 동기/대기 상태를 알려준다.
+        CockpitCollapsibleHUD(
+            title: "CMD → APPLIED",
+            statusText: pending ? "적용 대기" : "동기",
+            statusTone: pending ? CockpitColors.warn : CockpitColors.live,
+            storageKey: "df.cockpit.hud.latch.expanded"
+        ) {
             row("STRIDE", cmdStrideMm, latch.strideMm, "", eps: 3.0)
             row("SIDE", cmdSideMm, latch.sideMm, "", eps: 3.0)
             row("TURN", cmdTurnDeg, latch.turnDeg, "°", eps: 2.0)
@@ -144,7 +142,58 @@ struct CockpitLatchIndicator: View {
                     .foregroundStyle(latch.activeSource == "udp" ? CockpitColors.live : CockpitColors.warn)
             }
         }
-        .cockpitPanel(tint: pending ? CockpitColors.warn : CockpitColors.live, strokeOpacity: 0.35)
+    }
+}
+
+// MARK: - Collapsible HUD panel (아코디언, 2026-06-12)
+
+/// 하단 HUD 아코디언 래퍼 — 헤더(제목 + 상태 칩 + 셰브런)는 항상 보이는 얇은 칩,
+/// 본문은 클릭으로 접고 편다. 기본 접힘(장면 가림 최소화). 펼침 상태는 @AppStorage 로
+/// 영속(화면 전환·재시작 후에도 유지).
+struct CockpitCollapsibleHUD<Content: View>: View {
+    let title: String
+    let statusText: String
+    let statusTone: Color
+    @ViewBuilder let content: () -> Content
+
+    @AppStorage private var expanded: Bool
+
+    init(title: String,
+         statusText: String,
+         statusTone: Color,
+         storageKey: String,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.statusText = statusText
+        self.statusTone = statusTone
+        self.content = content
+        _expanded = AppStorage(wrappedValue: false, storageKey)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.6))
+                    Text(title)
+                        .font(.system(size: CockpitMetrics.pillLabel, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.7))
+                    Spacer(minLength: 8)
+                    Text(statusText)
+                        .font(.system(size: CockpitMetrics.pillLabel, weight: .bold, design: .monospaced))
+                        .foregroundStyle(statusTone)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "접기" : "펼치기")
+            if expanded { content() }
+        }
+        .cockpitPanel(tint: statusTone, strokeOpacity: 0.35)
     }
 }
 

@@ -291,16 +291,7 @@ final class DarwinOP2Rig: RigSkeleton {
         cap.position = SCNVector3(0, Self.helmetH + capH / 2 - 0.002, 0)
         parent.addChildNode(cap)
 
-        // 정수리 녹색 LED
-        let ledGeom = SCNSphere(radius: 0.0048)
-        let ledMat = SCNMaterial()
-        ledMat.diffuse.contents = Self.ledGreen
-        ledMat.emission.contents = Self.ledGreen
-        ledMat.lightingModel = .constant
-        ledGeom.firstMaterial = ledMat
-        let ledNode = SCNNode(geometry: ledGeom)
-        ledNode.position = SCNVector3(0, Self.helmetH + capH + 0.001, 0.014)
-        parent.addChildNode(ledNode)
+        // (정수리 LED 액센트 제거 — 사용자 결정 2026-06-12: 눈·카메라·LED 미표시)
 
         // 헬멧 측면 흰 ridge (귀 부분)
         let ridgeL = makeBox(w: 0.005, h: 0.034, d: 0.046,
@@ -312,22 +303,8 @@ final class DarwinOP2Rig: RigSkeleton {
         ridgeR.position = SCNVector3(Self.helmetW / 2 + 0.001, Self.helmetH * 0.55, 0)
         parent.addChildNode(ridgeR)
 
-        // 큰 보라 LED 눈 (헬멧 정면).
+        // (보라 눈·이마 카메라 액센트 제거 — 사용자 결정 2026-06-12)
         let eyeY = Self.helmetH * 0.52
-        addEye(into: parent, x: -0.020, y: eyeY, z: Self.helmetD / 2 + 0.003)
-        addEye(into: parent, x:  0.020, y: eyeY, z: Self.helmetD / 2 + 0.003)
-
-        // 이마 카메라 (눈 사이 위)
-        let cam = SCNCylinder(radius: 0.005, height: 0.005)
-        let camMat = SCNMaterial()
-        camMat.diffuse.contents = Self.eyePupil
-        camMat.specular.contents = NSColor.white.withAlphaComponent(0.7)
-        camMat.shininess = 80
-        cam.firstMaterial = camMat
-        let camNode = SCNNode(geometry: cam)
-        camNode.eulerAngles = SCNVector3(CGFloat.pi / 2, 0, 0)
-        camNode.position = SCNVector3(0, eyeY + 0.024, Self.helmetD / 2 + 0.005)
-        parent.addChildNode(camNode)
 
         // 입 — 가로 검은 grill
         let mouth = makeBox(w: 0.022, h: 0.004, d: 0.002,
@@ -340,33 +317,6 @@ final class DarwinOP2Rig: RigSkeleton {
                             color: Self.detailDark, chamfer: 0.003)
         chin.position = SCNVector3(0, 0.004, 0)
         parent.addChildNode(chin)
-    }
-
-    private func addEye(into parent: SCNNode, x: CGFloat, y: CGFloat, z: CGFloat) {
-        // 외부 보라 LED 디스크 (앞으로 살짝 튀어나옴)
-        let outer = SCNCylinder(radius: Self.eyeRadius, height: 0.005)
-        let outerMat = SCNMaterial()
-        outerMat.diffuse.contents = Self.eyePurple
-        outerMat.emission.contents = Self.eyePurple.withAlphaComponent(0.85)
-        outerMat.specular.contents = NSColor.white.withAlphaComponent(0.5)
-        outerMat.shininess = 30
-        outerMat.lightingModel = .blinn
-        outer.firstMaterial = outerMat
-        let outerNode = SCNNode(geometry: outer)
-        outerNode.eulerAngles = SCNVector3(CGFloat.pi / 2, 0, 0)
-        outerNode.position = SCNVector3(x, y, z)
-        parent.addChildNode(outerNode)
-
-        // 검은 동공 (가운데)
-        let pupil = SCNSphere(radius: 0.005)
-        let pupilMat = SCNMaterial()
-        pupilMat.diffuse.contents = Self.eyePupil
-        pupilMat.specular.contents = NSColor.white.withAlphaComponent(0.9)
-        pupilMat.shininess = 90
-        pupil.firstMaterial = pupilMat
-        let pupilNode = SCNNode(geometry: pupil)
-        pupilNode.position = SCNVector3(x, y, z + 0.0035)
-        parent.addChildNode(pupilNode)
     }
 
     // MARK: - Arm

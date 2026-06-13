@@ -154,7 +154,8 @@ final class MeshRig: RigSkeleton {
                          meshRPY: SCNVector3(0, Float.pi, Float.pi / 2),
                          linkID: .headTilt,
                          applyDefaultZRotation: false)
-        attachHeadDetails(to: headTiltAnchor)
+        // 눈·이마 카메라·정수리 LED 액센트는 제거 — 실기와 무관한 장식이라 STL 원형만
+        // 표시한다 (사용자 결정 2026-06-12).
 
         // ── 좌측 팔
         try buildArm(side: .left, body: body)
@@ -267,76 +268,6 @@ final class MeshRig: RigSkeleton {
 
     /// **W4 (2026-06-12)**: 프리미티브 rig(`DarwinOP2Rig`)에만 있던 얼굴 디테일을
     /// STL 머리에도 이식 — 보라 LED 눈 2개(디스크, emission 0.85) + 이마 카메라 +
-    /// 정수리 녹색 LED.
-    ///
-    /// 좌표계: `head_tilt` anchor 는 URDF frame(+X=정면, +Y=좌, +Z=위)을 따른다.
-    /// 따라서 눈은 +X(앞)·±Y(좌우)·소량 +Z(위)에 놓이고, 디스크의 평면이 +X 를
-    /// 향하도록 실린더 축을 Z 기준 π/2 회전한다.
-    ///
-    /// STL head 는 URDF frame 이라 프리미티브 좌표를 직접 쓸 수 없어 아래 상수는
-    /// **초기 튜닝값**이다. 최종 위치는 .app 번들 클로즈업 스냅샷으로 미세 조정한다
-    /// (swift test 헤드리스 환경은 STL 미로드 → 폴백 rig 렌더라 이 디테일이 보이지
-    /// 않는다 — 알려진 제약, `headless-snapshot-robot-invisible`).
-    private func attachHeadDetails(to head: SCNNode) {
-        // 튜닝 상수 (URDF m). forward=+X, lateral=±Y, up=+Z.
-        let eyeForward: CGFloat = 0.048
-        let eyeLateral: CGFloat = 0.021
-        let eyeUp: CGFloat = 0.015
-
-        addEyeDisc(to: head, x: eyeForward, y:  eyeLateral, z: eyeUp)
-        addEyeDisc(to: head, x: eyeForward, y: -eyeLateral, z: eyeUp)
-
-        // 이마 카메라 — 눈 사이 위쪽, 앞으로 약간 돌출.
-        let camGeom = SCNCylinder(radius: 0.005, height: 0.006)
-        let camMat = SCNMaterial()
-        camMat.diffuse.contents = DarwinOP2Rig.eyePupil
-        camMat.specular.contents = NSColor.white.withAlphaComponent(0.7)
-        camMat.shininess = 80
-        camGeom.firstMaterial = camMat
-        let camNode = SCNNode(geometry: camGeom)
-        // 실린더 축(Y) → +X(정면) 향하게 Z 기준 π/2 회전.
-        camNode.eulerAngles = SCNVector3(0, 0, Float.pi / 2)
-        camNode.position = SCNVector3(eyeForward + 0.002, 0, eyeUp + 0.020)
-        head.addChildNode(camNode)
-
-        // 정수리 녹색 LED.
-        let ledGeom = SCNSphere(radius: 0.0048)
-        let ledMat = SCNMaterial()
-        ledMat.diffuse.contents = DarwinOP2Rig.ledGreen
-        ledMat.emission.contents = DarwinOP2Rig.ledGreen
-        ledMat.lightingModel = .constant
-        ledGeom.firstMaterial = ledMat
-        let ledNode = SCNNode(geometry: ledGeom)
-        ledNode.position = SCNVector3(0.012, 0, eyeUp + 0.044)
-        head.addChildNode(ledNode)
-    }
-
-    /// 보라 LED 눈 디스크(앞면 +X) + 검은 동공.
-    private func addEyeDisc(to head: SCNNode, x: CGFloat, y: CGFloat, z: CGFloat) {
-        let outer = SCNCylinder(radius: 0.012, height: 0.005)
-        let outerMat = SCNMaterial()
-        outerMat.diffuse.contents = DarwinOP2Rig.eyePurple
-        outerMat.emission.contents = DarwinOP2Rig.eyePurple.withAlphaComponent(0.85)
-        outerMat.specular.contents = NSColor.white.withAlphaComponent(0.5)
-        outerMat.shininess = 30
-        outerMat.lightingModel = .blinn
-        outer.firstMaterial = outerMat
-        let outerNode = SCNNode(geometry: outer)
-        outerNode.eulerAngles = SCNVector3(0, 0, Float.pi / 2)   // 디스크 평면 → +X
-        outerNode.position = SCNVector3(x, y, z)
-        head.addChildNode(outerNode)
-
-        let pupil = SCNSphere(radius: 0.005)
-        let pupilMat = SCNMaterial()
-        pupilMat.diffuse.contents = DarwinOP2Rig.eyePupil
-        pupilMat.specular.contents = NSColor.white.withAlphaComponent(0.9)
-        pupilMat.shininess = 90
-        pupil.firstMaterial = pupilMat
-        let pupilNode = SCNNode(geometry: pupil)
-        pupilNode.position = SCNVector3(x + 0.0035, y, z)
-        head.addChildNode(pupilNode)
-    }
-
     // MARK: - Helpers
 
     /// joint anchor 노드 생성 — 부모 frame에서의 origin + 초기 회전(rpy).

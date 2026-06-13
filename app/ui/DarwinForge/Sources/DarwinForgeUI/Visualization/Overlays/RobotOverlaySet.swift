@@ -22,15 +22,12 @@ public struct RobotOverlaySet: OptionSet, Sendable, Equatable {
     /// 관절 한계 근접 경고(링크 emission tint).
     public static let limitWarning   = RobotOverlaySet(rawValue: 1 << 5)
 
-    /// 화면별 기본값 — 설계 §5 on/off 매트릭스.
+    /// 화면별 기본값 — **전부 OFF** (사용자 결정 2026-06-12: 오버레이는 해제가 기본,
+    /// 필요할 때 ViewportControls 팝오버에서 켠다). 설계 §5 의 화면별 on/off 매트릭스는
+    /// 팝오버의 토글 항목 구성으로만 남는다.
     public static func defaults(for preset: ScenePreset) -> RobotOverlaySet {
-        switch preset {
-        case .studio:  return [.jointAxis, .limitWarning]
-        case .teach:   return [.com, .jointAxis, .footContact, .limitWarning]
-        case .walkLab: return [.com, .footContact, .horizon, .limitWarning]
-        case .motion:  return [.jointAxis, .trajectory, .limitWarning]
-        case .cockpit: return [.footContact, .horizon]
-        }
+        _ = preset
+        return []
     }
 
     /// 사용자 토글 UI 노출 순서·라벨(설계 §5).

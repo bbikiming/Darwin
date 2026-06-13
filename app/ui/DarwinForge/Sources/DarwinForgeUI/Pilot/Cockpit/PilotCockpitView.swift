@@ -149,13 +149,17 @@ public struct PilotCockpitView: View {
         // **O4** — 온보드 TEL2 가 있을 때만 "명령 vs 래치값" 마이크로 인디케이터(래칭 지연 가시화).
         .overlay(alignment: .bottomLeading) {
             if let latch = store.onboardLatch {
+                // 아코디언(기본 접힘) — 토글 클릭이 필요해 hit-testing 활성. 하단 바
+                // (INPUT/bottomBar) 밴드와 겹치지 않게 그 위로 띄운다(겹침 방지,
+                // 사용자 요청 2026-06-12).
                 CockpitLatchIndicator(
                     cmdStrideMm: cockpit.motorCommand.strideMm,
                     cmdSideMm: cockpit.motorCommand.sideMm,
                     cmdTurnDeg: cockpit.motorCommand.turnDeg,
                     latch: latch)
-                    .padding(12)
-                    .allowsHitTesting(false)
+                    .frame(maxWidth: 240, alignment: .leading)
+                    .padding(.leading, 12)
+                    .padding(.bottom, 96)
             }
         }
         // **O4** — 실로봇 보행 위상(TEL2)으로 시뮬 walkAnimator 위상 동기(화면=게이지=실모터).
