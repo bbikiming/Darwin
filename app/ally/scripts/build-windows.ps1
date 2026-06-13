@@ -15,9 +15,10 @@
 #
 # 패키징 단계 (W4, PKG-01/02):
 #   1. exe + assets 묶음
-#   2. 방화벽 인바운드 규칙 (TEL2 UDP 수신):
-#      New-NetFirewallRule -DisplayName "DARwIn FPV TEL2" -Direction Inbound `
-#        -Program <exe 경로> -Action Allow -Protocol UDP
+#   2. 방화벽 인바운드 규칙 (TEL2 UDP 수신) — scripts/firewall-tel2.ps1 사용:
+#      .\firewall-tel2.ps1 -ExePath <exe 경로>
+#      (TEL2 는 임시 포트로 오는 unsolicited inbound → 프로그램 범위 규칙. 포트 범위
+#       규칙은 빗나간다. W1 게이트는 ally-cli.exe 가 수신 프로그램.)
 #   3. WiFi 어댑터 절전 해제 (NIC power saving → RTT 스파이크 방지)
 #   4. Armoury Crate 게임 등록 안내 출력 (수동 1회: 라이브러리 → 앱 추가)
 #

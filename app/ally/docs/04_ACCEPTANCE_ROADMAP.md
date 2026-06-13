@@ -21,7 +21,7 @@
 | 웨이브 | 범위 | 산출물(핵심) | 게이트 종류 | 게이트 합격선(요약) | 기간 |
 |---|---|---|---|---|---|
 | **W0** | 골격·와이어 패리티 (이번 커밋) | Cargo workspace + `crates/df-wire`(순함수) + 골든 벡터 | **로봇 불필요** — macOS `cargo test` | Python(`tools/switch-pilot/src/darwin_switch_agent/df_udp.py`) ↔ Rust **바이트/캐노니컬 동일성 100%** | 이번 |
-| **W1** | 제어 코어 헤드리스 | `ally-link` + `ally-input` + `ally-cli` | **유선 실기**(USB-C LAN → 192.168.123.1) | 20Hz 지속 eff_hz≥19 · E-STOP 와이어 송출 내부 ≤150ms · 정지 계약 ≤320ms · 패드 단절→zero+disarm | 1주 |
+| **W1** | 제어 코어 헤드리스 (코드·단위 테스트 완료 — `claude/ally-w1-core`, 유선 게이트 대기) | `ally-link` + `ally-input` + `ally-cli` | **유선 실기**(USB-C LAN → 192.168.123.1) | 20Hz 지속 eff_hz≥19 · E-STOP 와이어 송출 내부 ≤150ms · 정지 계약 ≤320ms · 패드 단절→zero+disarm | 1주 |
 | **W2** | Tauri 콕핏 HUD + 카메라 | `darwin-fpv`(Tauri 2 bin) + `ui/`(WebView2 풀스크린) | **무선 실기**(192.168.0.33) | 보행 중 영상 8–15fps + HUD 60fps 동시 · 입력→송신 지터 ±5ms · 터치 E-STOP 병행 · 30분 soak | 1주 |
 | **W3** | 3D 합성 포즈 + PIP | `ally-pose`(forge-core walk FK 직링크) + Three.js GLB 뷰어 | 무선 실기(보행) | 보행 위상 동기 Mac 앱 동등 · 영상+3D PIP 60fps | 1–1.5주 |
 | **W4** | 게임화·내구·패키징 | 패키징(MSI/포터블) · 절전/포커스 핸들링 · 장애 주입 | **내구 실기** | 30분 연속 데모 무중단 · §3 매트릭스 전 항목 안전 수렴 · Armoury Crate 기동 · 절전 시 E-STOP 발화 | 1–2주 |
@@ -72,10 +72,12 @@ W2 와 병행 착수 가능(게이트만 직렬).
 ### W1 — 제어 코어 헤드리스 (유선 실기 게이트 · 1주)
 
 **산출물**
-- `ally-link`: UDP 명령 TX 20Hz(:17374) · E-STOP ×3연발 0/50/100ms(:17372) + SSH
-  `touch /tmp/df-walklab-estop` 병행 · TEL2 RX(기본 :17371, `/tmp/df-walklab-uplink` 에
-  "ip:port" 등록) · ssh2 세션(핸드셰이크 `/tmp/df-walklab-channel` 기록, ACK 무수신 1.5s 시
-  SSH 파일 폴백 5Hz)
+- `ally-link`: UDP 명령 TX 20Hz(:17374) · E-STOP ×3연발 0/50/100ms(:17372, offset 0 동기
+  발화 — INV-1) + SSH `touch /tmp/df-walklab-estop` 병행 · TEL2 RX(임시 포트 bind,
+  `/tmp/df-walklab-uplink` 에 "ip:port" 등록) · **시스템 ssh.exe 서브프로세스 세션**(사용자
+  결정 2026-06-13 — ssh2/russh 대신, 빌드 C 의존 0 + 검증된 `ssh_control_client.py` 경로
+  일치; `RobotShell` 트레잇 뒤에서 교체 가능)(핸드셰이크 `/tmp/df-walklab-channel` 기록,
+  ACK 무수신 1.5s 시 SSH 파일 폴백 5Hz)
 - `ally-input`: gilrs 250Hz 폴링 + RG G01 검증 매핑 1:1(아래 동결 수치) + 안전 게이트
   (A=ARM 단일 게이트 · B=E-STOP rising-edge 즉시발화 · Y=복구 · failsafe 3티어:
   버튼 release 합성/장치 소실/이벤트 침묵 1500ms 슬루 정지)
@@ -117,21 +119,45 @@ W2 와 병행 착수 가능(게이트만 직렬).
 - [ ] 로봇 워치독: 송신 강제 중단 → 600ms 진폭 슬루→0 / 2.5s Stop(토크 유지) 트립 확인
       (계약 §G.4 — 스트림 소스 전용 티어)
 - [ ] 패드 분리 → zero + disarm (gilrs 단절 이벤트 경로)
-- [ ] ssh2 ↔ 로봇 OpenSSH 5.9(RSA only, user robotis) 접속 성공 —
-      **실패 시 이 게이트에서 russh/plink 분기 결정**(아래 리스크)
-- [ ] Windows 방화벽: TEL2 인바운드(UDP :17371) 허용 규칙 생성·수신 확인
-      (`scripts/` 의 설치 스크립트가 규칙을 만드는지 포함)
+- [ ] **ssh.exe** ↔ 로봇 OpenSSH 5.9(RSA only, user robotis) 접속 성공 — 백엔드는
+      시스템 ssh.exe 서브프로세스로 **결정**(2026-06-13, `ssh_control_client.py` 의 `+ssh-rsa`
+      레거시 옵션 그대로). 협상이 ssh.exe 에서도 실패하면 russh 분기를 이 게이트에서 재검토
+- [ ] Windows 방화벽: TEL2 인바운드 허용 규칙 생성·수신 확인 — `scripts/firewall-tel2.ps1`
+      이 **프로그램 범위** 인바운드 UDP 허용을 만든다(TEL2 는 임시 포트로 오는 unsolicited
+      inbound 라 포트 :17371 범위 규칙은 빗나감 — ACK 만 solicited return). 수신 확인 = accept
+      러너의 'TEL2 수신율' > 0
 - [ ] SSH 파일 폴백: 핸드셰이크 제거(`rm /tmp/df-walklab-channel`) 후 5Hz 파일 경로로
       조종 지속 (INV-3)
+
+**구현 상태 (2026-06-13 — `claude/ally-w1-core`, 헤드리스 코드·단위 테스트 완료):**
+세 크레이트 구현 + `cargo test` 통과(df-wire 14 + parity 7 + ally-input 18 + ally-link 15 +
+ally-cli 4 = **58 passed**, `clippy -D warnings`·`fmt` clean). 위 게이트 체크박스는 전부
+**물리 거동/실기 측정**이라 미체크로 둔다 — "ACK enabled=1 ≠ 서보 기록"(F9). 자율 범위는
+코드·단위 테스트까지이고, 실기 측정은 유선 게이트 세션에서 사용자 입회로 수행한다.
+
+- **메커니즘 자기검증(로봇 없이)**: `ally-cli loopback` 이 페이크 로봇(ACK 회신 + TEL2 30Hz +
+  estop 카운트)으로 핸드셰이크→프로브→20Hz→eff_hz→TEL2→RTT→estop 전 경로를 통과.
+  Ally 실측(6s): 채택 1ms · eff_hz 20.00 · ACK RTT p50/p95 1.64/1.73ms · estop 3발 — PASS.
+- **게이트에서 측정만 하면 되는 것**: 위 메커니즘을 실로봇에 연결해 ① 핸드셰이크 채택 ②
+  60s eff_hz ③ B→DF-ESTOP 내부 지연(`accept --estop`) ④ TEL2 수신율(방화벽 규칙 후) ⑤
+  RTT 베이스라인. 코드 경로는 준비됨.
+- **물리 입회가 본질인 것**(자동 판정 불가): ④ E-STOP 정지 계약 ≤320ms ⑤ 워치독 600ms/2.5s
+  트립 ⑥ 패드 단절 물리 정지 — §4.2 절차(flag mtime + ACK 동결 + 서보/고속영상)로 입회.
+- **SSH 백엔드 결정**: 시스템 ssh.exe 서브프로세스(`ally-link::ssh`). ssh2(libssh2+openssl
+  빌드 취약·SHA-1 협상 불확실)·russh(async 도입) 대비 빌드 C 의존 0 + 검증된 파이썬 경로
+  일치가 결정 근거. 03 §9 의 "실패 시 분기"는 ssh.exe 협상이 실로봇에서 깨질 때로 이연.
 
 **선행 조건**: W0 머지 · 로봇 세션 예약(§4 경합 규칙) · **측정 중 Mac DarwinForge 앱 종료**
 (브링업 §6 — `connectOnboard` 가 verify≠active 면 estop flag rm + demo 재기동으로 시험
 상태를 파괴. FallPreventionMonitor 자동 재기동 동일).
 
 **리스크**
-- **ssh2 크레이트 ↔ OpenSSH 5.9**: 구식 서버(ssh-rsa SHA-1)라 최신 클라이언트가 거부할 수
-  있음. 게이트 항목으로 못 박고, 실패 시 (a) russh + 레거시 알고리즘 활성 (b) 시스템
-  `plink`/`ssh.exe` 서브프로세스 분기 중 하나를 **이 게이트에서 결정**해 02 문서에 기록.
+- **ssh.exe ↔ OpenSSH 5.9**: 백엔드는 시스템 ssh.exe 서브프로세스로 **결정**(2026-06-13 —
+  위 (b)안). `ssh_control_client.py` 가 실증한 `PubkeyAcceptedAlgorithms=+ssh-rsa`·
+  `HostKeyAlgorithms=+ssh-rsa` 레거시 옵션을 그대로 쓰므로 Win32-OpenSSH 가 5.9 와 협상
+  가능할 것으로 본다. 그래도 협상이 깨지면 잔여 분기는 (a) russh + 레거시 알고리즘 활성 —
+  게이트에서 재검토. (ControlMaster 멀티플렉싱은 Win32-OpenSSH 버전 의존이라 `--no-multiplex`
+  토글 제공.)
 - XInput 트리거가 gilrs 에서 버튼/축 어느 쪽으로 오는지 기기 편차 — ally-cli 에 축 덤프
   모드를 넣어 게이트 현장에서 즉시 확인.
 - Ally 내장 패드의 절전/Armoury Crate 모드 전환이 장치 소실로 보일 수 있음 — failsafe

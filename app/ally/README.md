@@ -6,8 +6,8 @@ ROG Ally(Windows 11 핸드헬드)에서 DARwIn-OP2 를 **라이브 카메라를 
 "출격한 조종석"이다.
 
 - 스택: **Tauri 2 하이브리드** — Rust 코어가 안전·통신 전담(게임패드 250Hz·
-  DFCMD 20Hz·E-STOP 3연발·TEL2 30Hz·ssh2), WebView2 풀스크린 게임 UI.
-  webview 는 어떤 안전 경로에도 없다.
+  DFCMD 20Hz·E-STOP 3연발·TEL2 30Hz·ssh.exe 서브프로세스), WebView2 풀스크린
+  게임 UI. webview 는 어떤 안전 경로에도 없다.
 - 와이어 계약: `docs/ssh-parity-contract.md` (§G UDP·§C 14-token·§A.2-TEL2) —
   로봇 펌웨어 변경 없음, Switch·Mac 과 동일 계약.
 
@@ -27,11 +27,11 @@ ROG Ally(Windows 11 핸드헬드)에서 DARwIn-OP2 를 **라이브 카메라를 
 ```
 crates/
   df-wire/     와이어 계약 순함수 (의존 0, 골든 벡터 패리티) — W0 ✅
-  ally-link/   UDP·ssh2 세션 계층 — W1
-  ally-input/  gilrs + G01 동결 매핑(g01.rs 상수 ✅) + 안전 게이트 — W1
+  ally-link/   UDP 전송 + ssh.exe 세션 + 핸드셰이크/파일 폴백 — W1 ✅(헤드리스, 게이트 대기)
+  ally-input/  gilrs 250Hz + G01 동결 매핑 + 안전 게이트 — W1 ✅(헤드리스, 게이트 대기)
   ally-pose/   TEL2 phase → forge-core walk FK 합성 포즈 — W3
-  ally-cli/    헤드리스 수용시험 — W1
-  darwin-fpv/  Tauri 앱 (워크스페이스 멤버 등록은 W1) — W2
+  ally-cli/    헤드리스 수용시험(accept·loopback·axis-dump) — W1 ✅
+  darwin-fpv/  Tauri 앱 (워크스페이스 멤버 등록은 W2) — W2
 ui/            웹 프론트 (Switch 웹 콕핏 자산 1080p 스케일업) — W2
 assets/        darwin.glb 등 (출처: tools/switch-pilot/web/assets) — W3
 scripts/       골든 벡터 생성기 · Ally 부트스트랩(ally-bootstrap.ps1) ·
