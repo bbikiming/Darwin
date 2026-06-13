@@ -34,10 +34,30 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+        Some("cockpit") => cockpit_main(),
         Some(other) => {
-            eprintln!("알 수 없는 명령: {other}\n사용: darwin-fpv [trace|selfcheck [--seconds N]]");
+            eprintln!(
+                "알 수 없는 명령: {other}\n사용: darwin-fpv [trace|selfcheck [--seconds N]|cockpit]"
+            );
             ExitCode::from(2)
         }
+    }
+}
+
+/// Tauri 콕핏 셸 실행(feature="cockpit"). 미활성 빌드면 안내 후 종료.
+fn cockpit_main() -> ExitCode {
+    #[cfg(feature = "cockpit")]
+    {
+        darwin_fpv::cockpit::shell::run();
+        ExitCode::SUCCESS
+    }
+    #[cfg(not(feature = "cockpit"))]
+    {
+        eprintln!(
+            "cockpit: 'cockpit' feature 가 꺼져 있습니다 — \
+             `cargo run -p darwin-fpv --features cockpit -- cockpit` 로 빌드/실행하세요."
+        );
+        ExitCode::from(2)
     }
 }
 

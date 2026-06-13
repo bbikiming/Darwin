@@ -96,6 +96,7 @@ pub struct Runtime {
     input: Arc<InputService>,
     state: Arc<StateHub>,
     ssh: Option<Arc<SshClient>>,
+    estop: EstopBus,
 }
 
 impl Runtime {
@@ -407,12 +408,18 @@ impl Runtime {
             input,
             state,
             ssh,
+            estop: bus,
         })
     }
 
     /// StateHub 핸들(표시계층·셀프체크가 스냅샷 읽기).
     pub fn state(&self) -> Arc<StateHub> {
         self.state.clone()
+    }
+
+    /// E-STOP 버스 핸들 — 터치 E-STOP(보조 경로, §3) 등 외부 발원이 합류한다.
+    pub fn estop_handle(&self) -> EstopBus {
+        self.estop.clone()
     }
 
     /// 정지 + 스레드 합류 + 핸드셰이크 철회(§7-7 MUST: 스테일 토큰 금지).

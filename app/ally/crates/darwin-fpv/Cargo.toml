@@ -13,10 +13,14 @@ ally-input = { path = "../ally-input" }
 serde_json = "1"
 # INV-2: 안전 런타임은 tauri 를 의존하지 않는다. 무거운 tauri 의존은 `cockpit`
 # feature(Phase 3b 셸)에서만 들이고, 기본 빌드/테스트는 tauri-free·경량으로 둔다.
+tauri = { version = "2", optional = true }
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true }
 
 [features]
-# Phase 3b 에서 `cockpit = ["dep:tauri", "dep:tauri-build"]` 로 확장.
-cockpit = []
+# 콕핏 Tauri 셸(표시계층). 기본 OFF — 기본 빌드/테스트는 tauri-free·경량.
+cockpit = ["dep:tauri", "dep:tauri-build"]
 
 [lib]
 name = "darwin_fpv"

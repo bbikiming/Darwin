@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "DARwIn FPV 콕핏 기본 권한 — 코어 이벤트/윈도우(표시 전용). 커스텀 커맨드(connect/disconnect/touch_estop/set_settings)는 앱 자체 핸들러.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

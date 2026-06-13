@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DARwIn FPV",
+  "version": "0.1.0",
+  "identifier": "dev.darwinforge.fpv",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "DARwIn FPV",
+        "fullscreen": true,
+        "decorations": false,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline'; img-src 'self' data: http://192.168.123.1:8080 http://192.168.0.33:8080; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}
