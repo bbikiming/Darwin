@@ -102,6 +102,11 @@ public:
     static const int KICK_PAGE_RIGHT = 12;
     static const int KICK_PAGE_LEFT  = 13;
 
+    /// **C (2026-06-13)** — 킥 착지 안정화 settle 틱 수 (×8ms). 모션 완료 직후 Action
+    /// 최종 스탠스를 이만큼 유지(서보 홀드)해 스윙 잔여 진동을 감쇠한 뒤 Walking 으로
+    /// 반납한다 — 핸드오프 bump 로 인한 낙상 마진 회복. 37×8ms ≈ 296ms.
+    static const int KICK_SETTLE_TICKS = 37;
+
     /// HIP_PITCH_OFFSET 안전 clamp 범위 (°). (C++03: .cpp 에서 정의)
     static const double HIP_PITCH_MIN;
     static const double HIP_PITCH_MAX;

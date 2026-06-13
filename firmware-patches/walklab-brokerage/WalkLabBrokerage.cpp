@@ -284,9 +284,10 @@ namespace Robotis {
     // getup(CheckAndRecoverFall)과 동일한 walk↔action 모듈 스왑을 복제하되, getup
     // page(10/11) 대신 공식 킥 page(LEFT=13 / RIGHT=12)를 재생한다. getup 과의 2가지
     // 차이: ① 게이트가 반대 — getup 은 FALLEN 일 때, 킥은 STANDUP 일 때만 발동.
-    // ② 완료 후 m_fall_count 리셋 — 킥 착지 transient(순간 FALLEN)가 다음 poll 의
-    // auto-getup 을 오발하지 않게. 절차·8ms 대기·estop 즉시 반응·joint 반납(F9 명시
-    // 재enable)은 getup 과 동일(프로덕션 검증 패턴). 블로킹(~1~2s) — 그 사이 estop·
+    // ② 완료 후 settle(C)+낙상판정(B): ~300ms 정적 유지로 진동 감쇠 뒤 반납, settle 후
+    // STANDUP 이면 m_fall_count 리셋(착지 transient 오발 억제), FALLEN 이면 리셋 대신
+    // 임계로 올려 auto-getup 에 즉시 인계. 절차·8ms 대기·estop 즉시 반응·joint 반납(F9
+    // 명시 재enable)은 getup 과 동일(프로덕션 검증 패턴). 블로킹(~2s) — 그 사이 estop·
     // 낙상 감지는 루프 상단에서 이미 처리됨, 새 walk 명령은 킥 후로 미뤄진다.
     bool WalkLabBrokerage::CheckAndExecuteKick(Robot::Walking* walking,
                                                Robot::CM730* cm730,
@@ -367,6 +368,17 @@ namespace Robotis {
             WriteTelemetry(cm730, walking, walking_active, true);
             usleep(8000);
         }
+        // 6-5) **C (2026-06-13) — 킥 착지 안정화 settle**. 모션 완료 직후 Action 이 여전히
+        //   body joint 을 소유한 채(아직 미반납) 최종 스탠스를 ~300ms 유지한다 — 서보가
+        //   마지막 포즈를 홀드하므로 스윙 잔여 진동이 감쇠된다. 이 정적 유지 뒤에 Walking 으로
+        //   반납하면 핸드오프 순간의 흔들림 bump 가 줄어 낙상 마진을 회복. estop 즉시 반응 +
+        //   telemetry 계속(getup/모션완료 대기 루프와 동일 계약). 페이지 감속(A)과 함께
+        //   "빠른 스냅 → 넘어질 듯" 문제를 완화하는 두 번째 레버.
+        for (int settle = 0; settle < KICK_SETTLE_TICKS; ++settle) {
+            if (EstopRequested()) { action->m_Joint.SetEnableBody(false, true); m_fall_count = 0; return true; }
+            WriteTelemetry(cm730, walking, walking_active, true);
+            usleep(8000);
+        }
         // 7) joint 을 Walking/Head 로 반납 — ★F9: Walking::Start()는 enable 복구 안 함★
         //    (MotionManager 는 enable==true 만 서보 기록). getup 반납과 동일 패턴.
         //    (estop bail 경로는 의도적으로 반납 안 함 — estop=토크 OFF 유지, 재enable 은
@@ -375,9 +387,23 @@ namespace Robotis {
         if (head) head->m_Joint.SetEnableHeadOnly(true, true);
         walking->m_Joint.SetEnableBodyWithoutHead(true, true);
 
-        // 킥 착지 transient(순간 FALLEN)가 다음 poll auto-getup 을 오발하지 않게 리셋.
-        m_fall_count = 0;
-        printf("[WalkLabBrokerage] kick complete — joints returned to Walking, idle\n");
+        // 8) **B (2026-06-13) — settle 후 낙상 판정**. 킥 중 능동 자이로 밸런스는 프레임워크
+        //    구조상 불가하다(Action 은 개루프 위치재생, MotionManager 는 balance 미적용,
+        //    BALANCE_*_GAIN 은 Walking 모듈 전용). 자이로의 현실적 보호 역할은 "넘어졌으면
+        //    일으켜 세우기" — 그 경로(auto-getup)를 킥이 막지 않도록 한다.
+        //    settle(~300ms)로 착지 transient 가 지났으므로 이 시점 FALLEN 은 "킥이 실제로
+        //    넘어뜨림"의 신뢰 신호. STANDUP 이면 종전처럼 카운터 리셋(transient 오발 억제).
+        //    FALLEN 이면 m_fall_count 를 임계로 올려 다음 poll 의 CheckAndRecoverFall 이
+        //    즉시 복구(getup)하게 인계한다 — 종전의 무조건 리셋이 만들던 ~600ms 복구 지연 제거.
+        if (Robot::MotionStatus::FALLEN == Robot::STANDUP) {
+            m_fall_count = 0;   // 똑바로 섬 — 착지 transient 의 auto-getup 오발 억제(기존 동작).
+            printf("[WalkLabBrokerage] kick complete — STANDUP, joints returned, idle\n");
+        } else {
+            // settle 후에도 낙상 — 억제 금지. 다음 poll 이 즉시 debounce 충족하도록 임계 set.
+            m_fall_count = FALL_DEBOUNCE_POLLS;
+            fprintf(stderr, "[WalkLabBrokerage] kick 후 FALLEN(%d) — auto-getup 에 인계\n",
+                    Robot::MotionStatus::FALLEN);
+        }
         return true;   // 보행 정지 유지 — 다음 명령까지 idle(getup 과 동일).
     }
 
