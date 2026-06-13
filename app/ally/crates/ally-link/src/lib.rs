@@ -24,5 +24,13 @@ pub const SSH_SEND_HZ: f64 = 5.0;
 /// 핸드셰이크 후 첫 ACK 대기 (§G.1 — 로봇은 ≤1s 내 채택, 1.5s 면 유실 몇 발 커버).
 pub const ACK_PROBE_MS: u64 = 1500;
 
+pub mod session;
+pub mod ssh;
+pub mod udp;
+
+pub use session::{ControlSession, Dispatch, TransportState};
+pub use ssh::{RobotShell, ShellResult, SshConfig, SshShell};
+pub use udp::{local_ip_toward, UdpControlTransport};
+
 // 재노출: 송신 계층 사용자는 df-wire 를 직접 의존하지 않아도 된다.
 pub use df_wire::{DEFAULT_CMD_PORT, DEFAULT_ESTOP_PORT, DEFAULT_TELEMETRY_PORT};
