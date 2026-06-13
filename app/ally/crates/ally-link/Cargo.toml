@@ -1,10 +1,11 @@
 [package]
 name = "ally-link"
-description = "UDP 제어 전송 + ssh2 세션 + 핸드셰이크 + 유선/무선 듀얼 경로 (W1 구현)"
+description = "UDP 제어 전송 + subprocess-ssh 세션 + 핸드셰이크 + 유선/무선 듀얼 경로 (W1)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# W1 에서 ssh2 추가 (OpenSSH 5.9 kex 호환이 W1 최우선 검증 — 실패 시 russh/plink 분기).
+# subprocess-ssh(시스템 ssh 에 레거시 +ssh-rsa 플래그) 채택 — OpenSSH 5.9 kex 협상
+# 리스크 회피 + 외부 크레이트 0. 실기에서 5Hz 폴백 성능 필요 시 ssh2/russh 분기.
 [dependencies]
 df-wire = { path = "../df-wire" }
