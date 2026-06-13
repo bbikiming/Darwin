@@ -1,0 +1,21 @@
+[package]
+name = "darwin-fpv"
+description = "DARwIn FPV — ROG Ally 원격조종 런타임(안전·제어 코어). Tauri 셸은 Phase 3."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+df-wire = { path = "../df-wire" }
+ally-link = { path = "../ally-link" }
+ally-input = { path = "../ally-input" }
+# INV-2: 런타임 라이브러리는 tauri/webview 를 의존하지 않는다 — 표시계층은 EventSink
+# 트레이트로만 접한다. tauri 의존은 Phase 3(셸)에서 bin 쪽에만 추가한다.
+
+[lib]
+name = "darwin_fpv"
+path = "src/lib.rs"
+
+[[bin]]
+name = "darwin-fpv"
+path = "src/main.rs"
