@@ -80,6 +80,52 @@ final class ExternalControllerAdapterTests: XCTestCase {
                        "release only on the first centred frame after a move — no spam")
     }
 
+    /// W1b(a) — a held stick polled at 30Hz must not emit `streamWalk` faster than
+    /// ~10Hz (was up to 30 Task-per-poll). Injected clock drives the throttle window.
+    func test_held_stick_does_not_spam_streamWalk_above_10Hz() async {
+        let bridge = SpyBridge()
+        let source = MockExternalController()
+        var clock = 0.0
+        let adapter = ExternalControllerAdapter(bridge: bridge, source: source, now: { clock })
+
+        source.setSticks(leftY: +1)   // held forward for the whole window
+        for _ in 0..<30 {             // 30 polls across a simulated 1.0s
+            adapter.pollOnce()
+            clock += 1.0 / 30.0
+        }
+        await waitForBridgeTasks()
+
+        XCTAssertLessThanOrEqual(bridge.streamCalls.count, 11,
+            "30Hz held stick downsampled to ≤~10Hz")
+        XCTAssertGreaterThanOrEqual(bridge.streamCalls.count, 9,
+            "still streams at ~10Hz, not starved")
+    }
+
+    /// W1b(a) SAFETY (e2e): a release that lands INSIDE an open throttle window
+    /// (right after a moving emit) must still fire exactly one `releaseWalk`,
+    /// un-delayed — the stop path is never gated by the throttle. Injected clock
+    /// holds the window open so this exercises the real adapter wiring, not just
+    /// the throttle unit.
+    func test_stop_within_open_throttle_window_releases_immediately() async {
+        let bridge = SpyBridge()
+        let source = MockExternalController()
+        var clock = 0.0
+        let adapter = ExternalControllerAdapter(bridge: bridge, source: source, now: { clock })
+
+        source.setSticks(leftY: +1)   // move → emits at t=0, throttle window now open
+        adapter.pollOnce()
+        await waitForBridgeTasks()
+        XCTAssertEqual(bridge.streamCalls.count, 1)
+
+        clock = 0.02                  // still well inside the 100ms window
+        source.reset()                // centre the stick → release
+        adapter.pollOnce()
+        await waitForBridgeTasks()
+
+        XCTAssertEqual(bridge.releaseCalls, 1,
+            "release fires exactly once even inside an open throttle window (stop never gated)")
+    }
+
     // MARK: - Buttons
 
     func test_emergency_stop_button_fires_once_per_press() async {

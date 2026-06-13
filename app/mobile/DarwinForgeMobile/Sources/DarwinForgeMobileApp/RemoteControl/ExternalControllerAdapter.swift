@@ -52,11 +52,27 @@ public final class ExternalControllerAdapter: ObservableObject {
     private var previousStickWasZero: Bool = true
     private var pollTimer: Timer?
 
+    /// W1b(a) — latest-wins ~10Hz throttle on the moving walk-stream path (above
+    /// the ~5Hz robot dispatch). Polling stays 30Hz (button/E-STOP edges must not
+    /// be slowed); only the velocity stream is downsampled. The release/stop path
+    /// (`processSticks` else-branch) does NOT go through the throttle — it calls
+    /// `reset()` + `releaseWalk()` directly, so a stop is never gated.
+    private var walkThrottle = WalkFrameThrottle(intervalSeconds: 0.1)
+    /// Monotonic clock for the throttle — injectable for deterministic tests.
+    /// Non-Sendable + called only on the MainActor-isolated adapter, so a test can
+    /// inject a closure over a mutable clock var without a data race.
+    private let now: () -> TimeInterval
+
     // MARK: - Init
 
-    public init(bridge: RemoteControlBridge?, source: ExternalControllerInputSource) {
+    public init(bridge: RemoteControlBridge?,
+                source: ExternalControllerInputSource,
+                now: @escaping () -> TimeInterval = {
+                    Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+                }) {
         self.bridge = bridge
         self.source = source
+        self.now = now
     }
 
     // MARK: - Lifecycle
@@ -121,12 +137,19 @@ public final class ExternalControllerAdapter: ObservableObject {
             buttons: .init())
         let input = ExternalControllerStickMapper.map(snapshot, speedScale: speedScale)
         if input.isMoving {
-            Task { @MainActor [weak bridge] in
-                await bridge?.streamWalk(input)
+            // W1b(a): downsample the moving stream to ~10Hz latest-wins. Within the
+            // window the freshest poll wins and intermediates are dropped (not queued).
+            if let throttled = walkThrottle.offer(input, now: now()) {
+                Task { @MainActor [weak bridge] in
+                    await bridge?.streamWalk(throttled)
+                }
+                lastActionLabel = "stick move"
             }
-            lastActionLabel = "stick move"
             previousStickWasZero = false
         } else if !previousStickWasZero {
+            // Release re-arms the throttle so the next move emits promptly, and is
+            // itself never throttled (stop must not be delayed).
+            walkThrottle.reset()
             Task { @MainActor [weak bridge] in
                 await bridge?.releaseWalk()
             }
