@@ -25,6 +25,14 @@ pub enum EstopReason {
     PadButtonB,
 }
 
+/// E-STOP 신호 — 발원 + 입력 스레드가 이벤트를 본 monotonic ms.
+/// `t_ms`(공유 [`now_ms`])로 "입력 이벤트 → 소켓 write 내부 지연"을 측정한다(04 §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EstopSignal {
+    pub reason: EstopReason,
+    pub t_ms: i64,
+}
+
 /// 한 폴 시점의 입력 — gilrs 방향 raw 축 + 연결 상태 + monotonic 수신 ms.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InputFrame {
@@ -58,8 +66,8 @@ pub struct InputService {
 impl InputService {
     /// 폴링 스레드 기동. 반환: (서비스, estop 수신, edge 수신).
     /// gilrs 초기화 실패 시 Err(메시지) — 패드 미연결은 실패가 아니다(연결 대기).
-    pub fn spawn() -> Result<(Self, Receiver<EstopReason>, Receiver<ButtonEdges>), String> {
-        let (estop_tx, estop_rx) = std::sync::mpsc::channel::<EstopReason>();
+    pub fn spawn() -> Result<(Self, Receiver<EstopSignal>, Receiver<ButtonEdges>), String> {
+        let (estop_tx, estop_rx) = std::sync::mpsc::channel::<EstopSignal>();
         let (edge_tx, edge_rx) = std::sync::mpsc::channel::<ButtonEdges>();
         let (init_tx, init_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
@@ -118,7 +126,7 @@ impl Drop for InputService {
 fn reader_loop(
     frame: Arc<Mutex<InputFrame>>,
     running: Arc<std::sync::atomic::AtomicBool>,
-    estop_tx: Sender<EstopReason>,
+    estop_tx: Sender<EstopSignal>,
     edge_tx: Sender<ButtonEdges>,
     init_tx: SyncSender<Result<(), String>>,
 ) {
@@ -161,7 +169,10 @@ fn reader_loop(
                     match btn {
                         // B(East) — E-STOP 즉시 무손실 발화(INV-1: 스로틀·디바운스 금지).
                         Button::East => {
-                            let _ = estop_tx.send(EstopReason::PadButtonB);
+                            let _ = estop_tx.send(EstopSignal {
+                                reason: EstopReason::PadButtonB,
+                                t_ms: now_ms(),
+                            });
                             let _ = edge_tx.send(ButtonEdges {
                                 estop: true,
                                 ..Default::default()

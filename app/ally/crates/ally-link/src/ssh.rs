@@ -204,6 +204,7 @@ pub fn ssh_args(cfg: &SshConfig, command: &str) -> Vec<String> {
 }
 
 /// 시스템 ssh.exe 서브프로세스 셸.
+#[derive(Clone)]
 pub struct SshShell {
     cfg: SshConfig,
 }

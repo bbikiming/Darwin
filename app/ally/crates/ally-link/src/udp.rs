@@ -41,6 +41,8 @@ pub struct UdpControlTransport {
 
     seq: u64,
     last_ack_seq: i64,
+    ack_total: u64,
+    tel_total: u64,
     last_rtt_ms: Option<f64>,
     last_tel: Option<Tel2>,
     last_tel_at: Option<Instant>,
@@ -75,6 +77,8 @@ impl UdpControlTransport {
             local_port,
             seq: 0,
             last_ack_seq: 0,
+            ack_total: 0,
+            tel_total: 0,
             last_rtt_ms: None,
             last_tel: None,
             last_tel_at: None,
@@ -158,6 +162,7 @@ impl UdpControlTransport {
                         if let Some(tel) = parse_tel2(data) {
                             let now = Instant::now();
                             self.tel_times.push_back(now);
+                            self.tel_total += 1;
                             self.last_tel_at = Some(now);
                             latest = Some(tel.clone());
                             self.last_tel = Some(tel);
@@ -177,6 +182,7 @@ impl UdpControlTransport {
         };
         let now = Instant::now();
         self.last_ack_at = Some(now);
+        self.ack_total += 1;
         if seq > self.last_ack_seq {
             self.last_ack_seq = seq;
         }
@@ -245,6 +251,16 @@ impl UdpControlTransport {
 
     pub fn last_ack_seq(&self) -> i64 {
         self.last_ack_seq
+    }
+
+    /// 세션 누적 ACK 수 — 평균 eff_hz(= ack_total / 송신 시간) 산출용.
+    pub fn ack_total(&self) -> u64 {
+        self.ack_total
+    }
+
+    /// 세션 누적 TEL2 수 — 평균 TEL2 수신율 산출용.
+    pub fn tel_total(&self) -> u64 {
+        self.tel_total
     }
 
     pub fn tx_seq(&self) -> u64 {

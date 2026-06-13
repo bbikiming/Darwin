@@ -26,7 +26,7 @@ pub use mapping::{
     apply_deadzone, g01_gait_config, map_gamepad, shape_drive_axis, shape_head_axis, shape_turn,
     trigger_diff, GamepadState, HeadHold,
 };
-pub use source::{dump_events, EstopReason, InputFrame, InputService};
+pub use source::{dump_events, EstopReason, EstopSignal, InputFrame, InputService};
 
 /// 입력 폴링 주기 — 250Hz (03 §2: gilrs 폴링 4ms).
 pub const POLL_PERIOD: Duration = Duration::from_millis(4);

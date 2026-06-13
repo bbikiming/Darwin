@@ -6,6 +6,8 @@ version = 4
 name = "ally-cli"
 version = "0.1.0"
 dependencies = [
+ "ally-input",
+ "ally-link",
  "df-wire",
 ]
 
