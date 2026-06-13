@@ -663,11 +663,27 @@ public final class ConnectionStore: ObservableObject {
     /// 내부 재시도 루프. 한 번 실패해도 200ms 후 다시 — Dynamixel byte sync slide 가
     /// 한 차례의 stale data 를 흡수하지 못하는 케이스 보정.
     private func performConnect(endpoint: Endpoint, maxAttempts: Int, generation gen: Int) async {
+        // **실기 F6 (2026-06-12)**: LAN(5530) bus 는 로봇측 demo 와 공유 불가 — CM730 응답
+        // 바이트를 demo 의 8ms 벌크리드가 가로채 snapshot 이 "연결 중"에 사실상 무한 대기했다.
+        // DarwinForge 연결 시도가 **최상위 소유자**: 연결 전에 robot 측 버스 사용자를 선점
+        // 정리한다(best-effort — SSH 미가용이면 종전 동작으로 강등).
+        if case .network(let host, _) = endpoint {
+            await preemptRobotBusBestEffort(host: host)
+            guard gen == connectAttemptGeneration else { return }
+            status = .connecting(endpoint.displayName)
+        }
         var lastError: Error?
         for attempt in 1...maxAttempts {
             do {
                 // L7: bus open(≤3s) + snapshot(4왕복)을 전용 직렬 큐에서 — MainActor 무정지.
-                let (bus, snap, rtt) = try await openBusAndSnapshot(endpoint)
+                // 실기 F6: network 경로는 하드 타임아웃 — demo 점유 시에도 UI 가 갇히지 않는다.
+                let (bus, snap, rtt): (Bus, BoardSnapshot, Double)
+                if case .network = endpoint {
+                    (bus, snap, rtt) = try await openBusAndSnapshotTimed(
+                        endpoint, timeoutSeconds: 8)
+                } else {
+                    (bus, snap, rtt) = try await openBusAndSnapshot(endpoint)
+                }
                 // codex HIGH fix: await(Bus 생성/스냅샷) 동안 더 새로운 연결 시도가 시작됐으면
                 // 이 결과를 폐기 — bus/status/endpoint 를 덮지 않는다. 새로 만든 bus 는 스코프
                 // 이탈로 ARC 가 닫는다(다음 시도/경로가 ttyUSB0/소켓 소유).
@@ -769,6 +785,80 @@ public final class ConnectionStore: ObservableObject {
                     cont.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    /// **실기 F6 (2026-06-12)** — bus open+snapshot 하드 타임아웃 변형 (network 경로 전용).
+    ///
+    /// demo 가 ttyUSB0 를 병행 읽으면 snapshot 응답이 탈취돼 종전 경로는 read 재시도에
+    /// 갇혀 "연결 중"이 무한이었다. 타임아웃 시 이 시도를 포기시키고(블로킹 작업 자체는
+    /// busOpenQueue 에서 자연 종료 후 결과 폐기 — Bus deinit 이 소켓 close), 에러 메시지에
+    /// "timeout" 을 포함시켜 기존 demo-점유 휴리스틱(isDemoBusyDetected)을 발화시킨다.
+    /// 레이스 once-guard 는 SSHShell 의 SSHTimeoutFlag 와 동일 패턴.
+    private func openBusAndSnapshotTimed(_ endpoint: Endpoint, timeoutSeconds: Double)
+        async throws -> (bus: Bus, snapshot: BoardSnapshot, rttMs: Double) {
+        final class OnceFlag: @unchecked Sendable {
+            private let lock = NSLock()
+            private var claimed = false
+            func claim() -> Bool {
+                lock.lock(); defer { lock.unlock() }
+                if claimed { return false }
+                claimed = true
+                return true
+            }
+        }
+        struct BusOpenTimeout: LocalizedError {
+            let seconds: Double
+            var errorDescription: String? {
+                "bus open timeout (\(Int(seconds))s) — 로봇 demo 가 bus 를 점유 중일 수 "
+                    + "있어요. LAN 재시도 전 로봇측 demo 정지(자동 선점)가 필요합니다."
+            }
+        }
+        let queue = busOpenQueue
+        return try await withCheckedThrowingContinuation { cont in
+            let once = OnceFlag()
+            queue.async {
+                do {
+                    let bus = try Bus(endpoint: endpoint)
+                    let t0 = Date()
+                    let snap = try bus.boardSnapshot()
+                    let rtt = Date().timeIntervalSince(t0) * 1000
+                    if once.claim() { cont.resume(returning: (bus, snap, rtt)) }
+                    // 타임아웃이 선점했으면 결과 폐기 — bus 스코프 이탈로 handle close.
+                } catch {
+                    if once.claim() { cont.resume(throwing: error) }
+                }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds) {
+                if once.claim() {
+                    cont.resume(throwing: BusOpenTimeout(seconds: timeoutSeconds))
+                }
+            }
+        }
+    }
+
+    /// **실기 F6** — LAN(5530) 연결 전 robot 측 버스 선점 (best-effort).
+    ///
+    /// `RobotSetupCommand.busPreemptTakeover` 를 SSH 로 실행: demo 류 정지 + forge-bridge
+    /// (socat) 보장. SSH 미가용(키 없음/비 robot 호스트)이면 조용히 스킵 — 종전 동작 강등.
+    /// 선점 실패해도 연결은 강행한다(타임아웃이 UI 를 보호; 에러 메시지가 원인 안내).
+    private func preemptRobotBusBestEffort(host: String) async {
+        status = .connecting("버스 선점 — 로봇측 demo 정지 중…")
+        do {
+            let r = try await SSHShell.run(
+                command: RobotSetupCommand.busPreemptTakeover,
+                host: host, timeoutSeconds: 12)
+            let verdict = RobotSetupCommand.parseBusPreempt(r.stdout)
+            harness.record(
+                .connectAttempt, level: verdict == .ok ? .info : .error, actor: .system,
+                data: ["bus_preempt": AnyCodable(verdict.rawValue)],
+                context: harnessContext())
+            if verdict != .ok {
+                status = .connecting("버스 선점 \(verdict.rawValue) — 직접 연결 강행")
+            }
+        } catch {
+            // SSH 미가용 — 종전 경로(직접 연결)로 강등. 타임아웃이 무한 대기를 차단.
+            status = .connecting("버스 선점 생략(SSH 미가용) — 직접 연결")
         }
     }
 

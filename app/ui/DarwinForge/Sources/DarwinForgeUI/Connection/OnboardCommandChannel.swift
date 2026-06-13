@@ -161,8 +161,11 @@ public final class PersistentSSHChannel: OnboardLineTransport, @unchecked Sendab
     }
 
     /// 로봇이 cmd 파일을 쓰는 셸 명령(브로커리지가 폴/스트림으로 수신). atomic tmp+mv.
+    /// **실기 F7 (2026-06-12)**: 부팅 rc.local 훅(root)이 cmd 파일을 root 소유로 만들면
+    /// sticky /tmp 에서 robotis 의 mv(rename = 대상 unlink)가 거부된다 → 단일 정의
+    /// `RobotSetupCommand.walkLabCmdWrite` (mv 실패 시 0666 내용 덮어쓰기 폴백) 위임.
     private static func remoteWrite(line: String) -> String {
-        "printf '%s\\n' '\(line)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd"
+        RobotSetupCommand.walkLabCmdWrite(line: line)
     }
 
     public func send(_ command: OnboardCommand) async throws -> OnboardAck {

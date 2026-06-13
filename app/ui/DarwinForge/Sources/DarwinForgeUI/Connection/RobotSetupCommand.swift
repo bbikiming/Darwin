@@ -460,6 +460,9 @@ public enum RobotSetupCommand {
 
     echo "▶ demo 시작 → $BIN"
     cd "$(dirname "$BIN")" || exit 1
+    # 실기 F8: progress 파일은 root 소유(이전 demo 인스턴스가 기록, sticky /tmp 라 rm 불가)
+    # 라 stale "walklab-active" 가 남는다. 시작 시각을 기록해 mtime 게이트로 무효화한다.
+    DF_START_TS=$(date +%s)
     # nohup 이 sudo 를 감싸야 비대화형 SSH 에서 동작 (sudo nohup 은 nohup 이 NOPASSWD 화이트리스트에
     # 없어 비밀번호 프롬프트 → 실패). demo 바이너리는 NOPASSWD 등록됨.
     nohup sudo -n "$BIN" >/tmp/df-demo.log 2>&1 &
@@ -474,11 +477,20 @@ public enum RobotSetupCommand {
     echo "✅ demo 실행 중 (pid $PROC)"
 
     echo "▶ WalkLab active 단계 확인"
+    # **실기 F8 (2026-06-12)**: ① stale 면역 — progress 의 mtime 이 demo 시작 이후일 때만
+    # 인정(이전 인스턴스의 "walklab-active" 잔존값 차단). C1 부터 demo 가 기동 직후 카메라
+    # /httpd 초기화에 수 초를 쓰면서 stale 레이스를 항상 졌고, 그 결과 기립(≈15s) 중에
+    # 2s ACK 게이트가 실행돼 연결이 무조건 실패했다. ② 게이트 12s→30s — 느린 기립(×3)
+    # + 자이로 캘리브레이션(≈10–15s)과의 한계 경합 제거.
     STAGE=""
     for i in $(seq 1 60); do
       STAGE=$(head -1 /tmp/df-pilot-progress 2>/dev/null | tr -d '\r\n')
-      [ "$STAGE" = "walklab-active" ] && break
-      sleep 0.2
+      if [ "$STAGE" = "walklab-active" ]; then
+        PROG_TS=$(stat -c %Y /tmp/df-pilot-progress 2>/dev/null || echo 0)
+        [ "$PROG_TS" -ge "$DF_START_TS" ] && break
+        STAGE="stale-active"
+      fi
+      sleep 0.5
     done
     if [ "$STAGE" != "walklab-active" ]; then
       echo "DF_READY_START=progress_timeout"
@@ -490,10 +502,14 @@ public enum RobotSetupCommand {
     echo "▶ 최신 14-token 명령/ACK 계약 확인"
     CMD_ID="dfstart_$(date +%s)"
     rm -f /tmp/df-walklab-ack 2>/dev/null
+    # 실기 F7: 부팅 rc.local 이 만든 root 소유 cmd 파일엔 mv(rename) 가 거부됨(sticky /tmp)
+    # → 0666 내용 덮어쓰기 폴백. 한 줄 단일 write 라 reader 에 실질 원자적.
     printf '%s\n' "$CMD_ID 0 0.00 0.00 0.00 600 40 13.00 1.00 0 2 0.00 0.00 0" > /tmp/df-walklab-cmd.tmp &&
-      mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd
+      { mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd 2>/dev/null ||
+        { cat /tmp/df-walklab-cmd.tmp > /tmp/df-walklab-cmd && rm -f /tmp/df-walklab-cmd.tmp; }; }
     ACK=""
-    for i in $(seq 1 40); do
+    # 실기 F8: 2s→4s — 게이트 직후 brokerage 첫 poll 까지의 여유 (100ms poll + 파일 폴백 250ms).
+    for i in $(seq 1 80); do
       if grep -qF "$CMD_ID" /tmp/df-walklab-ack 2>/dev/null; then
         ACK=$(cat /tmp/df-walklab-ack 2>/dev/null)
         break
@@ -591,7 +607,19 @@ public enum RobotSetupCommand {
         // 으로 항상 *이번 명령*의 fresh ACK 를 받는다. 구형 firmware(cmd_id 미echo)는 loop 후
         // clear 이후 생긴 비어있지 않은 ACK 로 폴백. (로봇 busybox `seq` 미보장 → 명시 리스트.)
         let pollLoop = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do sleep 0.05; if grep -qF '\(id)' /tmp/df-walklab-ack 2>/dev/null; then cat /tmp/df-walklab-ack; exit 0; fi; done; if [ -s /tmp/df-walklab-ack ]; then cat /tmp/df-walklab-ack; exit 0; fi; echo NO_ACK"
-        return "rm -f /tmp/df-walklab-ack 2>/dev/null; printf '%s\\n' '\(fullLine)' > /tmp/df-walklab-cmd.tmp && mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd && (\(pollLoop))"
+        // 실기 F7: cmd 쓰기는 단일 정의(walkLabCmdWrite — mv 거부 시 내용 덮어쓰기 폴백).
+        return "rm -f /tmp/df-walklab-ack 2>/dev/null; \(walkLabCmdWrite(line: fullLine)) && (\(pollLoop))"
+    }
+
+    /// **실기 F7 (2026-06-12)** — cmd 파일 쓰기 단일 정의: atomic tmp+mv, mv 거부 시 폴백.
+    ///
+    /// 부팅 rc.local 훅(root)이 `/tmp/df-walklab-cmd` 를 root 소유로 생성하면 sticky /tmp
+    /// 에서 robotis 의 rename(대상 unlink 필요)이 `Operation not permitted` 로 거부된다 —
+    /// 재부팅 후 SSH 온보드 연결의 ACK 게이트가 영구 실패했던 원인. 폴백은 0666 내용
+    /// 덮어쓰기: 한 줄(<PIPE_BUF) 단일 write 라 reader(브로커리지 fgets, 파싱 실패 시 직전
+    /// 명령 유지)에 실질 원자적. 로봇측 자가치유(Run() 진입 chown)와 이중 방어.
+    public static func walkLabCmdWrite(line: String) -> String {
+        "printf '%s\\n' '\(line)' > /tmp/df-walklab-cmd.tmp && { mv /tmp/df-walklab-cmd.tmp /tmp/df-walklab-cmd 2>/dev/null || { cat /tmp/df-walklab-cmd.tmp > /tmp/df-walklab-cmd && rm -f /tmp/df-walklab-cmd.tmp; }; }"
     }
 
     /// **텔레메트리 UDP 업링크 타깃 지정 (2026-06-03)** — Mac → robot `/tmp/df-walklab-uplink`
