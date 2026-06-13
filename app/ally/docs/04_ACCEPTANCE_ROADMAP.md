@@ -141,6 +141,19 @@ ally-cli 4 = **58 passed**, `clippy -D warnings`·`fmt` clean). 위 게이트 �
   ACK RTT p50/p95 **1.60/1.72ms** · estop 3발 — PASS. 실제 `accept`(로봇 부재)는 SSH 도달성
   실패로 fail-fast(exit 1) 정상. `axis-dump` 로 **gilrs 가 Ally 내장 패드 감지·250Hz 폴링**
   확인(GamepadId(0) Connected, 무입력 시 드리프트 0) — 축 방향 실값은 게이트에서 스틱 조작.
+- **실기 부분 검증 (2026-06-13, 무선 192.168.0.33 — DARwIn-OP2 OpenSSH 5.9p1 i686)**:
+  - **ssh.exe ↔ OpenSSH 5.9: 협상 + 키 인증 성공** — `ecdh-sha2-nistp256`/`ecdsa` 협상,
+    RSA 키 인증 비대화형 통과. **W1 #1 리스크 해소** — russh 분기 불요.
+  - **무선 게이트(첫 채택)**: 채택 9ms · **eff_hz 19.73**(1184 ACK/60s) [PASS ≥19, 무선에서도] ·
+    ACK RTT p50/p95 **6.26/13.58ms**. 영명령(enabled=0)이라 무동작.
+  - **SSH 파일 폴백 실증**: UDP 미채택 구간에 로봇 TEL v1 `last_cmd_id` 가 내 cmd_id 로 갱신 —
+    로봇이 `/tmp/df-walklab-cmd` 적용(INV-3 영구 폴백).
+  - **방화벽**: `scripts/firewall-tel2.ps1` 로 프로그램 범위 인바운드 UDP 규칙 생성. 첫 run 의
+    TEL2=0 은 규칙 부재 탓(ACK=solicited 통과 / TEL2=unsolicited 차단 — 예측대로). **TEL2 흐름
+    확정은 브로커리지 재기동 후 1회 채택 필요**(아래 한계).
+  - **로봇측 한계(발견)**: 브로커리지는 **한 세션 내 첫 핸드셰이크만 ACK**. teardown 후 재채택 시
+    UDP 포트는 다시 bind 하나 ACK 를 멈춘다(프로브 창 무관). 동글 없음·`network` 항상 우선이라
+    중재 탓 아님 → 브로커리지 UDP 재시작 경로 이슈. **게이트는 브로커리지 재기동 후 1회 측정**.
 - **게이트에서 측정만 하면 되는 것**: 위 메커니즘을 실로봇에 연결해 ① 핸드셰이크 채택 ②
   60s eff_hz ③ B→DF-ESTOP 내부 지연(`accept --estop`) ④ TEL2 수신율(방화벽 규칙 후) ⑤
   RTT 베이스라인. 코드 경로는 준비됨.

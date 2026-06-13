@@ -22,6 +22,9 @@ pub const UDP_SEND_HZ: f64 = 20.0;
 /// SSH 파일 폴백 송신율 (검증된 5Hz).
 pub const SSH_SEND_HZ: f64 = 5.0;
 /// 핸드셰이크 후 첫 ACK 대기 (§G.1 — 로봇은 ≤1s 내 채택, 1.5s 면 유실 몇 발 커버).
+/// 주의(RG G01 실기 2026-06-13): 브로커리지는 **한 세션 내 첫 핸드셰이크만 ACK** 하고,
+/// teardown 후 재채택 시 UDP 포트는 다시 bind 하나 ACK 를 멈춘다(로봇측 한계 — 프로브
+/// 창과 무관, 넓혀도 오지 않는 ACK 를 못 받음). 게이트는 브로커리지 재기동 후 1회 측정.
 pub const ACK_PROBE_MS: u64 = 1500;
 
 pub mod session;
