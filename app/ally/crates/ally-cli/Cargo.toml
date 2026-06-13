@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 df-wire = { path = "../df-wire" }
 ally-link = { path = "../ally-link" }
+ally-input = { path = "../ally-input" }   # axis-dump (gilrs 입력 디버그) 재포팅
 
 [[bin]]
 name = "ally-cli"

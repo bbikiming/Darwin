@@ -4,6 +4,7 @@
 //!   - `selftest`           : 루프백 에코 로봇으로 UDP 제어경로+메트릭 검증(로봇 불요).
 //!   - `probe [--prefer …]` : §7-1 TCP :22 경로 프로브(유선/무선).
 //!   - `connect …`          : §7 전체 시퀀스 — 핸드셰이크→20Hz 스트림→메트릭(실로봇).
+//!   - `axis-dump …`        : gilrs 축/버튼 매핑 현장 확인(로봇 불요·STEP4 입력 디버그).
 //!
 //! W1 게이트(docs/04_ACCEPTANCE_ROADMAP.md §2): 핸드셰이크 → 20Hz 영명령(eff_hz ≥19)
 //! → E-STOP 버스트 → 메트릭 덤프. `selftest` 는 그 파이프라인을 소프트웨어로 회귀 검증한다.
@@ -69,6 +70,7 @@ fn main() -> ExitCode {
         "selftest" => selftest(),
         "probe" => probe(rest),
         "connect" => connect(rest),
+        "axis-dump" => axis_dump(rest),
         "help" | "-h" | "--help" => {
             usage();
             Ok(())
@@ -96,7 +98,8 @@ fn usage() {
          사용:\n\
          \x20 ally-cli selftest                      루프백으로 UDP 제어경로+메트릭 검증(로봇 불요)\n\
          \x20 ally-cli probe   [--prefer wired|wireless]\n\
-         \x20 ally-cli connect --identity <키경로> [--prefer wired|wireless] [--seconds N]\n"
+         \x20 ally-cli connect --identity <키경로> [--prefer wired|wireless] [--seconds N]\n\
+         \x20 ally-cli axis-dump [--seconds N]      gilrs 축/버튼 매핑 현장 확인(로봇 불요)\n"
     );
 }
 
@@ -106,6 +109,16 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
         .position(|a| a == name)
         .and_then(|i| args.get(i + 1))
         .map(String::as_str)
+}
+
+/// `axis-dump` — gilrs 이벤트/정규화 축을 N초간 stdout 으로 출력(기본 20s).
+/// XInput 트리거가 축/버튼 어디로 오는지 게이트 현장에서 확인하는 입력 디버그 도구(로봇 불요).
+/// 구 ally-cli `run_axis_dump` 의 신(d00b8ca) API 재포팅 — `ally_input::dump_events` 호출만.
+fn axis_dump(args: &[String]) -> io::Result<()> {
+    let secs = flag(args, "--seconds")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(20);
+    ally_input::dump_events(Duration::from_secs(secs)).map_err(io::Error::other)
 }
 
 fn prefer_from(args: &[String]) -> Path {
