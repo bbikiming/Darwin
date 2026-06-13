@@ -18,6 +18,15 @@ pub const HEAD_CURVE: f64 = 1.7;
 /// 터보 배율 — `GP_TURBO_SCALE` (콕핏 ControllerDriveModifiers.turboScale 동일).
 pub const TURBO_SCALE: f64 = 1.3;
 
+/// 부호 5종 — `GP_SIGN_*` (브링업 라운드4 실측 확정, 전부 −1.0).
+/// 로봇 좌표: X_MOVE+=전진 · Y_MOVE+=좌횡 · A_MOVE+=좌회전 · pan+=좌 · tilt+=상.
+/// evdev 방향 스냅샷(아래=+·오른쪽=+)에 곱해져 로봇 좌표로 변환한다.
+pub const SIGN_STRIDE: f64 = -1.0; // ABS_Y 아래=+ → 위=전진
+pub const SIGN_SIDE: f64 = -1.0; // ABS_X 오른쪽=+ → 우=−Y(우횡)
+pub const SIGN_TURN: f64 = -1.0; // RT(우)−LT(좌) → RT=−A(우회전)
+pub const SIGN_TILT: f64 = -1.0; // ABS_RY 아래=+ → 위=+tilt(머리들기)
+pub const SIGN_PAN: f64 = -1.0; // ABS_RX 오른쪽=+ → 우=−pan(robot pan+=좌)
+
 /// RT−LT 차분 데드존 — `GP_TRIGGER_DEADZONE` (휴지 노이즈 제거).
 pub const TRIGGER_DEADZONE: f64 = 0.02;
 /// 턴 저압 부스트 지수 — `GP_TURN_CURVE` (|d|^0.65, 부호 보존).
@@ -49,6 +58,10 @@ pub const GAIT_PERIOD_MAX_MS: f64 = 700.0;
 pub const GAIT_PERIOD_MIN_MS: f64 = 560.0;
 pub const GAIT_FOOT_MIN_MM: f64 = 18.0;
 pub const GAIT_FOOT_MAX_MM: f64 = 40.0;
+/// 정지(스케줄 비적용) 기본 — `GP_GAIT_PERIOD_DEFAULT`/`GP_GAIT_FOOT_DEFAULT`.
+pub const GAIT_PERIOD_DEFAULT_MS: f64 = 600.0;
+/// 고관절 피치 오프셋 — `GP_HIP_DEG` (ROBOTIS 원본 고정).
+pub const HIP_DEG: f64 = 13.0;
 /// 이동 진폭 기준 (온보드 클램프): x ±38mm · y ±22mm · a ±12°.
 pub const STRIDE_MAX_MM: f64 = 38.0;
 pub const SIDE_MAX_MM: f64 = 22.0;
