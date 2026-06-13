@@ -217,12 +217,17 @@ impl Runtime {
             let tick = cfg.tick;
             threads.push(spawn_named("control-tx", move || {
                 let mut pipe = TxPipeline::new();
-                let mut seq: u64 = 0;
+                // seq base = epoch ms — 로봇 m_cmd_slot 누적(새 세션 미리셋) 우회(ally-cli
+                // connect 와 동일 근거·실기 확인). 데드라인 틱은 seq 와 분리(epoch base 라
+                // `tick*(seq as u32)` 가 wrap 돼 장시간 sleep 으로 행되는 것 방지).
+                let mut seq: u64 = session_seq_base();
+                let mut tick_n: u32 = 0;
                 let start = Instant::now();
                 while !stop.load(Ordering::Relaxed) {
                     let t = now_ms();
                     seq += 1;
-                    let deadline = start + tick * (seq as u32);
+                    tick_n += 1;
+                    let deadline = start + tick * tick_n;
 
                     // 이번 틱 버튼 에지 누적(OR).
                     let mut e = ButtonEdges::default();
@@ -440,6 +445,16 @@ fn spawn_named(name: &str, f: impl FnOnce() + Send + 'static) -> JoinHandle<()> 
         .name(name.into())
         .spawn(f)
         .expect("스레드 생성 실패")
+}
+
+/// 세션 시작 seq base — 벽시계 epoch ms. 로봇 WalkLabBrokerage::m_cmd_slot 이 새 토큰/
+/// transport 에도 리셋되지 않아 seq 0 재시작 시 누적 slot 이하로 거부되는 펌웨어 버그
+/// 대응(ally-cli `session_seq_base` 와 동일·실기 확인 2026-06-13). loopback 셀프체크는
+/// 매번 새 에코로봇(slot 없음)이라 무해.
+fn session_seq_base() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| d.as_millis() as u64)
 }
 
 /// ssh-session 워커 — 블로킹 SSH 부수효과를 제어/E-STOP 스레드 밖에서 실행한다.
