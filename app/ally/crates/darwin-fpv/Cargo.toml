@@ -9,8 +9,14 @@ license.workspace = true
 df-wire = { path = "../df-wire" }
 ally-link = { path = "../ally-link" }
 ally-input = { path = "../ally-input" }
-# INV-2: 런타임 라이브러리는 tauri/webview 를 의존하지 않는다 — 표시계층은 EventSink
-# 트레이트로만 접한다. tauri 의존은 Phase 3(셸)에서 bin 쪽에만 추가한다.
+# §3 이벤트 페이로드 직렬화(콕핏 브리지) — 경량·기본 빌드 포함(단위검증 가능).
+serde_json = "1"
+# INV-2: 안전 런타임은 tauri 를 의존하지 않는다. 무거운 tauri 의존은 `cockpit`
+# feature(Phase 3b 셸)에서만 들이고, 기본 빌드/테스트는 tauri-free·경량으로 둔다.
+
+[features]
+# Phase 3b 에서 `cockpit = ["dep:tauri", "dep:tauri-build"]` 로 확장.
+cockpit = []
 
 [lib]
 name = "darwin_fpv"

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DARwIn FPV</title>
+<!--
+  DARwIn FPV 콕핏 — 표시 전용(INV-2). 명령 생성·E-STOP 경로는 Rust 코어에 있고 이
+  webview 는 상태 표시 + 보조 입력(연결·터치 E-STOP)만 한다. 빌드 툴링 없는 단일
+  HTML — Tauri 글로벌 API(window.__TAURI__, withGlobalTauri)만 쓴다. Tauri 밖(브라우저)
+  에서 열면 리스너는 no-op 이라 깨지지 않는다. 색 토큰: 03 §6(Switch 콕핏 이식).
+-->
+<style>
+  :root {
+    --bg: #111315; --panel: #1a1d20; --line: #2a2f34;
+    --cyan: #00d6ee; --red: #ff4a55; --green: #62dc8e; --amber: #ffd166;
+    --text: #e6ebef; --dim: #8a949c; --grid: 4px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; gap: var(--grid); padding: var(--grid); }
+
+  /* 씬: 타이틀 → 접속 → 콕핏 */
+  .scene { display: none; }
+  .scene.active { display: grid; }
+  #title.active, #connecting.active { place-items: center; height: 100%; }
+  #title h1 { font-size: 42px; letter-spacing: 2px; margin: 0 0 16px; }
+  #title .sub { color: var(--dim); margin-bottom: 28px; }
+  .btn { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px 22px; font-size: 15px; cursor: pointer; }
+  .btn:hover { border-color: var(--cyan); }
+  .btn.primary { border-color: var(--cyan); color: var(--cyan); }
+  .row { display: flex; gap: 12px; align-items: center; }
+
+  /* 콕핏 그리드 */
+  #cockpit { grid-template-columns: 1fr 320px; grid-template-rows: auto 1fr; gap: var(--grid); height: 100%; }
+  .topbar { grid-column: 1 / -1; display: flex; gap: 16px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
+  .cam { background: #000; border: 1px solid var(--line); border-radius: 8px; position: relative; overflow: hidden; }
+  .cam img { width: 100%; height: 100%; object-fit: contain; }
+  .cam .badge { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.6);
+    color: var(--amber); padding: 3px 8px; border-radius: 6px; font-size: 12px; }
+  .side { display: grid; grid-auto-rows: min-content; gap: var(--grid); align-content: start; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .card h2 { margin: 0 0 8px; font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+  .kv { display: flex; justify-content: space-between; padding: 2px 0; }
+  .kv .k { color: var(--dim); }
+  .kv .v { font-variant-numeric: tabular-nums; }
+
+  .pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--line); }
+  .pill.ok { color: var(--green); border-color: var(--green); }
+  .pill.warn { color: var(--amber); border-color: var(--amber); }
+  .pill.bad { color: var(--red); border-color: var(--red); }
+  .pill.dim { color: var(--dim); }
+
+  .estop { margin-left: auto; background: var(--red); color: #1a0608; border: none; border-radius: 8px;
+    padding: 10px 18px; font-weight: 800; font-size: 15px; cursor: pointer; letter-spacing: 1px; }
+  .estop:active { transform: translateY(1px); }
+
+  /* 스틱 오버레이 */
+  .sticks { display: flex; gap: 16px; justify-content: center; }
+  .stick { width: 76px; height: 76px; border: 1px solid var(--line); border-radius: 50%; position: relative; }
+  .stick .dot { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: var(--cyan);
+    left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  .trig { height: 8px; background: #0c0e10; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .trig > span { display: block; height: 100%; width: 0; background: var(--cyan); }
+  .stale { filter: saturate(0.25); opacity: 0.6; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- 타이틀 -->
+  <section id="title" class="scene active">
+    <div style="text-align:center">
+      <h1>DARwIn&nbsp;FPV</h1>
+      <div class="sub">ROG Ally 원격 조종 — 표시 전용 webview (INV-2)</div>
+      <div class="row">
+        <button class="btn primary" onclick="cmdConnect('wired')">유선 접속 (123.1)</button>
+        <button class="btn" onclick="cmdConnect('wireless')">무선 접속 (0.33)</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 접속 중 -->
+  <section id="connecting" class="scene">
+    <div style="text-align:center">
+      <div style="font-size:20px">접속 중…</div>
+      <div class="sub" id="connecting-detail" style="color:var(--dim);margin-top:8px">핸드셰이크 / 업링크 / 20Hz</div>
+    </div>
+  </section>
+
+  <!-- 콕핏 -->
+  <section id="cockpit" class="scene">
+    <div class="topbar">
+      <span class="pill" id="t-path">경로 —</span>
+      <span class="pill" id="t-transport">UDP</span>
+      <span class="pill" id="t-eff">eff_hz —</span>
+      <span class="pill" id="t-rtt">rtt —</span>
+      <span class="pill" id="t-arm">DISARMED</span>
+      <span class="pill" id="t-pad">패드 —</span>
+      <button class="estop" onclick="cmdTouchEstop()">■ E-STOP</button>
+    </div>
+
+    <div class="cam">
+      <span class="badge" id="cam-badge">카메라 대기</span>
+      <img id="cam-img" alt="" />
+    </div>
+
+    <div class="side">
+      <div class="card">
+        <h2>안전</h2>
+        <div class="kv"><span class="k">상태</span><span class="v" id="s-state">DISARMED</span></div>
+        <div class="kv"><span class="k">E-STOP 래치</span><span class="v" id="s-estop">—</span></div>
+        <div class="kv"><span class="k">복구 중</span><span class="v" id="s-recover">—</span></div>
+      </div>
+      <div class="card">
+        <h2>명령 vs 적용</h2>
+        <div class="kv"><span class="k">x (전후 mm)</span><span class="v"><b id="c-x">0</b> / <span id="t-x" style="color:var(--dim)">—</span></span></div>
+        <div class="kv"><span class="k">y (횡 mm)</span><span class="v"><b id="c-y">0</b> / <span id="t-y" style="color:var(--dim)">—</span></span></div>
+        <div class="kv"><span class="k">a (회전 °)</span><span class="v"><b id="c-a">0</b> / <span id="t-a" style="color:var(--dim)">—</span></span></div>
+        <div class="kv"><span class="k">위상</span><span class="v" id="t-phase">—</span></div>
+      </div>
+      <div class="card" id="tel-card">
+        <h2>텔레메트리 <span id="tel-age" style="color:var(--dim);font-weight:400"></span></h2>
+        <div class="kv"><span class="k">전압</span><span class="v" id="tel-volt">—</span></div>
+        <div class="kv"><span class="k">낙상</span><span class="v" id="tel-fallen">—</span></div>
+        <div class="kv"><span class="k">소스</span><span class="v" id="tel-src">—</span></div>
+      </div>
+      <div class="card">
+        <h2>입력</h2>
+        <div class="sticks">
+          <div><div class="stick"><div class="dot" id="ls"></div></div><div class="trig"><span id="lt"></span></div></div>
+          <div><div class="stick"><div class="dot" id="rs"></div></div><div class="trig"><span id="rt"></span></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+  // ── Tauri 글로벌 API (없으면 no-op) ──────────────────────────────────────
+  const TAURI = window.__TAURI__ || null;
+  const invoke = (cmd, args) => TAURI ? TAURI.core.invoke(cmd, args) : Promise.resolve(console.log("[no-tauri] invoke", cmd, args));
+  // 구독 레지스트리 — Tauri 모드는 실제 이벤트로, no-tauri 미리보기는 emitLocal 로 구동.
+  const subs = {};
+  function listen(evt, cb) {
+    (subs[evt] = subs[evt] || []).push(cb);
+    if (TAURI) TAURI.event.listen(evt, e => cb(e.payload));
+  }
+  const emitLocal = (evt, payload) => (subs[evt] || []).forEach(cb => cb(payload));
+
+  function scene(id) {
+    for (const s of document.querySelectorAll(".scene")) s.classList.toggle("active", s.id === id);
+  }
+  const $ = id => document.getElementById(id);
+  const fmt = (v, d = 1) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
+
+  function cmdConnect(prefer) { scene("connecting"); invoke("connect", { prefer }); }
+  function cmdTouchEstop() { invoke("touch_estop"); }
+
+  // ── state 이벤트(30Hz) → HUD ────────────────────────────────────────────
+  listen("state", s => {
+    if (!s) return;
+    scene("cockpit"); // 첫 상태 도착 = 콕핏 진입(스켈레톤 씬 전이)
+
+    $("t-path").textContent = "경로 " + (s.conn.path || "—");
+    $("t-path").className = "pill " + (s.conn.path === "none" ? "dim" : "ok");
+    $("t-transport").textContent = (s.conn.transport || "udp").toUpperCase();
+    $("t-transport").className = "pill " + (s.conn.transport === "ssh_file" ? "warn" : "ok");
+    $("t-eff").textContent = "eff_hz " + fmt(s.conn.eff_hz);
+    $("t-eff").className = "pill " + (s.conn.eff_hz >= 19 ? "ok" : "warn");
+    $("t-rtt").textContent = "rtt " + (s.conn.rtt_ms === null ? "—" : fmt(s.conn.rtt_ms, 1) + "ms");
+
+    const st = s.safety.estop_latched ? "ESTOP" : s.safety.recovering ? "복구중" : s.safety.armed ? "ARMED" : "DISARMED";
+    $("t-arm").textContent = st;
+    $("t-arm").className = "pill " + (s.safety.estop_latched ? "bad" : s.safety.armed ? "ok" : "dim");
+    $("s-state").textContent = st;
+    $("s-estop").textContent = s.safety.estop_latched ? "예" : "아니오";
+    $("s-recover").textContent = s.safety.recovering ? "예" : "아니오";
+
+    $("t-pad").textContent = "패드 " + (s.pad.connected ? (s.pad.turbo ? "터보" : "ON") : "OFF");
+    $("t-pad").className = "pill " + (s.pad.connected ? "ok" : "bad");
+
+    $("c-x").textContent = fmt(s.cmd.x, 0);
+    $("c-y").textContent = fmt(s.cmd.y, 0);
+    $("c-a").textContent = fmt(s.cmd.a, 0);
+
+    const tel = s.tel;
+    const card = $("tel-card");
+    if (tel) {
+      // §3: age_ms > 1500 → 채도 저하(stale 정직).
+      const stale = (tel.age_ms ?? 9999) > 1500;
+      card.classList.toggle("stale", stale);
+      $("tel-age").textContent = tel.age_ms === null ? "" : "(" + tel.age_ms + "ms" + (stale ? " stale" : "") + ")";
+      $("t-x").textContent = fmt(tel.x_lat, 0);
+      $("t-y").textContent = fmt(tel.y_lat, 0);
+      $("t-a").textContent = fmt(tel.a_lat, 0);
+      $("t-phase").textContent = tel.phase < 0 ? "정지" : tel.phase;
+      $("tel-volt").textContent = tel.voltage_v === null ? "—" : fmt(tel.voltage_v, 1) + "V";
+      $("tel-fallen").textContent = tel.fallen === 1 ? "낙상" : tel.fallen === 0 ? "정상" : "—";
+      $("tel-src").textContent = tel.active_source || "—";
+    } else {
+      card.classList.add("stale");
+      $("tel-age").textContent = "(수신 전)";
+    }
+
+    // 카메라 헬스
+    $("cam-badge").style.color = s.cam.healthy ? "var(--green)" : "var(--amber)";
+    $("cam-badge").textContent = s.cam.healthy ? "라이브" : "카메라 대기";
+  });
+
+  // ── stick 이벤트(고빈도) → 오버레이 ──────────────────────────────────────
+  listen("stick", v => {
+    if (!v) return;
+    const place = (el, x, y) => el.style.transform = `translate(calc(-50% + ${x * 28}px), calc(-50% + ${-y * 28}px))`;
+    place($("ls"), v.lx, v.ly);
+    place($("rs"), v.rx, v.ry);
+    $("lt").style.width = (v.lt * 100) + "%";
+    $("rt").style.width = (v.rt * 100) + "%";
+  });
+
+  // Tauri 밖(브라우저)에서 열면 합성 데이터로 콕핏을 미리보기(디자인 검토용).
+  // 실제 콕핏은 Rust 런타임의 state/stick 이벤트로만 구동된다(이 블록은 no-tauri 전용).
+  if (!TAURI) {
+    console.log("DARwIn FPV — Tauri 런타임 없음(표시 미리보기 모드).");
+    let k = 0;
+    setInterval(() => {
+      k++;
+      const tel = k > 6 ? {
+        x_lat: 30 + 4 * Math.sin(k / 6), y_lat: 0, a_lat: 0, period_lat: 600,
+        phase: k % 4, seq_applied: k, imu: [512, 510, 515, 8, -4, 256],
+        fsr: [120, 90, 60, 30, 140, 110, 80, 40], cop: [12, -6], fallen: 0,
+        voltage_v: 11.9 - k * 0.002, active_source: "udp", walking: true, age_ms: 40,
+      } : null;
+      emitLocal("state", {
+        conn: { path: "wireless", transport: "udp", rtt_ms: 1.4 + Math.random(), eff_hz: 19.8 + Math.random() * 0.4 },
+        safety: { armed: k > 3, estop_latched: false, recovering: false },
+        cmd: { x: 38 * Math.max(0, Math.sin(k / 6)), y: 0, a: 0 },
+        pad: { connected: true, turbo: false },
+        cam: { healthy: false },
+        tel,
+      });
+      emitLocal("stick", {
+        lx: Math.sin(k / 8) * 0.6, ly: Math.max(0, Math.sin(k / 6)), rx: 0, ry: 0, lt: 0, rt: (k % 12) / 12,
+      });
+    }, 250);
+  }
+</script>
+</body>
+</html>

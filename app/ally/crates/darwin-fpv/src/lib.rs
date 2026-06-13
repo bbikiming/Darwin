@@ -23,6 +23,7 @@
 //! Phase 2a 는 순수 안전 로직(state/event/estop/tx/supervisor)을 단위검증까지 확정한다.
 //! 스레드 런타임([`runtime`])과 Tauri 셸은 그 위에 올린다.
 
+pub mod cockpit;
 pub mod estop;
 pub mod event;
 pub mod runtime;
@@ -30,6 +31,7 @@ pub mod state;
 pub mod supervisor;
 pub mod tx;
 
+pub use cockpit::{state_payload, stick_payload, CockpitCommand};
 pub use estop::{EstopBus, EstopCause, EstopEvent};
 pub use event::{EventSink, NullSink};
 pub use runtime::{Endpoint, Runtime, RuntimeConfig};
