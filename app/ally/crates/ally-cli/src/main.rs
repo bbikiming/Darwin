@@ -265,9 +265,15 @@ fn run_estop_phase<S: RobotShell + Clone + Send + 'static>(session: &mut Control
     println!("  10초 내 패드 B 를 누르세요(물리 정지 입회 — ACK 동결 + 서보 정지 §4.2)...");
     match estop_rx.recv_timeout(Duration::from_secs(10)) {
         Ok(sig) => {
-            session.estop(); // UDP ×3연발 즉시(INV-1) + SSH touch 병행
+            // 측정 — 동기 offset-0 송신만 먼저(스폰 오버헤드 미포함), 직후 시각을 기준점.
+            let fired = session.estop_immediate();
             let t_write = now_ms();
             let latency = t_write - sig.t_ms;
+            // 보조 — 50/100ms 버스트 + SSH touch (측정 이후).
+            session.estop_followup();
+            if !fired {
+                println!("  (UDP 미발화 — 파일 폴백 상태, SSH touch 만 발화)");
+            }
             println!(
                 "  입력→소켓 write 내부 지연: {latency}ms [{}] (상한 {:.0}ms — 회귀 가드)",
                 report::verdict(report::estop_internal_pass(latency as f64)),

@@ -244,13 +244,19 @@ impl RobotShell for SshShell {
 }
 
 /// 서브프로세스 실행 + 하드 타임아웃(패닉·블록 없음). 타임아웃 시 child kill.
+///
+/// stdin write 와 stdout/stderr 읽기를 **동시에** 처리한다(각각 전용 스레드) —
+/// 안 그러면 블록킹 write_all 이 wait_timeout 전에 걸려, 큰 stdin + chatty stdout 시
+/// 파이프 버퍼 교착(~64KB)으로 타임아웃이 무력화된다(Python subprocess.run 의
+/// communicate() 와 동치). 현재 호출은 본문이 작아 미발현이나 RobotShell::run 은
+/// 범용 choke point 라 방어한다(어드벌서리 리뷰 2026-06-13).
 fn run_subprocess(
     bin: &str,
     args: &[String],
     input: Option<&[u8]>,
     timeout: Duration,
 ) -> ShellResult {
-    use std::io::Write;
+    use std::io::{Read, Write};
 
     let mut cmd = Command::new(bin);
     cmd.args(args)
@@ -261,48 +267,70 @@ fn run_subprocess(
         Ok(c) => c,
         Err(e) => return ShellResult::spawn_failure(format!("ssh 스폰 실패: {e}")),
     };
-    if let Some(data) = input {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(data);
-            // drop(stdin) → EOF.
-        }
-    } else {
-        drop(child.stdin.take());
-    }
 
-    match wait_timeout::ChildExt::wait_timeout(&mut child, timeout) {
-        Ok(Some(status)) => {
-            let out = child.wait_with_output();
-            let (stdout, stderr) = out
-                .map(|o| {
-                    (
-                        String::from_utf8_lossy(&o.stdout).into_owned(),
-                        String::from_utf8_lossy(&o.stderr).into_owned(),
-                    )
-                })
-                .unwrap_or_default();
-            ShellResult {
-                code: status.code(),
-                stdout,
-                stderr,
-                timed_out: false,
+    // stdin writer 스레드 — write_all 이 메인 흐름을 막지 않게(input 없어도 EOF 위해 닫음).
+    let stdin = child.stdin.take();
+    let body = input.map(<[u8]>::to_vec);
+    let writer = std::thread::spawn(move || {
+        if let Some(mut si) = stdin {
+            if let Some(body) = body {
+                let _ = si.write_all(&body);
             }
+            // drop(si) → EOF.
         }
-        Ok(None) => {
-            // 타임아웃 — child kill 후 실패로 보고.
-            let _ = child.kill();
-            let _ = child.wait();
-            ShellResult {
-                code: None,
-                stdout: String::new(),
-                stderr: format!("ssh 타임아웃 ({:?})", timeout),
-                timed_out: true,
+    });
+    // stdout/stderr 동시 드레인 — 파이프 버퍼 포화로 child 가 막히는 일 방지.
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out_reader = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        if let Some(p) = out_pipe.as_mut() {
+            let _ = p.read_to_end(&mut v);
+        }
+        v
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        if let Some(p) = err_pipe.as_mut() {
+            let _ = p.read_to_end(&mut v);
+        }
+        v
+    });
+
+    let (code, timed_out, wait_err) =
+        match wait_timeout::ChildExt::wait_timeout(&mut child, timeout) {
+            Ok(Some(status)) => (status.code(), false, None),
+            Ok(None) => {
+                // 타임아웃 — kill 하면 파이프가 닫혀 reader/writer 도 풀린다.
+                let _ = child.kill();
+                let _ = child.wait();
+                (None, true, None)
             }
-        }
-        Err(e) => {
-            let _ = child.kill();
-            ShellResult::spawn_failure(format!("ssh wait 실패: {e}"))
-        }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                (None, false, Some(e))
+            }
+        };
+
+    // 스레드 합류 — kill 후 파이프가 닫혀 모두 종료한다(detached 스레드 없음).
+    let _ = writer.join();
+    let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
+    let stderr_captured =
+        String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
+
+    if let Some(e) = wait_err {
+        return ShellResult::spawn_failure(format!("ssh wait 실패: {e}"));
+    }
+    ShellResult {
+        code,
+        stdout,
+        stderr: if timed_out {
+            format!("ssh 타임아웃 ({timeout:?})")
+        } else {
+            stderr_captured
+        },
+        timed_out,
     }
 }
 

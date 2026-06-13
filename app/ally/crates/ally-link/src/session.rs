@@ -152,6 +152,16 @@ impl<S: RobotShell> ControlSession<S> {
         self.shell.clear_estop()
     }
 
+    /// E-STOP 즉시 발화 — UDP offset-0 **동기 송신만**(버스트·SSH 스폰 없음). 반환 =
+    /// UDP 로 발화했는가. "입력→소켓 write 내부 지연" 측정은 이 호출 직후 시각을
+    /// 기준점으로 삼는다(스폰 오버헤드 미포함). 보조 경로는 [`Self::estop_followup`].
+    pub fn estop_immediate(&self) -> bool {
+        self.udp
+            .as_ref()
+            .map(|u| u.send_estop_immediate().is_ok())
+            .unwrap_or(false)
+    }
+
     /// 전송 메트릭 접근(eff_hz·RTT·TEL2 수신율) — 보고용.
     pub fn transport_mut(&mut self) -> Option<&mut UdpControlTransport> {
         self.udp.as_mut()
@@ -174,11 +184,11 @@ impl<S: RobotShell> ControlSession<S> {
 }
 
 impl<S: RobotShell + Clone + Send + 'static> ControlSession<S> {
-    /// E-STOP — UDP ×3연발(즉시 동기 발화, INV-1) **+** SSH touch 병행(보조 스레드).
-    /// UDP 가 없으면(파일 폴백) SSH touch 만. 호출자를 블록하지 않는다.
-    pub fn estop(&self) {
+    /// E-STOP 보조 발화 — UDP 50/100ms 버스트 + SSH touch 병행(보조 스레드).
+    /// 즉시 발화([`Self::estop_immediate`]) 이후 호출. 호출자를 블록하지 않는다.
+    pub fn estop_followup(&self) {
         if let Some(u) = self.udp.as_ref() {
-            let _ = u.send_estop(); // offset 0 동기, 50/100ms 보조 스레드
+            u.send_estop_burst(); // 50/100ms 보조
         }
         // SSH flag touch — 느린 왕복이라 별도 스레드(estop 즉시 경로를 블록하지 않음).
         let shell = self.shell.clone();
@@ -188,6 +198,12 @@ impl<S: RobotShell + Clone + Send + 'static> ControlSession<S> {
                 shell.touch_estop();
             })
             .ok();
+    }
+
+    /// E-STOP — 즉시(동기, INV-1) + 보조(버스트 + SSH touch). UDP 없으면 SSH touch 만.
+    pub fn estop(&self) {
+        self.estop_immediate();
+        self.estop_followup();
     }
 }
 

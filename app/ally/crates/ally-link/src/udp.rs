@@ -24,9 +24,10 @@ pub const DEFAULT_RATE_WINDOW_S: f64 = 1.0;
 
 /// pump 한 번이 흡수하는 최대 데이터그램 수(플러드가 제어 루프를 굶기지 않도록).
 const PUMP_MAX_DATAGRAMS: usize = 64;
-/// 미회신 송신 시각 맵 상한 — ACK 유실 누적 시 무한 성장 방지(Python 256/128).
+/// 미회신 송신 시각 맵 상한 — ACK 유실 누적 시 무한 성장 방지. >256 시 가장 오래된
+/// 128발을 제거(Python `df_udp.py` 와 동일: 고정 개수 pop → 257-128=129 잔존).
 const SENT_AT_CAP: usize = 256;
-const SENT_AT_TRIM_TO: usize = 128;
+const SENT_AT_TRIM_COUNT: usize = 128;
 
 /// 단일 UDP 소켓 위의 명령/E-STOP 송신 + ACK/TEL2 수신.
 pub struct UdpControlTransport {
@@ -106,10 +107,10 @@ impl UdpControlTransport {
         let seq = self.seq;
         self.sent_at.insert(seq, Instant::now());
         if self.sent_at.len() > SENT_AT_CAP {
-            // 가장 오래된 seq 부터 정리(작은 seq = 오래됨, 단조 송신이므로).
+            // 가장 오래된 128발 제거(작은 seq = 오래됨, 단조 송신이므로) — Python 패리티.
             let mut keys: Vec<u64> = self.sent_at.keys().copied().collect();
             keys.sort_unstable();
-            for k in keys.into_iter().take(self.sent_at.len() - SENT_AT_TRIM_TO) {
+            for k in keys.into_iter().take(SENT_AT_TRIM_COUNT) {
                 self.sent_at.remove(&k);
             }
         }
@@ -118,15 +119,16 @@ impl UdpControlTransport {
         seq
     }
 
-    /// §G.2 ×3연발(0/50/100ms). offset 0 은 **동기 송신**(INV-1 — 비동기 홉 없음),
-    /// 50/100ms 반복은 보조 스레드. 반환: 즉시 datagram 의 io 결과.
-    pub fn send_estop(&self) -> io::Result<()> {
-        // offset 0 — 호출 스레드에서 즉시.
-        let immediate = self
-            .sock
-            .send_to(&estop_datagram(&self.token, unix_millis()), self.estop_addr);
+    /// §G.2 offset 0 **즉시 동기 송신만**(스폰 없음 — INV-1 비동기 홉 없음, 내부 지연
+    /// 측정의 기준점). 보조 반복은 [`Self::send_estop_burst`] 가 따로 쏜다.
+    pub fn send_estop_immediate(&self) -> io::Result<()> {
+        self.sock
+            .send_to(&estop_datagram(&self.token, unix_millis()), self.estop_addr)
+            .map(|_| ())
+    }
 
-        // 50/100ms 반복 — 보조 스레드(먼저 도착한 쪽이 이김).
+    /// §G.2 50/100ms 반복 — 보조 스레드(먼저 도착한 쪽이 이김). 즉시분 이후 호출.
+    pub fn send_estop_burst(&self) {
         let sock = Arc::clone(&self.sock);
         let token = self.token.clone();
         let estop_addr = self.estop_addr;
@@ -144,8 +146,13 @@ impl UdpControlTransport {
                 }
             })
             .ok();
+    }
 
-        immediate.map(|_| ())
+    /// §G.2 ×3연발(0/50/100ms) — 즉시(동기) + 50/100ms(보조 스레드).
+    pub fn send_estop(&self) -> io::Result<()> {
+        let immediate = self.send_estop_immediate();
+        self.send_estop_burst();
+        immediate
     }
 
     /// 대기 중인 ACK/TEL2 를 비운다(non-blocking). 이번 사이클의 최신 TEL2 를 반환.
@@ -164,6 +171,9 @@ impl UdpControlTransport {
                             self.tel_times.push_back(now);
                             self.tel_total += 1;
                             self.last_tel_at = Some(now);
+                            // ack_times 처럼 push 마다 trim → 레이트 getter 호출 여부와
+                            // 무관하게 자기-바운딩(ACK 무수신 + getter 미호출 누수 차단).
+                            self.trim(now);
                             latest = Some(tel.clone());
                             self.last_tel = Some(tel);
                         }
