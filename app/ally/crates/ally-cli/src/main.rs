@@ -257,6 +257,20 @@ fn probe(args: &[String]) -> io::Result<()> {
     }
 }
 
+/// 세션 시작 seq base — 벽시계 epoch ms.
+///
+/// 로봇 `WalkLabBrokerage::m_cmd_slot` 은 새 토큰/transport 에도 리셋되지 않고 demo 수명
+/// 내내 단조 seq 를 강제한다(LoadHandshake/StartTransportThreads 미리셋 — 실기 확인
+/// 2026-06-13). seq 를 0 재시작하면 직전 세션 max 이하라 전부 Offer 거부 → ACK 무수신.
+/// 로봇 slot 누적은 최대 수천이므로 epoch ms(≈1.78e12) 를 base 로 쓰면 항상 그 위 +
+/// 세션 간 단조가 보장된다. **정본 해결은 펌웨어가 새 토큰에 slot 을 리셋하는 것**
+/// (firmware-patches WalkLabBrokerage::LoadHandshake) — 이건 그 전까지의 클라이언트 보정.
+fn session_seq_base() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| d.as_millis() as u64)
+}
+
 // ── connect: §7 전체 시퀀스 (실로봇) ────────────────────────────────────────
 fn connect(args: &[String]) -> io::Result<()> {
     let prefer = prefer_from(args);
@@ -335,12 +349,17 @@ fn connect(args: &[String]) -> io::Result<()> {
     ssh.write_uplink(&local_ip.to_string(), local_port)?;
     println!("  업링크 등록 {local_ip}:{local_port}");
 
+    // seq base — 로봇 누적 slot 회피(epoch ms, 위 session_seq_base 참조).
+    let seq_base = session_seq_base();
+    println!("  seq base {seq_base} (로봇 누적 slot 회피)");
+
     // §7-6 20Hz 영명령 스트림 + ACK/TEL2 드레인 + 폴백 판정.
     let mut rtt = RttEma::new();
     let mut eff = EffHz::new();
     let cfg = GaitConfig::default();
     let start = Instant::now();
-    let mut seq: u64 = 0;
+    let mut seq: u64 = seq_base;
+    let mut tick_n: u32 = 0; // 데드라인 스케줄용 틱 카운트(seq 와 분리 — seq 는 epoch base).
     let mut last_ack_ms: Option<i64> = None;
     let mut tel_count = 0u64;
     let mut fell_back = false;
@@ -352,7 +371,8 @@ fn connect(args: &[String]) -> io::Result<()> {
     while start.elapsed() < Duration::from_secs(seconds) {
         let now_ms = start.elapsed().as_millis() as i64;
         seq += 1;
-        let deadline = start + tick_dur * (seq as u32); // 데드라인 스케줄(드리프트 방지)
+        tick_n += 1;
+        let deadline = start + tick_dur * tick_n; // 데드라인 스케줄(드리프트 방지)
         let line = build_line(&gen_cmd_id(), &cfg, &MotionCommand::zero());
 
         // 시작 유예: 첫 ACK 전엔 age = 세션 시작 후 경과(now_ms). decide_transport(None)
