@@ -1,4 +1,4 @@
-# DARwIn FPV — ROG Ally 개발 환경 부트스트랩 (Windows 11, 관리자 PowerShell)
+﻿# DARwIn FPV — ROG Ally 개발 환경 부트스트랩 (Windows 11, 관리자 PowerShell)
 #
 # 사용법:
 #   Set-ExecutionPolicy -Scope Process Bypass
