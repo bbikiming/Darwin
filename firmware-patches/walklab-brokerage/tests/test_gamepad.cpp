@@ -193,8 +193,8 @@ static void test_mapping_signs() {
     MapGamepad(s, true, 1000.0, &hold, &f);   // dt=1s → 캡 200ms 적분
     CHECK(f.enabled == 1, "armed+이동 → enabled (F10: 데드맨 불요)");
     CHECK_NEAR(f.x, GP_MAX_STRIDE_MM, 1e-6, "스틱 위 → 전진 +38 (ABS_Y 아래=+ 실측)");
-    CHECK_NEAR(f.y, -GP_MAX_SIDE_MM, 1e-6, "스틱 우 → 우횡 −22 (Y_MOVE+=좌)");
-    CHECK_NEAR(f.a, -GP_MAX_TURN_DEG, 1e-6, "RT 풀 → 우회전 −12 (A_MOVE+=좌)");
+    CHECK_NEAR(f.y, -GP_MAX_SIDE_MM, 1e-6, "스틱 우 → 우횡 −28 (Anbernic P2: Y_MOVE+=좌)");
+    CHECK_NEAR(f.a, -GP_MAX_TURN_DEG, 1e-6, "RT 풀 → 우회전 −18 (Anbernic P4: A_MOVE+=좌)");
     // 헤드 레이트: dt 캡 200ms — 풀스틱 1콜 적분 = RATE × 0.2s.
     CHECK_NEAR(f.tilt, GP_HEAD_TILT_RATE_DPS * 0.2, 1e-6,
                "RS 위 → 틸트 +10 (50°/s × 0.2s 캡)");
@@ -318,13 +318,24 @@ static void test_gait_schedule() {
     GpGaitSchedule(0.0, 0.0, 0.0, 1, &period, &foot);
     CHECK_DEQ(period, GP_GAIT_PERIOD_MAX_MS, "강도 0 → period 700 (최저속)");
     CHECK_DEQ(foot, GP_GAIT_FOOT_MIN_MM, "강도 0 → foot 18");
-    // 중간 강도 0.5 → shaped = 0.5^0.7 ≈ 0.61557.
+    // 중간 강도 0.5 → shaped = 0.5^0.7 ≈ 0.61557. (단일축 = L2(sqrt(0.5²))=0.5 불변.)
     GpGaitSchedule(19.0, 0.0, 0.0, 1, &period, &foot);
     CHECK_NEAR(period, 700.0 - 140.0 * 0.61557, 0.1, "중간 강도 period ≈ 613.8");
     CHECK_NEAR(foot, 18.0 + 22.0 * 0.61557, 0.1, "중간 강도 foot ≈ 31.5");
-    // intensity = max(전후/횡/턴) — 턴 단독도 강도에 산입.
+    // 풀턴 단독도 강도=1 (ti=GP_MAX_TURN_DEG/GP_MAX_TURN_DEG=1 → L2=1).
     GpGaitSchedule(0.0, 0.0, GP_MAX_TURN_DEG, 1, &period, &foot);
     CHECK_DEQ(period, GP_GAIT_PERIOD_MIN_MS, "풀턴 → period 560");
+    // **Anbernic P1 결합강도(L2 magnitude)**: 블렌드(전진+횡)는 단일축보다 강도가 커
+    // 케이던스↑(period↓)·발높이↑. half-전진(19) 단독 vs half-전진+half-횡(19,19).
+    double p_single = 0.0, f_single = 0.0;
+    GpGaitSchedule(19.0, 0.0, 0.0, 1, &p_single, &f_single);
+    double p_blend = 0.0, f_blend = 0.0;
+    GpGaitSchedule(19.0, 19.0, 0.0, 1, &p_blend, &f_blend);   // L2 = sqrt(0.5²+0.5²)=0.707
+    CHECK(p_blend < p_single - 10.0, "블렌드 period < 단축 period (결합강도 케이던스↑)");
+    CHECK(f_blend > f_single + 3.0, "블렌드 foot > 단축 foot (발 클리어런스↑)");
+    // 3축 풀 블렌드는 L2 ≥ 1 → 강도 1.0 클램프(최속·최대 발높이).
+    GpGaitSchedule(GP_MAX_STRIDE_MM, GP_MAX_STRIDE_MM, GP_MAX_TURN_DEG, 1, &period, &foot);
+    CHECK_DEQ(period, GP_GAIT_PERIOD_MIN_MS, "3축 풀 → period 560 (L2 clamp 1.0)");
 }
 
 // ---- 라인 빌더 (v1 14-token — 형식 불변·ParseCommandLine 왕복) ----------------

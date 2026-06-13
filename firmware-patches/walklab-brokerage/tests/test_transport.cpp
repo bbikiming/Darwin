@@ -254,23 +254,32 @@ static void test_envelope_xmax_table() {
 
 static void test_governor_scaledown() {
     printf("test_governor_scaledown\n");
-    // period 600 → x_max=38, y_max=22, a_max=12. Under-budget passes unchanged.
+    // **Anbernic P2/P3/P4**: period 600 → x_max=38, y_max=28, a_max=18, SUM_MAX=1.25.
+    // Under-budget passes unchanged.
     double x = 19.0, y = 0.0, a = 0.0;  // 0.5 sum
     GovernEnvelope(&x, &y, &a, 600);
     CHECK_DEQ(x, 19.0, "under-budget x unchanged");
 
-    // Over-budget: x=38(1.0)+y=22(1.0)+a=12(1.0) = 3.0 → scale 1.15/3.0.
-    double x2 = 38.0, y2 = 22.0, a2 = 12.0;
+    // Over-budget: x=38(1.0)+y=28(1.0)+a=18(1.0) = 3.0 → scale 1.25/3.0.
+    double x2 = 38.0, y2 = 28.0, a2 = 18.0;
     GovernEnvelope(&x2, &y2, &a2, 600);
-    double sum = fabs(x2)/38.0 + fabs(y2)/22.0 + fabs(a2)/12.0;
-    CHECK(sum > 1.149 && sum < 1.151, "over-budget scaled to sum≈1.15");
-    CHECK(x2 > 14.5 && x2 < 14.7, "x scaled (38·1.15/3≈14.57)");
+    double sum = fabs(x2)/38.0 + fabs(y2)/28.0 + fabs(a2)/18.0;
+    CHECK(sum > 1.249 && sum < 1.251, "over-budget scaled to sum≈1.25");
+    CHECK(x2 > 15.7 && x2 < 15.9, "x scaled (38·1.25/3≈15.83)");
+
+    // Pure single-axis at the new max passes unchanged (sum=1.0 < 1.25).
+    double ys = 28.0, xs = 0.0, as_ = 0.0;
+    GovernEnvelope(&xs, &ys, &as_, 600);
+    CHECK_DEQ(ys, 28.0, "pure y=28 (new max) passes unscaled");
+    double at = 18.0, xt = 0.0, yt = 0.0;
+    GovernEnvelope(&xt, &yt, &at, 600);
+    CHECK_DEQ(at, 18.0, "pure a=18 (new max) passes unscaled");
 
     // Direction preserved (signs).
-    double x3 = -50.0, y3 = 0.0, a3 = 0.0;  // |x|/38 = 1.32 > 1.15
+    double x3 = -50.0, y3 = 0.0, a3 = 0.0;  // |x|/38 = 1.32 > 1.25
     GovernEnvelope(&x3, &y3, &a3, 600);
     CHECK(x3 < 0, "negative x stays negative");
-    CHECK(fabs(x3) < 50.0, "|x| reduced toward x_max·1.15");
+    CHECK(fabs(x3) < 50.0, "|x| reduced toward x_max·1.25");
 }
 
 // ---- O2: latch slew ---------------------------------------------------------
@@ -287,20 +296,51 @@ static void test_slew_first_apply() {
 
 static void test_slew_clamps_delta() {
     printf("test_slew_clamps_delta\n");
-    SlewState st;
-    double x = 0, y = 0, a = 0, p = 600;
-    SlewToward(&st, &x, &y, &a, &p);   // seed at 0
-    // Step to large target — each axis clamped to its max delta.
-    double x2 = 40.0, y2 = 30.0, a2 = 20.0, p2 = 440.0;
-    SlewToward(&st, &x2, &y2, &a2, &p2);
-    CHECK_DEQ(x2, 8.0, "x slew +8mm max");
-    CHECK_DEQ(y2, 6.0, "y slew +6mm max");
-    CHECK_DEQ(a2, 4.0, "a slew +4deg max");
-    CHECK_DEQ(p2, 540.0, "period slew -60ms max (600→540)");
-    // Negative direction clamps too.
-    double x3 = -100, y3 = 0, a3 = 0, p3 = 600;
-    SlewToward(&st, &x3, &y3, &a3, &p3);
-    CHECK_DEQ(x3, 0.0, "x slew -8mm from 8 → 0");
+    // **Anbernic P1 동기화(co-arrival)** + **P5 캡 상향**(DX=8,DY=7,DA=6). 세 이동축이
+    // 같은 래치 수 N=max(ceil(|Δ|/cap)) 에 함께 도달. 어떤 축도 자기 캡 초과 금지.
+    {
+        SlewState st;
+        double x = 0, y = 0, a = 0, p = 600;
+        SlewToward(&st, &x, &y, &a, &p);   // seed at 0
+        // target (40,30,20): nx=ceil(40/8)=5, ny=ceil(30/7)=5, na=ceil(20/6)=4 → N=5.
+        double x2 = 40.0, y2 = 30.0, a2 = 20.0, p2 = 440.0;
+        SlewToward(&st, &x2, &y2, &a2, &p2);
+        CHECK_DEQ(x2, 8.0, "co-arrival x = 40/5 = 8 (binding axis, = DX cap)");
+        CHECK_DEQ(y2, 6.0, "co-arrival y = 30/5 = 6 (≤ DY cap 7)");
+        CHECK_DEQ(a2, 4.0, "co-arrival a = 20/5 = 4 (≤ DA cap 6)");
+        CHECK_DEQ(p2, 540.0, "period indep slew -60ms (600→540)");
+    }
+    // 순수 strafe — 지배축이 자기 캡 전속(P5 응답성: 측보 시작 굼뜸 완화).
+    {
+        SlewState st;
+        double x = 0, y = 0, a = 0, p = 600;
+        SlewToward(&st, &x, &y, &a, &p);   // seed 0
+        double x2 = 0.0, y2 = 28.0, a2 = 0.0, p2 = 600.0;   // ny=ceil(28/7)=4 → N=4
+        SlewToward(&st, &x2, &y2, &a2, &p2);
+        CHECK_DEQ(y2, 7.0, "pure strafe y = DY cap 7 (0→28 ~4 latch)");
+        CHECK_DEQ(x2, 0.0, "x unchanged");
+        CHECK_DEQ(a2, 0.0, "a unchanged");
+    }
+    // 순수 turn — DA 캡 전속(P5 끊김 완화: 0→18 ~3 latch).
+    {
+        SlewState st;
+        double x = 0, y = 0, a = 0, p = 600;
+        SlewToward(&st, &x, &y, &a, &p);   // seed 0
+        double x2 = 0.0, y2 = 0.0, a2 = 18.0, p2 = 600.0;   // na=ceil(18/6)=3 → N=3
+        SlewToward(&st, &x2, &y2, &a2, &p2);
+        CHECK_DEQ(a2, 6.0, "pure turn a = DA cap 6 (continuity)");
+    }
+    // 비지배축 분수 전진 — 어떤 축도 자기 캡 초과 안 함(co-arrival).
+    {
+        SlewState st;
+        double x = 0, y = 0, a = 0, p = 600;
+        SlewToward(&st, &x, &y, &a, &p);   // seed 0
+        double x2 = 40.0, y2 = 7.0, a2 = 6.0, p2 = 600.0;  // nx=5, ny=1, na=1 → N=5
+        SlewToward(&st, &x2, &y2, &a2, &p2);
+        CHECK_DEQ(x2, 8.0, "binding x = 40/5 = 8");
+        CHECK(y2 > 1.39 && y2 < 1.41, "non-binding y = 7/5 = 1.4 (< DY cap)");
+        CHECK(a2 > 1.19 && a2 < 1.21, "non-binding a = 6/5 = 1.2 (< DA cap)");
+    }
 }
 
 static void test_slew_reaches_target() {
@@ -350,10 +390,11 @@ static void test_slew_loop_progression_reaches_target() {
     st.x = 0; st.y = 0; st.a = 0; st.period = 600; st.valid = true;
     double tx = 38.0, ty = 0.0, ta = 0.0, tp = 600.0;   // 단발 명령 목표 38mm.
 
-    // 명령 도착 1회(첫 전진) — 0→8.
+    // 명령 도착 1회(첫 전진). **Anbernic P1 동기화**: 단일축 x=38 도 N=ceil(38/8)=5 래치에
+    // 균등 도달(38/5=7.6/스텝) — 종전 8·8·8·8·6 과 래치 수 동일, 페이싱만 균등.
     double sx = tx, sy = ty, sa = ta, sp = tp;
     SlewToward(&st, &sx, &sy, &sa, &sp);
-    CHECK_DEQ(st.x, 8.0, "명령 도착 첫 전진 0→8mm");
+    CHECK(st.x > 7.59 && st.x < 7.61, "명령 도착 첫 전진 0→7.6mm (co-arrival 38/5)");
     CHECK(!SlewAtTarget(st, tx, ty, ta, tp), "아직 목표 미도달(고착 지점)");
 
     // 루프 측 진행 — 재송신 없이 SlewToward 반복으로 목표 도달.
@@ -365,8 +406,8 @@ static void test_slew_loop_progression_reaches_target() {
     }
     CHECK(SlewAtTarget(st, tx, ty, ta, tp), "루프 진행으로 목표 도달(고착 해소)");
     CHECK_DEQ(st.x, 38.0, "최종 38mm 도달");
-    // 0→8→16→24→32→38: 첫 전진 후 추가 4스텝(8·8·8·6) = 5스텝째 도달.
-    CHECK(steps == 4, "8mm/스텝으로 38mm 까지 추가 4스텝(첫 전진 포함 5)");
+    // 0→7.6→15.2→22.8→30.4→38: 첫 전진 후 추가 4스텝 = 5스텝째 도달(래치 수 종전 동일).
+    CHECK(steps == 4, "≤8mm/스텝으로 38mm 까지 추가 4스텝(첫 전진 포함 5)");
 }
 
 // ---- O2: balance gain scale -------------------------------------------------
@@ -387,24 +428,55 @@ static void test_balance_gain_scale() {
 
 static void test_gate_schedule() {
     printf("test_gate_schedule\n");
-    // period 600 → x_max 38. threshold 0.7 → 26.6mm. Below = no boost.
-    GateBoost low = GateSchedule(20.0, 600, 0);
+    // period 600 → x_max 38. threshold 0.7 → 26.6mm. Below = no boost. (y=0 → 전진 거동 불변.)
+    GateBoost low = GateSchedule(20.0, 0.0, 600, 0);
     CHECK_DEQ(low.z_move, 0.0, "below threshold → no z boost");
     CHECK_DEQ(low.y_swap, 0.0, "below threshold → no y_swap boost");
 
     // At x_max (ratio 1.0) → full boost.
-    GateBoost full = GateSchedule(38.0, 600, 0);
+    GateBoost full = GateSchedule(38.0, 0.0, 600, 0);
     CHECK_DEQ(full.z_move, 5.0, "at x_max → +5mm Z_MOVE");
     CHECK_DEQ(full.y_swap, 2.0, "at x_max → +2mm Y_SWAP");
     CHECK_DEQ(full.hip, 1.5, "at x_max → +1.5deg HIP");
 
     // Midway: ratio 0.85 (x=32.3) → t = (0.85-0.7)/0.3 = 0.5 → half boost.
-    GateBoost mid = GateSchedule(32.3, 600, 0);
+    GateBoost mid = GateSchedule(32.3, 0.0, 600, 0);
     CHECK(mid.z_move > 2.4 && mid.z_move < 2.6, "midway → ~half z boost");
 
     // flags OFF → no boost regardless.
-    GateBoost off = GateSchedule(38.0, 600, FLAG_GATE_SCHED_OFF);
+    GateBoost off = GateSchedule(38.0, 0.0, 600, FLAG_GATE_SCHED_OFF);
     CHECK_DEQ(off.z_move, 0.0, "FLAG_GATE_SCHED_OFF → no boost");
+}
+
+// **Anbernic P6 — gate-on-y**: 순수 strafe(x=0)도 |y|/ENVELOPE_Y_MAX 비율로 boost 발화.
+static void test_gate_schedule_lateral() {
+    printf("test_gate_schedule_lateral\n");
+    // 순수 strafe at ENVELOPE_Y_MAX(28) → yr=1.0 → full boost (종전 x=0 이라 all-zero 였음).
+    GateBoost full = GateSchedule(0.0, ENVELOPE_Y_MAX, 600, 0);
+    CHECK_DEQ(full.z_move, 5.0, "pure strafe at y_max → +5mm Z_MOVE (gate-on-y)");
+    CHECK_DEQ(full.y_swap, 2.0, "pure strafe at y_max → +2mm Y_SWAP");
+
+    // 임계 이하 측속(0.5·y_max=14, yr=0.5 < 0.7) → boost 0.
+    GateBoost lowy = GateSchedule(0.0, 0.5 * ENVELOPE_Y_MAX, 600, 0);
+    CHECK_DEQ(lowy.z_move, 0.0, "below-threshold strafe → no boost");
+
+    // x·y 결합 — max(비율)로 발화. 전진 임계 미만이라도 측속 풀이면 boost.
+    GateBoost combo = GateSchedule(10.0, ENVELOPE_Y_MAX, 600, 0);
+    CHECK_DEQ(combo.z_move, 5.0, "combined uses max(xr,yr) → full via y");
+
+    // flags OFF → 측속 풀이어도 0.
+    GateBoost off = GateSchedule(0.0, ENVELOPE_Y_MAX, 600, FLAG_GATE_SCHED_OFF);
+    CHECK_DEQ(off.z_move, 0.0, "OFF → no lateral boost");
+}
+
+// **Anbernic P0 — 베이스 lateral 밸런스 게인 factory 정합**(회귀 가드).
+static void test_base_balance_gains_factory() {
+    printf("test_base_balance_gains_factory\n");
+    CHECK_DEQ(BASE_BALANCE_HIP_ROLL_GAIN, 0.6, "hip_roll base = factory 0.6 (P0)");
+    CHECK_DEQ(BASE_BALANCE_ANKLE_ROLL_GAIN, 1.2, "ankle_roll base = factory 1.2 (P0)");
+    // sagittal 은 의도적으로 factory(0.2/0.6) 초과 유지 — 미변경(검증 지적, 별도 리뷰).
+    CHECK_DEQ(BASE_BALANCE_KNEE_GAIN, 0.3, "knee base unchanged 0.3 (>factory, intentional)");
+    CHECK_DEQ(BASE_BALANCE_ANKLE_PITCH_GAIN, 0.9, "ankle_pitch base unchanged 0.9 (>factory)");
 }
 
 // ---- O4: CommandSlot.Take seq_out -------------------------------------------
@@ -549,7 +621,9 @@ int main() {
     test_slew_at_target();
     test_slew_loop_progression_reaches_target();
     test_balance_gain_scale();
+    test_base_balance_gains_factory();
     test_gate_schedule();
+    test_gate_schedule_lateral();
     test_slot_take_seq_out();
     test_format_tel2_full();
     test_format_tel2_fsr_missing();

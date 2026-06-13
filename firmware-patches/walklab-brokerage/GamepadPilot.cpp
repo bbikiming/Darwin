@@ -197,9 +197,10 @@ namespace Robotis {
         double si = fabs(x_mm) / GP_MAX_STRIDE_MM;
         double yi = fabs(y_mm) / GP_MAX_STRIDE_MM;
         double ti = fabs(a_deg) / GP_MAX_TURN_DEG;
-        double inten = si;
-        if (yi > inten) inten = yi;
-        if (ti > inten) inten = ti;
+        // **Anbernic 고도화 P1 — 결합강도**: max-of-axes 대신 L2 magnitude. 복합 stride 는
+        // 총 발 이동이 단축보다 크므로 더 높은 케이던스+발높이를 받아야 자연스럽다(종전엔
+        // 같은 케이던스로 '끌렸다'). 단일축은 sqrt(축²)=|축| 그대로라 단축 거동 불변.
+        double inten = sqrt(si * si + yi * yi + ti * ti);
         if (inten > 1.0) inten = 1.0;
         if (inten < 0.0) inten = 0.0;
         double shaped = pow(inten, 0.7);

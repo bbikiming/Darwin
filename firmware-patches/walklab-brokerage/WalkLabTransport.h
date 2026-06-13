@@ -67,9 +67,16 @@ static const double TWIST_K_A = 1.0;
 // |x|/x_max + |y|/y_max + |a|/a_max ≤ ENVELOPE_SUM_MAX 초과 시 x/y/a 비례 스케일다운.
 // Switch(stride 50mm 무클램프)·핸드헬드 포함 **전 클라이언트의 안전 전제** — 로봇 최종판.
 // 단일 정의(bus-direct-teleop-upgrade D1 와 공유). Mac 클램프(38/22/12)는 UX 레이어로 유지.
-static const double ENVELOPE_SUM_MAX = 1.15;
-static const double ENVELOPE_Y_MAX   = 22.0;  // mm
-static const double ENVELOPE_A_MAX   = 12.0;  // deg
+//
+// **Anbernic 고도화 P2/P3/P4 (2026-06-13, docs/design/anbernic-gait-upgrade.md)** —
+// 좌우 고속·회전 대각·복합 유기화. 불변식: ENVELOPE_Y_MAX/A_MAX 는 게임패드 클램프
+// GP_MAX_SIDE_MM/GP_MAX_TURN_DEG 와 **항상 동일값**으로 같이 변경(작은 쪽이 클램프).
+// 이 거버너는 전 클라이언트(Switch·핸드헬드·bus-direct) 공유 최종 클램프이므로 상향 시
+// 게임패드뿐 아니라 전 클라이언트 회전·횡속이 함께 빨라진다(의도된 전역 변경).
+// 2단계(좌우 32·회전 20·L2 엔벨로프)는 온스탠드 IK-freeze 스윕 검증 후에만 — 보류.
+static const double ENVELOPE_SUM_MAX = 1.25;  // P3: 1.15→1.25 (L1 budget — 3축 동시최대 collapse 38%→41.7% 완화; 단일축·≤1.15 블렌드는 종전과 동일)
+static const double ENVELOPE_Y_MAX   = 28.0;  // mm — P2: 22→28 (GP_MAX_SIDE_MM 과 동일). 32 는 P7 스윕 후
+static const double ENVELOPE_A_MAX   = 18.0;  // deg — P4: 12→18 (GP_MAX_TURN_DEG 과 동일, 발 yaw peak 9°). 20 은 P7
 // period 종속 x_max(mm) 스케줄 — 초기값(벤치로 갱신). 경계 밖 끝값 고정, 중간 선형 보간.
 //   700ms→40, 600→38, 500→32, 440→28.
 double EnvelopeXMax(double period_ms);
@@ -78,9 +85,11 @@ void GovernEnvelope(double* x, double* y, double* a, double period_ms);
 
 // ===== O2 래치 단위 슬루 (G5) — 셰이핑 일원화: 가속 제한 ====================
 // 인접 래치(반주기) 간 축당 최대 변화. 첫걸음 capturability 보호. 단일 정의(D1 공유).
+// **Anbernic 고도화 P5** — 좌우 응답성·회전 끊김 완화: DY 6→7, DA 4→6(끊김 직접 원인).
+// 둘 다 SLEW_DX_MAX=8 미만 유지(측·회전 첫걸음 capturability 가 전진보다 빡빡).
 static const double SLEW_DX_MAX      = 8.0;   // mm
-static const double SLEW_DY_MAX      = 6.0;   // mm
-static const double SLEW_DA_MAX      = 4.0;   // deg
+static const double SLEW_DY_MAX      = 7.0;   // mm — P5: 6→7 (측보 시작 응답성)
+static const double SLEW_DA_MAX      = 6.0;   // deg — P5: 4→6 (0→18 ~3 latch·끊김 완화; 7 은 표면별 검증 후 P7)
 static const double SLEW_DPERIOD_MAX = 60.0;  // ms
 // 슬루 상태(마지막 적용값). valid=false 면 첫 적용 — 슬루 없이 target 수용 후 valid.
 struct SlewState {
@@ -88,8 +97,14 @@ struct SlewState {
     bool   valid;
     SlewState();
 };
-// st 에서 target(*x/*y/*a/*period)으로 축당 SLEW_*_MAX 만큼만 전진. *값을 갱신 + st 저장.
-// 호출 cadence(래치당 1회)는 호출부가 결정 — 본 함수는 순수 1-스텝 클램프(호스트 테스트).
+// **Anbernic 고도화 P1 — 동기화(co-arrival) 슬루**: 세 이동축(x/y/a)이 같은 래치 수 N 에
+// 함께 도달하도록 각 축을 (target-prev)/N 전진. N = 각 축이 자기 캡(SLEW_*_MAX)으로
+// 도달하는 데 필요한 래치 수의 최댓값. 어떤 축도 자기 캡을 넘지 않으며(|Δ|/N ≤ cap),
+// 빠른 축을 느린 축에 맞춰 늦춰 twist 벡터를 *직선* 이동 → 복합 전이가 한 곡선·peak
+// twist rate↓(turn-then-drift 제거). 단일/지배축은 Δ/N(≤자기 캡, 균등 페이싱)으로 전진 —
+// 도달 래치 수는 ceil(|Δ|/cap)로 종전과 동일(Δ가 캡의 정수배일 때만 첫 스텝=캡, 예 40/8).
+// period 는 종전대로 독립 대칭 슬루(케이던스는 보행 강도 종속, co-arrival 불요).
+// 호출 cadence(래치당 1회)는 호출부가 결정 — 본 함수는 순수 1-스텝(호스트 테스트).
 void SlewToward(SlewState* st, double* x, double* y, double* a, double* period);
 
 // 슬루 전진 cadence 판정(순수) — last_slew_ms==0(미전진) 또는 반주기(period/2) 경과 시 true.
@@ -102,24 +117,34 @@ bool SlewAtTarget(const SlewState& st, double x, double y, double a, double peri
 
 // ===== O2 죽은 토큰 결선 (G7 일부) ==========================================
 // Walking 출하 밸런스 게인(단일 정의) — blevel 배율의 곱셈 기준.
+// **Anbernic 고도화 P0 (2026-06-13)** — 좌우 진폭 상향 전, lateral 자이로 권한을 factory
+// config.ini(hip_roll=0.6, ankle_roll=1.2) 검증값으로 먼저 복원. Walking.cpp 표준 빌드는
+// `*4` 경로(L588-598, MX28_1024 미정의 실측)라 효과 게인 hip_roll≈2.4/ankle_roll≈4.8.
+// NOTE(검증 지적·미변경): sagittal(knee 0.3>factory 0.2, ankle_pitch 0.9>factory 0.6)은
+// factory 를 *초과* — 의도/불일치 확정은 별도 리뷰(무성찰 일괄 정합은 sagittal 거동 변경 위험).
 static const double BASE_BALANCE_KNEE_GAIN        = 0.3;
 static const double BASE_BALANCE_ANKLE_PITCH_GAIN = 0.9;
-static const double BASE_BALANCE_HIP_ROLL_GAIN    = 0.5;
-static const double BASE_BALANCE_ANKLE_ROLL_GAIN  = 1.0;
+static const double BASE_BALANCE_HIP_ROLL_GAIN    = 0.6;  // P0: 0.5→0.6 (factory 정합 — lateral 권한 복원)
+static const double BASE_BALANCE_ANKLE_ROLL_GAIN  = 1.2;  // P0: 1.0→1.2 (factory 정합 — lateral CoP 유지)
 // blevel(0..3) → 게인 배율 {0, 0.5, 1.0, 1.5}. 범위 밖은 끝값 클램프.
 double BalanceGainScale(int blevel);
 
 // ===== O2 속도 비례 게이트 스케줄 (역동성) ==================================
-// |x|/x_max 가 GATE_SPEED_THRESH(상위 30%) 초과 시 선형 가산 — 발 클리어런스·측면 안정.
-// FLAG_GATE_SCHED_OFF 이면 0. 기본 ON.
-static const double GATE_SPEED_THRESH  = 0.70;  // x_max 대비 비율 임계
+// max(|x|/x_max, |y|/ENVELOPE_Y_MAX) 가 GATE_SPEED_THRESH(상위 30%) 초과 시 선형 가산 —
+// 발 클리어런스·측면 안정. FLAG_GATE_SCHED_OFF 이면 0. 기본 ON.
+// **Anbernic 고도화 P6 — gate-on-y**: 종전 ratio=|x|/x_max 만이라 순수 strafe(x=0)는 boost
+// 0 을 받아 발 클리어런스·body sway 증대 없이 진폭만 커지는 IK-freeze 최근접 구성이었다.
+// y 를 인자로 받아 측보도 Y_SWAP/Z_MOVE boost 를 받게 한다(swing foot lateral CoM feasible).
+// (DEFAULT_Y_SWAP_AMPLITUDE 상수 상향은 무효 — Run 진입 시 config 19 로 덮어씀, brokerage
+//  L1078 실측. 추가 sway 는 오직 이 gate-on-y(slew-bounded·speed-gated)로.)
+static const double GATE_SPEED_THRESH  = 0.70;  // x_max/y_max 대비 비율 임계
 static const double GATE_ZMOVE_ADD_MAX = 5.0;   // mm (Z_MOVE_AMPLITUDE 가산)
 static const double GATE_YSWAP_ADD_MAX = 2.0;   // mm (Y_SWAP_AMPLITUDE 가산)
 static const double GATE_HIP_ADD_MAX   = 1.5;   // deg (HIP_PITCH_OFFSET 가산)
 static const double DEFAULT_Y_SWAP_AMPLITUDE = 20.0;  // Walking 출하값(가산 기준).
 struct GateBoost { double z_move, y_swap, hip; GateBoost(); };
-// x(슬루 후 진폭)·period·flags 로 가산량 산출. 임계 이하 또는 OFF 면 0 boost.
-GateBoost GateSchedule(double x, double period_ms, int flags);
+// x·y(슬루 후 진폭)·period·flags 로 가산량 산출. 임계 이하 또는 OFF 면 0 boost.
+GateBoost GateSchedule(double x, double y, double period_ms, int flags);
 
 // ===== latest-wins 슬롯 (KEEP_LAST depth 1) =================================
 // transport 스레드가 Offer, supervisor 가 Take. mutex 보호 1칸.

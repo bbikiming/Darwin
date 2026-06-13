@@ -79,9 +79,13 @@ static const double GP_DEADZONE    = 0.10;  // 통일안 (콕핏 0.10)
 static const double GP_DRIVE_CURVE = 1.35;  // 통일안 (Switch drive_curve)
 // F12 (2026-06-13): 터보(GP_TURBO_SCALE ×1.3) 제거 — RB 를 오른발 킥에 재할당.
 // LT/RT 아날로그 턴 + 풀스틱 스트라이드로 ×1.3 부스트는 중복이라 단순화.
+// **Anbernic 고도화 P2/P4 (2026-06-13, docs/design/anbernic-gait-upgrade.md)** — 좌우
+// 고속화·회전 대각화. 불변식: GP_MAX_SIDE_MM/GP_MAX_TURN_DEG 는 거버너 ENVELOPE_Y_MAX/
+// A_MAX 와 **항상 동일값**(작은 쪽이 클램프). 2단계(좌우 32·회전 20)는 온스탠드
+// IK-freeze 스윕(좌우)·발yaw 무스컬프 14°(회전) 검증 후에만 — P7 보류.
 static const double GP_MAX_STRIDE_MM = 38.0;  // UI 클램프 — 최종은 거버너(O2)
-static const double GP_MAX_SIDE_MM   = 22.0;
-static const double GP_MAX_TURN_DEG  = 12.0;
+static const double GP_MAX_SIDE_MM   = 28.0;  // P2: 22→28 (per-leg half-amp 14mm, IK NaN 여유)
+static const double GP_MAX_TURN_DEG  = 18.0;  // P4: 12→18 (발 yaw peak 9°, 충돌 ~40° 마진)
 static const double GP_MAX_HEAD_PAN_DEG  = 70.0;  // Switch max_head_pan 패리티
 static const double GP_MAX_HEAD_TILT_DEG = 35.0;  // Switch max_head_tilt 패리티
 // 실기 F10b (2026-06-13): 데드존 0.05→0.02 — 트리거 살짝 눌러도 회전 시작.

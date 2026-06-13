@@ -245,6 +245,14 @@ static double SlewAxis(double prev, double target, double max_delta) {
     return prev + d;
 }
 
+// **Anbernic 고도화 P1** — 축이 자기 캡으로 잔여 거리를 좁히는 데 필요한 래치 수(≥1).
+static int SlewStepsFor(double delta, double cap) {
+    if (cap <= 0.0) return 1;
+    double mag = (delta < 0.0) ? -delta : delta;
+    int n = (int)ceil(mag / cap);
+    return (n < 1) ? 1 : n;
+}
+
 void SlewToward(SlewState* st, double* x, double* y, double* a, double* period) {
     if (!st || !x || !y || !a || !period) return;
     if (!st->valid) {
@@ -253,11 +261,28 @@ void SlewToward(SlewState* st, double* x, double* y, double* a, double* period) 
         st->valid = true;
         return;
     }
-    *x      = SlewAxis(st->x, *x, SLEW_DX_MAX);
-    *y      = SlewAxis(st->y, *y, SLEW_DY_MAX);
-    *a      = SlewAxis(st->a, *a, SLEW_DA_MAX);
+    // 동기화(co-arrival) 슬루: 세 이동축이 같은 래치 수 N 에 함께 도달하도록 각 축을
+    // Δ/N 전진. N = 각 축이 자기 캡으로 도달하는 데 필요한 래치 수의 최댓값. 매 호출마다
+    // 현재 governed target 대비 재계산(캐시 금지 — 목표가 움직이면 재수렴). |Δ|/N ≤ cap
+    // 이 보장되어 어떤 축도 자기 캡을 초과하지 않는다(ceil 정의상 N ≥ |Δ|/cap).
+    double dx = *x - st->x, dy = *y - st->y, da = *a - st->a;
+    int n = SlewStepsFor(dx, SLEW_DX_MAX);
+    int ny = SlewStepsFor(dy, SLEW_DY_MAX);
+    int na = SlewStepsFor(da, SLEW_DA_MAX);
+    if (ny > n) n = ny;
+    if (na > n) n = na;
+    if (n <= 1) {
+        // 세 축 모두 한 래치 안에 자기 캡으로 도달 — target 즉시 수용.
+        st->x = *x; st->y = *y; st->a = *a;
+    } else {
+        st->x += dx / (double)n;
+        st->y += dy / (double)n;
+        st->a += da / (double)n;
+        *x = st->x; *y = st->y; *a = st->a;
+    }
+    // period 는 독립 대칭 슬루(케이던스는 보행 강도 종속 — co-arrival 불요).
     *period = SlewAxis(st->period, *period, SLEW_DPERIOD_MAX);
-    st->x = *x; st->y = *y; st->a = *a; st->period = *period;
+    st->period = *period;
 }
 
 bool SlewCadenceDue(long long now_ms, long long last_slew_ms, double period_ms) {
@@ -281,12 +306,18 @@ double BalanceGainScale(int blevel) {
 
 GateBoost::GateBoost() : z_move(0), y_swap(0), hip(0) {}
 
-GateBoost GateSchedule(double x, double period_ms, int flags) {
+GateBoost GateSchedule(double x, double y, double period_ms, int flags) {
     GateBoost b;
     if (flags & FLAG_GATE_SCHED_OFF) return b;   // 기본 ON, flags 비트로 OFF.
     double x_max = EnvelopeXMax(period_ms);
     if (x_max <= 0.0) return b;
+    // **P6 gate-on-y**: 전진(|x|/x_max)과 횡속(|y|/ENVELOPE_Y_MAX) 중 큰 비율로 발화 —
+    // 순수 strafe(x=0)도 Y_SWAP/Z_MOVE boost 를 받아 swing foot lateral CoM 을 feasible 유지.
     double ratio = fabs(x) / x_max;
+    if (ENVELOPE_Y_MAX > 0.0) {
+        double yr = fabs(y) / ENVELOPE_Y_MAX;
+        if (yr > ratio) ratio = yr;
+    }
     if (ratio <= GATE_SPEED_THRESH) return b;    // 상위 30% 구간에서만 가산.
     // 임계~1.0 을 0~1 로 정규화(상한 클램프).
     double t = (ratio - GATE_SPEED_THRESH) / (1.0 - GATE_SPEED_THRESH);

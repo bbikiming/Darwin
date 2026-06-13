@@ -1453,7 +1453,8 @@ namespace Robotis {
     // 보관된 비-슬루 목표(m_tgt_flags)와 슬루 진폭(sx)으로 재계산 — 루프 진행 시에도 일관.
     void WalkLabBrokerage::WriteShapedCommand(Robot::Walking* walking,
                                               double sx, double sy, double sa, double sp) {
-        Robotis::GateBoost boost = Robotis::GateSchedule(sx, sp, m_tgt_flags);
+        // P6 gate-on-y — 슬루 후 횡진폭 sy 를 전달해 순수 strafe 도 발 클리어런스·sway boost.
+        Robotis::GateBoost boost = Robotis::GateSchedule(sx, sy, sp, m_tgt_flags);
         // supervisor 단일 writer(§c 스레드 안전). 셰이핑(거버너→슬루→게이트)을 통과한 값.
         walking->X_MOVE_AMPLITUDE = sx;
         walking->Y_MOVE_AMPLITUDE = sy;
