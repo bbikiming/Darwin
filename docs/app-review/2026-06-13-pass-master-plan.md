@@ -11,23 +11,40 @@
 
 | # | 항목 | 우선순위 | 유형 | 상태 |
 |---|---|---|---|---|
-| 1 | entitlements cs.* false 5개 제거 | P0 | 자동 검사 반려 | ✅ 조치됨 (PR #43) |
-| 2 | **`com.apple.security.device.serial` 추가** | **P0** | **샌드박스 기능 파손 (robot 연결 불가)** | ⬜ 미조치 |
-| 3 | **CFBundleVersion 자동 bump** | **P0** | 업로드 거부 (build 579 < 새 build 필요) | ⬜ 미조치 |
-| 4 | **샌드박스 활성 상태 통합 기능 검증** | **P0** | 검증 공백 (한 번도 수행 안 됨 추정) | ⬜ 미조치 |
-| 5 | **ROBOTIS 상표/사칭 (bundle ID + 저작권)** | **P1** | 휴먼 리뷰 반려 위험 (5.2.1) | ⬜ **사용자 의사결정 필요** |
-| 6 | Claude CLI 외부 프로세스 의존 기능 gate | P1 | 2.1 완성도 (리뷰어 환경에서 깨진 기능) | ⬜ 미조치 |
-| 7 | SynthBridge `cargo` 의존 gate | P1 | 2.1 완성도 | ⬜ 미조치 |
-| 8 | SSH/scp/ping 서브프로세스 샌드박스 검증 | P1 | 기능 파손 가능 | ⬜ 미조치 |
-| 9 | ComingSoonOverlay 사용처 정리 | P1 | 2.1 placeholder | ⬜ 사용처 확인 필요 |
-| 10 | App Review Notes + 데모 영상 (하드웨어 의존) | P1 | 2.1 리뷰 진행 불가 방지 | ⬜ 템플릿 있음, 영상 필요 |
-| 11 | App Privacy 라벨 (음성/Claude 데이터) | P1 | 메타데이터 | ⬜ 미조치 |
+| 1 | entitlements cs.* false 5개 제거 | P0 | 자동 검사 반려 | ✅ 조치됨 (PR #43, 본 브랜치 체리픽 `8d62550`) |
+| 2 | **`com.apple.security.device.serial` 추가** | **P0** | **샌드박스 기능 파손 (robot 연결 불가)** | ✅ 조치됨 (`be8ab20` — AppStore/DevID/default 3개) |
+| 3 | **CFBundleVersion 자동 bump** | **P0** | 업로드 거부 (build 579 < 새 build 필요) | ✅ 조치됨 (`be8ab20` — archive Step 0.5, git count+600=1297) |
+| 4 | **샌드박스 활성 상태 통합 기능 검증** | **P0** | 검증 공백 (한 번도 수행 안 됨 추정) | ⬜ 미조치 (archive 빌드 + 실기 robot 필요 — §3 체크리스트) |
+| 5 | **ROBOTIS 상표/사칭 (bundle ID + 저작권)** | **P1** | 휴먼 리뷰 반려 위험 (5.2.1) | 🟡 **코드 완료 (시나리오 B)** — bundle ID·저작권·상표 고지 변경됨. **포털 작업 잔여** (아래 §5 결정 블록) |
+| 6 | Claude CLI 외부 프로세스 의존 기능 gate | P1 | 2.1 완성도 (리뷰어 환경에서 깨진 기능) | ✅ 조치됨 — App Store 빌드에서 숨김 (`#if APPSTORE`) |
+| 7 | SynthBridge `cargo` 의존 gate | P1 | 2.1 완성도 | ✅ 조치됨 — App Store 빌드에서 숨김 (`#if APPSTORE`) |
+| 8 | SSH/scp/ping 서브프로세스 샌드박스 검증 | P1 | 기능 파손 가능 | ⬜ 미조치 (§4 와 함께 archive 빌드에서 실측) |
+| 9 | ComingSoonOverlay 사용처 정리 | P1 | 2.1 placeholder | ⬜ 미조치 (Pilot 화면 3곳 — 별도 차수) |
+| 10 | App Review Notes + 데모 영상 (하드웨어 의존) | P1 | 2.1 리뷰 진행 불가 방지 | ⬜ 템플릿 있음, 영상 필요 (사용자 작업) |
+| 11 | App Privacy 라벨 (음성/Claude 데이터) | P1 | 메타데이터 | ⬜ 미조치 (App Store Connect UI — Claude 숨김으로 "Audio Data" 단일화 가능) |
 | 12 | NSAllowsLocalNetworking (ATS 명시) | P2 | 방어적 | ⬜ 권장 |
-| 13 | App Store Connect 메타데이터 (스크린샷/URL) | P2 | 제출 요건 | ⬜ 확인 필요 |
+| 13 | App Store Connect 메타데이터 (스크린샷/URL) | P2 | 제출 요건 | ⬜ 확인 필요 (사용자 작업) |
 | 14 | 앱 아이콘 | P2 | — | ✅ 확인 완료 (1254×1254, build-app.sh 가 icns 생성) |
 | 15 | Info.plist 필수 키 | P2 | — | ✅ 확인 완료 (Bonjour/카테고리/암호화 모두 존재) |
 
 **예상 리뷰 시나리오**: 1차 반려는 *자동 binary 검사* 단계였다. entitlements 수정 후 재제출하면 다음은 **휴먼 리뷰** — 이때 #5 (상표), #6/#7 (깨진 기능), #10 (하드웨어) 가 새 반려 사유로 등장할 가능성이 높다. P0 만 고치고 재제출하면 **2차 반려 가능성이 상당**하므로, P1 까지 일괄 처리 후 제출을 권장한다.
+
+---
+
+## 진행 현황 — 2026-06-13 구현 세션 (브랜치 `claude/robotis-darwin-op-setup-oyzTi`)
+
+**완료 (코드)**: #1(체리픽) · #2 device.serial · #3 build bump · #6/#7 Claude·Synth App Store 숨김 · #5 코드 변경.
+
+**#5 ROBOTIS 상표 — 사용자 결정 = 시나리오 B (순수 서드파티)**. 코드 변경 완료:
+- `CFBundleIdentifier` : `com.robotis.darwinforge` → **`com.yuseokkim.darwinforge`** (Info.plist + AppStore entitlements `application-identifier` + build/archive/install 스크립트 3개 + OSLog subsystem 4개 일관 변경)
+- `NSHumanReadableCopyright` : `© 2026 ROBOTIS` → **`© 2026 YUSEOK KIM. All rights reserved.`**
+- README 상표 고지 강화 ("ROBOTIS·DARwIn-OP 는 ROBOTIS 상표, 본 앱은 비공식 서드파티 도구")
+
+> ⚠️ **포털 작업 잔여 (개발자 수작업 — 코드로 불가)**: bundle ID 변경은 Apple Developer 포털에서 ① 새 App ID(`com.yuseokkim.darwinforge`) 등록 ② macOS App Store provisioning profile 재발급 → `~/Library/MobileDevice/Provisioning Profiles/` 에 설치 ③ App Store Connect 에 새 앱 레코드 생성(기존 submission 이력과 분리)이 선행돼야 archive·업로드가 성립한다. (archive-app.sh Step 1.5 가 새 ID 의 profile 을 자동 검색하므로, profile 만 설치하면 됨.)
+
+**#4/#8 샌드박스 검증 — 잔여 (다음 단계)**: `bash scripts/archive-app.sh --method app-store --team-id JM4LJMU49Q` 로 sandbox 빌드 생성 후 §3 체크리스트 12항목(특히 robot USB 연결 — device.serial 실효 확인)을 실기로 전수. 이건 App Store 빌드 + 실 robot 이 있어야 가능.
+
+**검증(이번 세션)**: swift build 기본·APPSTORE 양 구성 컴파일 성공, plutil -lint 3개 OK, 풀 테스트 스위트 통과.
 
 ---
 
