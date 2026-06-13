@@ -127,23 +127,24 @@ public enum RobotSetupCommand {
     fi
 
     echo "starting ROBOTIS camera_tutorial from $CAM_DIR"
-    sudo ./camera_tutorial >/tmp/df-camera.log 2>&1 &
+    sudo -n ./camera_tutorial >/tmp/df-camera.log 2>&1 &
     sleep 1
 
-    if command -v ss >/dev/null 2>&1; then
-      LISTEN=$(ss -lnt 2>/dev/null | grep ':8080')
-    else
-      LISTEN=$(netstat -lnt 2>/dev/null | grep ':8080')
-    fi
+    IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -z "$IP" ] && IP=$(hostname -i 2>/dev/null | awk '{print $1}')
 
-    if [ -n "$LISTEN" ]; then
-      IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-      [ -z "$IP" ] && IP="192.168.123.1"
-      echo "camera_tutorial running"
+    # 8080 의 실제 소유 프로세스를 확인해 정직하게 보고한다. bare LISTEN 만 보고 성공을
+    # 단정하면, walklab demo 가 8080 을 점유 중일 때 그 스트림을 camera_tutorial 것으로
+    # 오인 보고하는 "가짜 성공"이 된다(데모 감사 2026-06-13).
+    if pgrep -x camera_tutorial >/dev/null 2>&1; then
+      echo "✅ camera_tutorial 실행 중 (pid $(pgrep -x camera_tutorial))"
       echo "snapshot: http://$IP:8080/?action=snapshot"
       echo "stream:   http://$IP:8080/?action=stream"
+    elif pgrep -x demo >/dev/null 2>&1 && (ss -lnt 2>/dev/null | grep -q ':8080' || netstat -lnt 2>/dev/null | grep -q ':8080'); then
+      echo "ℹ️  walklab 조종 데모가 이미 8080 을 스트리밍 중 — 별도 camera_tutorial 불필요"
+      echo "stream:   http://$IP:8080/?action=stream   (walklab demo 가 제공)"
     else
-      echo "camera_tutorial started, but port 8080 is not visible yet"
+      echo "✗ camera_tutorial 시작 실패 (8080 미점유) — 로그:"
       tail -40 /tmp/df-camera.log 2>/dev/null
     fi
     """#
@@ -715,63 +716,12 @@ public enum RobotSetupCommand {
 
     echo
     echo "USB bus 점유자:"
-    sudo fuser -v /dev/ttyUSB0 2>&1 | head -3 || echo "  (점유자 없음)"
+    (sudo -n fuser -v /dev/ttyUSB0 2>&1 || fuser -v /dev/ttyUSB0 2>&1) | head -3 || echo "  (점유자 없음)"
     """#
 
-    /// 걷기 데모 시작 — walk_tuner. ROBOTIS 의 walk_tuner 는 좌/우/전/후 키로 보행.
-    ///
-    /// **참고**: ROBOTIS-OP2 의 단독 walk_demo binary 는 없고, demo 통합 또는 walk_tuner 가 표준.
-    /// 사용자가 "걷기 시작" 누르면 walk_tuner 가 더 적절 (튜닝 + 보행 둘 다).
-    public static let walkDemoStart: String = #"""
-    set +e
-    echo "▶ forge-bridge 종료 (USB bus 해제)"
-    sudo killall socat 2>/dev/null
-    sleep 0.3
-
-    echo "▶ walk_tuner binary 탐색"
-    BIN=""
-    for d in "$HOME/Framework/Linux/project/walk_tuner/walk_tuner" \
-             "$HOME/darwin/Linux/project/walk_tuner/walk_tuner" \
-             "/darwin/Linux/project/walk_tuner/walk_tuner" \
-             "/robotis/Linux/project/walk_tuner/walk_tuner"; do
-      if [ -x "$d" ]; then BIN="$d"; break; fi
-    done
-    if [ -z "$BIN" ]; then
-      echo "walk_tuner not found — demo 로 대체 시도"
-      for d in "$HOME/Framework/Linux/project/demo/demo" \
-               "$HOME/darwin/Linux/project/demo/demo" \
-               "/darwin/Linux/project/demo/demo"; do
-        if [ -x "$d" ]; then BIN="$d"; break; fi
-      done
-    fi
-    if [ -z "$BIN" ]; then
-      echo "walk_tuner 와 demo 모두 없음 — ROBOTIS 공식 패키지 빌드 필요"
-      exit 1
-    fi
-
-    echo "▶ 이전 데모 종료"
-    sudo killall demo walk_tuner walk_demo action_editor 2>/dev/null
-    sleep 0.3
-
-    echo "▶ 시작 → $BIN"
-    cd "$(dirname "$BIN")" || exit 1
-    sudo nohup ./$(basename "$BIN") >/tmp/df-walk.log 2>&1 &
-    sleep 1
-
-    if pgrep -f "$(basename "$BIN")" >/dev/null; then
-      echo "✅ walk demo 실행 중 (pid $(pgrep -f "$(basename "$BIN")"))"
-      echo "   조작은 VNC/SSH 콘솔의 walk_tuner UI 로"
-      tail -10 /tmp/df-walk.log 2>/dev/null
-    else
-      echo "✗ walk demo 시작 실패"
-      tail -30 /tmp/df-walk.log 2>/dev/null
-      exit 1
-    fi
-    """#
-
-    public static let walkDemoStop: String = demoStop
-
-    public static let walkDemoStatus: String = ballTrackerStatus
+    // walkDemoStart/Stop/Status (walk_tuner) 제거(2026-06-13): walk_tuner 는 빌드 바이너리가
+    // 없는 소스 전용 + 콘솔/VNC 튜닝 도구라 원격 데모로 부적합했고, 해당 QuickAction 도 함께
+    // 제거됨. 보행 데모는 walkLabRobotisStart(조종기 데모)가 담당. 다른 참조 없음(전수 grep 확인).
 
     /// Action editor 시작 — motion_4096.bin 페이지를 키보드로 직접 재생.
     /// motion play 의 단일 pose preview 가 부족할 때 사용자가 진짜 chain 재생을 원할 때.
@@ -784,7 +734,8 @@ public enum RobotSetupCommand {
     BIN=""
     for d in "$HOME/Framework/Linux/project/action_editor/action_editor" \
              "$HOME/darwin/Linux/project/action_editor/action_editor" \
-             "/darwin/Linux/project/action_editor/action_editor"; do
+             "/darwin/Linux/project/action_editor/action_editor" \
+             "/robotis/Linux/project/action_editor/action_editor"; do
       if [ -x "$d" ]; then BIN="$d"; break; fi
     done
     if [ -z "$BIN" ]; then

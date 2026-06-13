@@ -130,17 +130,19 @@ public enum QuickActionCatalog {
                     detail: "프로세스·8080 포트·video 장치", icon: "video.badge.checkmark",
                     command: RobotSetupCommand.cameraTutorialStatus),
         QuickAction(id: "camera-stop", category: .robotis, label: "카메라 데모 중지",
-                    detail: "8080 영상 송출 종료", icon: "camera.fill.badge.ellipsis",
+                    detail: "camera_tutorial 프로세스만 종료 (walklab 데모 8080 스트림은 유지)",
+                    icon: "camera.fill.badge.ellipsis",
                     command: RobotSetupCommand.cameraTutorialStop),
-        QuickAction(id: "ball-tracker-start", category: .robotis, label: "공 추적 데모 시작",
-                    detail: "공을 따라 머리·보행 추적", icon: "target",
-                    command: RobotSetupCommand.ballTrackerStart),
+        // 공 추적은 조종기 데모(walklab)의 패드 X 버튼으로 진입한다 — 별도 SOCCER 데모는
+        // 이 빌드에 없다(데모 감사 2026-06-13). 중복 실행 대신 상태 확인 + 안내만 한다.
+        QuickAction(id: "ball-tracker-start", category: .robotis, label: "공 추적 (패드 X 안내)",
+                    detail: "조종기 데모 중 패드 X 버튼으로 공 추적 — 머리 두리번/잠금", icon: "target",
+                    command: "if pgrep -x demo >/dev/null 2>&1 && grep -qx walklab /tmp/df-pilot-mode 2>/dev/null; then echo '✅ 조종기 데모 실행 중 — 패드 X 버튼으로 공 추적 시작/중지 (머리가 두리번거리다 공을 잠금)'; else echo 'ℹ️ 먼저 [조종기 데모 시작] 을 실행한 뒤, 패드 X 버튼으로 공 추적을 토글하세요'; fi"),
         QuickAction(id: "demo-status", category: .robotis, label: "데모 상태 확인",
                     detail: "데모 프로세스·브리지·USB 점유자", icon: "list.bullet.indent",
                     command: RobotSetupCommand.ballTrackerStatus),
-        QuickAction(id: "walk-demo-start", category: .robotis, label: "걷기 데모 시작",
-                    detail: "walk_tuner 보행 튜닝 진입", icon: "figure.walk.motion",
-                    command: RobotSetupCommand.walkDemoStart),
+        // "걷기 데모"(walk_tuner) 제거(2026-06-13): walk_tuner 는 빌드된 바이너리가 없는
+        // 소스 전용 + 콘솔/VNC 튜닝 도구라 원격 데모로 부적합. 보행은 "조종기 데모 시작"이 담당.
         QuickAction(id: "action-demo-start", category: .robotis, label: "액션 데모 시작",
                     detail: "action_editor 모션 재생 진입", icon: "play.rectangle.fill",
                     command: RobotSetupCommand.actionDemoStart),
@@ -149,35 +151,14 @@ public enum QuickActionCatalog {
                     detail: "데모를 멈추고 forge-bridge 재기동", icon: "gamecontroller",
                     command: RobotSetupCommand.demoStop),
 
-        // Phase B (Sprint 18) — patched demo binary 자동 빌드 + 관리.
-        QuickAction(id: "demo-patch-build", category: .robotis,
-                    label: "패치 demo 빌드",
-                    detail: "SOCCER 자동 진입용 demo-pilot 생성 (1회)",
-                    icon: "hammer.fill",
-                    command: RobotSetupCommand.demoBuildPatched,
-                    requiresConfirm: true,
-                    confirmSummary: "로봇에서 demo 를 재빌드합니다 — 약 1~2분 걸리고, "
-                        + "빌드가 끝나면 원본 main.cpp 는 복구됩니다.",
-                    confirmTitle: "demo 를 다시 빌드할까요?",
-                    confirmVerb: "빌드 시작"),
-        QuickAction(id: "demo-patch-status", category: .robotis,
-                    label: "패치 demo 상태 확인",
-                    detail: "demo-pilot 설치 여부",
-                    icon: "checkmark.seal",
-                    command: RobotSetupCommand.demoPatchedStatus),
-        QuickAction(id: "demo-patch-remove", category: .robotis,
-                    label: "패치 demo 제거",
-                    detail: "demo-pilot 정리 — 원본 demo 유지",
-                    icon: "trash",
-                    command: RobotSetupCommand.demoRemovePatched,
-                    requiresConfirm: true,
-                    confirmSummary: "demo-pilot 바이너리와 주입 흔적을 정리합니다 — "
-                        + "원본 demo 는 그대로 유지됩니다.",
-                    confirmTitle: "패치 demo 를 제거할까요?",
-                    confirmVerb: "제거"),
+        // Phase B (Sprint 18) demo-pilot 패치 트리오(빌드/상태/제거)는 메뉴에서 숨김
+        // (2026-06-13): demo-pilot 방식은 install-onboard.sh/deploy-kick.sh 의 in-place
+        // demo 빌드로 대체돼 사장됨(이 로봇에 demo-pilot 미존재). 명령 정의는 RemotePilotView
+        // 가 demoPatchedStatus 를 참조하므로 RobotSetupCommand 에 보존(빌드 안전), 사용자
+        // 메뉴 노출만 제거. 완전 제거는 RemotePilotView 리팩터 후 별도 진행.
         QuickAction(id: "fuser-ttyusb", category: .robotis, label: "ttyUSB 점유자 확인",
                     detail: "USB 시리얼을 잡은 프로세스", icon: "questionmark.circle",
-                    command: "sudo fuser -v /dev/ttyUSB0 2>&1"),
+                    command: "sudo -n fuser -v /dev/ttyUSB0 2>&1 || fuser -v /dev/ttyUSB0 2>&1"),
 
         // ── system (시스템 진단) — 읽기 전용 고빈도 ─────────────────────
         QuickAction(id: "uptime", category: .system, label: "가동 시간 확인",
@@ -191,7 +172,7 @@ public enum QuickActionCatalog {
                     command: "df -h ~ | tail -1; df -h / | tail -1"),
         QuickAction(id: "cpu-temp", category: .system, label: "CPU 온도 확인",
                     detail: "현재 보드 온도", icon: "thermometer.medium",
-                    command: "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf \"%.1f°C\\n\", $1/1000}'"),
+                    command: "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf \"%.1f°C\\n\", $1/1000}' || echo '온도 센서 없음'"),
         QuickAction(id: "os-version", category: .system, label: "OS 버전 확인",
                     detail: "리눅스 배포판·커널", icon: "info.circle",
                     command: "lsb_release -a 2>/dev/null; uname -a"),
@@ -218,8 +199,8 @@ public enum QuickActionCatalog {
 
         // ── service (서비스) — 셋업기 외 저빈도 ─────────────────────────
         QuickAction(id: "df-inbox-status", category: .service, label: "df-inbox 상태 확인",
-                    detail: "원격 명령 수신 채널 동작 여부", icon: "tray.fill",
-                    command: "sudo /etc/init.d/df-inbox status 2>/dev/null"),
+                    detail: "SMB 수신 채널 (미설치면 SSH 직결 사용 중 — 정상)", icon: "tray.fill",
+                    command: "[ -x /etc/init.d/df-inbox ] && sudo -n /etc/init.d/df-inbox status 2>&1 || echo 'df-inbox 미설치 — 원격 명령은 SSH 직결 경로 사용 중 (정상)'"),
         QuickAction(id: "forge-bridge-status", category: .service, label: "forge-bridge 상태 확인",
                     detail: "USB-TCP 브리지(5530) 동작 여부", icon: "antenna.radiowaves.left.and.right",
                     command: "sudo /etc/init.d/forge-bridge status 2>/dev/null; ss -lnt 2>/dev/null | grep :5530"),
