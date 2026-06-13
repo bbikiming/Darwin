@@ -43,6 +43,13 @@
     <key>com.apple.security.device.usb</key>
     <true/>
 
+    <!-- USB-Serial 디바이스 노드 (/dev/cu.usbserial-*) — ROBOTIS CM-730/740 통신.
+         device.usb 는 IOUSBHost/IOKit 용이며 POSIX serial open(serialport crate
+         TTYPort::open)은 본 키가 별도 필요. 미설정 시 sandbox 빌드에서 robot 연결이
+         EPERM 으로 전면 차단됨(개발 환경은 sandbox 비활성이라 드러난 적 없음). -->
+    <key>com.apple.security.device.serial</key>
+    <true/>
+
     <!-- Motion page / robot pose import/export. -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>

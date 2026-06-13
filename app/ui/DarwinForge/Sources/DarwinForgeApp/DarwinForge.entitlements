@@ -26,6 +26,11 @@
     <key>com.apple.security.device.usb</key>
     <true/>
 
+    <!-- USB-Serial 디바이스 노드 (/dev/cu.usbserial-*) — POSIX serial open(TTYPort)에
+         device.usb 와 별도로 필요. 이게 없으면 sandbox 빌드에서 robot 연결 EPERM. -->
+    <key>com.apple.security.device.serial</key>
+    <true/>
+
     <!-- 카메라 — 미래 vision-based 보행 보정 (현재 미사용, 활성화 시점에 enable) -->
     <!--
     <key>com.apple.security.device.camera</key>

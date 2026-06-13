@@ -94,6 +94,17 @@ if [[ ! -f "$ENT_FILE" ]]; then
     exit 1
 fi
 
+# ===== Step 0.5: CFBundleVersion 자동 bump (App Store 업로드 요건) =====
+# App Store Connect 는 동일/이하 build number 재업로드를 거부한다. 1차 반려 빌드 =
+# 579, source Info.plist 기본값 = 2 → 자동화 없으면 업로드 거부 재발. git commit
+# count 기반(단조 증가) + offset 600 으로 579 추월 보장. build-app.sh 가 이 source
+# Info.plist 를 .app 으로 복사(build-app.sh:89·133)하므로 호출 *이전*에 bump.
+INFO_SRC="$PKG_ROOT/Sources/DarwinForgeApp/Info.plist"
+GIT_COUNT="$(git -C "$REPO_ROOT" rev-list --count HEAD)"
+NEW_BUILD=$((GIT_COUNT + 600))
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD" "$INFO_SRC"
+echo "▶ Step 0.5: CFBundleVersion → $NEW_BUILD (git count $GIT_COUNT + 600, 반려 579 추월)"
+
 echo "▶ Step 1: build-app.sh 실행 — .app bundle 어셈블"
 SKIP_FLAG=""
 [[ "$SKIP_RUST" -eq 1 ]] && SKIP_FLAG="--skip-rust"

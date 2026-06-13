@@ -26,6 +26,10 @@
     <key>com.apple.security.device.usb</key>
     <true/>
 
+    <!-- USB-Serial 디바이스 노드 (/dev/cu.usbserial-*) — POSIX serial open 에 별도 필요. -->
+    <key>com.apple.security.device.serial</key>
+    <true/>
+
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
 
