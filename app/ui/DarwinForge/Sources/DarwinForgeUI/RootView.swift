@@ -674,7 +674,7 @@ public struct RootView: View {
             // 높은 윈도우에서는 자연스럽게 fill, 짧은 윈도우에서는 scroll.
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: DFSpace.none) {
-                    ForEach(Section.allCases, id: \.self) { s in
+                    ForEach(Section.sidebarVisible, id: \.self) { s in
                         sidebarRow(section: s)
                     }
 
@@ -1217,9 +1217,13 @@ public struct RootView: View {
             Button("Section 4") { section = .walk }
                 .keyboardShortcut("4", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
+            // App Store 빌드(§4)에서는 Conversation(Claude CLI) 단축키도 제거 —
+            // 사이드바 숨김과 일관(⌘5 로도 진입 불가).
+            #if !APPSTORE
             Button("Section 5") { section = .conversation }
                 .keyboardShortcut("5", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
+            #endif
             Button("Section 6") { section = .remote }
                 .keyboardShortcut("6", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
@@ -1243,6 +1247,17 @@ private enum Section: String, CaseIterable, Hashable {
 
     init?(id: String) {
         self.init(rawValue: id)
+    }
+
+    /// 사이드바에 노출할 섹션 — **App Store 빌드(§4)에서는 Conversation(Claude CLI
+    /// 의존) 을 숨긴다.** 리뷰어 머신엔 claude CLI 가 없어 깨진 기능으로 보이므로
+    /// 아예 노출하지 않는다(가이드라인 2.1 완성도). 개발 빌드는 전체 노출.
+    static var sidebarVisible: [Section] {
+        #if APPSTORE
+        return allCases.filter { $0 != .conversation }
+        #else
+        return allCases
+        #endif
     }
 
     var label: String {

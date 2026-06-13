@@ -43,6 +43,7 @@ APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 SKIP_RUST=0
 SIGN_MODE="adhoc"
 SIGN_IDENTITY="-"
+APPSTORE_FLAGS=""   # --appstore 시 -DAPPSTORE 주입 (외부 프로세스 의존 기능 숨김, §4)
 
 for arg in "$@"; do
     case "$arg" in
@@ -51,6 +52,10 @@ for arg in "$@"; do
             ;;
         --no-sign)
             SIGN_MODE="none"
+            ;;
+        --appstore)
+            # App Store 빌드 — Conversation(Claude CLI)·Synth(cargo) 숨김.
+            APPSTORE_FLAGS="-Xswiftc -DAPPSTORE"
             ;;
         --sign)
             # 다음 토큰이 identity (e.g. "Developer ID Application: ...")
@@ -109,9 +114,9 @@ else
 fi
 echo "  ✓ Vendor 준비 완료"
 
-echo "▶ Step 2: swift build -c release --product $EXEC_NAME"
+echo "▶ Step 2: swift build -c release --product $EXEC_NAME${APPSTORE_FLAGS:+ (APPSTORE)}"
 cd "$PKG_ROOT"
-swift build -c release --product "$EXEC_NAME" 2>&1 | tail -3
+swift build -c release --product "$EXEC_NAME" $APPSTORE_FLAGS 2>&1 | tail -3
 
 EXEC_PATH="$BUILD_DIR/$EXEC_NAME"
 if [ ! -f "$EXEC_PATH" ]; then
@@ -131,7 +136,7 @@ cp "$EXEC_PATH" "$APP_BUNDLE/Contents/MacOS/$EXEC_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$EXEC_NAME"
 
 # Info.plist — source-of-truth (Sources/DarwinForgeApp/Info.plist).
-# CFBundleExecutable=DarwinForgeApp, CFBundleIdentifier=com.robotis.darwinforge.
+# CFBundleExecutable=DarwinForgeApp, CFBundleIdentifier=com.yuseokkim.darwinforge.
 cp "$INFO_PLIST_SRC" "$APP_BUNDLE/Contents/Info.plist"
 
 # CFBundleIconFile 명시 (Info.plist 에 없으면 추가) — AppIcon 참조.

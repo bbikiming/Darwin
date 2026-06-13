@@ -108,7 +108,11 @@ echo "▶ Step 0.5: CFBundleVersion → $NEW_BUILD (git count $GIT_COUNT + 600, 
 echo "▶ Step 1: build-app.sh 실행 — .app bundle 어셈블"
 SKIP_FLAG=""
 [[ "$SKIP_RUST" -eq 1 ]] && SKIP_FLAG="--skip-rust"
-bash "$REPO_ROOT/scripts/build-app.sh" $SKIP_FLAG --no-sign
+# App Store 빌드는 외부 프로세스 의존 기능(Conversation/Synth)을 컴파일 단계에서
+# 숨긴다(§4 — -DAPPSTORE). developer-id 빌드는 전체 기능 유지.
+APPSTORE_FLAG=""
+[[ "$METHOD" == "app-store" ]] && APPSTORE_FLAG="--appstore"
+bash "$REPO_ROOT/scripts/build-app.sh" $SKIP_FLAG $APPSTORE_FLAG --no-sign
 
 if [[ ! -d "$APP_BUNDLE" ]]; then
     echo "✗ .app bundle 누락: $APP_BUNDLE" >&2
@@ -120,7 +124,7 @@ fi
 # CFBundleIdentifier / CFBundleName / CFBundlePackageType 누락. App Store 검증 거부
 # (-19241 Missing Bundle Identifier). 각 bundle 의 Info.plist 보강.
 echo "▶ Step 1.2: SwiftPM resource bundle Info.plist 보강"
-MAIN_BUNDLE_ID="com.robotis.darwinforge"
+MAIN_BUNDLE_ID="com.yuseokkim.darwinforge"
 for B in "$APP_BUNDLE"/Contents/Resources/*.bundle; do
     [[ -d "$B" ]] || continue
     BNAME=$(basename "$B" .bundle)
@@ -169,7 +173,7 @@ if [[ "$METHOD" == "app-store" ]]; then
                 # 키 이름이 'com.apple.application-identifier' — full key name 필수.
                 APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.application-identifier" "$TMP" 2>/dev/null || true)
                 PLAT=$(/usr/libexec/PlistBuddy -c "Print :Platform:0" "$TMP" 2>/dev/null || true)
-                if [[ "$APP_ID" == *"com.robotis.darwinforge"* && "$PLAT" == "OSX" ]]; then
+                if [[ "$APP_ID" == *"com.yuseokkim.darwinforge"* && "$PLAT" == "OSX" ]]; then
                     FOUND_PROFILE="$PP"
                     rm -f "$TMP"
                     break
@@ -182,7 +186,7 @@ if [[ "$METHOD" == "app-store" ]]; then
             cp "$FOUND_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"
             echo "  ✓ embedded.provisionprofile : $(basename "$FOUND_PROFILE")"
         else
-            echo "  ⚠ Provisioning Profile (com.robotis.darwinforge / OSX) 못 찾음 — App Store 업로드 시 거절 위험" >&2
+            echo "  ⚠ Provisioning Profile (com.yuseokkim.darwinforge / OSX) 못 찾음 — App Store 업로드 시 거절 위험" >&2
         fi
     else
         echo "  ⚠ $PROFILE_DIR 디렉토리 없음" >&2

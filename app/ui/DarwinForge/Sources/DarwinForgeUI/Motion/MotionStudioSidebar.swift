@@ -234,7 +234,11 @@ struct MotionStudioSidebar: View {
 
             // V280-D — 고급 AI 모션 합성기 진입점 (orphan 해소).
             // 위쪽 한 줄 heuristic 빌더 외에, 카탈로그 합성·검증 UI 노출.
+            // App Store 빌드(§4)에서는 숨김 — Synth 는 forge-cli(cargo) 자식
+            // 프로세스 의존이라 리뷰어 샌드박스에서 확정 실패(가이드라인 2.1).
+            #if !APPSTORE
             advancedSynthEntryButton
+            #endif
         }
     }
 
