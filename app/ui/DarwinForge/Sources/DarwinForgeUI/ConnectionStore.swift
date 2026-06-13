@@ -2142,6 +2142,16 @@ public final class ConnectionStore: ObservableObject {
         return NetworkProbe.localIPv4Addresses().first { $0.hasPrefix(prefix) }
     }
 
+    /// **A4** — Equatable @Published 값을 *실제로 바뀐 경우에만* 재대입한다.
+    ///
+    /// 비유: 게시판에 같은 공지를 또 붙이지 않는다 — 내용이 바뀌었을 때만 새로 붙인다. 30Hz
+    /// 텔레메트리에서 frame-to-frame 동일 값을 매번 재대입하면 SwiftUI 가 view graph 를 헛돌려
+    /// (`objectWillChange` 발화 → onChange/overlay 재평가) 레이턴시를 낭비한다. 같으면 건드리지
+    /// 않아 불필요한 publish 를 막는다(immutable — 새 값을 만들어 넘기고, 같을 때만 무시).
+    private func setIfChanged<T: Equatable>(_ target: inout T, to newValue: T) {
+        if target != newValue { target = newValue }
+    }
+
     /// onboard 샘플 1개를 기존 파이프라인에 주입 — HUD + L0/L3 게이트 동작 (contract §D.3 PINNED).
     ///
     /// 규칙:
@@ -2171,17 +2181,21 @@ public final class ConnectionStore: ObservableObject {
         diagnoseImuScale(imu)                     // 1g 중력 sanity.
         // voltage 미상이면 직전 board 유지 — L0 voltage 게이트가 0V 로 false-trip 안 하게.
         let board = sample.toBoardSnapshot() ?? lastTelemetry?.board
-        lastTelemetry = TelemetrySnapshot(board: board, joints: [:], imu: imu)
+        // **A4** — 값이 실제로 바뀐 경우에만 @Published 재대입(setIfChanged). 30Hz TEL2 스트림에서
+        // board/imu 가 frame-to-frame 동일하면 view graph 재평가를 건너뛴다(레이턴시 절약).
+        setIfChanged(&lastTelemetry, to: TelemetrySnapshot(board: board, joints: [:], imu: imu))
         // codex HIGH fix: 로봇 낙상 표면화 + 재낙상 루프 차단 (아래 helper).
         updateOnboardFallen(sample.fallen)
         // **O4** — TEL2(v2)면 디지털 트윈 정합: 래치/위상/소스 노출 + FSR 오버레이 주입.
         //   (v1 라인은 isTel2=false → onboardLatch/FSR 미갱신, 종전 동작 보존.)
         if sample.isTel2 {
-            onboardLatch = OnboardLatchSnapshot(
+            // **A4** — `OnboardLatchSnapshot.==` 는 `at`(Date) 을 제외하므로, 래치값이 동일하면
+            // ts/at 만 전진해도 identity 가 churn 하지 않는다(onChange/overlay 불필요 재발화 차단).
+            setIfChanged(&onboardLatch, to: OnboardLatchSnapshot(
                 phase: sample.phase, seqApplied: sample.seqApplied,
                 strideMm: sample.latStrideMm ?? 0, sideMm: sample.latSideMm ?? 0,
                 turnDeg: sample.latTurnDeg ?? 0, periodMs: sample.latPeriodMs ?? 0,
-                activeSource: sample.activeSource, at: Date())
+                activeSource: sample.activeSource, at: Date()))
             ingestOnboardFsr(sample)
         }
         if telemetryMode != .onboard { telemetryMode = .onboard }

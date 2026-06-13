@@ -82,6 +82,11 @@ public struct PilotCockpitView: View {
     /// 본 cockpit 화면에서 명령을 보낼 수 있다.
     @Environment(WalkLabSession.self) private var session
     @StateObject private var cockpit = CockpitState()
+    /// **A3** — 유선 재프로브 모니터. 백그라운드 `WalkLabOnboardBridge` 가 ~5s 주기로 tick 해
+    /// "유선 전환(166x)" 제안을 갱신하고, 본 view 가 그 `state` 를 읽어 dismissible 배너를 띄운다.
+    /// 전환 동작은 배너에서 *주입* 한다(모니터는 host setter 를 보유하지 않음 — probe-and-prompt).
+    @StateObject private var reprobeMonitor = WiredReprobeMonitor()
+    @EnvironmentObject private var remoteShell: RemoteShell
     @State private var watcher: CockpitGameControllerWatcher?
     @State private var keyboardMonitor: CockpitKeyboardMonitor?
     @FocusState private var keyboardFocused: Bool
@@ -146,6 +151,10 @@ public struct PilotCockpitView: View {
             cockpitContent
         }
         .overlay(alignment: .topTrailing) { controllerSettingsButton }
+        // **A3** — 유선 재프로브 배너. 무선 경로 중 유선(123.1:22)이 살아있으면 "유선 전환(166x)"
+        // 을 *제안*만 한다(자동 전환 X). 사용자가 "전환" 을 누르면 주입된 closure 가 host 를 유선으로
+        // 바꿔 onboard 텔레메트리를 빠른 경로로 재연결한다(브리지의 remoteShell.host onChange 가 처리).
+        .overlay(alignment: .top) { wiredReprobeBanner }
         // **O4** — 온보드 TEL2 가 있을 때만 "명령 vs 래치값" 마이크로 인디케이터(래칭 지연 가시화).
         .overlay(alignment: .bottomLeading) {
             if let latch = store.onboardLatch {
@@ -301,7 +310,7 @@ public struct PilotCockpitView: View {
         // 업링크 lifecycle(remoteShellRef/poller) + walklab 모드 검증을 소유한다.
         // 종전: 브리지가 WalkLabView 에만 있어 콕핏 조종 중엔 onboard 전송·텔레메트리·
         // e-stop(remoteShellRef nil)이 전부 dead 였음.
-        .background(WalkLabOnboardBridge(session: session))
+        .background(WalkLabOnboardBridge(session: session, reprobeMonitor: reprobeMonitor))
         .accessibilityIdentifier("cockpit.root")
     }
 
@@ -405,6 +414,51 @@ public struct PilotCockpitView: View {
             .overlay(alignment: .bottom) {
                 bottomBar(layout: layout).padding(.bottom, layout.outerPadding)
             }
+    }
+
+    // MARK: - A3 유선 재프로브 배너 (probe-and-prompt)
+
+    /// **A3** — 무선 경로 중 유선(123.1)이 살아있을 때 "유선 전환(166x)" 을 *제안*하는 dismissible
+    /// 배너. 모니터(`reprobeMonitor`)는 host setter 를 보유하지 않으므로, 전환 동작을 여기서 *주입*
+    /// 한다(probe-and-prompt 불변식). [전환] = 주입된 closure 1회 발동, [✕] = 제안만 닫음.
+    @ViewBuilder
+    private var wiredReprobeBanner: some View {
+        if case let .offerWired(target) = reprobeMonitor.state {
+            HStack(spacing: 10) {
+                Image(systemName: "cable.connector.horizontal")
+                    .font(.system(size: 12, weight: .bold))
+                Text("유선 전환 (166x) — \(target)")
+                    .font(.system(size: CockpitMetrics.bannerText, weight: .heavy,
+                                  design: .monospaced))
+                Button("전환") {
+                    // 주입된 전환 동작 — 모니터는 host 를 직접 건드리지 않는다. host 를 유선으로
+                    // 바꾸면 브리지의 remoteShell.host onChange 가 onboard 텔레메트리를 재연결.
+                    reprobeMonitor.accept {
+                        remoteShell.host = WiredReprobeMonitor.wiredTarget
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(CockpitColors.live)
+                Button {
+                    reprobeMonitor.dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.black.opacity(0.6))
+                .accessibilityLabel("유선 전환 배너 닫기")
+            }
+            .foregroundStyle(.black)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(CockpitColors.cyan, in: Capsule())
+            .shadow(color: CockpitColors.cyan.opacity(0.45), radius: 8, x: 0, y: 2)
+            .padding(.top, 10)
+            .accessibilityIdentifier("cockpit.wiredReprobeBanner")
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
     }
 
     // MARK: - SIM banner (floating top-center)

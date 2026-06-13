@@ -32,6 +32,29 @@ public struct OnboardLatchSnapshot: Equatable, Sendable {
         guard let p = phase, p >= 0 else { return nil }
         return Double(((p % 4) + 4) % 4) / 4.0
     }
+
+    // MARK: - Equatable (A4 — Date 제외 변경 게이팅)
+
+    /// **A4 (2026-06-14)** — `at: Date` 을 **제외**한 손작성 Equatable.
+    ///
+    /// 비유: 엽서의 "찍힌 시각"은 무시하고 "적힌 내용"만 비교한다. 매 TEL2 샘플마다 `at` 은
+    /// 항상 새 시각이라, 합성 `==` 였다면 값이 동일해도 매번 != → @Published `onboardLatch` 가
+    /// 끝없이 churn → SwiftUI onChange/overlay 가 불필요하게 재발화(레이턴시 낭비). 여기서
+    /// `at` 만 빼고 나머지 *모든* 값 필드를 비교해, "실제 래치값 변화" 에만 게이트가 열린다.
+    ///
+    /// 주의(불변식): `at` 저장 프로퍼티와 initializer 는 그대로 둔다 — staleness 시계는
+    /// ConnectionStore 의 `lastOnboardFreshAt` 가 별도로 관리(snapshot identity 와 무관).
+    /// 필드를 추가하면 **반드시 이 비교에도 추가**해야 한다(과소-붕괴 방지, 테스트가 강제).
+    public static func == (lhs: OnboardLatchSnapshot, rhs: OnboardLatchSnapshot) -> Bool {
+        lhs.phase == rhs.phase
+            && lhs.seqApplied == rhs.seqApplied
+            && lhs.strideMm == rhs.strideMm
+            && lhs.sideMm == rhs.sideMm
+            && lhs.turnDeg == rhs.turnDeg
+            && lhs.periodMs == rhs.periodMs
+            && lhs.activeSource == rhs.activeSource
+        // `at` 은 의도적으로 제외 — 위 doc 참조.
+    }
 }
 
 /// SSH 온보드 경로의 robot→Mac 텔레메트리 한 줄을 표현하는 불변(immutable) 값.

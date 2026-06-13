@@ -11,6 +11,10 @@ import Combine
 /// - deadline polling 1.5s (sleep 0.25 보다 robust)
 struct WalkLabOnboardBridge: View {
     var session: WalkLabSession
+    /// **A3** — 유선 재프로브 모니터(옵셔널). 콕핏이 소유한 인스턴스를 주입하면, onboard 세션이
+    /// 활성인 동안 이 브리지가 ~5s 주기로 `tick` 을 돌려 "유선 전환" 제안을 갱신한다. nil 이면
+    /// (예: WalkLabView 경유) 재프로브를 돌리지 않는다 — 배너는 콕핏 화면 전용.
+    var reprobeMonitor: WiredReprobeMonitor? = nil
     @EnvironmentObject private var remoteShell: RemoteShell
     /// SSH↔LAN parity (2026-06-01): onboard telemetry 업링크 + e-stop 의 lifecycle 을
     /// 소유한다. 종전: `startOnboardTelemetry` 호출부가 없어 poller 가 안 켜지고
@@ -94,6 +98,24 @@ struct WalkLabOnboardBridge: View {
             .onAppear { syncOnboardLifecycle() }
             .onDisappear { store.stopOnboardTelemetry() }
             .task { await streamLoop() }
+            .task { await reprobeLoop() }
+    }
+
+    /// **A3** — onboard 세션이 활성인 동안 ~5s 주기로 유선 재프로브 모니터를 tick.
+    ///
+    /// 무선(192.168.0.33) 으로 텔레메트리가 흐를 때 유선(192.168.123.1) 이 살아있는지 확인해
+    /// "유선 전환(166x)" 배너를 *제안만* 한다(전환은 사용자 클릭). monitor 미주입 시 no-op.
+    /// onboard 모드가 아니거나 host 미설정이면 제안을 닫는다(monitor.tick 이 idle 처리).
+    private func reprobeLoop() async {
+        guard let monitor = reprobeMonitor else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if Task.isCancelled { return }
+            let host = remoteShell.host.trimmingCharacters(in: .whitespacesAndNewlines)
+            // onboard 세션이 아니거나 host 미설정 → 무선 후보 아님 → tick 이 idle 로 닫는다.
+            let onboardActive = session.walkingEngine == .robotisOnboard && !host.isEmpty
+            await monitor.tick(currentHost: onboardActive ? host : "")
+        }
     }
 
     /// 연속 입력 스트리밍 — debounce(입력 정지 시 발사)는 머리 추종이 "한참 뒤"였다.
