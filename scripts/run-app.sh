@@ -109,7 +109,10 @@ EOF
 # 3b) ad-hoc 코드사인 + entitlements (audio-input 포함).
 #     마이크/음성 인식은 TCC 가 usage description + 서명을 요구 — 미서명 시 권한
 #     요청 순간 SIGABRT(TCC privacy violation)로 즉시 종료된다(2026-05-31 회귀).
-ENTITLEMENTS="$PKG/Sources/DarwinForgeApp/DarwinForge.entitlements"
+#     **실기 F9 (2026-06-12)**: 종전엔 공증용 DarwinForge.entitlements(app-sandbox=true)를
+#     부착 → 샌드박스가 ssh 키 접근·Application Support 를 차단해 연결 마법사(SSH 경로)가
+#     전면 불능 + harness 기록 침묵. 로컬 실행은 sandbox 없는 dev entitlements 사용.
+ENTITLEMENTS="$PKG/Sources/DarwinForgeApp/DarwinForge.dev.entitlements"
 if [[ -f "$ENTITLEMENTS" ]]; then
     codesign --force --deep --sign - --entitlements "$ENTITLEMENTS" --no-strict "$APP_PATH" \
         && echo "▶ ad-hoc 사인 + entitlements 첨부 완료"

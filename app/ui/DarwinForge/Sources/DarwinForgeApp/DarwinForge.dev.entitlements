@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ===== 로컬/개발 설치용 entitlements (실기 F9, 2026-06-12) ===== -->
+    <!-- DarwinForge.entitlements(공증용)는 app-sandbox=true 라 로컬 설치에 부착하면
+         ① ssh 자식 프로세스의 ~/.ssh 키 접근 차단 → SSH 온보드/원격 명령 전부 실패
+         ② Application Support 직접 경로 차단 → harness 기록 침묵 + 액션 예외
+         ③ scp/외부 도구 경로 차단
+         이 일어난다 (2026-06-12 실기 — 연결 마법사 전면 불능 재현·확정).
+         로컬 설치는 sandbox 없이 TCC 항목(마이크·음성)만 선언한다. -->
+
+    <!-- Voice — SFSpeechRecognizer + audio input (TCC 는 서명에 entitlements 필요) -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>
