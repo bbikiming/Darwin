@@ -139,14 +139,20 @@
 </div>
 
 <script>
-  // ── Tauri 글로벌 API (없으면 no-op) ──────────────────────────────────────
-  const TAURI = window.__TAURI__ || null;
-  const invoke = (cmd, args) => TAURI ? TAURI.core.invoke(cmd, args) : Promise.resolve(console.log("[no-tauri] invoke", cmd, args));
-  // 구독 레지스트리 — Tauri 모드는 실제 이벤트로, no-tauri 미리보기는 emitLocal 로 구동.
+  // ── Tauri 글로벌 API ─────────────────────────────────────────────────────
+  // window.__TAURI__ 는 WebView2 에서 인라인 스크립트보다 **늦게** 주입될 수 있다
+  // (tauri#12990). 그래서 시점 캡처(const TAURI=…)는 영구 null 위험 → 호출 시점 지연
+  // 평가(getTauri)로, 리스너 배선은 글로벌이 뜬 뒤(setup, load+폴)로 미룬다.
+  const getTauri = () => window.__TAURI__ || null;
+  const invoke = (cmd, args) => {
+    const t = getTauri();
+    return t ? t.core.invoke(cmd, args) : Promise.resolve(console.log("[no-tauri] invoke", cmd, args));
+  };
+  // 구독 레지스트리 — listen 은 핸들러를 등록만 하고, 실제 Tauri 이벤트 배선은 setup 에서
+  // (글로벌 가용 후) 한 번에. no-tauri 미리보기는 emitLocal 로 구동.
   const subs = {};
   function listen(evt, cb) {
     (subs[evt] = subs[evt] || []).push(cb);
-    if (TAURI) TAURI.event.listen(evt, e => cb(e.payload));
   }
   const emitLocal = (evt, payload) => (subs[evt] || []).forEach(cb => cb(payload));
 
@@ -156,7 +162,31 @@
   const $ = id => document.getElementById(id);
   const fmt = (v, d = 1) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
 
-  function cmdConnect(prefer) { scene("connecting"); invoke("connect", { prefer }); }
+  // ── 진단 오버레이 (헤드리스 디버그용) ────────────────────────────────────
+  function dbg(msg) {
+    let d = document.getElementById("__dbg");
+    if (!d) {
+      d = document.createElement("div");
+      d.id = "__dbg";
+      d.style.cssText = "position:fixed;left:0;bottom:0;right:0;max-height:45%;overflow:auto;background:rgba(0,0,0,.9);color:#5f5;font:12px monospace;padding:8px;z-index:99999;white-space:pre-wrap;border-top:2px solid #5f5";
+      (document.body || document.documentElement).appendChild(d);
+    }
+    d.textContent += msg + "\n";
+    d.scrollTop = d.scrollHeight;
+  }
+  window.addEventListener("error", (e) => dbg("‼ JS 에러: " + e.message + " @" + e.lineno));
+
+  function cmdConnect(prefer) {
+    dbg("▶ 버튼 connect(" + prefer + ") 눌림");
+    scene("connecting");
+    try {
+      Promise.resolve(invoke("connect", { prefer }))
+        .then(() => dbg("✓ invoke('connect') OK — 런타임 기동됨"))
+        .catch((e) => dbg("✗ invoke('connect') 거부: " + (e && e.message ? e.message : JSON.stringify(e))));
+    } catch (e) {
+      dbg("✗ invoke 호출 예외: " + (e && e.message ? e.message : e));
+    }
+  }
   function cmdTouchEstop() { invoke("touch_estop"); }
 
   // ── state 이벤트(30Hz) → HUD ────────────────────────────────────────────
@@ -220,9 +250,8 @@
     $("rt").style.width = (v.rt * 100) + "%";
   });
 
-  // Tauri 밖(브라우저)에서 열면 합성 데이터로 콕핏을 미리보기(디자인 검토용).
-  // 실제 콕핏은 Rust 런타임의 state/stick 이벤트로만 구동된다(이 블록은 no-tauri 전용).
-  if (!TAURI) {
+  // 합성 미리보기(no-tauri 전용) — setup 이 글로벌 부재를 확정했을 때만 켠다.
+  function startDemo() {
     console.log("DARwIn FPV — Tauri 런타임 없음(표시 미리보기 모드).");
     let k = 0;
     setInterval(() => {
@@ -246,6 +275,29 @@
       });
     }, 250);
   }
+
+  // setup — 글로벌이 뜬 뒤 실제 Tauri 이벤트를 subs 핸들러로 배선(없으면 미리보기).
+  function setup() {
+    const t = getTauri();
+    dbg("boot: TAURI=" + (t
+      ? "OK keys=[" + Object.keys(t).join(",") + "]" +
+        (t.core && t.core.invoke ? " core.invoke=ok" : " core.invoke=MISSING") +
+        (t.event && t.event.listen ? " event.listen=ok" : " event.listen=MISSING")
+      : "NULL (preview 모드 — __TAURI__ 미주입)"));
+    if (t && t.event && t.event.listen) {
+      for (const evt of Object.keys(subs)) {
+        t.event.listen(evt, e => emitLocal(evt, e.payload));
+      }
+    } else {
+      startDemo();
+    }
+  }
+
+  // WebView2 주입 레이스(tauri#12990) 흡수 — 글로벌이 뜰 때까지 50ms×최대 40회(~2s) 폴 후 setup.
+  (function waitTauri(tries) {
+    if (getTauri() || tries <= 0) setup();
+    else setTimeout(() => waitTauri(tries - 1), 50);
+  })(40);
 </script>
 </body>
 </html>
