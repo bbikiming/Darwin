@@ -335,7 +335,10 @@ fn connect(args: &[String]) -> io::Result<()> {
         let deadline = start + tick_dur * (seq as u32); // 데드라인 스케줄(드리프트 방지)
         let line = build_line(&gen_cmd_id(), &cfg, &MotionCommand::zero());
 
-        match decide_transport(last_ack_ms.map(|t| now_ms - t)) {
+        // 시작 유예: 첫 ACK 전엔 age = 세션 시작 후 경과(now_ms). decide_transport(None)
+        // →SshFile 함정 회피 — 시작부터 ACK_PROBE_MS 동안 UDP 를 시도하고 그 이후의
+        // 침묵만 폴백으로 본다(없으면 tick1 에 핸드셰이크 철회·eff_hz 0 으로 게이트 오탈락).
+        match decide_transport(Some(last_ack_ms.map_or(now_ms, |t| now_ms - t))) {
             Transport::Udp => {
                 if let Err(e) = tx.send_cmd(seq, &line) {
                     eprintln!("⚠ UDP 송신 실패(seq {seq}): {e}"); // 한 발 손실 — 계속.
@@ -377,7 +380,7 @@ fn connect(args: &[String]) -> io::Result<()> {
 
     let final_ms = start.elapsed().as_millis() as i64;
     let eff_hz = eff.rate(final_ms);
-    let transport = decide_transport(last_ack_ms.map(|t| final_ms - t));
+    let transport = decide_transport(Some(last_ack_ms.map_or(final_ms, |t| final_ms - t)));
     println!(
         "  메트릭 — 전송 {} · eff_hz {:.1} · rtt {} ms · TEL2 {}",
         transport.as_str(),
