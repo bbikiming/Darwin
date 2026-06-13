@@ -28,10 +28,44 @@ final class ExternalControllerAdapterTests: XCTestCase {
         func toggleBallTracking() async { ballTrackCalls += 1 }
     }
 
+    /// A bridge whose `streamWalk` actually SUSPENDS (yields) before recording,
+    /// while `releaseWalk` records immediately. With the old design (one unstructured
+    /// `Task` per dispatch) the release Task — which never suspends — finishes BEFORE
+    /// the still-suspended move Tasks resume, so `.release` lands before `.move`
+    /// (the reorder bug). A strictly-serial FIFO channel must await each move to
+    /// completion before the release runs, so `.release` is always last.
+    final class SuspendingSpyBridge: RemoteControlBridge {
+        enum Event: Equatable { case move, release, recover, ballTrack }
+        var events: [Event] = []
+
+        func streamWalk(_ input: WalkFreeformInput) async {
+            // Suspend a couple of times so an out-of-order release has a window
+            // to overtake an in-flight move under a non-serialized dispatcher.
+            await Task.yield()
+            await Task.yield()
+            events.append(.move)
+        }
+        func releaseWalk() async { events.append(.release) }
+        func performEStop() async {}
+        func performRecover() async { events.append(.recover) }
+        func toggleBallTracking() async { events.append(.ballTrack) }
+    }
+
     private func waitForBridgeTasks() async {
-        // Bridge calls are dispatched on Tasks. Yield twice to let them run.
-        await Task.yield()
-        await Task.yield()
+        // Bridge calls drain through the adapter's single serial consumer Task.
+        // Yield generously so a small buffer (a held stick can queue ~10 frames)
+        // fully drains; all current tests buffer well under this bound.
+        for _ in 0..<32 { await Task.yield() }
+    }
+
+    /// Cooperatively yield until `condition` holds (or a safety bound is hit), so a
+    /// suspending bridge's serial consumer can fully drain without timer-based sleeps.
+    private func yieldUntil(_ condition: () -> Bool, max: Int = 5_000) async {
+        var i = 0
+        while !condition() && i < max {
+            await Task.yield()
+            i += 1
+        }
     }
 
     // MARK: - Sticks
@@ -124,6 +158,43 @@ final class ExternalControllerAdapterTests: XCTestCase {
 
         XCTAssertEqual(bridge.releaseCalls, 1,
             "release fires exactly once even inside an open throttle window (stop never gated)")
+    }
+
+    /// W1b(a) REORDER FIX (HIGH): rapid moves followed by a release must reach the
+    /// bridge strictly FIFO — the release can NEVER be delivered before a still-in-
+    /// flight move (which would leave the robot walking until the 500ms heartbeat).
+    /// The bridge here genuinely suspends inside `streamWalk`, the exact condition
+    /// under which independent unstructured Tasks reorder. Asserts the release is the
+    /// LAST event and fires exactly once, with every move ahead of it.
+    func test_release_is_delivered_after_in_flight_moves_under_suspending_bridge() async {
+        let bridge = SuspendingSpyBridge()
+        let source = MockExternalController()
+        var clock = 0.0
+        let adapter = ExternalControllerAdapter(bridge: bridge, source: source, now: { clock })
+
+        // Five rapid moves — advance the clock well past the 100ms throttle window
+        // each poll (a full second, no float-boundary ambiguity) so every move is
+        // enqueued (not coalesced), then centre → release.
+        for _ in 0..<5 {
+            source.setSticks(leftY: +1)
+            clock += 1.0
+            adapter.pollOnce()
+        }
+        source.reset()
+        adapter.pollOnce()   // release, enqueued immediately after the last move
+
+        // Drain until all six events have landed (5 moves + 1 release).
+        await yieldUntil { bridge.events.count >= 6 }
+
+        XCTAssertEqual(bridge.events.last, .release,
+            "release must be delivered AFTER its preceding move frames (strict FIFO)")
+        XCTAssertEqual(bridge.events.filter { $0 == .release }.count, 1,
+            "release fires exactly once")
+        let releaseIndex = bridge.events.firstIndex(of: .release)
+        XCTAssertEqual(releaseIndex, bridge.events.count - 1,
+            "no move is delivered after the release")
+        XCTAssertEqual(bridge.events.prefix(5), [.move, .move, .move, .move, .move],
+            "all five moves precede the release, in order")
     }
 
     // MARK: - Buttons

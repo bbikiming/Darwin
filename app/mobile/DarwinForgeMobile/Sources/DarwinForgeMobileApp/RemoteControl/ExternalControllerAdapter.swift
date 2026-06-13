@@ -56,12 +56,40 @@ public final class ExternalControllerAdapter: ObservableObject {
     /// the ~5Hz robot dispatch). Polling stays 30Hz (button/E-STOP edges must not
     /// be slowed); only the velocity stream is downsampled. The release/stop path
     /// (`processSticks` else-branch) does NOT go through the throttle — it calls
-    /// `reset()` + `releaseWalk()` directly, so a stop is never gated.
+    /// `reset()` and enqueues `releaseWalk` un-gated, so a stop is never throttled
+    /// (it is still FIFO-ordered behind its preceding moves via the command channel).
     private var walkThrottle = WalkFrameThrottle(intervalSeconds: 0.1)
     /// Monotonic clock for the throttle — injectable for deterministic tests.
     /// Non-Sendable + called only on the MainActor-isolated adapter, so a test can
     /// inject a closure over a mutable clock var without a data race.
     private let now: () -> TimeInterval
+
+    // MARK: - Serial bridge dispatch (W1b(a) reorder fix)
+
+    /// One serialized command the adapter forwards to the bridge. E-STOP is *not*
+    /// modelled here — it keeps its own immediate path (panic input must never queue
+    /// behind walk frames).
+    private enum BridgeCommand: Sendable {
+        case streamWalk(WalkFreeformInput)
+        case releaseWalk
+        case recover
+        case toggleBallTracking
+    }
+
+    /// FIFO channel for every non-E-STOP bridge call. Each dispatch was previously an
+    /// independent unstructured `Task { await bridge.… }`; because those Tasks are not
+    /// serialized, under `await` suspension *inside* the bridge their delivery order is
+    /// not guaranteed to match enqueue order — a `releaseWalk` could overtake a still-
+    /// in-flight final `streamWalk`, leaving the robot walking after the user centred
+    /// the stick (until the 500ms heartbeat watchdog catches it). The ~10Hz throttle
+    /// widened that window by making the moving stream sparse while releases stayed
+    /// immediate. Routing every dispatch through one channel drained by a single long-
+    /// lived consumer makes frames reach the bridge strictly in enqueue order, so a
+    /// release always follows its preceding move frames.
+    private let commandContinuation: AsyncStream<BridgeCommand>.Continuation
+    /// The single consumer draining `commandContinuation` in order. Lives for the whole
+    /// adapter lifetime (independent of start/stop) so start→stop→start re-uses it.
+    private var commandConsumer: Task<Void, Never>?
 
     // MARK: - Init
 
@@ -73,6 +101,24 @@ public final class ExternalControllerAdapter: ObservableObject {
         self.bridge = bridge
         self.source = source
         self.now = now
+
+        // Unbounded FIFO so a release is never dropped by a buffering policy; the
+        // ~10Hz throttle already bounds the moving-frame rate and `streamWalk` is
+        // fire-and-forget on the bridge, so the buffer stays shallow in practice.
+        let (stream, continuation) = AsyncStream<BridgeCommand>.makeStream()
+        self.commandContinuation = continuation
+        self.commandConsumer = nil   // finish stored-property init before capturing self
+
+        self.commandConsumer = Task { @MainActor [weak self] in
+            for await command in stream {
+                await self?.dispatch(command)
+            }
+        }
+    }
+
+    deinit {
+        commandContinuation.finish()   // ends the for-await loop → consumer completes
+        commandConsumer?.cancel()
     }
 
     // MARK: - Lifecycle
@@ -101,9 +147,10 @@ public final class ExternalControllerAdapter: ObservableObject {
         previousButtons = .init()
         previousStickWasZero = true
         if shouldRelease {
-            Task { @MainActor [weak bridge] in
-                await bridge?.releaseWalk()
-            }
+            // Through the serial channel so this teardown release still follows any
+            // frames already queued ahead of it (and re-arm the throttle).
+            walkThrottle.reset()
+            enqueue(.releaseWalk)
         }
     }
 
@@ -126,11 +173,10 @@ public final class ExternalControllerAdapter: ObservableObject {
         if emergencyFired { return }
 
         // 2. Sticks → freeform walk.
-        processSticks(snapshot.sticks, bridge: bridge)
+        processSticks(snapshot.sticks)
     }
 
-    private func processSticks(_ sticks: ExternalControllerStickState,
-                               bridge: RemoteControlBridge) {
+    private func processSticks(_ sticks: ExternalControllerStickState) {
         let snapshot = ExternalControllerSnapshot(
             controllerName: connectedControllerName,
             sticks: sticks,
@@ -140,19 +186,16 @@ public final class ExternalControllerAdapter: ObservableObject {
             // W1b(a): downsample the moving stream to ~10Hz latest-wins. Within the
             // window the freshest poll wins and intermediates are dropped (not queued).
             if let throttled = walkThrottle.offer(input, now: now()) {
-                Task { @MainActor [weak bridge] in
-                    await bridge?.streamWalk(throttled)
-                }
+                enqueue(.streamWalk(throttled))
                 lastActionLabel = "stick move"
             }
             previousStickWasZero = false
         } else if !previousStickWasZero {
             // Release re-arms the throttle so the next move emits promptly, and is
-            // itself never throttled (stop must not be delayed).
+            // itself never throttled (stop must not be delayed). It enters the SAME
+            // FIFO channel as the moves, so it is always delivered after them.
             walkThrottle.reset()
-            Task { @MainActor [weak bridge] in
-                await bridge?.releaseWalk()
-            }
+            enqueue(.releaseWalk)
             lastActionLabel = "stick release"
             previousStickWasZero = true
         }
@@ -161,25 +204,49 @@ public final class ExternalControllerAdapter: ObservableObject {
     @discardableResult
     private func processButtons(_ buttons: ExternalControllerButtonState,
                                 bridge: RemoteControlBridge) -> Bool {
-        // Emergency first — exclusive.
+        // Emergency first — exclusive. E-STOP keeps its own IMMEDIATE path (never the
+        // FIFO channel) so a panic input can never queue behind walk frames. The Mac
+        // side disarms on E-STOP, so any move still draining the channel afterwards is
+        // a no-op (`streamWalk` early-returns when not armed).
         if buttons.emergencyStop && !previousButtons.emergencyStop {
             Task { @MainActor [weak bridge] in await bridge?.performEStop() }
             lastActionLabel = "emergency stop"
             return true
         }
         if buttons.recover && !previousButtons.recover {
-            Task { @MainActor [weak bridge] in await bridge?.performRecover() }
+            enqueue(.recover)
             lastActionLabel = "recover"
         }
         if buttons.stopMotion && !previousButtons.stopMotion {
-            Task { @MainActor [weak bridge] in await bridge?.releaseWalk() }
+            enqueue(.releaseWalk)
             lastActionLabel = "stop motion"
         }
         // 볼 트래킹 (2026-06-02): X 버튼 엣지 → 로봇 온보드 헤드 추적 on/off 토글.
         if buttons.ballTrackToggle && !previousButtons.ballTrackToggle {
-            Task { @MainActor [weak bridge] in await bridge?.toggleBallTracking() }
+            enqueue(.toggleBallTracking)
             lastActionLabel = "ball track toggle"
         }
         return false
+    }
+
+    // MARK: - Serial dispatch plumbing
+
+    /// Enqueue a command for the single FIFO consumer. Unbounded, so nothing is
+    /// dropped; ordering is enqueue order.
+    private func enqueue(_ command: BridgeCommand) {
+        commandContinuation.yield(command)
+    }
+
+    /// Runs on the consumer Task, one command at a time. Reads `bridge` weakly at
+    /// execution (same nil-if-gone semantics as the old `[weak bridge]` capture) and
+    /// awaits each call to completion before the next command is pulled.
+    private func dispatch(_ command: BridgeCommand) async {
+        guard let bridge else { return }
+        switch command {
+        case .streamWalk(let input): await bridge.streamWalk(input)
+        case .releaseWalk:           await bridge.releaseWalk()
+        case .recover:               await bridge.performRecover()
+        case .toggleBallTracking:    await bridge.toggleBallTracking()
+        }
     }
 }
