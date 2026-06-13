@@ -20,6 +20,7 @@ ROG Ally(Windows 11 핸드헬드)에서 DARwIn-OP2 를 **라이브 카메라를 
 | [docs/02_UIUX_DESIGN.md](docs/02_UIUX_DESIGN.md) | UX/UI 설계 — 시뮬레이터 게임 레퍼런스·토큰·화면맵·HUD·UX 라이팅 |
 | [docs/03_ARCHITECTURE.md](docs/03_ARCHITECTURE.md) | 기술 아키텍처 — 스레드 모델·Rust⇄UI 계약·세션 시퀀스·안전 계층 |
 | [docs/04_ACCEPTANCE_ROADMAP.md](docs/04_ACCEPTANCE_ROADMAP.md) | 웨이브 로드맵(W0~W4)·실기 게이트·장애 주입 매트릭스 |
+| [docs/05_ALLY_DEV_SETUP.md](docs/05_ALLY_DEV_SETUP.md) | Ally 개발 환경 세팅·파일 전달(GitHub/microSD bundle)·Mac 원격 체크 |
 
 ## 구조
 
@@ -33,7 +34,8 @@ crates/
   darwin-fpv/  Tauri 앱 (워크스페이스 멤버 등록은 W1) — W2
 ui/            웹 프론트 (Switch 웹 콕핏 자산 1080p 스케일업) — W2
 assets/        darwin.glb 등 (출처: tools/switch-pilot/web/assets) — W3
-scripts/       골든 벡터 생성기 · Windows 빌드/패키징
+scripts/       골든 벡터 생성기 · Ally 부트스트랩(ally-bootstrap.ps1) ·
+               SD 번들 생성(make-sd-bundle.sh) · Windows 빌드/패키징
 ```
 
 ## 빌드·테스트
