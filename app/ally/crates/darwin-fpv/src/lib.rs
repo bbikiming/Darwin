@@ -25,12 +25,14 @@
 
 pub mod estop;
 pub mod event;
+pub mod runtime;
 pub mod state;
 pub mod supervisor;
 pub mod tx;
 
 pub use estop::{EstopBus, EstopCause, EstopEvent};
 pub use event::{EventSink, NullSink};
+pub use runtime::{Endpoint, Runtime, RuntimeConfig};
 pub use state::{ConnPath, ConnState, ConnTransport, Snapshot, StateHub};
 pub use supervisor::Heartbeat;
 pub use tx::{TxOutcome, TxPipeline};
