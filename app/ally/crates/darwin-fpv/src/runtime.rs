@@ -18,7 +18,7 @@
 
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::mpsc::RecvTimeoutError;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -47,6 +47,18 @@ pub enum Endpoint {
     },
     /// 헤드리스 셀프체크: 루프백 에코 로봇(127.0.0.1:port). SSH 미기동, UDP만.
     Loopback { host: String, cmd_port: u16, estop_port: u16 },
+}
+
+/// ssh-session 워커로 보내는 블로킹 SSH 부수효과 작업. 제어 TX·E-STOP 스레드는 이걸
+/// 채널로 비차단 송신만 하고, 워커가 자기 속도로 실행한다 — 핫패스가 SSH 지연에 막히지
+/// 않게(워치독 오발 E-STOP·정지 버스트 직렬 지연 방지).
+enum SshJob {
+    /// 폴백 명령 파일 기록(5Hz). 워커가 버스트를 최신승으로 합쳐 스테일 프레임은 버린다.
+    Cmd(String),
+    /// 복구 — 로봇 estop flag 제거(rm).
+    Recover,
+    /// E-STOP 병행 경로 — `touch /tmp/df-walklab-estop`(빠른 UDP 버스트와 별개로).
+    EstopTouch,
 }
 
 /// 런타임 설정.
@@ -152,6 +164,23 @@ impl Runtime {
         let last_ack = Arc::new(AtomicI64::new(0));
         let mut threads: Vec<JoinHandle<()>> = Vec::new();
 
+        // ── ssh-session: 블로킹 SSH 부수효과(폴백 cmd 파일·복구 rm·estop touch)를 제어
+        //    스레드 밖에서 처리. 제어 TX 의 20Hz 하트비트와 E-STOP 의 빠른 UDP 버스트가
+        //    SSH 지연(무선 OpenSSH 5.9, ControlMaster off)에 막히지 않게 한다 — 안 그러면
+        //    느린 SSH 가 하트비트를 정체시켜 수퍼바이저가 오발 TxStall E-STOP 을 던지거나
+        //    후속 정지 버스트를 직렬 지연시킨다. Robot 만 기동. §2 "SSH 세션 스레드".
+        let ssh_jobs: Option<Sender<SshJob>> = if let Some(c) = &ssh {
+            let (job_tx, job_rx) = std::sync::mpsc::channel::<SshJob>();
+            let worker_ssh = c.clone();
+            let worker_stop = stop.clone();
+            threads.push(spawn_named("ssh-session", move || {
+                ssh_worker(worker_ssh, job_rx, worker_stop)
+            }));
+            Some(job_tx)
+        } else {
+            None
+        };
+
         // ── estop-fwd: 입력 무손실 B 채널 → estop 버스 ─────────────────────────
         {
             let bus = bus.clone();
@@ -177,7 +206,7 @@ impl Runtime {
             let stop = stop.clone();
             let hb = heartbeat.clone();
             let last_ack = last_ack.clone();
-            let ssh_tx = ssh.clone();
+            let ssh_jobs = ssh_jobs.clone();
             let sink = sink.clone();
             let tick = cfg.tick;
             threads.push(spawn_named("control-tx", move || {
@@ -211,17 +240,19 @@ impl Runtime {
                             let _ = udp.send_cmd(seq, &out.line);
                         }
                         Transport::SshFile => {
-                            if let (Some(c), true) = (&ssh_tx, seq.is_multiple_of(4)) {
-                                let _ = c.write_cmd_file(&out.line);
+                            // 비차단 위임 — 워커가 최신승으로 5Hz 기록(블로킹은 워커에서).
+                            if let (Some(j), true) = (&ssh_jobs, seq.is_multiple_of(4)) {
+                                let _ = j.send(SshJob::Cmd(out.line.clone()));
                             }
                         }
                     }
                     hb.beat(t);
 
-                    // 복구 발화 → 로봇 estop flag 제거(rm) — Robot 만.
+                    // 복구 발화 → 로봇 estop flag 제거(rm) — 비차단 위임(블로킹 SSH 가
+                    // 하트비트를 막아 오발 TxStall 로 복구를 되-래치시키지 않게).
                     if out.events.fire_recover {
-                        if let Some(c) = &ssh_tx {
-                            let _ = c.run(&format!("rm -f {ESTOP_PATH}"));
+                        if let Some(j) = &ssh_jobs {
+                            let _ = j.send(SshJob::Recover);
                         }
                     }
 
@@ -291,19 +322,20 @@ impl Runtime {
             }));
         }
 
-        // ── estop: 무손실 버스 수신 → UDP ×3연발 + SSH touch ───────────────────
+        // ── estop: 무손실 버스 수신 → UDP ×3연발(빠른 경로) + SSH touch 위임 ─────
         {
             let udp = udp.clone();
-            let ssh_es = ssh.clone();
+            let ssh_jobs = ssh_jobs.clone();
             let stop = stop.clone();
             let state = state.clone();
             threads.push(spawn_named("estop", move || loop {
                 match bus_rx.recv_timeout(Duration::from_millis(100)) {
                     Ok(_ev) => {
-                        if stop.load(Ordering::Relaxed) {
-                            break; // 정상 종료 중 — 발화 억제(클린 disconnect 가 estop 아님).
-                        }
-                        // §G.2: 0/50/100ms ×3 UDP + SSH touch(병행 경로).
+                        // 큐에 실린 건 전부 진짜 estop 이다 — 발원은 물리 B(estop-fwd)·
+                        // 패드단절·TX행(supervisor)뿐이고 클린 disconnect 는 버스에 안
+                        // 실린다. 그러니 종료 중이라도 대기 중 estop 은 발화한다(비유실).
+                        // §G.2: 0/50/100ms ×3 UDP(빠른 경로). SSH touch 는 ssh-session
+                        // 워커로 위임 — 직렬 블로킹이 후속 정지 버스트를 지연시키지 않게.
                         let es = Instant::now();
                         for off in ESTOP_BURST_OFFSETS_MS {
                             if let Some(w) = (es + Duration::from_millis(off))
@@ -313,8 +345,8 @@ impl Runtime {
                             }
                             let _ = udp.send_estop(now_ms());
                         }
-                        if let Some(c) = &ssh_es {
-                            let _ = c.touch_estop();
+                        if let Some(j) = &ssh_jobs {
+                            let _ = j.send(SshJob::EstopTouch);
                         }
                         state.write(|s| s.safety.estop_latched = true);
                     }
@@ -382,4 +414,44 @@ fn spawn_named(name: &str, f: impl FnOnce() + Send + 'static) -> JoinHandle<()> 
         .name(name.into())
         .spawn(f)
         .expect("스레드 생성 실패")
+}
+
+/// ssh-session 워커 — 블로킹 SSH 부수효과를 제어/E-STOP 스레드 밖에서 실행한다.
+/// 한 번에 대기 중 job 을 모아(버스트 합치기) **최신 Cmd 만** 기록하고(스테일 폴백
+/// 프레임은 버림·큐 무한 증가 방지), EstopTouch/Recover 는 안전 우선순위로 실행한다.
+/// stop 플래그로 종료(센서 채널 Disconnected 도 종료). SSH 가 수 초 막혀도 제어·정지
+/// 핫패스는 영향 없다 — 이 워커만 느려질 뿐.
+fn ssh_worker(ssh: Arc<SshClient>, rx: Receiver<SshJob>, stop: Arc<AtomicBool>) {
+    while !stop.load(Ordering::Relaxed) {
+        let first = match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(j) => j,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        // 대기 중 job 합치기: 최신 Cmd 만 남기고 touch/recover 는 OR.
+        let mut jobs = vec![first];
+        while let Ok(j) = rx.try_recv() {
+            jobs.push(j);
+        }
+        let mut latest_cmd: Option<String> = None;
+        let mut recover = false;
+        let mut touch = false;
+        for j in jobs {
+            match j {
+                SshJob::Cmd(l) => latest_cmd = Some(l),
+                SshJob::Recover => recover = true,
+                SshJob::EstopTouch => touch = true,
+            }
+        }
+        // 안전 우선: touch → recover → 최신 cmd.
+        if touch {
+            let _ = ssh.touch_estop();
+        }
+        if recover {
+            let _ = ssh.run(&format!("rm -f {ESTOP_PATH}"));
+        }
+        if let Some(l) = latest_cmd {
+            let _ = ssh.write_cmd_file(&l);
+        }
+    }
 }
