@@ -77,12 +77,27 @@ impl UdpControlTransport {
         self.sock.send_to(&dgram, (self.host.as_str(), self.estop_port))
     }
 
-    /// 데이터그램 1개 수신·분류. 타임아웃/무수신 → Ok(None).
+    /// 데이터그램 1개 수신·분류. 타임아웃/무수신/스테일 ICMP → Ok(None).
+    ///
+    /// `ConnectionReset`/`ConnectionRefused` 도 Ok(None) 으로 흡수한다 — df_udp.py 의
+    /// "send/receive 는 제어 루프에 예외를 던지지 않는다" 계약 패리티. **Windows 필수**:
+    /// 리스너 없는 포트로 보낸 직후의 다음 recv_from 은 ICMP Port-Unreachable 이
+    /// WSAECONNRESET 으로 올라온다. 로봇의 UDP 리스너는 핸드셰이크 채택(≤1s 스로틀)
+    /// 후 lazy-open 이라, 건강한 로봇에서도 핸드셰이크 정착 창에서 첫 DFCMD 들이
+    /// 리스너보다 먼저 도착해 이 오류를 유발한다 — 전파하면 connect 가 통째로 중단된다.
     pub fn recv(&self) -> io::Result<Option<Inbound>> {
         let mut buf = [0u8; 2048];
         match self.sock.recv_from(&mut buf) {
             Ok((n, _src)) => Ok(Some(classify(&buf[..n]))),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
                 Ok(None)
             }
             Err(e) => Err(e),
