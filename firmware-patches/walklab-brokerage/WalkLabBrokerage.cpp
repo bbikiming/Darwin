@@ -500,7 +500,11 @@ namespace Robotis {
         // 공간 검증 게이트 — 갓 추적중(track_valid + 미검출 GATE_HOLD_FRAMES 이내)일 때만.
         // 예측 위치에서 GATE 이상 벗어난 검출은 같은 공이 아니라고 보고 이 프레임은
         // 미검출로 처리(coast). 단 오래 끊긴 뒤엔 게이트를 풀어(공 이동 가능) 즉시 재획득.
-        if (raw_found && m_track_valid && !m_scanning && m_noball_count <= GATE_HOLD_FRAMES) {
+        // **볼-추종(2026-06-14)**: 추종 보행 중엔 몸 이동으로 시야가 흔들려 공이 프레임에서
+        // 크게 점프한다 — 정적 추적용 게이트가 이를 "다른 물체"로 기각하면 추적 상실→보행
+        // 정지→스캔(한 번 걷고 머리만 거동). 보행 중엔 게이트 비활성(공 점프는 정당).
+        if (raw_found && m_track_valid && !m_scanning && m_noball_count <= GATE_HOLD_FRAMES &&
+            !m_ballfollow_enabled) {
             double px = m_ball_x + m_vel_x;       // 등속 예측 위치
             double py = m_ball_y + m_vel_y;
             double dx = pos.X - px, dy = pos.Y - py;
@@ -512,7 +516,9 @@ namespace Robotis {
         // 고착되면 중심을 못 맞춰 공 픽셀이 가장자리에 남는다 → 탈출. 반면 공을 높이 들어 tilt 가
         // 한계(55°)여도 공이 화면 중앙에 잡혔으면 정상 추적이므로 오발동 금지(중앙 정지 공의 상하
         // 흔들림 버그 수정). 따라가는 공은 헤드도 움직여(non-static) 역시 발동 안 함.
-        if (head && m_track_valid && !m_scanning) {
+        // **볼-추종(2026-06-14)**: 추종 보행 중엔 비활성 — 접근하며 head tilt 가 한계로 내려갈
+        // 때(공이 발 앞) 고착으로 오판해 재스캔→보행 정지하는 것 방지. 근접-정지는 follower 가 소유.
+        if (head && m_track_valid && !m_scanning && !m_ballfollow_enabled) {
             double pa = head->GetPanAngle();
             double ti = head->GetTiltAngle();
             bool near_limit = (pa <= -LIM_PAN || pa >= LIM_PAN || ti >= LIM_TILT);
