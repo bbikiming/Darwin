@@ -202,10 +202,16 @@ namespace Robotis {
             return false;
         }
 
-        // **D-패드 앉음(2026-06-14, 리뷰 HIGH-1)** — auto-getup 을 *억제하지 않는다*. 앉음
-        // (page15)은 몸통 직립=STANDUP 이라 아래 STANDUP 분기가 자연히 getup 을 막고(앉음 유지),
-        // 앉다 진짜로 넘어지면(FALLEN) auto-getup 이 정상 복구해야 안전하다(억제 시 deadlock).
-        // getup 이 실제 발화하면(아래) 로봇은 일어선 것이므로 m_sitting 을 해제한다.
+        // **F2/F4 실기 수정 (2026-06-15)** — 앉음(SIT) 상태에선 auto-getup 을 **억제**한다.
+        // 실기에서 SIT(page15) 자세가 IMU 에 비STANDUP(FALLEN)으로 읽혀, 앉자마자 ~600ms 뒤
+        // auto-getup(page10/11 빠른 기립)이 오발했다("앉으면 혼자 벌떡 일어남"). 앉음은 의도된
+        // 안정 저자세이므로 STAND(D-패드 위)·E-STOP/복구 로만 해제하고, 그 전엔 낙상 판정을
+        // 건너뛴다. (앉음 자세를 진짜 낙상과 구분할 IMU 수단이 없어 종전 "억제 안 함" 설계를
+        // 실기 관측에 맞춰 뒤집음 — 진짜 낙상 복구는 수동 STAND/복구에 위임.)
+        if (m_sitting) {
+            m_fall_count = 0;
+            return false;
+        }
         int fallen = Robot::MotionStatus::FALLEN;
         if (fallen == Robot::STANDUP) {
             m_fall_count = 0;   // 똑바로 서 있음 — 카운터 reset.
@@ -440,13 +446,10 @@ namespace Robotis {
         //    FALLEN 이면 m_fall_count 를 임계로 올려 다음 poll 의 CheckAndRecoverFall 이
         //    즉시 복구(getup)하게 인계한다 — 종전의 무조건 리셋이 만들던 ~600ms 복구 지연 제거.
         // **D-패드 자세(2026-06-14)**: SIT 은 의도된 앉음 — 낙상 판정 건너뛰고 앉음 상태로.
-        // **F2/D3 정정 (2026-06-15, 리뷰)**: 종전 주석은 "m_sitting 이 auto-getup 을 추가
-        // 차단한다"였으나 그런 코드는 없다(CheckAndRecoverFall 은 m_sitting 미참조). 실제
-        // 안전망은 "SIT(page15) 완료 시 FALLEN==STANDUP" 가정 하나뿐 — 그래서 settle 후
-        // 낙상 판정을 건너뛴다(앉음은 본래 비-기립 자세라 FALLEN 으로 오판될 수 있음). 이
-        // 가정이 깨지면(앉음이 FORWARD/BACKWARD 로 읽힘) auto-getup 이 오발할 수 있으므로
-        // SIT 후 FALLEN 값을 실기 측정해야 한다(INTEGRATION.md 게이트). 가정이 깨질 시
-        // CheckAndRecoverFall 에 m_sitting 방어 게이트 추가가 후속 과제.
+        // **F2/F4 실기 확정 (2026-06-15)**: SIT(page15) 자세는 실기 IMU 에서 비STANDUP(FALLEN)
+        // 으로 읽힌다 → 종전엔 다음 poll 의 auto-getup 이 오발("앉으면 혼자 벌떡 일어남").
+        // 이제 CheckAndRecoverFall 진입부의 `if (m_sitting) return false` 가 앉음 중 auto-getup
+        // 을 억제하므로 앉음 자세가 유지된다. STAND(D-패드 위)·E-STOP/복구 가 m_sitting 해제.
         if (side == Robotis::GP_ACTION_SIT) {
             m_sitting = true;
             m_fall_count = 0;
