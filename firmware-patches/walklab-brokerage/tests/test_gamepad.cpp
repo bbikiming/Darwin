@@ -193,8 +193,8 @@ static void test_mapping_signs() {
     MapGamepad(s, true, 1000.0, &hold, &f);   // dt=1s → 캡 200ms 적분
     CHECK(f.enabled == 1, "armed+이동 → enabled (F10: 데드맨 불요)");
     CHECK_NEAR(f.x, GP_MAX_STRIDE_MM, 1e-6, "스틱 위 → 전진 +38 (ABS_Y 아래=+ 실측)");
-    CHECK_NEAR(f.y, -GP_MAX_SIDE_MM, 1e-6, "스틱 우 → 우횡 −28 (Anbernic P2: Y_MOVE+=좌)");
-    CHECK_NEAR(f.a, -GP_MAX_TURN_DEG, 1e-6, "RT 풀 → 우회전 −GP_MAX_TURN_DEG (2026-06-14: 24°)");
+    CHECK_NEAR(f.y, -GP_MAX_SIDE_MM, 1e-6, "스틱 우 → 우횡 −GP_MAX_SIDE_MM (2026-06-14: 32mm)");
+    CHECK_NEAR(f.a, -GP_MAX_TURN_DEG, 1e-6, "RT 풀 → 우회전 −GP_MAX_TURN_DEG (2026-06-14: 28°)");
     // 헤드 레이트: dt 캡 200ms — 풀스틱 1콜 적분 = RATE × 0.2s.
     CHECK_NEAR(f.tilt, GP_HEAD_TILT_RATE_DPS * 0.2, 1e-6,
                "RS 위 → 틸트 +10 (50°/s × 0.2s 캡)");

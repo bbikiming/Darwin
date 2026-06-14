@@ -73,10 +73,11 @@ static const double TWIST_K_A = 1.0;
 // GP_MAX_SIDE_MM/GP_MAX_TURN_DEG 와 **항상 동일값**으로 같이 변경(작은 쪽이 클램프).
 // 이 거버너는 전 클라이언트(Switch·핸드헬드·bus-direct) 공유 최종 클램프이므로 상향 시
 // 게임패드뿐 아니라 전 클라이언트 회전·횡속이 함께 빨라진다(의도된 전역 변경).
-// 2단계(좌우 32·회전 20·L2 엔벨로프)는 온스탠드 IK-freeze 스윕 검증 후에만 — 보류.
+// 실기 튜닝(2026-06-14, 온스탠드): 좌우 28→32·회전 24→28 적용. ★측보 32mm 는 IK-freeze
+// 근접이므로 풀스틱 측보 시 leg 거동(jitter/NaN/freeze) 온스탠드 관찰 필수 — 이상 시 30 으로 환원.
 static const double ENVELOPE_SUM_MAX = 1.25;  // P3: 1.15→1.25 (L1 budget — 3축 동시최대 collapse 38%→41.7% 완화; 단일축·≤1.15 블렌드는 종전과 동일)
-static const double ENVELOPE_Y_MAX   = 28.0;  // mm — P2: 22→28 (GP_MAX_SIDE_MM 과 동일). 32 는 P7 스윕 후
-static const double ENVELOPE_A_MAX   = 24.0;  // deg — P4: 12→18→24 (실기 튜닝 2026-06-14, 회전 더 키움). GP_MAX_TURN_DEG 과 동일. 발 yaw peak ~12°(<무스컬프 14° 우려·충돌 ~40° 마진)
+static const double ENVELOPE_Y_MAX   = 32.0;  // mm — P2: 22→28→32 (실기 튜닝 2026-06-14, 측보 보폭·횡속↑). GP_MAX_SIDE_MM 과 동일. per-leg half-amp 16mm — gate-on-y(P6) 발클리어런스 동반. ★온스탠드 IK-freeze 관찰 필요
+static const double ENVELOPE_A_MAX   = 28.0;  // deg — P4: 12→18→24→28 (실기 튜닝 2026-06-14). GP_MAX_TURN_DEG 과 동일. 발 yaw peak ~14°(무스컬프 천장 — 이상은 발yaw 스컬프 필요·충돌 ~40° 마진)
 // period 종속 x_max(mm) 스케줄 — 초기값(벤치로 갱신). 경계 밖 끝값 고정, 중간 선형 보간.
 //   700ms→40, 600→38, 500→32, 440→28.
 double EnvelopeXMax(double period_ms);
