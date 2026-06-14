@@ -254,26 +254,27 @@ static void test_envelope_xmax_table() {
 
 static void test_governor_scaledown() {
     printf("test_governor_scaledown\n");
-    // **Anbernic P2/P3/P4**: period 600 → x_max=38, y_max=28, a_max=18, SUM_MAX=1.25.
+    // **Anbernic P2/P3/P4**: period 600 → x_max=38, y_max=ENVELOPE_Y_MAX, a_max=
+    // ENVELOPE_A_MAX, SUM_MAX=1.25. 상수 기반(튜닝 시 자동 정합 — 2026-06-14 회전 24°).
     // Under-budget passes unchanged.
     double x = 19.0, y = 0.0, a = 0.0;  // 0.5 sum
     GovernEnvelope(&x, &y, &a, 600);
     CHECK_DEQ(x, 19.0, "under-budget x unchanged");
 
-    // Over-budget: x=38(1.0)+y=28(1.0)+a=18(1.0) = 3.0 → scale 1.25/3.0.
-    double x2 = 38.0, y2 = 28.0, a2 = 18.0;
+    // Over-budget: x=x_max(1.0)+y=y_max(1.0)+a=a_max(1.0) = 3.0 → scale 1.25/3.0.
+    double x2 = 38.0, y2 = ENVELOPE_Y_MAX, a2 = ENVELOPE_A_MAX;
     GovernEnvelope(&x2, &y2, &a2, 600);
-    double sum = fabs(x2)/38.0 + fabs(y2)/28.0 + fabs(a2)/18.0;
+    double sum = fabs(x2)/38.0 + fabs(y2)/ENVELOPE_Y_MAX + fabs(a2)/ENVELOPE_A_MAX;
     CHECK(sum > 1.249 && sum < 1.251, "over-budget scaled to sum≈1.25");
     CHECK(x2 > 15.7 && x2 < 15.9, "x scaled (38·1.25/3≈15.83)");
 
     // Pure single-axis at the new max passes unchanged (sum=1.0 < 1.25).
-    double ys = 28.0, xs = 0.0, as_ = 0.0;
+    double ys = ENVELOPE_Y_MAX, xs = 0.0, as_ = 0.0;
     GovernEnvelope(&xs, &ys, &as_, 600);
-    CHECK_DEQ(ys, 28.0, "pure y=28 (new max) passes unscaled");
-    double at = 18.0, xt = 0.0, yt = 0.0;
+    CHECK_DEQ(ys, ENVELOPE_Y_MAX, "pure y=y_max passes unscaled");
+    double at = ENVELOPE_A_MAX, xt = 0.0, yt = 0.0;
     GovernEnvelope(&xt, &yt, &at, 600);
-    CHECK_DEQ(at, 18.0, "pure a=18 (new max) passes unscaled");
+    CHECK_DEQ(at, ENVELOPE_A_MAX, "pure a=a_max passes unscaled");
 
     // Direction preserved (signs).
     double x3 = -50.0, y3 = 0.0, a3 = 0.0;  // |x|/38 = 1.32 > 1.25

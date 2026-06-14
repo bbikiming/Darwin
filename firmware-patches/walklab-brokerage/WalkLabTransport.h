@@ -76,7 +76,7 @@ static const double TWIST_K_A = 1.0;
 // 2단계(좌우 32·회전 20·L2 엔벨로프)는 온스탠드 IK-freeze 스윕 검증 후에만 — 보류.
 static const double ENVELOPE_SUM_MAX = 1.25;  // P3: 1.15→1.25 (L1 budget — 3축 동시최대 collapse 38%→41.7% 완화; 단일축·≤1.15 블렌드는 종전과 동일)
 static const double ENVELOPE_Y_MAX   = 28.0;  // mm — P2: 22→28 (GP_MAX_SIDE_MM 과 동일). 32 는 P7 스윕 후
-static const double ENVELOPE_A_MAX   = 18.0;  // deg — P4: 12→18 (GP_MAX_TURN_DEG 과 동일, 발 yaw peak 9°). 20 은 P7
+static const double ENVELOPE_A_MAX   = 24.0;  // deg — P4: 12→18→24 (실기 튜닝 2026-06-14, 회전 더 키움). GP_MAX_TURN_DEG 과 동일. 발 yaw peak ~12°(<무스컬프 14° 우려·충돌 ~40° 마진)
 // period 종속 x_max(mm) 스케줄 — 초기값(벤치로 갱신). 경계 밖 끝값 고정, 중간 선형 보간.
 //   700ms→40, 600→38, 500→32, 440→28.
 double EnvelopeXMax(double period_ms);
