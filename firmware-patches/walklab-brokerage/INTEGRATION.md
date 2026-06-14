@@ -128,6 +128,13 @@ scp motion_retimed.bin <user@host>:/robotis/Data/motion_4096.bin
 - [ ] **C1/C5 stale 보행라인**: 스틱 앞으로 민 채 킥/동작 → 동작 직후 의도치 않은 보행 없음.
 - [ ] **F1 getup 인계**: 킥 정지 중 실제 낙상 → 다음 poll 즉시 getup(≤~100ms, 종전 ~600ms).
 - [ ] **B1 패스 감속**: rPASS/lPASS 스냅 144ms 로 재생(요람 거치 안정성 실측).
+- [ ] **F4 SIT 후 FALLEN 실측 ★중요★**: SIT(D-패드 아래) 완료 후 `MotionStatus::FALLEN`
+      (telemetry TEL 마지막 필드)이 **STANDUP(0)** 인지 측정. 앉음 안전 전체가 이 가정에
+      의존한다(F2 참조 — m_sitting 은 auto-getup 을 막지 않음). 만약 FORWARD/BACKWARD 로
+      읽히면 앉자마자 auto-getup 오발 위험 → CheckAndRecoverFall 에 m_sitting 방어 게이트
+      추가가 필수 후속. STANDUP 으로 읽히면 현행 설계 안전.
+- [ ] **D2 STAND no-op**: 서 있는 상태에서 D-패드 위(STAND) → 무동작(콘솔 "STAND 무시 —
+      이미 서 있음"). 앉은 상태에서만 기립 재생.
 
 ## 회귀 위험
 

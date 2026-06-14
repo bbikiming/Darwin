@@ -295,9 +295,13 @@ private:
     /// take+clear. m_kick_mtx 로 배타. last-wins(동시 LB+RB 극히 드묾 — 무해).
     int m_pending_kick_side;
     pthread_mutex_t m_kick_mtx;
-    /// **D-패드 모션 (2026-06-14)** — 앉음(SIT) 상태 플래그. true 면 (1) 자동 getup 억제
-    /// (앉았는데 "넘어졌다"고 자동 기립하는 충돌 방지), (2) 보행 Start 차단(앉은 채 걷기
-    /// 금지 — 먼저 STAND), (3) STAND 외 D-패드/킥 차단. STAND/E-STOP 시 해제.
+    /// **D-패드 모션 (2026-06-14)** — 앉음(SIT) 상태 플래그. true 면 (1) 보행 Start 차단
+    /// (앉은 채 걷기 금지 — 먼저 STAND), (2) STAND 외 D-패드/킥 차단, (3) 볼-추종 보행 차단.
+    /// STAND/getup/E-STOP 시 해제.
+    /// **F2 정정 (2026-06-15, 리뷰)** — auto-getup 은 m_sitting 으로 억제하지 *않는다*. SIT
+    /// (page15)이 STANDUP 으로 읽혀 CheckAndRecoverFall 의 STANDUP 분기가 자연히 안 일으키고,
+    /// 앉다 진짜로 넘어지면(FALLEN) auto-getup 이 정상 복구해야 안전(억제 시 deadlock). 이
+    /// 안전은 "SIT 완료 시 FALLEN==STANDUP" 가정에 의존 — 실기 검증 게이트(INTEGRATION.md).
     /// **E1 (2026-06-15)** — volatile: E-STOP 스레드(TriggerEstopImmediate)가 해제,
     /// supervisor 가 R/W → 크로스-스레드 가시성. 단일 바이트 bool 이라 torn write 무.
     volatile bool m_sitting;

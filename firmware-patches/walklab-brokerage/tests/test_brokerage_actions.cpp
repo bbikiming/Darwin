@@ -75,11 +75,21 @@ static void test_should_block_manual_walk_for_sit() {
     CHECK(ShouldBlockManualWalkStartForSit(false, false, true) == false, "보행의도 없음 → 차단 불요");
 }
 
+// ---- ShouldSkipRedundantStand: 서있을때 STAND no-op (D2) --------------------
+static void test_should_skip_redundant_stand() {
+    CHECK(ShouldSkipRedundantStand(GP_ACTION_STAND, false) == true,  "STAND + 비앉음 → no-op 건너뜀 (D2)");
+    CHECK(ShouldSkipRedundantStand(GP_ACTION_STAND, true)  == false, "STAND + 앉음 → 실행(기립)");
+    CHECK(ShouldSkipRedundantStand(GP_ACTION_SIT, false)   == false, "SIT 은 STAND 가드 무관");
+    CHECK(ShouldSkipRedundantStand(GP_KICK_LEFT, false)    == false, "킥은 STAND 가드 무관");
+    CHECK(ShouldSkipRedundantStand(GP_ACTION_PASS_RIGHT, false) == false, "패스는 STAND 가드 무관");
+}
+
 int main() {
     test_action_side_to_page();
     test_ballfollow_enabled_for();
     test_should_run_ballfollow();
     test_should_block_manual_walk_for_sit();
+    test_should_skip_redundant_stand();
     printf("== test_brokerage_actions: %d checks, %d failures ==\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

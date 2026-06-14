@@ -76,6 +76,13 @@ inline bool ShouldBlockManualWalkStartForSit(bool want_active, bool walking_acti
     return want_active && !walking_active && sitting;
 }
 
+/// **D2 (2026-06-15)** — 이미 서 있을 때(비-앉음) STAND(D-패드 위)는 의미 없는 no-op.
+/// STAND=page16 은 "앉은자세→서기" 모션이라 서 있는 로봇에 재생하면 불필요한 크라우치→
+/// 기립으로 불안정해진다. STAND 는 앉음 해제 용도로만 유효 → 비-앉음이면 건너뛴다.
+inline bool ShouldSkipRedundantStand(int side, bool sitting) {
+    return (side == GP_ACTION_STAND) && !sitting;
+}
+
 }  // namespace Robotis
 
 #endif  // WALKLAB_BROKERAGE_ACTIONS_H_

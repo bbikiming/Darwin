@@ -325,6 +325,14 @@ namespace Robotis {
             return false;
         }
 
+        // 3.6) **D2 (2026-06-15, 리뷰)** — 이미 서 있을 때 STAND 는 no-op. page16(앉음→서기)을
+        //   서 있는 로봇에 재생하면 불필요한 크라우치→기립으로 불안정. STAND 는 앉음 해제
+        //   용도로만 유효(SSOT=BrokerageActions.h::ShouldSkipRedundantStand).
+        if (Robotis::ShouldSkipRedundantStand(side, m_sitting)) {
+            printf("[WalkLabBrokerage] STAND 무시 — 이미 서 있음(앉음 아님, no-op)\n");
+            return false;
+        }
+
         // 4) side → page + 이름. **단일 매핑 지점** = BrokerageActions.h::ActionSideToPage
         //    (킥 비대칭 + D-패드 공식 페이지, host 테스트로 핀). 미지 side = -1 거부.
         int page = Robotis::ActionSideToPage(side);
@@ -385,6 +393,11 @@ namespace Robotis {
             m_fall_count = 0;
             return true;   // 보행은 멈춘 상태 — 이번 poll 명령 skip.
         }
+        // **C3 (2026-06-15, 리뷰)** — SetEnableBody(true,true)는 헤드 관절까지 Action 에
+        // 인계한다 → 단일동작 재생 중 헤드무빙(추적/수동)은 **의도적으로 동결**된다(Action
+        // 페이지가 전신 포즈를 소유). 사용자 불변식("동작 중 헤드무빙은 허용")보다 더 보수적
+        // 이라 안전상 무해. 헤드 허용은 ROBOTIS 프레임워크가 부분 인계를 직접 지원 안 해
+        // 비용이 크므로 현행 유지. 동작 완료 후(아래 SetEnableHeadOnly 반납) 추적 재개.
         action->m_Joint.SetEnableBody(true, true);
         // 6-3) 킥 모션 재생. Start() false 면 모듈 busy — 재시도(estop bail + 토크 off).
         //   getup 패리티: Start()가 false 면 아직 미시작 → Stop() 불요(중단할 모션 없음).
@@ -427,7 +440,13 @@ namespace Robotis {
         //    FALLEN 이면 m_fall_count 를 임계로 올려 다음 poll 의 CheckAndRecoverFall 이
         //    즉시 복구(getup)하게 인계한다 — 종전의 무조건 리셋이 만들던 ~600ms 복구 지연 제거.
         // **D-패드 자세(2026-06-14)**: SIT 은 의도된 앉음 — 낙상 판정 건너뛰고 앉음 상태로.
-        // (앉음 자세가 비STANDUP 으로 읽혀도 m_sitting 이 auto-getup 을 추가 차단한다.)
+        // **F2/D3 정정 (2026-06-15, 리뷰)**: 종전 주석은 "m_sitting 이 auto-getup 을 추가
+        // 차단한다"였으나 그런 코드는 없다(CheckAndRecoverFall 은 m_sitting 미참조). 실제
+        // 안전망은 "SIT(page15) 완료 시 FALLEN==STANDUP" 가정 하나뿐 — 그래서 settle 후
+        // 낙상 판정을 건너뛴다(앉음은 본래 비-기립 자세라 FALLEN 으로 오판될 수 있음). 이
+        // 가정이 깨지면(앉음이 FORWARD/BACKWARD 로 읽힘) auto-getup 이 오발할 수 있으므로
+        // SIT 후 FALLEN 값을 실기 측정해야 한다(INTEGRATION.md 게이트). 가정이 깨질 시
+        // CheckAndRecoverFall 에 m_sitting 방어 게이트 추가가 후속 과제.
         if (side == Robotis::GP_ACTION_SIT) {
             m_sitting = true;
             m_fall_count = 0;
