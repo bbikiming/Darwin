@@ -73,6 +73,7 @@ fn main() -> ExitCode {
         "selftest" => selftest(),
         "probe" => probe(rest),
         "connect" => connect(rest),
+        "axisdump" => axisdump(),
         "help" | "-h" | "--help" => {
             usage();
             Ok(())
@@ -100,8 +101,57 @@ fn usage() {
          사용:\n\
          \x20 ally-cli selftest                      루프백으로 UDP 제어경로+메트릭 검증(로봇 불요)\n\
          \x20 ally-cli probe   [--prefer wired|wireless]\n\
-         \x20 ally-cli connect --identity <키경로> [--prefer wired|wireless] [--seconds N]\n"
+         \x20 ally-cli connect --identity <키경로> [--prefer wired|wireless] [--seconds N]\n\
+         \x20 ally-cli axisdump                      게임패드 원시 입력 덤프(부호/트리거 보정; --features device 필요)\n"
     );
+}
+
+// ── axisdump: gilrs 원시 입력 덤프 (부호/트리거 라우팅 보정 — 하드웨어 게이트 첫 단계) ──
+#[cfg(feature = "device")]
+fn axisdump() -> io::Result<()> {
+    use ally_input::source::GamepadSource;
+    println!(
+        "▶ axisdump — gilrs 원시 입력 덤프(부호/트리거 라우팅 보정용). ~15s 후 종료, Ctrl-C 가능."
+    );
+    let mut src =
+        GamepadSource::new().map_err(|e| io::Error::other(format!("gilrs 초기화 실패: {e}")))?;
+    let start = Instant::now();
+    let mut last_print: i64 = 0;
+    while start.elapsed() < Duration::from_secs(15) {
+        // 0 은 InputFrame 의 미설정 sentinel 이므로 +1 (clock > 0 보장).
+        let now_ms = start.elapsed().as_millis() as i64 + 1;
+        let r = src.pump(now_ms);
+        if r.connected {
+            println!("  [{now_ms:>6}] 패드 연결");
+        }
+        if r.disconnected {
+            println!("  [{now_ms:>6}] 패드 단절");
+        }
+        if r.estop_edge {
+            println!("  [{now_ms:>6}] B(E-STOP) rising ⏹");
+        }
+        if now_ms - last_print >= 200 {
+            let f = r.frame;
+            println!(
+                "  [{now_ms:>6}] L({:+.2},{:+.2}) R({:+.2},{:+.2}) LT{:.2} RT{:.2} | A{} B{} X{} Y{} LB{} RB{}",
+                f.lx, f.ly, f.rx, f.ry, f.lt, f.rt,
+                u8::from(f.btn_a), u8::from(f.btn_b), u8::from(f.btn_x),
+                u8::from(f.btn_y), u8::from(f.btn_lb), u8::from(f.btn_rb),
+            );
+            last_print = now_ms;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    println!("✓ axisdump 종료. 스틱 위/우·트리거를 source.rs 부호 상수와 대조해 확정하라.");
+    Ok(())
+}
+
+/// device feature 없이 빌드된 경우 — 안내만.
+#[cfg(not(feature = "device"))]
+fn axisdump() -> io::Result<()> {
+    Err(io::Error::other(
+        "axisdump 은 게임패드(gilrs) 빌드가 필요합니다 — `cargo run -p ally-cli --features device -- axisdump`",
+    ))
 }
 
 // ── --flag 값 파서 (clap 의존 회피) ─────────────────────────────────────────

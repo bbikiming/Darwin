@@ -5,5 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# W1 에서 gilrs 추가. W0 은 동결 매핑 상수 모듈만 수록한다.
 [dependencies]
+df-wire = { path = "../df-wire" }
+# gilrs(XInput/장치 폴링)는 feature `device` 로만 — 기본 빌드/CI(ubuntu)는 순수 로직만 컴파일해
+# libudev 등 OS 의존 없이 빠르게 돈다. 안전 로직은 gilrs 비관여(호스트 테스트 가능).
+gilrs = { version = "0.10", optional = true }
+
+[features]
+device = ["dep:gilrs"]
