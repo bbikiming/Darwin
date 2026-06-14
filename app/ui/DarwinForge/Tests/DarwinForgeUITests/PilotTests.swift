@@ -196,7 +196,8 @@ final class PilotTests: XCTestCase {
     func testQuickActionCatalogIncludesDemoModeActions() {
         let ids = QuickActionCatalog.all.map { $0.id }
         XCTAssertTrue(ids.contains("ball-tracker-start"))
-        XCTAssertTrue(ids.contains("walk-demo-start"))
+        // walk-demo-start 는 메뉴 정리(13→9, 2026-06-13)에서 제거됨 — 보행 데모는
+        // gamepad-pilot-start(조종기 데모)가 담당. 기대 목록에서 제외.
         XCTAssertTrue(ids.contains("action-demo-start"))
         XCTAssertTrue(ids.contains("demo-stop"))
         XCTAssertTrue(ids.contains("demo-status"))
@@ -366,13 +367,13 @@ final class PilotTests: XCTestCase {
                       "백업 파일 정리")
     }
 
-    /// QuickActionCatalog 에 patch 관련 명령 3개가 모두 등록됨.
-    /// 사용자가 ⌘6 에서 'patched 빌드 / 상태 / 제거' 를 직접 호출할 수 있어야 한다.
-    func testQuickActionCatalogIncludesPatchActions() {
+    /// patch trio 는 메뉴 정리(13→9, 2026-06-13)에서 카탈로그에서 숨겨졌다 —
+    /// 일반 사용자 노출용이 아닌 개발 빌드 명령이라 ⌘6 에서 제외. 부재를 가드한다.
+    func testQuickActionCatalogExcludesPatchActions() {
         let ids = QuickActionCatalog.all.map { $0.id }
-        XCTAssertTrue(ids.contains("demo-patch-build"))
-        XCTAssertTrue(ids.contains("demo-patch-status"))
-        XCTAssertTrue(ids.contains("demo-patch-remove"))
+        XCTAssertFalse(ids.contains("demo-patch-build"))
+        XCTAssertFalse(ids.contains("demo-patch-status"))
+        XCTAssertFalse(ids.contains("demo-patch-remove"))
     }
 
     // MARK: - Phase C: Transition flow + 후면 버튼 단계

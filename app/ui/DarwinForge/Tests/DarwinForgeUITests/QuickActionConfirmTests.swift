@@ -31,10 +31,12 @@ final class QuickActionConfirmTests: XCTestCase {
         XCTAssertLessThan(model.dialogBodyText.count, 300)
     }
 
-    func testDialogBodyExcludesRealDemoBuildScript() {
-        // 실제 결함을 일으킨 액션 — 카탈로그의 demo-patch-build.
-        guard let action = QuickActionCatalog.all.first(where: { $0.id == "demo-patch-build" })
-        else { return XCTFail("demo-patch-build 액션이 카탈로그에 없음") }
+    func testDialogBodyExcludesLongScriptCommand() {
+        // 긴 스크립트 액션 — 메뉴 정리(13→9) 후 demo-patch-build 제거됨.
+        // 현재 카탈로그에서 가장 긴 command(walkLabRobotisStart, 수백 줄)를 쓰는
+        // gamepad-pilot-start 로 동일 의도(긴 명령이 다이얼로그 본문에 안 들어감) 검증.
+        guard let action = QuickActionCatalog.all.first(where: { $0.id == "gamepad-pilot-start" })
+        else { return XCTFail("gamepad-pilot-start 액션이 카탈로그에 없음") }
         let model = QuickActionConfirmModel(action: action)
         XCTAssertGreaterThan(action.command.count, 1000, "전제: 수백 줄 스크립트")
         XCTAssertFalse(model.dialogBodyText.contains(action.command))
