@@ -20,6 +20,23 @@ pub const ESTOP_PATH: &str = "/tmp/df-walklab-estop";
 /// 브로커리지 모드 파일 (walklab 진입 확인).
 pub const PILOT_MODE_PATH: &str = "/tmp/df-pilot-mode";
 
+/// §7-5 업링크 본문 — `"<ip> <port>\n"` **공백 구분**(로봇 `fscanf("%63s %d")` 계약).
+///
+/// 검증된 Mac(`RobotSetupCommand.walkLabWriteUplink`)·실기 벤치(`onboard-bench.py`)와 동일.
+/// 콜론(`ip:port`)은 df_udp.py 참조의 미발견 버그이므로 따르지 않는다(H4).
+pub fn uplink_value(ip: &str, port: u16) -> String {
+    format!("{ip} {port}\n")
+}
+
+/// §7-7 철회 명령 — 채널·업링크·명령 파일 일괄 제거(멱등 `rm -f`). 스테일 잔재 금지(H2).
+///
+/// **`ESTOP_PATH` 는 의도적으로 제외**한다: E-STOP 플래그는 안전 래치이므로 세션 종료가
+/// 이를 지우면 비상정지된 로봇을 조용히 재무장하는 셈(위험). 해제는 명시적 복구(Y)/재무장
+/// 경로의 몫이다(계약 §B). 여기에 추가하지 말 것.
+pub fn retract_command() -> String {
+    format!("rm -f {CHANNEL_PATH} {UPLINK_PATH} {CMD_PATH}")
+}
+
 /// `ssh_control_client.py::ssh_args` 1:1 포팅 — 옵션 순서까지 동일(계약).
 ///
 /// `identity`/`control_path` 가 모두 있을 때만 ControlMaster 블록을 낸다(핸드셰이크
@@ -36,27 +53,43 @@ pub fn ssh_args(
 ) -> Vec<String> {
     let connect_timeout = timeout_s.min(10);
     let mut args: Vec<String> = vec![
-        "-o".into(), "BatchMode=yes".into(),
-        "-o".into(), "StrictHostKeyChecking=accept-new".into(),
-        "-o".into(), "LogLevel=ERROR".into(),
-        "-o".into(), format!("ConnectTimeout={connect_timeout}"),
-        "-o".into(), "ServerAliveInterval=2".into(),
-        "-o".into(), "ServerAliveCountMax=2".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        "LogLevel=ERROR".into(),
+        "-o".into(),
+        format!("ConnectTimeout={connect_timeout}"),
+        "-o".into(),
+        "ServerAliveInterval=2".into(),
+        "-o".into(),
+        "ServerAliveCountMax=2".into(),
     ];
     if let (Some(_), Some(cp)) = (identity, control_path) {
         args.extend([
-            "-o".into(), "ControlMaster=auto".into(),
-            "-o".into(), format!("ControlPath={cp}"),
-            "-o".into(), "ControlPersist=30".into(),
+            "-o".into(),
+            "ControlMaster=auto".into(),
+            "-o".into(),
+            format!("ControlPath={cp}"),
+            "-o".into(),
+            "ControlPersist=30".into(),
         ]);
     }
     // 레거시 OpenSSH 5.9 호환 — 로봇 필수, 현대 ssh 에 무해.
     args.extend([
-        "-o".into(), "PubkeyAcceptedAlgorithms=+ssh-rsa".into(),
-        "-o".into(), "HostKeyAlgorithms=+ssh-rsa".into(),
+        "-o".into(),
+        "PubkeyAcceptedAlgorithms=+ssh-rsa".into(),
+        "-o".into(),
+        "HostKeyAlgorithms=+ssh-rsa".into(),
     ]);
     if let Some(id) = identity {
-        args.extend(["-i".into(), id.to_string(), "-o".into(), "IdentitiesOnly=yes".into()]);
+        args.extend([
+            "-i".into(),
+            id.to_string(),
+            "-o".into(),
+            "IdentitiesOnly=yes".into(),
+        ]);
     }
     args.extend(["-p".into(), port.to_string()]);
     args.push(format!("{user}@{host}"));
@@ -119,7 +152,11 @@ impl SshClient {
     pub fn run_with_stdin(&self, command: &str, stdin: Option<&str>) -> io::Result<String> {
         let mut child = Command::new("ssh")
             .args(self.args(command))
-            .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdin(if stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
@@ -163,12 +200,19 @@ impl SshClient {
 
     /// §7-4 핸드셰이크: 토큰+포트를 채널 파일에 원자 기록. 로봇 RefreshHandshake 가 ≤1s 채택.
     pub fn write_handshake(&self, token: &str, estop_port: u16, cmd_port: u16) -> io::Result<()> {
-        self.atomic_write(CHANNEL_PATH, &df_wire::handshake_line(token, estop_port, cmd_port))
+        self.atomic_write(
+            CHANNEL_PATH,
+            &df_wire::handshake_line(token, estop_port, cmd_port),
+        )
     }
 
-    /// §7-5 업링크 등록: "ip:port".
+    /// §7-5 업링크 등록 — `"<ip> <port>\n"` 공백 구분([`uplink_value`]).
+    ///
+    /// **포맷 정정(H4)**: 로봇 `RefreshUplinkTarget` 은 `fscanf("%63s %d")` 로 공백 2토큰을
+    /// 기대한다. 콜론(`ip:port`)이면 `%63s` 가 콜론까지 먹어 포트 파싱이 실패 → TEL2 UDP
+    /// push 미작동(파일 폴백에 가려짐). 검증된 Mac/onboard-bench 와 동일하게 공백으로 쓴다.
     pub fn write_uplink(&self, ip: &str, port: u16) -> io::Result<()> {
-        self.atomic_write(UPLINK_PATH, &format!("{ip}:{port}"))
+        self.atomic_write(UPLINK_PATH, &uplink_value(ip, port))
     }
 
     /// §7-6 폴백: 14-token 명령 라인을 명령 파일에 원자 기록(5Hz).
@@ -181,9 +225,13 @@ impl SshClient {
         self.run(&format!("touch {ESTOP_PATH}")).map(|_| ())
     }
 
-    /// §7-7 종료: 채널 파일 제거 — 스테일 토큰 금지(계약 §G.1 MUST).
+    /// §7-7 종료: 채널·업링크·명령 파일 일괄 제거 — 스테일 토큰/타깃 금지(계약 §G.1 MUST).
+    ///
+    /// **누수 정정(H2)**: 채널만 지우면 `df-walklab-uplink`(이전 운영자 IP)·`df-walklab-cmd`
+    /// (폴백 잔재)가 남아 다음 세션을 오염시킨다. 검증된 참조(ssh_control_client.py)는 채널+
+    /// 업링크를 함께 지운다 — 여기에 폴백 명령 파일까지 정리한다([`retract_command`]).
     pub fn retract_handshake(&self) -> io::Result<()> {
-        self.run(&format!("rm -f {CHANNEL_PATH}")).map(|_| ())
+        self.run(&retract_command()).map(|_| ())
     }
 }
 
@@ -225,7 +273,9 @@ mod tests {
     #[test]
     fn ssh_args_clamps_timeout_to_10() {
         let a = ssh_args("h", "u", "c", None, None, 99, 22);
-        assert!(a.windows(2).any(|w| w[0] == "-o" && w[1] == "ConnectTimeout=10"));
+        assert!(a
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1] == "ConnectTimeout=10"));
     }
 
     #[test]
@@ -244,6 +294,23 @@ mod tests {
         assert!(!a.iter().any(|s| s == "-i"));
         assert!(!a.iter().any(|s| s.starts_with("ControlMaster"))); // identity 없으면 CM 도 없음
         assert!(a.windows(2).any(|w| w[0] == "-p" && w[1] == "2222"));
+    }
+
+    #[test]
+    fn uplink_value_is_space_separated_with_newline() {
+        // 로봇 fscanf("%63s %d") 계약 — 공백 구분, 콜론 금지(H4).
+        assert_eq!(uplink_value("192.168.0.33", 54321), "192.168.0.33 54321\n");
+        assert!(!uplink_value("10.0.0.1", 1).contains(':'));
+    }
+
+    #[test]
+    fn retract_command_clears_all_session_files() {
+        // 채널만이 아니라 업링크·명령 파일까지 일괄 정리(H2).
+        let cmd = retract_command();
+        assert!(cmd.starts_with("rm -f "));
+        assert!(cmd.contains(CHANNEL_PATH));
+        assert!(cmd.contains(UPLINK_PATH));
+        assert!(cmd.contains(CMD_PATH));
     }
 
     #[test]

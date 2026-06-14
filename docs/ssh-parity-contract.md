@@ -509,6 +509,17 @@ Adds an **event-driven UDP transport** alongside the file-poll path. The file pa
   so the robot tears down UDP transport and returns to file-poll (no stale listener with an old
   token). Absent handshake = legacy file-poll behavior fully preserved.
 
+#### G.1a Uplink registration `/tmp/df-walklab-uplink` (TEL2 UDP target — PINNED)
+- Body **`"{ip} {port}\n"` — SPACE-separated, NOT colon.** Robot `RefreshUplinkTarget` reads it
+  with `fscanf(fp, "%63s %d", ip, &port)` (two whitespace tokens). A colon form (`ip:port`) makes
+  `%63s` swallow the whole token and the `%d` fails → target unset → **no TEL2 UDP push** (silently
+  masked by the 5Hz file fallback). Ground truth: `RobotSetupCommand.walkLabWriteUplink`
+  (`printf '%s %d\n'`) and `firmware-patches/tools/onboard-bench.py`. Note: `df_udp.py::uplink_value`
+  emits colon — a latent bug in that reference; do not copy it (Rust `ally-link` writes space).
+- **Session end: clear uplink too** (`rm -f /tmp/df-walklab-uplink`, plus `/tmp/df-walklab-cmd` if a
+  file fallback was used) so the next session's robot does not stream TEL2 to a dead address during
+  the ≤1s handshake-adoption window. Ally `ally-link::ssh::retract_command` clears all three.
+
 ### G.2 E-STOP datagram (UDP `estop_port`, default 17372)
 - Payload `DF-ESTOP v1 {token} {unixMillis}`. Mac fires **×3 burst (0/50/100ms)** in
   parallel with the SSH/file path (first to land wins).

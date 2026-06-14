@@ -56,6 +56,33 @@ fn probe_tcp(host: &str, port: u16, timeout: Duration) -> bool {
     false
 }
 
+/// 선행 `~/` · `$HOME/` · `%USERPROFILE%\` 를 실제 홈 경로로 확장한다(순함수).
+///
+/// **왜 필요한가**: Mac→Ally SSH 명령은 PowerShell single-quote 로 인용되므로 `'$HOME/…'`
+/// 의 `$HOME` 이 확장되지 않은 리터럴로 ally-cli 까지 도달한다. ssh 의 `~` 확장에만 기대지
+/// 않고 여기서 직접 확장해 키 경로가 어떤 셸을 거쳤든 올바르게 풀리도록 한다(C1 수정).
+/// `home` 이 `None`(환경변수 미설정)이면 원본을 그대로 두어 ssh 의 자체 확장에 맡긴다.
+pub fn expand_home(path: &str, home: Option<&str>) -> String {
+    let Some(home) = home else {
+        return path.to_string();
+    };
+    let home = home.trim_end_matches(['/', '\\']);
+    for prefix in [
+        "~/",
+        "~\\",
+        "$HOME/",
+        "$HOME\\",
+        "%USERPROFILE%/",
+        "%USERPROFILE%\\",
+    ] {
+        if let Some(rest) = path.strip_prefix(prefix) {
+            let sep = if prefix.ends_with('\\') { '\\' } else { '/' };
+            return format!("{home}{sep}{rest}");
+        }
+    }
+    path.to_string()
+}
+
 /// §7-1 유선 우선(또는 선호 경로) 프로브 → 처음 도달한 [`Path`]. 둘 다 실패면 `Path::None`.
 pub fn probe_path(prefer: Path, timeout: Duration) -> Path {
     for p in probe_order(prefer) {
@@ -84,6 +111,31 @@ mod tests {
     fn probe_tcp_false_when_nothing_listening() {
         // 닫힌 포트(아무도 안 들음) → connect 거부 → false.
         assert!(!probe_tcp("127.0.0.1", 1, Duration::from_millis(150)));
+    }
+
+    #[test]
+    fn expand_home_handles_tilde_dollar_and_userprofile() {
+        let home = Some("C:\\Users\\kus19");
+        // ~/ 와 $HOME/ 둘 다 확장(슬래시 보존).
+        assert_eq!(
+            expand_home("~/.ssh/id_rsa_darwin", home),
+            "C:\\Users\\kus19/.ssh/id_rsa_darwin"
+        );
+        assert_eq!(
+            expand_home("$HOME/.ssh/id_rsa_darwin", home),
+            "C:\\Users\\kus19/.ssh/id_rsa_darwin"
+        );
+        // 백슬래시 변형은 백슬래시 구분자 유지.
+        assert_eq!(
+            expand_home("%USERPROFILE%\\.ssh\\id_rsa", home),
+            "C:\\Users\\kus19\\.ssh\\id_rsa"
+        );
+        // 홈 말미 구분자는 중복 없이 정규화.
+        assert_eq!(expand_home("~/x", Some("/home/rog/")), "/home/rog/x");
+        // 절대경로·미해당 접두는 그대로.
+        assert_eq!(expand_home("/etc/key", home), "/etc/key");
+        // 홈 미설정이면 원본 유지(ssh 자체 확장에 위임).
+        assert_eq!(expand_home("~/.ssh/id", None), "~/.ssh/id");
     }
 
     #[test]

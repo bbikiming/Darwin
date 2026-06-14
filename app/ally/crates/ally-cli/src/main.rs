@@ -17,11 +17,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use ally_link::metrics::{EffHz, RttEma};
-use ally_link::session::{decide_transport, Path, Transport};
+use ally_link::session::{select_transport, Path, Transport};
 use ally_link::ssh::SshClient;
 use ally_link::udp::{local_ip_toward, Inbound, UdpControlTransport};
-use ally_link::{probe_path, DEFAULT_CMD_PORT, DEFAULT_ESTOP_PORT};
-use df_wire::{build_line, gen_cmd_id, gen_token, GaitConfig, MotionCommand};
+use ally_link::{expand_home, probe_path, DEFAULT_CMD_PORT, DEFAULT_ESTOP_PORT};
+use df_wire::{build_line, gen_cmd_id, gen_token, handshake_line, GaitConfig, MotionCommand};
 
 const TICK_HZ: f64 = ally_link::UDP_SEND_HZ; // 20
 /// 송신 틱 간격 (20Hz → 50ms). const 부동소수 캐스트 회피 위해 런타임 산출.
@@ -48,6 +48,10 @@ impl<'a> HandshakeGuard<'a> {
             let _ = self.ssh.retract_handshake();
             self.active = false;
         }
+    }
+    /// 철회 없이 무장 해제 — 우리 토큰이 아닐 때(경쟁 패배) 승자 채널을 건드리지 않는다(H5).
+    fn defuse(&mut self) {
+        self.active = false;
     }
 }
 
@@ -174,7 +178,9 @@ fn selftest() -> io::Result<()> {
     println!(
         "  결과 — 송신 {seq} · ACK {acks} · eff_hz {:.1} · rtt_ema {} ms (루프백 합성)",
         eff_hz,
-        rtt.value().map(|v| format!("{v:.2}")).unwrap_or_else(|| "—".into())
+        rtt.value()
+            .map(|v| format!("{v:.2}"))
+            .unwrap_or_else(|| "—".into())
     );
 
     // 소프트웨어 게이트: 파이프라인이 살아 있는가(실기 ≥19 은 connect 의 몫).
@@ -239,8 +245,18 @@ fn probe(args: &[String]) -> io::Result<()> {
 // ── connect: §7 전체 시퀀스 (실로봇) ────────────────────────────────────────
 fn connect(args: &[String]) -> io::Result<()> {
     let prefer = prefer_from(args);
-    let identity = flag(args, "--identity").map(str::to_string);
-    let seconds: u64 = flag(args, "--seconds").and_then(|s| s.parse().ok()).unwrap_or(5);
+    // C1: 선행 ~/·$HOME/·%USERPROFILE% 를 실제 홈으로 확장한다. Mac→Ally SSH 가 PowerShell
+    // single-quote 로 인용해 `$HOME` 이 미확장 리터럴로 도달하므로, ssh 의 ~ 확장에만 기대지
+    // 않고 직접 푼다. (Windows 는 USERPROFILE, Unix 는 HOME.)
+    let identity = flag(args, "--identity").map(|s| {
+        let home = std::env::var("USERPROFILE")
+            .ok()
+            .or_else(|| std::env::var("HOME").ok());
+        expand_home(s, home.as_deref())
+    });
+    let seconds: u64 = flag(args, "--seconds")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
     let force = args.iter().any(|a| a == "--force");
     let estop_test = args.iter().any(|a| a == "--estop-test");
 
@@ -291,6 +307,21 @@ fn connect(args: &[String]) -> io::Result<()> {
     let mut guard = HandshakeGuard::new(&ssh);
     println!("  핸드셰이크 기록(token {token})");
 
+    // H5: 기록 직후 읽어 우리 토큰이 채택됐는지 확인(write-then-verify, TOCTOU 완화).
+    // 다른 운영자가 같은 순간 핸드셰이크했다면 채널은 그쪽 토큰이므로, 승자 채널을
+    // 건드리지 않고(defuse) 물러난다 — 단조 last-writer-wins 경쟁의 사고 방지.
+    let expected = handshake_line(&token, DEFAULT_ESTOP_PORT, DEFAULT_CMD_PORT);
+    let readback = ssh.run(&format!(
+        "cat {} 2>/dev/null || true",
+        ally_link::ssh::CHANNEL_PATH
+    ))?;
+    if readback.trim() != expected.trim() {
+        guard.defuse();
+        return Err(io::Error::other(
+            "핸드셰이크 경쟁 — 다른 운영자가 동시에 연결 중(우리 토큰 미채택). 단일 운영자 확인 후 재시도",
+        ));
+    }
+
     // §7-5 업링크 등록.
     let tx = UdpControlTransport::bind(
         host,
@@ -322,7 +353,11 @@ fn connect(args: &[String]) -> io::Result<()> {
         let deadline = start + tick_dur * (seq as u32); // 데드라인 스케줄(드리프트 방지)
         let line = build_line(&gen_cmd_id(), &cfg, &MotionCommand::zero());
 
-        match decide_transport(last_ack_ms.map(|t| now_ms - t)) {
+        // C2+probing: select_transport 는 (1) 첫 ACK 전 probing 윈도(now_ms ≤ ACK_PROBE_MS)
+        // 동안 UDP 를 흘려 첫 ACK 를 기다리고(없으면 첫 틱 즉시 폴백 — connect 영구 실패),
+        // (2) 첫 ACK 후 신선도 판정, (3) 한 번 폴백하면 무조건 SSH 래치(무한 공회전 방지).
+        // probe_age_ms = now_ms (스트리밍이 루프 시작에서 개시되므로 경과시간과 동일).
+        match select_transport(fell_back, last_ack_ms.map(|t| now_ms - t), now_ms) {
             Transport::Udp => {
                 if let Err(e) = tx.send_cmd(seq, &line) {
                     eprintln!("⚠ UDP 송신 실패(seq {seq}): {e}"); // 한 발 손실 — 계속.
@@ -364,31 +399,42 @@ fn connect(args: &[String]) -> io::Result<()> {
 
     let final_ms = start.elapsed().as_millis() as i64;
     let eff_hz = eff.rate(final_ms);
-    let transport = decide_transport(last_ack_ms.map(|t| final_ms - t));
+    let transport = select_transport(fell_back, last_ack_ms.map(|t| final_ms - t), final_ms);
     println!(
         "  메트릭 — 전송 {} · eff_hz {:.1} · rtt {} ms · TEL2 {}",
         transport.as_str(),
         eff_hz,
-        rtt.value().map(|v| format!("{v:.1}")).unwrap_or_else(|| "—".into()),
+        rtt.value()
+            .map(|v| format!("{v:.1}"))
+            .unwrap_or_else(|| "—".into()),
         tel_count,
     );
 
     // §G.2 E-STOP 버스트 검증(옵션 --estop-test) — 0/50/100ms ×3 UDP + SSH touch.
     // 로봇을 estop 래치시키므로 명시 요청 시에만. 정지 와이어아웃 계약 증명.
     if estop_test {
-        println!("  E-STOP 버스트(0/50/100ms ×3 + SSH touch)…");
-        let es = Instant::now();
-        for off in df_wire::ESTOP_BURST_OFFSETS_MS {
-            if let Some(w) = (es + Duration::from_millis(off)).checked_duration_since(Instant::now())
-            {
-                thread::sleep(w);
+        if fell_back {
+            // H1: 폴백 상태 = 핸드셰이크 철회됨 → 로봇 UDP 리스너·토큰 폐기. UDP estop 은
+            // 토큰 불일치로 사일런트 드롭되므로 보내지 않고, 유효한 SSH 파일 경로로만 정지한다
+            // (경로 독립성이 폴백 구간에선 SSH 단독으로 축소됨을 정직하게 반영).
+            eprintln!("  E-STOP — 폴백 중이라 UDP 무효, SSH 파일 경로 단독으로 정지…");
+            let _ = ssh.touch_estop();
+        } else {
+            println!("  E-STOP 버스트(0/50/100ms ×3 + SSH touch)…");
+            let es = Instant::now();
+            for off in df_wire::ESTOP_BURST_OFFSETS_MS {
+                if let Some(w) =
+                    (es + Duration::from_millis(off)).checked_duration_since(Instant::now())
+                {
+                    thread::sleep(w);
+                }
+                let ts = es.elapsed().as_millis() as i64;
+                if let Err(e) = tx.send_estop(ts) {
+                    eprintln!("⚠ E-STOP UDP 송신 실패: {e}");
+                }
             }
-            let ts = es.elapsed().as_millis() as i64;
-            if let Err(e) = tx.send_estop(ts) {
-                eprintln!("⚠ E-STOP UDP 송신 실패: {e}");
-            }
+            let _ = ssh.touch_estop();
         }
-        let _ = ssh.touch_estop();
         eprintln!("  ⚠ 로봇 E-STOP 래치됨 — 복구(Y) 또는 데모 재시작 필요.");
     }
 

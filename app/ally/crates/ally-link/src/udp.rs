@@ -67,14 +67,16 @@ impl UdpControlTransport {
     /// §G.3 명령 데이터그램 송신. 반환 = 보낸 바이트수.
     pub fn send_cmd(&self, seq: u64, line: &str) -> io::Result<usize> {
         let dgram = df_wire::cmd_datagram(&self.token, seq, line);
-        self.sock.send_to(&dgram, (self.host.as_str(), self.cmd_port))
+        self.sock
+            .send_to(&dgram, (self.host.as_str(), self.cmd_port))
     }
 
     /// §G.2 E-STOP 데이터그램 1발 송신. 버스트(0/50/100ms)는 E-STOP 스레드가
     /// `df_wire::ESTOP_BURST_OFFSETS_MS` 로 이 함수를 3회 호출해 구성한다.
     pub fn send_estop(&self, ts_ms: i64) -> io::Result<usize> {
         let dgram = df_wire::estop_datagram(&self.token, ts_ms);
-        self.sock.send_to(&dgram, (self.host.as_str(), self.estop_port))
+        self.sock
+            .send_to(&dgram, (self.host.as_str(), self.estop_port))
     }
 
     /// 데이터그램 1개 수신·분류. 타임아웃/무수신 → Ok(None).
@@ -82,7 +84,9 @@ impl UdpControlTransport {
         let mut buf = [0u8; 2048];
         match self.sock.recv_from(&mut buf) {
             Ok((n, _src)) => Ok(Some(classify(&buf[..n]))),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
+            {
                 Ok(None)
             }
             Err(e) => Err(e),
@@ -127,7 +131,9 @@ mod tests {
     fn loopback_cmd_roundtrip() {
         // 가짜 "로봇" 수신 소켓.
         let robot = UdpSocket::bind("127.0.0.1:0").unwrap();
-        robot.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+        robot
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
         let cmd_port = robot.local_addr().unwrap().port();
 
         let tx = UdpControlTransport::bind(
@@ -139,7 +145,9 @@ mod tests {
         )
         .unwrap();
 
-        let n = tx.send_cmd(7, "id0 0 0.00 0.00 0.00 600 40 13 1.0 0 2 0.00 0.00 0").unwrap();
+        let n = tx
+            .send_cmd(7, "id0 0 0.00 0.00 0.00 600 40 13 1.0 0 2 0.00 0.00 0")
+            .unwrap();
         assert!(n > 0);
 
         let mut buf = [0u8; 2048];
@@ -151,14 +159,9 @@ mod tests {
 
     #[test]
     fn recv_times_out_to_none() {
-        let tx = UdpControlTransport::bind(
-            "127.0.0.1",
-            "tok",
-            40000,
-            40001,
-            Duration::from_millis(50),
-        )
-        .unwrap();
+        let tx =
+            UdpControlTransport::bind("127.0.0.1", "tok", 40000, 40001, Duration::from_millis(50))
+                .unwrap();
         // 아무도 안 보냄 → 타임아웃 → None (블로킹 안 함).
         assert_eq!(tx.recv().unwrap(), None);
     }

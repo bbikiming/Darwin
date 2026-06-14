@@ -233,7 +233,7 @@ path 의존으로만 끌어온다. lock 파일 이중화는 의도된 격리 —
 2. **ssh2 수립** — user `robotis`, RSA only. 로봇은 **OpenSSH 5.9 레거시 kex** — ssh2 협상 가능 여부가 **W1 최우선 검증 항목** (§9 리스크·폴백 분기).
 3. **브로커리지 기동 확인** — `/tmp/df-pilot-mode` = `walklab` 확인, 아니면 기동 절차 수행.
 4. **핸드셰이크** — 토큰 생성(16 영숫자) → SFTP로 `/tmp/df-walklab-channel`에 `"TOKEN 17372 17374\n"` 원자 기록(tmp+mv). 로봇 `RefreshHandshake`가 ≤1s 내 채택.
-5. **TEL2 수신 개시** — UDP bind → `local_ip_toward` (connected-UDP `getsockname` 트릭 — df_udp.py 검증 구현)로 로봇이 볼 내 IP 산출 → `/tmp/df-walklab-uplink`에 `"ip:port"` 기록(기본 :17371) → TEL2 30Hz 수신 시작.
+5. **TEL2 수신 개시** — UDP bind → `local_ip_toward` (connected-UDP `getsockname` 트릭 — df_udp.py 검증 구현)로 로봇이 볼 내 IP 산출 → `/tmp/df-walklab-uplink`에 `"ip port\n"` **공백 구분** 기록(로봇 `fscanf("%63s %d")` 계약 — 콜론 금지, 계약 §G.1a)(기본 :17371) → TEL2 30Hz 수신 시작.
 6. **DFCMD 20Hz 개시** — ACK 1.5s 무수신 → **SSH 파일 폴백 5Hz**(`/tmp/df-walklab-cmd`) 전환 + 핸드셰이크 철회(로봇 UDP 리스너 정리). UI에 `transport: ssh_file` 정직 표기.
 7. **종료** — 핸드셰이크 파일 제거(`rm -f /tmp/df-walklab-channel`) — **스테일 토큰 금지** (계약 §G.1 MUST).
 

@@ -23,7 +23,11 @@ public enum AllyFpvCommands {
     /// 리포 내 Ally 프로젝트 하위 경로.
     public static let allyProjectSubpath = "app/ally"
     /// ally-cli 가 로봇에 SSH 할 때 쓰는 Ally 로컬 키 기본 경로(로봇 OpenSSH 5.9 = RSA only).
-    public static let defaultRobotIdentityOnAlly = "$HOME/.ssh/id_rsa_darwin"
+    ///
+    /// `~` 사용(C1 수정): PowerShell single-quote 안에서 `$HOME` 은 확장되지 않아 ally-cli 에
+    /// 리터럴 `$HOME/…` 이 도달했었다. `~/…` 로 두면 ally-cli 의 `expand_home` 이 USERPROFILE
+    /// 로 풀고, 미확장이어도 ssh 자체가 `~` 를 해석한다(이중 안전).
+    public static let defaultRobotIdentityOnAlly = "~/.ssh/id_rsa_darwin"
     /// darwin-fpv(W2) Tauri 빌드 산출물 추정 경로(워크스페이스 target).
     static let fpvBinaryRelPath = "target/release/darwin-fpv.exe"
 
@@ -113,11 +117,13 @@ public enum AllyFpvCommands {
         var passedTotal = 0
         var failedTotal = 0
         var matched = false
-        for line in output.split(separator: "\n") {
+        // CRLF 안전: `\r\n` 은 단일 grapheme 이라 split(separator:"\n") 이 Windows 출력을 못
+        // 나눈다(멀티스위트 합산이 어긋남). `.newlines` CharacterSet 으로 분리한다.
+        for line in output.components(separatedBy: .newlines) {
             guard line.contains("test result:") else { continue }
             matched = true
-            passedTotal += firstInt(before: "passed", in: String(line)) ?? 0
-            failedTotal += firstInt(before: "failed", in: String(line)) ?? 0
+            passedTotal += firstInt(before: "passed", in: line) ?? 0
+            failedTotal += firstInt(before: "failed", in: line) ?? 0
         }
         return matched ? CargoTestResult(passed: passedTotal, failed: failedTotal) : nil
     }
@@ -134,9 +140,14 @@ public enum AllyFpvCommands {
     }
 
     /// fpvReadyProbe 출력 → 준비 여부(`READY` 만 true).
+    ///
+    /// `components(separatedBy: .newlines)` 사용(H3 수정): ROG Ally PowerShell 출력은 CRLF다.
+    /// Swift 에서 `"\r\n"` 은 **단일 grapheme cluster** 라 `split(separator: "\n")` 은 CRLF 줄을
+    /// 아예 못 나눠 `"…READY"` 가 한 토큰에 묻혀 비교 실패했다(영구 false). `.newlines`
+    /// CharacterSet 은 `\r`·`\n` 스칼라 각각을 구분자로 처리해 CRLF/LF/CR 모두 올바르게 분리한다.
     public static func parseFpvReady(_ output: String) -> Bool {
         output
-            .split(separator: "\n")
+            .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .contains("READY")
     }

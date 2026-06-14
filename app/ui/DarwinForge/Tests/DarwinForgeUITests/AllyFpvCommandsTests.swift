@@ -136,6 +136,14 @@ final class AllyFpvCommandsTests: XCTestCase {
         XCTAssertNil(AllyFpvCommands.parseCargoTest("Compiling ally-cli v0.1.0\n"))
     }
 
+    /// H3 회귀: Windows CRLF 출력에서도 멀티스위트가 정확히 합산돼야 한다(`\r\n` grapheme).
+    func testParseCargoTestSumsMultipleSuitesOverCRLF() {
+        let out = "test result: ok. 14 passed; 0 failed; 0 ignored\r\n"
+            + "test result: ok. 7 passed; 0 failed; 0 ignored\r\n"
+        let r = AllyFpvCommands.parseCargoTest(out)
+        XCTAssertEqual(r, AllyFpvCommands.CargoTestResult(passed: 21, failed: 0))
+    }
+
     func testParseProbeUsesExitCode() {
         XCTAssertTrue(AllyFpvCommands.parseProbe("path: wired", exitCode: 0).ok)
         XCTAssertFalse(AllyFpvCommands.parseProbe("no route", exitCode: 1).ok)
@@ -146,5 +154,18 @@ final class AllyFpvCommandsTests: XCTestCase {
         XCTAssertTrue(AllyFpvCommands.parseFpvReady("noise\nREADY\n"))
         XCTAssertFalse(AllyFpvCommands.parseFpvReady("MISSING"))
         XCTAssertFalse(AllyFpvCommands.parseFpvReady(""))
+    }
+
+    /// H3 회귀: ROG Ally PowerShell 출력은 CRLF — `\r` 가 남아도 READY 로 인식해야 한다.
+    func testParseFpvReadyHandlesWindowsCRLF() {
+        XCTAssertTrue(AllyFpvCommands.parseFpvReady("READY\r\n"))
+        XCTAssertTrue(AllyFpvCommands.parseFpvReady("noise\r\nREADY\r\n"))
+        XCTAssertFalse(AllyFpvCommands.parseFpvReady("MISSING\r\n"))
+    }
+
+    /// C1 회귀: 기본 키 경로는 `$HOME`(PowerShell single-quote 안 미확장)이 아니라 `~` 여야 한다.
+    func testDefaultRobotIdentityUsesTildeNotDollarHome() {
+        XCTAssertEqual(AllyFpvCommands.defaultRobotIdentityOnAlly, "~/.ssh/id_rsa_darwin")
+        XCTAssertFalse(AllyFpvCommands.defaultRobotIdentityOnAlly.contains("$HOME"))
     }
 }

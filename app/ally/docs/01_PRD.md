@@ -155,9 +155,9 @@ REQ-ID 체계: **CON**(연결) / **CPT**(콕핏) / **CTL**(조종) / **SAF**(안
 - **CON-02 시퀀스 상세**: ① ssh2로 브로커리지 생존 확인(`walkLabVerifyMode` 계약 출력
   `DF_WALKLAB=active|idle|missing` 파싱) → ② 필요 시 기동 + E-STOP 플래그
   `rm -f`(재무장 계약 §B) → ③ `/tmp/df-walklab-channel`에 `"{token} 17372 17374"` 원자
-  기록 → ④ `/tmp/df-walklab-uplink`에 Ally `ip:port` 등록(TEL2 수신,
-  `WalkLabBrokerage.cpp:76 UPLINK_PATH`) → ⑤ DFCMD 20Hz 개시. 세션 종료 시
-  `walkLabClearChannelHandshake`(`rm -f`) 필수 — 계약 §G.1.
+  기록 → ④ `/tmp/df-walklab-uplink`에 Ally `"ip port\n"` **공백 구분** 등록(TEL2 수신,
+  로봇 `fscanf("%63s %d")` — 콜론 금지 §G.1a, `WalkLabBrokerage.cpp:76 UPLINK_PATH`) →
+  ⑤ DFCMD 20Hz 개시. 세션 종료 시 채널+업링크 `rm -f` 필수 — 계약 §G.1/§G.1a.
 - **CTL-02 컨텍스트 분리 (D3)**: B=E-STOP은 **콕핏(조종) 화면 한정**. 메뉴·커넥트
   화면에서 B=뒤로(Windows 게임 관례). 콕핏 진입 중 오발 = 불필요한 정지 = 안전측
   오류라 허용.
