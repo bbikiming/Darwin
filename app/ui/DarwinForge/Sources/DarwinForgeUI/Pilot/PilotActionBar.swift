@@ -328,6 +328,9 @@ public struct PilotActionBar: View {
                 .frame(maxWidth: .infinity)
             }
         } else {
+            // App Store 빌드(§4): '더 보기' 미출시 placeholder + '다음 업데이트'
+            // affordance 제거 — 출시된 기능만 노출(가이드라인 2.1). PilotHudStrip 2건과 일관.
+            #if !APPSTORE
             HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "ellipsis.circle")
                 Text("+ 더 보기 (\(MotionCatalog.actionBarMore.count) 페이지)")
@@ -350,6 +353,9 @@ public struct PilotActionBar: View {
                 when: "다음 업데이트",
                 alternative: "지금: 메인 7 페이지 + Motion Studio 의 사용자 모션"
             )
+            #else
+            EmptyView()
+            #endif
         }
     }
 

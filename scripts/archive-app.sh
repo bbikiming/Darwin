@@ -186,10 +186,14 @@ if [[ "$METHOD" == "app-store" ]]; then
             cp "$FOUND_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"
             echo "  ✓ embedded.provisionprofile : $(basename "$FOUND_PROFILE")"
         else
-            echo "  ⚠ Provisioning Profile (com.yuseokkim.darwinforge / OSX) 못 찾음 — App Store 업로드 시 거절 위험" >&2
+            # --method app-store 인데 profile 미임베드 → 업로드 불가 아카이브.
+            # 종전 비치명적 echo 는 green-looking run 으로 잘못된 산출물을 냈다 → FATAL.
+            echo "  ✗ Provisioning Profile (com.yuseokkim.darwinforge / OSX) 못 찾음 — App Store 아카이브는 업로드 불가. 프로필 발급 후 재시도." >&2
+            exit 1
         fi
     else
-        echo "  ⚠ $PROFILE_DIR 디렉토리 없음" >&2
+        echo "  ✗ $PROFILE_DIR 디렉토리 없음 — App Store 아카이브에 임베드할 프로필 없음. 업로드 불가." >&2
+        exit 1
     fi
 fi
 

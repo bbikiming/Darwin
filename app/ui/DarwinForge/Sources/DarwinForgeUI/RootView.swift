@@ -206,7 +206,10 @@ public struct RootView: View {
         }
         // P0-G: macOS Menu (DarwinForgeApp.commands) → RootView 액션 분배.
         .onReceive(NotificationCenter.default.publisher(for: .dfSwitchSection)) { note in
-            if let raw = note.object as? String, let s = Section(id: raw) {
+            // 방어선: 숨겨진 섹션(App Store 빌드의 .conversation/.remote 등)으로는
+            // 문자열 라우트가 도달해도 전환하지 않는다(sidebarVisible 만 허용).
+            if let raw = note.object as? String, let s = Section(id: raw),
+               Section.sidebarVisible.contains(s) {
                 section = s
             }
         }
@@ -688,7 +691,7 @@ public struct RootView: View {
                         .padding(.top, DFSpace.xs)
                         .padding(.bottom, 2)
 
-                    ForEach(ExpertTab.allCases) { tab in
+                    ForEach(ExpertTab.visibleCases) { tab in
                         expertTabRow(tab)
                     }
                 }
@@ -1088,9 +1091,15 @@ public struct RootView: View {
         case .harness:  HarnessInspectorView()
         case .mic:      MicCheckView()
         case .allyFpv:
+            // App Store 빌드(§4): allyFpv 는 cargo/SSH 의존 → visibleCases 에서 제외돼
+            // 도달 불가하지만 switch exhaustiveness 위해 ExpertDashboard 로 폴백.
+            #if APPSTORE
+            ExpertDashboard()
+            #else
             AllyFpvLauncherView(remoteShell: remoteShell,
                                 macRobotHost: store.activeConnectionHost,
                                 store: store)
+            #endif
         }
     }
 
@@ -1175,9 +1184,11 @@ public struct RootView: View {
         case .emergencyStop:
             store.emergencyStop()
         case .switchSection(let id):
-            if let s = Section(id: id) { section = s }
+            // 방어선: 숨겨진 섹션으로는 팔레트 디스패치도 전환 불가(sidebarVisible 만 허용).
+            if let s = Section(id: id), Section.sidebarVisible.contains(s) { section = s }
         case .switchExpertTab(let id):
-            if let t = ExpertTab(rawValue: id) {
+            // 방어선: 숨겨진 전문가 탭(App Store 빌드의 .allyFpv)으로는 라우트 불가.
+            if let t = ExpertTab(rawValue: id), ExpertTab.visibleCases.contains(t) {
                 section = .expert
                 expertTab = t
             }
@@ -1225,9 +1236,12 @@ public struct RootView: View {
                 .keyboardShortcut("5", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
             #endif
+            // App Store 빌드(§4): Remote(ssh/scp/ping) 단축키도 제거 — 사이드바 숨김과 일관.
+            #if !APPSTORE
             Button("Section 6") { section = .remote }
                 .keyboardShortcut("6", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
+            #endif
             Button("Section 7") { section = .expert }
                 .keyboardShortcut("7", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
@@ -1250,12 +1264,14 @@ private enum Section: String, CaseIterable, Hashable {
         self.init(rawValue: id)
     }
 
-    /// 사이드바에 노출할 섹션 — **App Store 빌드(§4)에서는 Conversation(Claude CLI
-    /// 의존) 을 숨긴다.** 리뷰어 머신엔 claude CLI 가 없어 깨진 기능으로 보이므로
+    /// 사이드바에 노출할 섹션 — **App Store 빌드(§4)에서는 외부 CLI 의존 섹션을 숨긴다.**
+    /// - `.conversation`: `claude` CLI 의존
+    /// - `.remote`: ssh/scp/ping(원격 명령) 의존 — App Sandbox 에서 거부됨
+    /// 리뷰어 머신엔 해당 도구가 없거나 샌드박스에서 막혀 깨진 기능으로 보이므로
     /// 아예 노출하지 않는다(가이드라인 2.1 완성도). 개발 빌드는 전체 노출.
     static var sidebarVisible: [Section] {
         #if APPSTORE
-        return allCases.filter { $0 != .conversation }
+        return allCases.filter { $0 != .conversation && $0 != .remote }
         #else
         return allCases
         #endif
@@ -1321,6 +1337,18 @@ private enum Section: String, CaseIterable, Hashable {
 private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
     case board, joints, motion, walk, walkData, strategy, harness, mic, allyFpv
     var id: String { rawValue }
+
+    /// 전문가 탭 노출 목록 — **App Store 빌드(§4)에서는 `.allyFpv`(ROG Ally FPV)를 숨긴다.**
+    /// allyFpv 는 `cargo test`/`cargo run -p ally-cli` 를 SSH 로 실행하므로 리뷰어
+    /// 머신/샌드박스에서 동작하지 않는다. `.walkData`(보행 데이터)는 유지 — 그 안의
+    /// Claude sub-tab 은 WalkDataView.DetailMode.visibleCases 로 별도 차단한다.
+    static var visibleCases: [ExpertTab] {
+        #if APPSTORE
+        return allCases.filter { $0 != .allyFpv }
+        #else
+        return allCases
+        #endif
+    }
 
     var label: String {
         switch self {

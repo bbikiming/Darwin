@@ -241,6 +241,9 @@ struct DarwinForgeApp: App {
                 }
                 .keyboardShortcut("4", modifiers: .command)
 
+                // App Store 빌드(§4): Conversation(Claude CLI 의존)·원격 명령(SSH)
+                // 메뉴 항목과 단축키(⌘5/⌘6)를 컴파일 제거 — 사이드바 숨김과 일관.
+                #if !APPSTORE
                 Button("대화") {
                     NotificationCenter.default.post(name: .dfSwitchSection, object: "conversation")
                 }
@@ -250,6 +253,7 @@ struct DarwinForgeApp: App {
                     NotificationCenter.default.post(name: .dfSwitchSection, object: "remote")
                 }
                 .keyboardShortcut("6", modifiers: .command)
+                #endif
 
                 Button("전문가") {
                     NotificationCenter.default.post(name: .dfSwitchSection, object: "expert")

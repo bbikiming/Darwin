@@ -247,7 +247,9 @@ public enum CommandAction: Sendable {
 public enum CommandCatalog {
     /// StudioView가 사용할 기본 카탈로그. 모든 부제는 비전문가가 한 번 읽고 이해할 수 있어야 한다.
     public static func standard() -> [CommandEntry] {
-        [
+        // App Store 빌드(§4): Conversation(Claude CLI 의존) 항목은 ⌘K 검색에서도
+        // 노출되면 안 되므로 var 배열로 만들어 #if !APPSTORE 에서만 삽입한다.
+        var entries: [CommandEntry] = [
             CommandEntry(
                 id: "connect",
                 title: "USB로 로봇과 연결",
@@ -417,15 +419,6 @@ public enum CommandCatalog {
                 action: .switchSection("walk")
             ),
             CommandEntry(
-                id: "section-conversation",
-                title: "말로 시키기로 이동",
-                subtitle: "자연어로 로봇과 대화하며 동작을 시켜요",
-                icon: "bubble.left.and.bubble.right",
-                keywords: ["conversation", "대화", "claude", "ai", "말로"],
-                shortcut: "⌘4",
-                action: .switchSection("conversation")
-            ),
-            CommandEntry(
                 id: "section-expert",
                 title: "전문가 도구로 이동",
                 subtitle: "관절·보드·전략 등 자세한 디버깅 화면이에요",
@@ -435,6 +428,27 @@ public enum CommandCatalog {
                 action: .switchSection("expert")
             )
         ]
+
+        // App Store 빌드(§4): Conversation 항목은 ⌘K 검색에서도 surfacing 차단.
+        // dev/DevID 빌드에서만 'section-walk' 다음 자리에 삽입(UX 순서 유지).
+        #if !APPSTORE
+        let conversationEntry = CommandEntry(
+            id: "section-conversation",
+            title: "말로 시키기로 이동",
+            subtitle: "자연어로 로봇과 대화하며 동작을 시켜요",
+            icon: "bubble.left.and.bubble.right",
+            keywords: ["conversation", "대화", "claude", "ai", "말로"],
+            shortcut: "⌘4",
+            action: .switchSection("conversation")
+        )
+        if let walkIndex = entries.firstIndex(where: { $0.id == "section-walk" }) {
+            entries.insert(conversationEntry, at: walkIndex + 1)
+        } else {
+            entries.append(conversationEntry)
+        }
+        #endif
+
+        return entries
     }
 }
 

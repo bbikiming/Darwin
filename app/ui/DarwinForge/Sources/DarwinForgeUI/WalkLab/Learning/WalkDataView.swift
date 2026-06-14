@@ -34,6 +34,17 @@ public struct WalkDataView: View {
             case .critic:   return "Critic V2"
             }
         }
+
+        /// App Store 빌드(§4): Claude/Critic 탭은 `claude` CLI 를 spawn 하므로
+        /// 리뷰어 머신에서 '분석 실패' 로 깨진다 → 세그먼트 picker 에서 아예 제외.
+        /// dev/DevID 빌드는 전체 노출.
+        static var visibleCases: [DetailMode] {
+            #if APPSTORE
+            return [.overview]
+            #else
+            return allCases
+            #endif
+        }
     }
 
     // V280-C: extension (다른 file) 접근 위해 default internal scope 유지.
@@ -130,7 +141,7 @@ public struct WalkDataView: View {
 
     private var detailModePicker: some View {
         Picker("분석 모드", selection: $detailMode) {
-            ForEach(DetailMode.allCases) { mode in
+            ForEach(DetailMode.visibleCases) { mode in
                 Text(mode.label).tag(mode)
             }
         }
@@ -153,9 +164,19 @@ public struct WalkDataView: View {
         case .overview:
             overviewMode
         case .claude:
+            // App Store 빌드(§4): Claude 패널은 `claude` CLI 의존 → overview 로 폴백
+            // (picker 에서도 숨겨 도달 불가하지만 방어적으로 fallback).
+            #if APPSTORE
+            overviewMode
+            #else
             claudePanelView
+            #endif
         case .critic:
+            #if APPSTORE
+            overviewMode
+            #else
             criticPanelView
+            #endif
         }
     }
 

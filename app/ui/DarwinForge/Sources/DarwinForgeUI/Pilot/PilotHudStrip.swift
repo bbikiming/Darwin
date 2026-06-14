@@ -192,6 +192,9 @@ public struct PilotHudStrip: View {
                     }
                 }
             } else {
+                // App Store 빌드(§4): '준비 중'/'다음 업데이트' affordance 제거 —
+                // 출시된 기능만 노출(미출시 기능 광고 금지, 가이드라인 2.1).
+                #if !APPSTORE
                 metricCell(label: "IMU",
                            icon: "gyroscope",
                            tint: PilotColor.comingSoon,
@@ -203,6 +206,9 @@ public struct PilotHudStrip: View {
                         when: "다음 업데이트",
                         alternative: "지금: 전압·온도·세션 모니터링"
                     )
+                #else
+                EmptyView()
+                #endif
             }
         }
     }
@@ -316,6 +322,8 @@ public struct PilotHudStrip: View {
                 .background(DFColor.elev2)
                 .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
             } else {
+                // App Store 빌드(§4): '준비 중' affordance 제거 — 출시 기능만 노출.
+                #if !APPSTORE
                 metricCell(label: "자동복구",
                            icon: "shield.slash.fill",
                            tint: PilotColor.comingSoon,
@@ -327,6 +335,9 @@ public struct PilotHudStrip: View {
                         when: "다음 업데이트",
                         alternative: "지금: ⌘⇧. E-stop 으로 모터 토크 OFF"
                     )
+                #else
+                EmptyView()
+                #endif
             }
         }
     }
