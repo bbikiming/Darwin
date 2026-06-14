@@ -354,7 +354,14 @@ namespace Robotis {
 
     bool GamepadPilot::HasControl(long long now_ms) {
         pthread_mutex_lock(&m_mtx);
-        long long last = m_last_event_ms;
+        // **하드닝-T (2026-06-14, 연속 회전)**: 신선도 기준 = 마지막 *공급(offer)* — 마지막
+        // 원시 *이벤트* 가 아니다. LT/RT 트리거를 꽉 누르면 기계적 끝점이라 값 변화=0 →
+        // evdev 이벤트가 안 나온다. 종전엔 m_last_event_ms 기준이라 1초/1.5초 후 HasControl
+        // 이 false 로 떨어져 supervisor 가 회전 명령 적용을 멈췄다(전진은 스틱 떨림 이벤트로
+        // 유지됨 — 비대칭). MaybeRefresh 가 장치 보유 중 50ms 마다 보유 상태를 재공급해
+        // m_last_offer_ms 를 갱신하므로, 정적 홀드도 워킹처럼 끊기지 않는다. 장치 소실 시
+        // 재공급이 멈춰 offer 가 stale → HasControl 이 떨어지며 네트워크로 제어 양보.
+        long long last = m_last_offer_ms;
         pthread_mutex_unlock(&m_mtx);
         return last > 0 && (now_ms - last) <= GP_LOCAL_FRESH_MS;
     }
@@ -362,8 +369,10 @@ namespace Robotis {
     GamepadFailsafe GamepadPilot::PollFailsafe(long long now_ms) {
         if (!m_running) return GP_FS_NONE;
         pthread_mutex_lock(&m_mtx);
-        // ③티어 기준은 max(마지막 이벤트, 노드 획득) — 획득 직후 무입력 즉발 방지.
-        long long alive = (m_last_event_ms > m_adopt_ms) ? m_last_event_ms : m_adopt_ms;
+        // **하드닝-T**: ③티어 침묵 기준도 마지막 *공급(offer)* — 재공급이 도는 동안엔 침묵이
+        // 누적되지 않아 정적 홀드가 슬루-제로로 끊기지 않는다. max(offer, 노드 획득)으로
+        // 획득 직후 무입력 즉발 방지. 단절(재공급 정지)은 ②티어 ENODEV 가 즉시 소화.
+        long long alive = (m_last_offer_ms > m_adopt_ms) ? m_last_offer_ms : m_adopt_ms;
         bool node_ok = m_node_ok;
         bool had = m_had_device;
         pthread_mutex_unlock(&m_mtx);
@@ -537,11 +546,13 @@ namespace Robotis {
             m_armed = false;
             m_rearm_requires_neutral = true;
         }
-        if (m_node_ok && m_have_snap && m_last_event_ms > 0 &&
-            (now_ms - m_last_event_ms) < GP_SILENCE_SLEW_MS &&
+        // **하드닝-T (2026-06-14, 연속 회전)**: 장치 보유 중이면 보유 상태를 *계속* 재공급
+        // (종전 침묵 ≥1.5s 중단 상한 제거). LT/RT 트리거 정적 홀드처럼 이벤트가 안 나오는
+        // 입력도 워킹(스틱 떨림)처럼 끊기지 않는다 — HasControl/③티어가 offer 기준이라
+        // 재공급이 신선도를 유지한다. 단절(ENODEV)은 ②티어가 즉시, 정지-홀드/사망 패드는
+        // ARM idle-timeout(15s)이 backstop(활동은 이벤트에서만 갱신 → 정적 홀드는 15s 후 disarm).
+        if (m_node_ok && m_have_snap &&
             (now_ms - m_last_offer_ms) >= GP_REFRESH_MS) {
-            // 보유 상태 재공급 — 정적 홀드(이벤트 0)에서 스트림 워치독 餓死 방지.
-            // 침묵 ≥1.5s 면 중단 → ③티어(PollFailsafe)가 제자리 슬루를 이어받는다.
             OfferCurrentLocked(now_ms);
         }
         pthread_mutex_unlock(&m_mtx);

@@ -524,9 +524,11 @@ static void test_pilot_refresh_cadence() {
     CHECK(p.TakeCommand(line, sizeof(line)), "60ms — 보유 상태 재공급");
     WalkCommand c;
     CHECK(ParseCommandLine(line, &c) && c.enabled == 1, "재공급 라인 = 보유 이동 상태");
-    // ③티어 진입(침묵 ≥1.5s) 후에는 재공급 중단 — 제자리 슬루로 인계.
+    // **하드닝-T (2026-06-14)**: 장치 보유 중엔 침묵 1.6s 에도 재공급 *계속*(연속 홀드 —
+    // 워킹 패리티). 종전엔 1.5s 에 중단했으나 그게 트리거 정적 홀드 회전을 끊은 원인이었다.
     p.TickForTest(1010 + 1600);
-    CHECK(!p.TakeCommand(line, sizeof(line)), "침묵 1.6s — 재공급 중단 (③ 인계)");
+    CHECK(p.TakeCommand(line, sizeof(line)), "침묵 1.6s 에도 재공급 계속 (장치 보유 — 연속)");
+    CHECK(ParseCommandLine(line, &c) && c.enabled == 1, "재공급 라인 = 보유 이동 상태 유지");
     p.Stop();
 }
 
@@ -1170,28 +1172,36 @@ static void test_pilot_forcedisarm_reentrancy() {
     p.Stop();
 }
 
-static void test_local_fresh_silence_alignment() {
-    printf("test_local_fresh_silence_alignment (하드닝 A2/P1-2 — local 신선창 == 침묵창)\n");
-    CHECK(GP_LOCAL_FRESH_MS == GP_SILENCE_SLEW_MS,
-          "GP_LOCAL_FRESH_MS == GP_SILENCE_SLEW_MS (정렬 — 선점 구간 제거)");
+static void test_pilot_held_input_continuous() {
+    printf("test_pilot_held_input_continuous (하드닝-T — 정적 홀드(트리거) 연속, 워킹 패리티)\n");
+    // 정렬 불변식 유지(offer 기준에서도 HasControl 창 == ③티어 침묵 창).
+    CHECK(GP_LOCAL_FRESH_MS == GP_SILENCE_SLEW_MS, "GP_LOCAL_FRESH_MS == GP_SILENCE_SLEW_MS");
     ResetCallbacks();
     GamepadPilot p;
     p.Start(OnEstop, OnRecover, OnKick, 0, false);
     p.InjectAdoptForTest(1000);
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
-    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
     p.InjectEventForTest(Syn(), 1010);
-    DrainSlot(p);
-    long long last = 1010;
-    // HasControl(우선권)과 refresh(재공급)가 같은 1500ms 경계에서 동시 만료 →
-    // 1.0~1.5s 선점 구간 없음(P1-2 결합 결함 근본 차단).
-    CHECK(p.HasControl(last + GP_SILENCE_SLEW_MS), "경계(1500ms) — local 우선 유지");
-    CHECK(!p.HasControl(last + GP_SILENCE_SLEW_MS + 1), "경계 초과 — local 우선 해제");
-    char line[256];
-    p.TickForTest(last + GP_SILENCE_SLEW_MS - 1);   // 1499ms — 재공급
-    CHECK(p.TakeCommand(line, sizeof(line)), "1499ms — 보유 재공급(refresh 활성)");
-    p.TickForTest(last + GP_SILENCE_SLEW_MS + 100);  // 1600ms — 중단
-    CHECK(!p.TakeCommand(line, sizeof(line)), "1600ms — refresh 중단(③티어 인계)");
+    // RT 풀(우회전) — 트리거는 기계적 끝점이라 이후 *이벤트 없음*(정적 홀드). activity=1020.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_RZ, 255), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    WalkCommand c;
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "회전 명령(enabled=1)");
+    CHECK(c.a < -1.0, "우회전 a<0 (RT 트리거 차분)");
+    // 이벤트 없이 시간만 흐름(트리거 홀드). 종전 1.5s 침묵 컷이 회전을 끊었다.
+    // 하드닝-T: refresh 가 계속 공급 → HasControl/③티어가 offer 기준이라 끊김 없음.
+    p.TickForTest(3000);   // 옛 침묵창(1.5s) 한참 초과
+    CHECK(p.HasControl(3000), "3s 정적 홀드 — local 우선 유지(offer 기준, 끊김 없음)");
+    CHECK(p.PollFailsafe(3000) == GP_FS_NONE, "3s — ③티어 슬루 없음(연속)");
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "3s — 회전 명령 계속 공급(연속)");
+    p.TickForTest(8000);
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "8s — 여전히 연속 회전");
+    CHECK(p.ArmedForTest(), "8s — armed 유지(idle-timeout 전)");
+    // ARM idle-timeout(15s) backstop: 활동(마지막 이벤트) 1020 기준 → 16020 에 disarm
+    // (사망 패드/방치 안전망 — 이벤트로만 활동 갱신, refresh 는 활동 비갱신).
+    p.TickForTest(1020 + GP_ARM_IDLE_TIMEOUT_MS);
+    CHECK(!p.ArmedForTest(), "정적 홀드 15s → idle-timeout backstop disarm(안전망)");
+    CHECK(TakeParsed(p, &c) && c.enabled == 0, "disarm 후 → enabled 0");
     p.Stop();
 }
 
@@ -1296,7 +1306,7 @@ int main() {
     test_pilot_external_estop_no_walk_until_rearm();
     test_pilot_rearm_requires_neutral();
     test_pilot_forcedisarm_reentrancy();
-    test_local_fresh_silence_alignment();
+    test_pilot_held_input_continuous();
     test_pilot_arm_idle_timeout();
     test_pilot_kick_setup_not_idle();
 
