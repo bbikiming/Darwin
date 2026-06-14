@@ -282,6 +282,8 @@ namespace Robotis {
 
         m_fall_count = 0;   // 복구 완료 — 카운터 reset.
         m_sitting = false;  // **D-패드(2026-06-14)** — getup 으로 일어섰으니 앉음 상태 해제.
+        m_ballfollow_enabled = false;  // **C2(2026-06-15)** — 자동 기립 후 명령 없이 추종
+                            // 보행이 재개되지 않게 해제(단일동작 경로와 대칭). START 재토글 필요.
         printf("[WalkLabBrokerage] getup complete — joints returned to Walking, idle\n");
         return true;   // 보행은 정지 유지 — 다음 Mac 명령까지 대기.
     }
@@ -323,18 +325,13 @@ namespace Robotis {
             return false;
         }
 
-        // 4) side → page + 이름. **단일 매핑 지점**(킥 비대칭 + D-패드 공식 페이지, op2 교차검증).
-        int page = -1; const char* name = "?";   // default 가 return 하나 g++ uninit 경고 방지.
-        switch (side) {
-            case Robotis::GP_KICK_LEFT:         page = KICK_PAGE_LEFT;   name = "KICK LEFT";  break;
-            case Robotis::GP_KICK_RIGHT:        page = KICK_PAGE_RIGHT;  name = "KICK RIGHT"; break;
-            case Robotis::GP_ACTION_STAND:      page = STAND_PAGE;       name = "STAND";      break;
-            case Robotis::GP_ACTION_SIT:        page = SIT_PAGE;         name = "SIT";        break;
-            case Robotis::GP_ACTION_PASS_LEFT:  page = PASS_LEFT_PAGE;   name = "PASS LEFT";  break;
-            case Robotis::GP_ACTION_PASS_RIGHT: page = PASS_RIGHT_PAGE;  name = "PASS RIGHT"; break;
-            default:
-                fprintf(stderr, "[WalkLabBrokerage] invalid action side=%d — 무시\n", side);
-                return false;
+        // 4) side → page + 이름. **단일 매핑 지점** = BrokerageActions.h::ActionSideToPage
+        //    (킥 비대칭 + D-패드 공식 페이지, host 테스트로 핀). 미지 side = -1 거부.
+        int page = Robotis::ActionSideToPage(side);
+        const char* name = Robotis::ActionSideName(side);
+        if (page < 0) {
+            fprintf(stderr, "[WalkLabBrokerage] invalid action side=%d — 무시\n", side);
+            return false;
         }
 
         // 5) 안전 게이트 — STANDUP(직립 몸통) 일 때만. 낙상/불안정 중 모션 금지(getup 우선).
@@ -348,6 +345,13 @@ namespace Robotis {
             return false;
         }
         printf("[WalkLabBrokerage] ACTION %s — page %d\n", name, page);
+
+        // **C2 (2026-06-15, 리뷰 critical)** — 단일동작 실행 = 볼-추종 자동보행 해제.
+        // 끄지 않으면 동작 완료(continue) 후 다음 poll 의 ProcessBallFollow 가 명령 없이
+        // 보행을 재개해 "단일동작 중·직후 타 동작 겹침 금지" 불변식을 깬다. 추종 재개는
+        // START 재토글 필수. 여기(STANDUP 게이트 통과·실행 확정 지점)에서 한 번 끄면
+        // 아래 모든 return true 경로(SIT/STAND/일반/정지후낙상)를 일괄 커버한다.
+        m_ballfollow_enabled = false;
 
         // 6) getup 과 동일 모듈 스왑 (검증된 패턴) ─────────────────────────────
         // 6-1) 보행 중단 + 완전 정지 대기(안정 스탠스로 수렴). telemetry 계속.
@@ -366,8 +370,12 @@ namespace Robotis {
         // 정지 후 STANDUP 재확인(감속 transient 회피). 비STANDUP(정지 사이 실제 낙상)이면
         // Action 시작 전 중단 → getup 인계(STAND 포함 — page16 은 STANDUP 전제, 낙상 시 부적합).
         if (Robot::MotionStatus::FALLEN != Robot::STANDUP) {
-            printf("[WalkLabBrokerage] %s 중단 — 정지 후 낙상 감지 → getup 인계\n", name);
-            m_fall_count = 0;
+            printf("[WalkLabBrokerage] %s 중단 — 정지 후 낙상 감지 → getup 즉시 인계\n", name);
+            // **F1 (2026-06-15, 리뷰 high)** — 카운터를 임계로 올려 다음 poll 의
+            // CheckAndRecoverFall 이 즉시 getup 발화하게 한다(settle 후 낙상 경로와 동일).
+            // 종전 `= 0` 은 debounce 를 처음부터 다시 세게 해 getup 인계가 최대 ~600ms
+            // 지연됐다(같은 함수 내 두 낙상-인계 경로가 불일치).
+            m_fall_count = FALL_DEBOUNCE_POLLS;
             return true;
         }
         // 6-2) body joint 을 Action 모듈에 인계.
@@ -635,6 +643,14 @@ namespace Robotis {
     // 추종만(자동 킥 없음 — KickBall 무시, 킥은 LB/RB 수동). 호출 게이트는 supervisor 가
     // (m_ballfollow_enabled && Armed) 로 소유. E-STOP/disarm/미ARM 은 보행을 막는다.
     void WalkLabBrokerage::ProcessBallFollow(Robot::Walking* walking, bool& walking_active) {
+        // **D1 심층 방어 (2026-06-15)** — 앉은 상태에선 추종 보행 금지(호출측 게이트와 이중).
+        // BallFollower::Process 는 Walking::Start 를 직접 호출하므로 여기서 막지 않으면 앉은
+        // 자세로 보행 시작 → 낙상. 보행 중이면 정지 후 복귀.
+        if (m_sitting) {
+            if (walking->IsRunning()) walking->Stop();
+            walking_active = false;
+            return;
+        }
         if (!m_tracker) return;   // 방어(리뷰 LOW-3) — ProcessBallTracking 이 먼저 init 하나 가드.
         if (!m_follower) m_follower = new Robot::BallFollower();
         if (m_track_valid && !m_scanning) {
@@ -653,6 +669,19 @@ namespace Robotis {
         }
         // follower 가 Walking 을 직접 Start/Stop 하므로 walking_active 를 실제 상태로 동기화.
         walking_active = walking->IsRunning();
+    }
+
+    // ===== C1/C5 (2026-06-15) — getup/단일동작 직후 명령 슬롯 드레인 ================
+    // getup·CheckAndExecuteKick 가 true 를 반환하면 supervisor 는 이번 poll 명령 적용을
+    // continue 로 건너뛴다. 그러나 블로킹 동작(~1~2s) 중 게임패드 읽기 스레드·UDP 전송
+    // 스레드는 "스틱 앞으로" enabled=1 보행 라인을 latest-wins 슬롯에 계속 덮어쓴다. 그
+    // 라인을 비우지 않으면 다음 poll 에서 곧바로 꺼내 walking->Start() — 동작 직후 의도치
+    // 않은 재보행(불변식 위반). 파일 명령은 last_stat 캡처가 별도로 막지만 두 슬롯은 무방비라
+    // 여기서 명시적으로 비운다. 반환값은 무시(목적은 비우기). 반환 직전 호출(다음 poll 신선).
+    void WalkLabBrokerage::DrainCommandSlots() {
+        char buf[256];
+        m_gamepad.TakeCommand(buf, sizeof(buf));
+        m_cmd_slot.Take(buf, sizeof(buf));
     }
 
     // ===== C1 카메라 스트림 펌프 (2026-06-12) =====================================
@@ -1302,6 +1331,7 @@ namespace Robotis {
                     memset(&last_stat, 0, sizeof(last_stat));
                 }
                 last_cmd_time = time(NULL);
+                DrainCommandSlots();   // **C5(2026-06-15)** — getup 중 쌓인 stale 보행라인 폐기.
                 usleep(POLL_INTERVAL_MS * 1000);
                 continue;
             }
@@ -1319,6 +1349,7 @@ namespace Robotis {
                     memset(&last_stat, 0, sizeof(last_stat));
                 }
                 last_cmd_time = time(NULL);
+                DrainCommandSlots();   // **C1(2026-06-15)** — 단일동작 중 쌓인 stale 보행라인 폐기.
                 usleep(POLL_INTERVAL_MS * 1000);
                 continue;
             }
@@ -1498,13 +1529,13 @@ namespace Robotis {
             // 수동 Start/Stop 은 ApplyCommandLine 에서 억제됨 → follower 가 Walking 을 소유.
             if (m_balltrack_enabled) {
                 ProcessBallTracking();
-                if (m_ballfollow_enabled) {
-                    if (m_gamepad.Armed()) {
-                        ProcessBallFollow(walking, walking_active);
-                    } else {
-                        if (walking->IsRunning()) walking->Stop();
-                        walking_active = false;
-                    }
+                // **D1 (2026-06-15)** — 추종 보행 게이트: 활성 + ARM + 비-앉음(SSOT). 앉음·미ARM
+                // 이면 보행 금지(앉은 자세 자동보행 낙상 차단). 게이트 미통과면 보행 정지.
+                if (Robotis::ShouldRunBallFollow(m_ballfollow_enabled, m_gamepad.Armed(), m_sitting)) {
+                    ProcessBallFollow(walking, walking_active);
+                } else if (m_ballfollow_enabled) {
+                    if (walking->IsRunning()) walking->Stop();
+                    walking_active = false;
                 }
             }
 
@@ -1651,7 +1682,10 @@ namespace Robotis {
         // 볼 트래킹/추종 토글 (edge 처리). **볼-추종(2026-06-14)**: balltrack 0=off,
         // 1=머리추적(X), 2=볼-추종 보행(START). 1·2 모두 머리추적 포함, 2 는 추가로 보행.
         bool want_balltrack = (cmd.balltrack >= 1);
-        m_ballfollow_enabled = (cmd.balltrack == 2);
+        // **D1 (2026-06-15, 리뷰 critical)** — 앉은 상태(m_sitting)에선 추종 활성 금지.
+        // 종전엔 m_sitting 무관하게 켜져, 앉은 채 ProcessBallFollow→Walking::Start 로
+        // 앉은 자세 보행→확실 낙상이었다(수동 보행 앉음 게이트를 우회). SSOT=BrokerageActions.h.
+        m_ballfollow_enabled = Robotis::BallFollowEnabledFor(cmd.balltrack, m_sitting);
         if (want_balltrack && !m_balltrack_prev && m_ball_finder) {
             ReloadBallColor();
             printf("[WalkLabBrokerage] ball color reloaded from %s\n", BALLCOLOR_INI);

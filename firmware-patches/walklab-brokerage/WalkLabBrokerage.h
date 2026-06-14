@@ -13,6 +13,7 @@
 #include <pthread.h>          // O1 transport 스레드
 #include "WalkLabTransport.h" // O1 — latest-wins 슬롯·워치독·파서(Robot:: 의존 0)
 #include "GamepadPilot.h"     // H1 — RG G01 동글 직결 파일럿(자체 슬롯·읽기 스레드)
+#include "BrokerageActions.h" // 단일동작 결정 로직(side→page·앉음/볼추종 게이트, Robot:: 의존 0)
 
 // 공식 ROBOTIS 프레임워크의 Walking/CM730 클래스는 namespace Robot 에 있음 (Robotis 아님).
 namespace Robot { class Walking; }
@@ -96,20 +97,10 @@ public:
     static const int GETUP_PAGE_FORWARD = 10;
     static const int GETUP_PAGE_BACKWARD = 11;
 
-    /// **F12 (2026-06-13)** — 공식 킥 모션 page 번호 (motion_4096.bin 내장).
-    /// ⚠️ 비대칭: RIGHT=12 · LEFT=13 (demo main.cpp:271/276 RIGHT KICK=Start(12)·
-    /// LEFT KICK=Start(13) · forge-core library.rs:169-177 4중 교차검증). side
-    /// (GP_KICK_LEFT/RIGHT) → page 매핑은 CheckAndExecuteKick 단일 지점이 소유.
-    static const int KICK_PAGE_RIGHT = 12;
-    static const int KICK_PAGE_LEFT  = 13;
-
-    /// **D-패드 모션 (2026-06-14)** — 공식 Action 페이지(motion_4096.bin, op2 카탈로그
-    /// 교차검증). 위=stand up(16)·아래=sit down(15)·좌=lPASS(71)·우=rPASS(70). 페이지
-    /// 자체 속도 준수. side(GP_ACTION_*) → page 매핑은 CheckAndExecuteKick 단일 지점이 소유.
-    static const int STAND_PAGE      = 16;
-    static const int SIT_PAGE        = 15;
-    static const int PASS_LEFT_PAGE  = 71;
-    static const int PASS_RIGHT_PAGE = 70;
+    /// **F12 (2026-06-13) / D-패드 (2026-06-14)** — 단일동작 page 번호(motion_4096.bin 내장)와
+    /// side(GP_KICK_*/GP_ACTION_*) → page 매핑은 BrokerageActions.h 가 단일 소유한다
+    /// (BROK_KICK_PAGE_*/STAND/SIT/PASS_* + ActionSideToPage). 호스트 테스트 가능하도록
+    /// Robot:: 의존 없는 헤더로 추출(리뷰 G3). 킥 비대칭 RIGHT=12·LEFT=13 교차검증은 그곳 주석.
 
     /// **C (2026-06-13)** — 킥 착지 안정화 settle 틱 수 (×8ms). 모션 완료 직후 Action
     /// 최종 스탠스를 이만큼 유지(서보 홀드)해 스윙 잔여 진동을 감쇠한 뒤 Walking 으로
@@ -306,8 +297,10 @@ private:
     pthread_mutex_t m_kick_mtx;
     /// **D-패드 모션 (2026-06-14)** — 앉음(SIT) 상태 플래그. true 면 (1) 자동 getup 억제
     /// (앉았는데 "넘어졌다"고 자동 기립하는 충돌 방지), (2) 보행 Start 차단(앉은 채 걷기
-    /// 금지 — 먼저 STAND), (3) STAND 외 D-패드/킥 차단. STAND/E-STOP 시 해제. supervisor 단독.
-    bool m_sitting;
+    /// 금지 — 먼저 STAND), (3) STAND 외 D-패드/킥 차단. STAND/E-STOP 시 해제.
+    /// **E1 (2026-06-15)** — volatile: E-STOP 스레드(TriggerEstopImmediate)가 해제,
+    /// supervisor 가 R/W → 크로스-스레드 가시성. 단일 바이트 bool 이라 torn write 무.
+    volatile bool m_sitting;
 
     // ===== O2 셰이핑 상태 (2026-06-12, walklab-onboard-teleop-upgrade Wave O2) =====
     /// 거버너 적용 후의 명령 목표값(X/Y/A/period) — 슬루가 이 목표로 전진. 래치 사이엔 재적용.
@@ -383,8 +376,9 @@ private:
 
     /// **볼-추종 보행 (2026-06-14)** — START 토글(명령라인 balltrack 값=2). true 면 머리추적
     /// (ProcessBallTracking) 위에 BallFollower 가 Head 각도로 공을 향해 보행한다(싸커 데모 응용).
-    /// 사용자 선택: 추종만(자동 킥 없음 — 킥은 LB/RB 수동). ARM 필요·E-STOP 시 해제.
-    bool m_ballfollow_enabled;
+    /// 사용자 선택: 추종만(자동 킥 없음 — 킥은 LB/RB 수동). ARM 필요·E-STOP·단일동작 시 해제.
+    /// **E1 (2026-06-15)** — volatile: E-STOP 스레드 해제 + supervisor R/W 크로스-스레드 가시성.
+    volatile bool m_ballfollow_enabled;
     /// Head 각도 → Walking X/A_MOVE 추종 보행기(ROBOTIS 프레임워크). lazy-init.
     Robot::BallFollower* m_follower;
 
@@ -397,6 +391,12 @@ private:
     /// 직후 BallFollower::Process(tracker.ball_position)로 공을 향해 Walking 직접 구동. 공 미검출
     /// 시 보행 정지(머리는 tracker 스캔). 자동 킥 없음(KickBall 무시 — 킥은 LB/RB 수동).
     void ProcessBallFollow(Robot::Walking* walking, bool& walking_active);
+
+    /// **C1/C5 (2026-06-15)** — getup/단일동작(CheckAndExecuteKick) 직후 continue 전에
+    /// 게임패드·UDP 명령 슬롯을 비운다. 블로킹 동작 중 읽기/전송 스레드가 슬롯에 덮어쓴
+    /// stale "스틱 앞으로" 보행 라인이 다음 poll 에 즉시 적용돼 동작 직후 재보행하는 것을
+    /// 막는다(파일 경로는 last_stat 캡처가 별도 방어). 슬롯은 latest-wins 1칸.
+    void DrainCommandSlots();
 
     /// **공 색상 로드 (2026-06-03)** — config(balltrack.ini)의 [Find Color] 섹션을
     /// m_ball_finder 에 적용 (싸커 데모의 ColorFinder::LoadINISettings 와 동일).
