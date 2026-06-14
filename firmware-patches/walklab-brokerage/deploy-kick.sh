@@ -28,7 +28,7 @@ if [ -z "$TARGET" ]; then
 fi
 
 FILES=(install-onboard.sh \
-       WalkLabBrokerage.cpp WalkLabBrokerage.h \
+       WalkLabBrokerage.cpp WalkLabBrokerage.h BrokerageActions.h \
        WalkLabTransport.cpp WalkLabTransport.h \
        GamepadPilot.cpp GamepadPilot.h \
        balltrack.ini)
