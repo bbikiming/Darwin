@@ -15,6 +15,7 @@
 | **B-AS1** | App Store | 코드(P0/P1 시나리오 B) 완료, **개발자 포털 잔여**: 새 App ID·provisioning profile 재발급·App Store Connect 새 앱 레코드 + 아카이브 실기 검증·데모 영상 | 활성 — 사용자 포털 작업 |
 | **B-HW1** | Switch | Switch 어플라이언스 **하드웨어 미검증**(RCM jig 미보유) — 부팅·kiosk·전원버튼·read-only rootfs 경로 미검증. 코드 레벨(bash -n·compileall)만 통과 | 활성 — 실기 게이트 |
 | **B-FLD1** | 실기 필드 | WalkLab P7(32/20/L2)·킥 K3·D1/D2·H1/H2 호스트 테스트만 GREEN, **필드 게이트 미수행**. O3(FSR/IMU 밸런스) 코드 미구현 | 활성 — 입회 일정 미정 |
+| **B-FLD2** | 실기 필드 | **Anbernic 하드닝(`1c7f35c`) + 게임패드 회전/측보 튜닝 + D-패드 모션(`8cdc282`) + 볼-추종 자동보행(`c67fd4a`) 전부 로봇 미배포(OFF)** — 호스트 279 checks GREEN, 실기 미검증. 잔여 게이트 = M2M p95·침묵 임계·단절 매트릭스 4종. 배포 = `firmware-patches/walklab-brokerage` 6파일 재배포 + demo-pilot 재기동 필요(디스크만 반영, 재기동 시 적용) | 활성 — 입회 일정 미정 |
 
 > 실기 측정 시 **Mac 앱 종료 필수**(시리얼 경합). 로봇·워크트리는 단일 공유 자원 — 세션당 한 번만 접근.
 

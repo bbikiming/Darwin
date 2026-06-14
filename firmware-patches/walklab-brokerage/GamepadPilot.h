@@ -109,7 +109,8 @@ static const double GP_MAX_STRIDE_MM = 38.0;  // UI 클램프 — 최종은 거�
 // 불변식 GP_MAX_SIDE_MM==ENVELOPE_Y_MAX, GP_MAX_TURN_DEG==ENVELOPE_A_MAX 가 구조적으로
 // 보장되어 한쪽만 바꿔도 발산 불가(종전엔 양쪽 헤더 주석에만 — 조용히 깨질 수 있었다).
 // GpGaitSchedule 측보 정규화가 GP_MAX_SIDE_MM 를 분모로 쓰므로(P1-1) 이 정렬이 핵심.
-// 값은 WalkLabTransport.h: ENVELOPE_Y_MAX=28(P2), ENVELOPE_A_MAX=18(P4). C++03 라 const
+// 값은 WalkLabTransport.h: ENVELOPE_Y_MAX=32(P2 22→28→32), ENVELOPE_A_MAX=28(P4 12→18→24→28),
+// 둘 다 2026-06-14 실기 튜닝 최종값. C++03 라 const
 // double 은 정수상수식이 아니어서 컴파일타임 array-assert 불가 → 구조적 동일 정의로 대체.
 static const double GP_MAX_SIDE_MM   = ENVELOPE_Y_MAX;  // ==32 (실기튜닝 2026-06-14, per-leg half-amp 16mm, IK-freeze 관찰)
 static const double GP_MAX_TURN_DEG  = ENVELOPE_A_MAX;  // ==28 (실기튜닝 2026-06-14, 발 yaw ~14° 무스컬프 천장, 충돌 ~40° 마진)

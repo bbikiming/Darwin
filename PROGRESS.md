@@ -27,6 +27,7 @@
 - [x] **Mac 'FPV 조종' 탭** (2026-06-13, `40434a0`): 전문가 탭에 ROG Ally FPV 데모 런처(AllyFpvCommands/Session/View, probe/connect/fpv 명령 생성·파싱). 기존 '스위치 연결' 탭 개편 흡수.
 - [x] **iOS Mobile Relay 고도화** (2026-06-13~14): walk 30→10Hz latest-wins throttle(`b1fb37b`), 디스패치 직렬화(release가 in-flight move 추월 차단, `ddfc498`), Mac 릴레이 walk conflation 슬롯 + 레이턴시 JSON sink(`7a4ffb1`), 텔레메트리 @Published 게이트 + 유선 재프로브 배너(`f1af504`), 릴레이 conflation 실측·통합테스트 + isEnabled 게이트 테스트(`05ce002`).
 - [x] **WalkLab 텔레옵·킥** (2026-06): Anbernic 보행 고도화 P0~P6(`ea5bbb9`, 호스트 test_transport 187/test_gamepad 216 GREEN), 게임패드 LB/RB 공식 킥 F12(`f2e9fae`·`cb0a964`, 온보드 단독), 킥 안정성 감속·착지 settle·사후낙상 인계(`58efaa8`). P7(32/20/L2)·킥 K3 실기 게이트 대기.
+- [x] **Anbernic 동글직결 조종 하드닝 + D-패드/볼-추종** (2026-06-14, 호스트 test 279 checks/0 fail): 14-에이전트 감사+플랜(`1bfe8ef`) → Batch A/B/C 구현 `1c7f35c`(A1 ForceDisarm·소스소멸 단일화·신선창 정렬, B2 측보정 정규화, B3 idle timeout). 회전각 18→24→28°(`423e7f0`·`58866f9`)·좌우 보폭/횡속 28→32mm·트리거 회전 연속화(`ef65c02`, 신선도/침묵을 offer 기준). **볼-추종 자동 보행**(`c67fd4a`, START 토글 — 싸커 데모 BallFollower 응용, balltrack 0/1/2) + 보행 중 추적 끊김 수정(`7c89d22`, 정적 추적 휴리스틱 보행 중 비활성). **D-패드 모션**(`8cdc282`, 위=서기 page16·아래=앉기 page15·좌=lPASS71·우=rPASS70, 공식 Action 속도 준수). 전부 **로봇 미배포(OFF)·실기 미검증** — 잔여 게이트 = M2M p95·침묵 임계·단절 매트릭스.
 - [x] **실기 브링업 RG G01** (2026-06-13 입회, 보고서 `docs/reports/2026-06-13-rgg01-bringup.md`): F6/F7 버스 선점·하드 타임아웃(`465b7d9`), F9 E-STOP 복구 관절 재enable 결함 수정 + F10b 조작계 리디자인 + F11 레이턴시(`1d8c6ff`), 실기 벤치 도구(`6df967d`). 단절 매트릭스·10분 분포 등 잔여.
 - [x] **App Store 심사 대응 코드** (2026-06-11~13): hardened runtime 예외 제거(`8d62550`, PR #43), device.serial entitlement + CFBundleVersion 자동 bump(`be8ab20`), Claude/Synth App Store 빌드 숨김(`48365e4`), bundle ID·저작권 com.yuseokkim 시나리오 B(`8cee624`), 마스터 플랜(`645a571`, `docs/app-review/2026-06-13-pass-master-plan.md`). **잔여 = 개발자 포털(새 App ID·profile 재발급·새 앱 레코드)·아카이브 실기 검증·데모 영상**.
 - [x] **콕핏 레이턴시/3D 뷰포트** (2026-06): 콕핏 HUD 아코디언 + 3D 오버레이 기본 OFF·머리 장식 제거(`9ad2563`). 콕핏 레이턴시 Wave 0~2·부분 W3, 3D 뷰포트 W0~W5 설계는 `docs/design/` 참조(실기 벤치 잔여).
@@ -54,10 +55,12 @@ ROADMAP §5 MVP 정의 100% 충족:
 
 ## 직전 체크포인트
 
-- 커밋: `05ce002` fix(mobile-relay): B2 실제 conflation/통합테스트 + A1 isEnabled 게이트 테스트 — 2026-06-14
+- 커밋: `8cdc282` feat(walklab): D-패드 모션 — 위=서기·아래=앉기·좌우=패스 (공식 Action 페이지) — 2026-06-14
 - 브랜치: `claude/robotis-darwin-op-setup-oyzTi`
 - PR: #1 (draft, MVP 완료 후 갱신)
-> 직전 체크포인트가 sprint-6 placeholder(`<latest>`)로 고정돼 있던 것을 2026-06-14 현행 HEAD로 갱신.
+- 테스트 실측 (2026-06-14): Rust `cargo test --workspace` **382 / 382 통과**(exit 0), 펌웨어 호스트 `make -C firmware-patches/walklab-brokerage/tests` **279 checks / 0 fail**.
+- 핸즈오프 문서: [`docs/handoff/2026-06-14-darwinforge-full-handoff.md`](docs/handoff/2026-06-14-darwinforge-full-handoff.md) — 다른 Claude 계정 인계용 전체 구조·현황·다음 작업.
+> 직전 체크포인트가 `05ce002`(mobile-relay)에 고정돼 있던 것을 2026-06-14 현행 HEAD(`8cdc282`)로 갱신. 그 사이 12개 커밋(Anbernic 하드닝·게임패드 튜닝·볼-추종·D-패드) 반영.
 
 ## Sprint 7 — SwiftUI Studio (2026-05-10)
 
