@@ -21,8 +21,8 @@
 >   **우스틱=헤드 레이트**, 터보 제거. 본문 H1·H2·매핑표(§3·223행)의 데드맨/터보/1:1 무시.
 > - **노드 소멸 정지 = 버튼 상태로 분기** → 폐기(하드닝 A2). 현행: 버튼 무관 단일 안전상태
 >   (②티어 슬루가 정지 소유, IEC 62745). 외부 E-STOP 은 `ForceDisarm`(재ARM 필수, ISO 13850).
-> - 현행 조작계의 단일 출처: `firmware-patches/walklab-brokerage/GamepadPilot.{h,cpp}` 본문 +
->   `docs/design/anbernic-dongle-direct-control-hardening.md`.
+> - **현행 조작계의 단일 출처(SSOT): `docs/design/anbernic-control-current.md`** (전체 매핑·
+>   보행 파라미터·안전·모션·볼추종·배포 현황). 코드 출처는 `GamepadPilot.{h,cpp}` 본문.
 > ---
 
 ## 0. 결론 요약
