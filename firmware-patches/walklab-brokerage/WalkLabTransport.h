@@ -257,6 +257,9 @@ bool ParseCmdDatagram(const char* buf, int len, const char* token,
 // fsr8 은 fsr_present 일 때만 8개(l1..l4 r1..r4) 정수를 읽는다. copx/copy 는 정수(FSR_X/Y
 //   바이트 평균 — 전신 균형 인디케이터; 발별 CoP 는 Mac 이 셀에서 재구성). active_source 는
 //   "udp"/"file". snprintf 의미(반환=기록 길이, 잘림 시 cap 으로 클램프는 호출부).
+// **하드닝 B3 (2026-06-14)**: 말미에 {armed} {estop_latched}(0/1) 추가 — 게임패드 ARM
+//   상태·E-STOP latch 의 관찰가능성(IEC 60204-1 §10.3). 말미 append 라 forward-compat
+//   (소비자는 tokens.count>=N 로 파싱 — 구 파서는 추가 토큰을 무시). loop_ms 뒤, \n 앞.
 int FormatTel2(char* out, int cap,
                long long ts_ms, long long seq_applied, int phase,
                double x_lat, double y_lat, double a_lat, double period_lat,
@@ -264,7 +267,8 @@ int FormatTel2(char* out, int cap,
                bool fsr_present, const int* fsr8,
                bool cop_present, int copx, int copy,
                int fallen, bool risk_present, double risk,
-               int vdV, const char* active_source, long long loop_ms);
+               int vdV, const char* active_source, long long loop_ms,
+               int armed, int estop_latched);
 
 }  // namespace Robotis
 

@@ -214,6 +214,10 @@ H0 실측 보고서(docs/reports/2026-06-12-rgg01-usb-probe.md)가 설계 가정
 4. 매핑(콕핏 RG G01 프리셋 1:1 — ControllerBindingProfile.swift:184-230): LS=이동/횡,
    RS X=턴·Y=머리틸트, LT/RT=머리팬, B=E-STOP, Y=복구, X=볼트랙, LB=데드맨(이동/턴만
    게이트), RB=터보, A=ARM.
+   > ⚠️ **폐기 (2026-06-14)**: 위 4번 매핑은 P7 초기 지시문이며 실기 F10/F12 로 대체됐다 —
+   > **복붙 금지**. 현행: 이동 게이트=ARM(A) 단일(데드맨 해제), **LB/RB=좌/우발 킥**,
+   > **LT/RT=좌/우 회전**, **우스틱=헤드 레이트**, 터보 제거. 단일 출처=`GamepadPilot.{h,cpp}` +
+   > `docs/design/anbernic-dongle-direct-control-hardening.md`. (헤더 완료주석·H2 3티어는 최신.)
 5. 적용 경로: O1 latest-wins 슬롯에 source=local 합류(supervisor 20ms 소비) — 클램프는
    거버너(O2)가 최종, 자체 하드클램프 불요(sanity 상한만). **E-STOP 만 예외**: 읽기
    스레드에서 즉시(슬롯 경유 금지) Walking::Stop+토크OFF+estop 파일 set — 기존 estop

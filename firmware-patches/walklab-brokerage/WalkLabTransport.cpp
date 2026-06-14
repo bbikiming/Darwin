@@ -391,7 +391,8 @@ int FormatTel2(char* out, int cap,
                bool fsr_present, const int* fsr8,
                bool cop_present, int copx, int copy,
                int fallen, bool risk_present, double risk,
-               int vdV, const char* active_source, long long loop_ms) {
+               int vdV, const char* active_source, long long loop_ms,
+               int armed, int estop_latched) {
     if (!out || cap <= 0) return 0;
 
     // FSR 그룹: 장착 시 8셀, 아니면 "-".
@@ -422,13 +423,15 @@ int FormatTel2(char* out, int cap,
 
     const char* src = (active_source && active_source[0]) ? active_source : "file";
 
+    // 하드닝 B3 — 말미에 {armed} {estop_latched}(0/1) append(관찰가능성, forward-compat).
     int n = snprintf(out, (size_t)cap,
-        "TEL2 %lld %lld %d %.2f %.2f %.2f %.2f %d %d %d %d %d %d %s %s %d %s %d %s %lld\n",
+        "TEL2 %lld %lld %d %.2f %.2f %.2f %.2f %d %d %d %d %d %d %s %s %d %s %d %s %lld %d %d\n",
         ts_ms, seq_applied, phase,
         x_lat, y_lat, a_lat, period_lat,
         gx, gy, gz, ax, ay, az,
         fsr_buf, cop_buf,
-        fallen, risk_buf, vdV, src, loop_ms);
+        fallen, risk_buf, vdV, src, loop_ms,
+        armed ? 1 : 0, estop_latched ? 1 : 0);
     if (n < 0) return 0;
     return n;
 }

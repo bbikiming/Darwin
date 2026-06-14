@@ -766,6 +766,13 @@ namespace Robotis {
         m_pending_kick_side = -1;
         pthread_mutex_unlock(&m_kick_mtx);
         TouchEstopFlag();
+        // **하드닝 A1 (2026-06-14)**: 외부 E-STOP(UDP)·Gamepad-B 가 공유하는 이 경로에서
+        // GamepadPilot 의 ARM 도 latch-해제(ISO 13850 reset≠restart). 종전엔 B 경로만
+        // ProcessEvent 내부에서 disarm 했고 UDP E-STOP 은 물리정지+flag 만 했다 — flag
+        // 해제 시 여전히 armed 라 잔여 스틱으로 즉시 재보행 가능했다. ForceDisarm 은
+        // m_mtx 를 잡지만 이 함수는 락 미보유 컨텍스트(B 콜백은 ProcessEvent unlock 후
+        // 발화)라 재진입 데드락 없음. Switch/Mac flag-only 경로는 별도 배선(아래 supervisor).
+        m_gamepad.ForceDisarm();
     }
 
     void WalkLabBrokerage::TouchEstopFlag() {
@@ -1158,6 +1165,12 @@ namespace Robotis {
                     walking->m_Joint.SetEnableBody(false);
                     walking_active = false;
                     estop_latched = true;
+                    // **하드닝 A1 (2026-06-14)**: Switch/Mac flag-only E-STOP 의 물리정지는
+                    // 이 블록이 TriggerEstopImmediate 를 거치지 않고 직접 수행한다 — 그래서
+                    // ForceDisarm 을 TriggerEstopImmediate 에만 넣으면 이 경로의 GamepadPilot
+                    // ARM 이 latch 된 채 남는다(감사가 든 바로 그 시나리오: 외부 E-STOP→flag
+                    // 해제→잔여 스틱 재보행). latch 진입 시점에 ARM 도 해제(ISO 13850).
+                    m_gamepad.ForceDisarm();
                 }
                 WriteTelemetry(cm730, walking, walking_active, true);  // Mac 에 정지 상태 계속 보고(파일+UDP).
                 // 실기 F11 — hold 중 20ms 폴: flag 해제(Y/rm) 감지가 종전 평균 50ms
@@ -1322,6 +1335,17 @@ namespace Robotis {
             }
 
             // H2 ②③티어 활성 판정 — 아래 워치독 스냅 양보와 티어 블록이 공유.
+            // **하드닝 A2 (2026-06-14)**: SRC_LOCAL 게이트는 유지한다 — 이 게이트는 "유휴
+            // 패드가 Mac/Switch 네트워크 보행을 정지시키는" 회귀를 막으려는 의도적 설계다.
+            // P0-3↔P1-2 결합 결함(선점 창에서 active_source 플립으로 ②티어 슬루 무장해제)은
+            // GP_LOCAL_FRESH_MS 를 GP_SILENCE_SLEW_MS 와 정렬해 근본 차단했다: local 신선
+            // 창(1.5s) 내내 UDP/파일은 게이트아웃(!local_control)되어 active_source 가
+            // SRC_LOCAL 을 유지하므로, 신선 중 노드 소멸은 항상 local_fs_slew=true 로 잡힌다.
+            // 신선 창 만료 후 다른 소스가 보행을 인계하면 그 소스의 워치독이 정지를 소유한다.
+            // 경계 주의(리뷰 HIGH-1): 침묵 정확히 1500ms 틱에서는 local_control(≤1500)과 ③티어
+            // SLEW_ZERO(≥1500)가 동시 참 — 결함이 아니라 ③티어 슬루 *개시* 시점이다. 그 순간
+            // local_control=true 가 UDP/파일 선점을 막는 동안 local 이 목표 0 으로 슬루를 시작하고
+            // (완만 정지, 급정지 아님), 1501ms 이후 소유권은 끊김 없이 이어진다.
             bool local_fs_slew =
                 (m_active_source == SRC_LOCAL &&
                  m_gamepad.PollFailsafe(now_ms) == Robotis::GP_FS_SLEW_ZERO);
@@ -1407,12 +1431,19 @@ namespace Robotis {
             // 볼 트래킹 OFF 일 때만 sleep. **O1**: 보행 중 20ms(SUPERVISOR_WALK_MS, 실효율
             // ≥20Hz) / 정지·유휴 100ms(CPU 절약). 볼트래킹은 카메라 페이스(usleep 생략).
             if (!m_balltrack_enabled) {
-                // 실기 F11 (2026-06-13) — 레이턴시: 게임패드 입력이 신선(≤1s)하면
+                // 실기 F11 (2026-06-13) — 레이턴시: 게임패드 입력이 신선(≤1.5s)하면
                 // 유휴에도 20ms 루프. 종전엔 정지 상태의 첫 스틱 입력이 평균 50ms
                 // (최대 100ms) 동안 슬롯에서 대기했다 — 기동 체감 지연의 주범.
-                // 패드 비활성(유휴) 시엔 100ms 유지(CPU 절약 불변).
+                // **하드닝 B1/P0-1 (2026-06-14)**: 패드가 연결돼 있으면(DevicePresent)
+                // 유휴(신선창 만료 후)에도 20ms 유지 — 1초 이상 무입력 후 첫 스틱
+                // 이벤트의 worst-case 지연을 100ms→~20ms 로 축소(reader→슬롯 가시성은
+                // mutex 보장이나 wake 프리미티브가 없어 ~20ms 잔존; 이벤트구동 wake 는
+                // 2단계, 측정 후 우선순위 재평가 — 1단계로 운동수행 임계 충족). 부하는
+                // balltrack OFF·미조종 구간 한정(balltrack ON 은 카메라 페이스, 보행 중은
+                // 이미 20ms). 패드 미연결이면 종전대로 100ms(CPU 절약 불변).
                 bool local_fresh = m_gamepad.HasControl(now_ms);
-                int sleep_ms = (walking_active || local_fresh)
+                bool pad_present = m_gamepad.DevicePresent();
+                int sleep_ms = (walking_active || local_fresh || pad_present)
                                    ? SUPERVISOR_WALK_MS : POLL_INTERVAL_MS;
                 usleep(sleep_ms * 1000);
             }
@@ -1679,6 +1710,10 @@ namespace Robotis {
         const char* src = (m_active_source == SRC_LOCAL) ? "local"
                           : (m_active_source == SRC_UDP) ? "udp" : "file";
 
+        // 하드닝 B3 — armed/estop_latched 관찰가능성(IEC 60204-1 §10.3). estop latch 는
+        // flag 파일 존재(EstopRequested)로 판정 — supervisor 의 estop_latched 로컬과 동치.
+        int gp_armed = m_gamepad.Armed() ? 1 : 0;
+        int gp_estop_latched = EstopRequested() ? 1 : 0;
         char tbuf[320];
         int tn = Robotis::FormatTel2(tbuf, sizeof(tbuf),
                                      ts_ms, m_last_seq_applied, phase,
@@ -1687,7 +1722,8 @@ namespace Robotis {
                                      fsr_present, fsr8,
                                      cop_present, copx, copy,
                                      fallen, /*risk_present*/ false, 0.0,  // risk: O3 미구현 "-".
-                                     vdV, src, m_loop_ms);
+                                     vdV, src, m_loop_ms,
+                                     gp_armed, gp_estop_latched);
         if (tn > 0) {
             if (tn > (int)sizeof(tbuf)) tn = (int)sizeof(tbuf);   // truncation guard.
             SendTelemetryUDP(tbuf, tn);   // 비차단·실패 무음.

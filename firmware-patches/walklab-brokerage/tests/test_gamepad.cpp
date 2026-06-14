@@ -325,16 +325,29 @@ static void test_gait_schedule() {
     // 풀턴 단독도 강도=1 (ti=GP_MAX_TURN_DEG/GP_MAX_TURN_DEG=1 → L2=1).
     GpGaitSchedule(0.0, 0.0, GP_MAX_TURN_DEG, 1, &period, &foot);
     CHECK_DEQ(period, GP_GAIT_PERIOD_MIN_MS, "풀턴 → period 560");
+    // **하드닝 B2/P1-1**: 순수 좌우 풀스틱(축별 최대 28mm)은 강도=1 — period 560·foot 40
+    // (전진 풀스틱과 동일). 종전엔 y 를 38 로 정규화해 28/38=0.7368 로 과소평가됐다(period
+    // ≈587·foot≈35.8). yi=fabs(y)/GP_MAX_SIDE_MM 수정의 RED→GREEN 단언.
+    GpGaitSchedule(0.0, GP_MAX_SIDE_MM, 0.0, 1, &period, &foot);
+    CHECK_DEQ(period, GP_GAIT_PERIOD_MIN_MS, "순수 좌우 풀스틱 → period 560 (전진 풀스틱과 동일)");
+    CHECK_DEQ(foot, GP_GAIT_FOOT_MAX_MM, "순수 좌우 풀스틱 → foot 40");
+    // 순수 좌우 반스틱(14mm) → 강도 14/28=0.5 → period≈613.8·foot≈31.5 (감사 표 일치).
+    GpGaitSchedule(0.0, GP_MAX_SIDE_MM / 2.0, 0.0, 1, &period, &foot);
+    CHECK_NEAR(period, 700.0 - 140.0 * 0.61557, 0.1, "순수 좌우 반스틱 period ≈ 613.8");
+    CHECK_NEAR(foot, 18.0 + 22.0 * 0.61557, 0.1, "순수 좌우 반스틱 foot ≈ 31.5");
     // **Anbernic P1 결합강도(L2 magnitude)**: 블렌드(전진+횡)는 단일축보다 강도가 커
     // 케이던스↑(period↓)·발높이↑. half-전진(19) 단독 vs half-전진+half-횡(19,19).
+    // 하드닝 B2: 횡 정규화 분모가 28 이라 (19,19) 블렌드 강도 = sqrt((19/38)²+(19/28)²)
+    // = sqrt(0.25+0.4605) ≈ 0.843 (종전 0.707 보다 큼 — 측보 기여가 정당하게 강화).
     double p_single = 0.0, f_single = 0.0;
     GpGaitSchedule(19.0, 0.0, 0.0, 1, &p_single, &f_single);
     double p_blend = 0.0, f_blend = 0.0;
-    GpGaitSchedule(19.0, 19.0, 0.0, 1, &p_blend, &f_blend);   // L2 = sqrt(0.5²+0.5²)=0.707
+    GpGaitSchedule(19.0, 19.0, 0.0, 1, &p_blend, &f_blend);
     CHECK(p_blend < p_single - 10.0, "블렌드 period < 단축 period (결합강도 케이던스↑)");
     CHECK(f_blend > f_single + 3.0, "블렌드 foot > 단축 foot (발 클리어런스↑)");
-    // 3축 풀 블렌드는 L2 ≥ 1 → 강도 1.0 클램프(최속·최대 발높이).
-    GpGaitSchedule(GP_MAX_STRIDE_MM, GP_MAX_STRIDE_MM, GP_MAX_TURN_DEG, 1, &period, &foot);
+    // 3축 풀 블렌드는 L2 ≥ 1 → 강도 1.0 클램프(최속·최대 발높이). 횡 인자는 축별 최대
+    // GP_MAX_SIDE_MM(28) — 하드닝 B2 전엔 GP_MAX_STRIDE_MM(38, 도메인밖)을 넣었다.
+    GpGaitSchedule(GP_MAX_STRIDE_MM, GP_MAX_SIDE_MM, GP_MAX_TURN_DEG, 1, &period, &foot);
     CHECK_DEQ(period, GP_GAIT_PERIOD_MIN_MS, "3축 풀 → period 560 (L2 clamp 1.0)");
 }
 
@@ -484,10 +497,11 @@ static void test_pilot_line_flow_and_arbitration_window() {
     CHECK_NEAR(c.period, 560.0, 1e-6, "성형: 풀스틱 period 560");
     char tmp[256];
     CHECK(!p.TakeCommand(tmp, sizeof(tmp)), "take 후 슬롯 비움 (latest-wins drain)");
-    // H2-1 중재 창: 마지막 이벤트 ≤1s 만 local 우선.
+    // 하드닝 A2/P1-2 중재 창: 마지막 이벤트 ≤1.5s 만 local 우선(침묵 창과 정렬 —
+    // 종전 1.0s 였으나 1.0~1.5s 선점 구간 제거 위해 GP_SILENCE_SLEW_MS 와 단일화).
     CHECK(p.HasControl(1500), "이벤트 +480ms → local 우선");
-    CHECK(p.HasControl(2020), "이벤트 +1000ms (경계) → local 우선");
-    CHECK(!p.HasControl(2021), "이벤트 +1001ms → 네트워크 복귀");
+    CHECK(p.HasControl(2520), "이벤트 +1500ms (경계, 침묵창 정렬) → local 우선");
+    CHECK(!p.HasControl(2521), "이벤트 +1501ms → 네트워크 복귀");
     p.Stop();
 }
 
@@ -534,13 +548,14 @@ static void test_pilot_tier1_release_then_enodev() {
     p.InjectEventForTest(Syn(), 2000);
     CHECK(TakeParsed(p, &c), "release 라인 발행");
     CHECK(c.enabled == 1, "F10: LB release 무영향 — 주행 유지 (②티어가 보호)");
-    // ~1ms 뒤 ENODEV(②티어) — disarm + 최종 정지 라인 + SLEW_ZERO.
+    // ~1ms 뒤 ENODEV(②티어) — disarm + 라인 미발행(하드닝 A2) + SLEW_ZERO.
     p.InjectNodeLostForTest(2001);
     CHECK(!p.ArmedForTest(), "②티어: disarm (재 ARM 필수)");
-    CHECK(TakeParsed(p, &c) && c.enabled == 0, "최종 정지 라인");
+    CHECK(!TakeParsed(p, &c), "하드닝 A2: 노드 소멸 — 라인 미발행 (②티어 슬루가 정지 소유)");
     CHECK(p.PollFailsafe(2010) == GP_FS_SLEW_ZERO, "②티어: SLEW_ZERO (재획득 전 지속)");
-    CHECK(p.HasControl(2500), "마지막 이벤트 +500ms — 정지 라인 적용 창 유지");
-    CHECK(!p.HasControl(3100), "+1.1s — local 우선 해제");
+    CHECK(p.HasControl(2500), "마지막 이벤트 +500ms — local 우선 유지");
+    CHECK(p.HasControl(3500), "마지막 이벤트 +1500ms (경계) — local 우선 유지(침묵창 정렬)");
+    CHECK(!p.HasControl(3501), "+1501ms — local 우선 해제");
     // 재전원 → 재획득(~1.3s 실측) → 재 ARM 필수.
     p.InjectAdoptForTest(3300);
     CHECK(p.PollFailsafe(3400) == GP_FS_NONE, "재획득 → failsafe 해제");
@@ -552,7 +567,7 @@ static void test_pilot_tier1_release_then_enodev() {
 }
 
 static void test_pilot_tier2_enodev_without_release() {
-    printf("test_pilot_tier2_enodev_without_release (release 미합성 — SYN 유실)\n");
+    printf("test_pilot_tier2_enodev_without_release (release 미합성 — SYN 유실, 하드닝 A2)\n");
     ResetCallbacks();
     GamepadPilot p;
     p.Start(OnEstop, OnRecover, OnKick, 0, false);
@@ -562,20 +577,20 @@ static void test_pilot_tier2_enodev_without_release() {
     p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
     p.InjectEventForTest(Syn(), 1010);
     DrainSlot(p);
-    // release 이벤트가 SYN 없이 끊긴 케이스 — ForceCommit 이 pending 을 커밋
-    // → 데드맨 해제 관측 = ①티어로 취급, 정지 라인 발행.
+    // release 이벤트가 SYN 없이 끊긴 케이스. 하드닝 A2: 노드 소멸은 버튼/release 합성
+    // 여부와 무관하게 라인을 발행하지 않는다 — ②티어 슬루(SLEW_ZERO)가 정지를 단일 소유.
     p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 0), 2000);
     p.InjectNodeLostForTest(2001);
     WalkCommand c;
-    CHECK(TakeParsed(p, &c), "노드 소멸 시 최종 라인 발행 (강제 커밋 — release 관측)");
-    CHECK(c.enabled == 0, "최종 라인 enabled=0 (disarm+release 반영)");
+    CHECK(!TakeParsed(p, &c), "하드닝 A2: 노드 소멸 — 라인 미발행 (버튼/release 무관)");
+    CHECK(!p.ArmedForTest(), "②티어: disarm (재 ARM 필수)");
     CHECK(p.PollFailsafe(2100) == GP_FS_SLEW_ZERO, "②티어 SLEW_ZERO");
     CHECK(!p.DevicePresent(), "노드 미보유 — 재스캔 전이");
     p.Stop();
 }
 
-static void test_pilot_tier2_enodev_deadman_held() {
-    printf("test_pilot_tier2_enodev_deadman_held (비정상 단절 — release 전무, codex P1 fix)\n");
+static void test_pilot_tier2_enodev_button_held() {
+    printf("test_pilot_tier2_enodev_button_held (LB 눌린 채 노드 소멸 — 하드닝 A2 단일 안전상태)\n");
     ResetCallbacks();
     GamepadPilot p;
     p.Start(OnEstop, OnRecover, OnKick, 0, false);
@@ -585,15 +600,38 @@ static void test_pilot_tier2_enodev_deadman_held() {
     p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
     p.InjectEventForTest(Syn(), 1010);
     DrainSlot(p);
-    // 데드맨이 눌린 채 노드만 소멸(거리 이탈·배터리 탈락 모사 — release 합성 없음).
-    // 정지 라인을 발행하면 supervisor 가 즉시 Walking::Stop — ②티어 스펙(제자리
-    // 슬루 → WD_STOP 2.5s) 위반이므로 라인 미발행이 정답.
+    // LB 가 눌린 채 노드만 소멸(거리 이탈·배터리 탈락 모사). 하드닝 A2: 노드 소멸은
+    // 버튼 상태와 무관하게 라인 미발행 — ②티어 슬루(SLEW_ZERO → WD_STOP)가 정지를 소유.
     p.InjectNodeLostForTest(2000);
     char line[256];
     CHECK(!p.TakeCommand(line, sizeof(line)), "②티어: 정지 라인 미발행 (슬루가 소화)");
     CHECK(!p.ArmedForTest(), "②티어: disarm (재 ARM 필수)");
     CHECK(p.PollFailsafe(2100) == GP_FS_SLEW_ZERO, "②티어: SLEW_ZERO 지속");
     p.Stop();
+}
+
+// 하드닝 A2/P0-3 — 노드 소멸 시 정지 방식이 버튼 상태와 무관(IEC 62745: 신호 부재
+// 자체가 정지 결정). LB 눌림/안눌림 두 경우 모두 라인 미발행 + 동일 ②티어 거동.
+static void test_pilot_node_lost_button_independent() {
+    printf("test_pilot_node_lost_button_independent (하드닝 A2 — 버튼 상태 무관 단일 거동)\n");
+    char line[256];
+    for (int held = 0; held <= 1; ++held) {
+        ResetCallbacks();
+        GamepadPilot p;
+        p.Start(OnEstop, OnRecover, OnKick, 0, false);
+        p.InjectAdoptForTest(1000);
+        p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+        if (held) p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), 1010);
+        p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
+        p.InjectEventForTest(Syn(), 1010);
+        DrainSlot(p);
+        p.InjectNodeLostForTest(2000);
+        CHECK(!p.TakeCommand(line, sizeof(line)),
+              held ? "LB 눌림 — 라인 미발행" : "LB 안눌림 — 라인 미발행(동일)");
+        CHECK(!p.ArmedForTest(), "disarm (양쪽 동일)");
+        CHECK(p.PollFailsafe(2100) == GP_FS_SLEW_ZERO, "SLEW_ZERO (양쪽 동일)");
+        p.Stop();
+    }
 }
 
 static void test_pilot_tier3_silence_false_positive() {
@@ -1019,6 +1057,192 @@ static void test_pilot_kick_lost_on_device_reacquire() {
     p.Stop();
 }
 
+// ---- 하드닝 (2026-06-14) — A1 ForceDisarm/재ARM 중립 게이트, A2 정렬, B3 idle timeout ----
+
+static void test_pilot_forcedisarm_clears_armed() {
+    printf("test_pilot_forcedisarm_clears_armed (하드닝 A1)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(p.Armed(), "ARM (Armed() 접근자)");
+    p.ForceDisarm();
+    CHECK(!p.Armed(), "ForceDisarm → !Armed");
+    CHECK(!p.ArmedForTest(), "ArmedForTest 도 일치");
+    p.Stop();
+}
+
+static void test_pilot_external_estop_no_walk_until_rearm() {
+    printf("test_pilot_external_estop_no_walk_until_rearm (하드닝 A1 — 외부 E-STOP 후 재ARM 전 재보행 불가)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    // ARM + 풀스틱 전진 주행.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    WalkCommand c;
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "주행 중 (enabled=1)");
+    // 외부 E-STOP(UDP/Switch/Mac flag 모사) — ForceDisarm. ISO 13850 reset≠restart.
+    p.ForceDisarm();
+    CHECK(!p.ArmedForTest(), "ForceDisarm → disarm");
+    // 스틱은 여전히 풀스틱 전진. 보유 재공급(refresh)으로도 enabled=0 (disarm).
+    p.TickForTest(1060);
+    CHECK(TakeParsed(p, &c) && c.enabled == 0, "disarm 중 보유 재공급 → enabled 0");
+    // A release(재press 위한 rising 준비). 스틱 전진 유지.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 0), 1100);
+    p.InjectEventForTest(Syn(), 1100);
+    // A 재press — 스틱 전진 유지 → 중립 게이트로 enabled 0(잔여 스틱 즉시 재보행 차단).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1110);
+    p.InjectEventForTest(Syn(), 1110);
+    CHECK(p.ArmedForTest(), "A 재press → armed (m_armed)");
+    CHECK(TakeParsed(p, &c) && c.enabled == 0, "재ARM 직후 잔여 스틱 → enabled 0 (중립 게이트)");
+    // 스틱 중립 통과 → 게이트 해제.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, 0), 1120);
+    p.InjectEventForTest(Syn(), 1120);
+    CHECK(TakeParsed(p, &c) && c.enabled == 0, "중립 통과 → enabled 0 (이동 없음, 게이트 해제)");
+    // 다시 전진 → 재보행.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1130);
+    p.InjectEventForTest(Syn(), 1130);
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "중립 경유 후 이동 → 재보행 (enabled=1)");
+    p.Stop();
+}
+
+static void test_pilot_rearm_requires_neutral() {
+    printf("test_pilot_rearm_requires_neutral (하드닝 A1 — B E-STOP 후 재ARM 도 중립 경유 필요)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    WalkCommand c;
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "주행 중");
+    // B E-STOP(스틱 유지) → disarm + 중립 게이트(B 도 명시적 E-STOP 경로).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 1), 1020);
+    CHECK(g_estop_calls == 1 && !p.ArmedForTest(), "B → estop + disarm");
+    p.InjectEventForTest(Syn(), 1020);
+    // B release + A release(재press 준비). 스틱 전진 유지.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 0), 1030);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 0), 1030);
+    p.InjectEventForTest(Syn(), 1030);
+    DrainSlot(p);
+    // A 재press — 스틱 전진 유지 → 중립 게이트로 enabled 0.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1040);
+    p.InjectEventForTest(Syn(), 1040);
+    CHECK(p.ArmedForTest(), "A 재press → armed");
+    CHECK(TakeParsed(p, &c) && c.enabled == 0, "재ARM 직후 잔여 스틱 전진 → enabled 0 (중립 게이트)");
+    // 중립 경유.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, 0), 1050);
+    p.InjectEventForTest(Syn(), 1050);
+    DrainSlot(p);
+    // 다시 전진 → 재보행.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1060);
+    p.InjectEventForTest(Syn(), 1060);
+    CHECK(TakeParsed(p, &c) && c.enabled == 1, "중립 경유 후 → 재보행");
+    p.Stop();
+}
+
+static void test_pilot_forcedisarm_reentrancy() {
+    printf("test_pilot_forcedisarm_reentrancy (하드닝 A1 — 멱등 + 락 해제 후 정상 동작)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(p.ArmedForTest(), "ARM");
+    // 연속 ForceDisarm — 멱등(데드락/상태 손상 없음). m_mtx 는 non-recursive 라
+    // 콜백은 락 밖에서만 발화(헤더 불변식) — 호스트에서 순차 호출 안전성 확인.
+    p.ForceDisarm();
+    p.ForceDisarm();
+    CHECK(!p.ArmedForTest(), "연속 ForceDisarm → disarm 유지(멱등)");
+    // 이어서 이벤트 처리(m_mtx 재획득)가 정상 — 락이 제대로 해제됐음.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 0), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1030);
+    p.InjectEventForTest(Syn(), 1030);
+    CHECK(p.ArmedForTest(), "ForceDisarm 후 정상 재ARM (락 정상 해제)");
+    p.Stop();
+}
+
+static void test_local_fresh_silence_alignment() {
+    printf("test_local_fresh_silence_alignment (하드닝 A2/P1-2 — local 신선창 == 침묵창)\n");
+    CHECK(GP_LOCAL_FRESH_MS == GP_SILENCE_SLEW_MS,
+          "GP_LOCAL_FRESH_MS == GP_SILENCE_SLEW_MS (정렬 — 선점 구간 제거)");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_Y, -32768), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    DrainSlot(p);
+    long long last = 1010;
+    // HasControl(우선권)과 refresh(재공급)가 같은 1500ms 경계에서 동시 만료 →
+    // 1.0~1.5s 선점 구간 없음(P1-2 결합 결함 근본 차단).
+    CHECK(p.HasControl(last + GP_SILENCE_SLEW_MS), "경계(1500ms) — local 우선 유지");
+    CHECK(!p.HasControl(last + GP_SILENCE_SLEW_MS + 1), "경계 초과 — local 우선 해제");
+    char line[256];
+    p.TickForTest(last + GP_SILENCE_SLEW_MS - 1);   // 1499ms — 재공급
+    CHECK(p.TakeCommand(line, sizeof(line)), "1499ms — 보유 재공급(refresh 활성)");
+    p.TickForTest(last + GP_SILENCE_SLEW_MS + 100);  // 1600ms — 중단
+    CHECK(!p.TakeCommand(line, sizeof(line)), "1600ms — refresh 중단(③티어 인계)");
+    p.Stop();
+}
+
+static void test_pilot_arm_idle_timeout() {
+    printf("test_pilot_arm_idle_timeout (하드닝 B3 — ARM 후 무입력 N초 → auto-disarm)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    // ARM(press+release) — 실사용 패턴(A 는 모멘터리). activity=1010(press 커밋).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 0), 1015);
+    p.InjectEventForTest(Syn(), 1015);
+    CHECK(p.ArmedForTest(), "ARM (release 후에도 latch — activity=1010)");
+    // 타임아웃 직전 — 유지.
+    p.TickForTest(1010 + GP_ARM_IDLE_TIMEOUT_MS - 1);
+    CHECK(p.ArmedForTest(), "타임아웃 직전 — armed 유지");
+    // 타임아웃 도달 — auto-disarm.
+    p.TickForTest(1010 + GP_ARM_IDLE_TIMEOUT_MS);
+    CHECK(!p.ArmedForTest(), "무입력 타임아웃 → auto-disarm (데드맨 완화책)");
+    p.Stop();
+}
+
+static void test_pilot_kick_setup_not_idle() {
+    printf("test_pilot_kick_setup_not_idle (하드닝 B3 — 킥/버튼 입력이 idle 타이머 리셋)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 0), 1015);
+    p.InjectEventForTest(Syn(), 1015);
+    CHECK(p.ArmedForTest() && g_kick_calls == 0, "ARM");
+    // 타임아웃의 80% 지점에서 LB 킥(버튼 활동) — 타이머 리셋(이동축만 보면 오발 disarm).
+    long long t = 1010 + (GP_ARM_IDLE_TIMEOUT_MS * 8 / 10);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 1), t);
+    p.InjectEventForTest(Syn(), t);
+    CHECK(g_kick_calls == 1, "킥 발화(활동 — activity=t 리셋)");
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_LB, 0), t + 10);
+    p.InjectEventForTest(Syn(), t + 10);
+    // 원래 ARM(1010) 기준 타임아웃을 지나도, 킥 활동(t)으로 리셋됐으면 armed 유지.
+    p.TickForTest(1010 + GP_ARM_IDLE_TIMEOUT_MS + 100);
+    CHECK(p.ArmedForTest(), "킥 셋업 활동으로 타이머 리셋 → armed 유지(오발 disarm 없음)");
+    // 마지막 활동(킥 press t) 후 타임아웃까지 무입력이면 결국 disarm.
+    p.TickForTest(t + GP_ARM_IDLE_TIMEOUT_MS);
+    CHECK(!p.ArmedForTest(), "마지막 활동 후 타임아웃 → disarm");
+    p.Stop();
+}
+
 // ---- main --------------------------------------------------------------------
 
 int main() {
@@ -1044,7 +1268,8 @@ int main() {
     test_pilot_refresh_cadence();
     test_pilot_tier1_release_then_enodev();
     test_pilot_tier2_enodev_without_release();
-    test_pilot_tier2_enodev_deadman_held();
+    test_pilot_tier2_enodev_button_held();
+    test_pilot_node_lost_button_independent();
     test_pilot_tier3_silence_false_positive();
     test_pilot_balltrack_toggle();
     test_pilot_adopt_grace();
@@ -1066,6 +1291,14 @@ int main() {
     test_pilot_kick_syn_dropped_clears_edge();
     test_pilot_kick_with_balltrack();
     test_pilot_kick_lost_on_device_reacquire();
+    // 하드닝 (2026-06-14) — A1 ForceDisarm/재ARM 중립, A2 정렬, B3 idle timeout
+    test_pilot_forcedisarm_clears_armed();
+    test_pilot_external_estop_no_walk_until_rearm();
+    test_pilot_rearm_requires_neutral();
+    test_pilot_forcedisarm_reentrancy();
+    test_local_fresh_silence_alignment();
+    test_pilot_arm_idle_timeout();
+    test_pilot_kick_setup_not_idle();
 
     printf("== %d checks, %d failures ==\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

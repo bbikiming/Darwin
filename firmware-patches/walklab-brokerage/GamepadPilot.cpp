@@ -186,6 +186,16 @@ namespace Robotis {
         return (d >= 0.0) ? scaled : -scaled;
     }
 
+    // **하드닝 A1/B3** — 이동 의도(데드존·곡선 통과 후 전진/측보/턴 성분 중 하나라도
+    // 0 이 아닌가). 재ARM 중립 게이트 해제 판정의 단일 기준. 부호 승수는 0 여부에 무관해
+    // 생략. 머리(우스틱)는 이동 게이트와 무관하므로 제외(머리는 비게이트라 항상 동작).
+    static bool GpMovingIntent(const GamepadSnapshot& s) {
+        double fwd  = GpShapeDriveAxis(s.ly);
+        double side = GpShapeDriveAxis(s.lx);
+        double turn = GpShapeTurn(GpTriggerDiff(s.rt, s.lt));
+        return (fwd != 0.0) || (side != 0.0) || (turn != 0.0);
+    }
+
     void GpGaitSchedule(double x_mm, double y_mm, double a_deg, int enabled,
                         double* period_ms, double* foot_mm) {
         if (!enabled) {
@@ -193,9 +203,14 @@ namespace Robotis {
             *foot_mm = GP_GAIT_FOOT_DEFAULT;
             return;
         }
-        // switch _gait_params 식: side 도 stride_ref 로 정규화(원식 보존).
+        // **하드닝 B2/P1-1 (2026-06-14)**: 축별 최대치로 정규화. 종전엔 측보 y 도 전진
+        // 최대(GP_MAX_STRIDE_MM=38)로 나눠, 순수 좌우 풀스틱(실제 축별 최대 28mm)이 강도
+        // 28/38=0.7368 로 체계적 과소평가됐다(period↑·foot↓ — 덜 빠릿·발 클리어런스 부족).
+        // 비대칭 진폭은 per-axis max 로 정규화가 정석(Capture Steps/NimbRo). GateSchedule 도
+        // 이미 ENVELOPE_Y_MAX 를 분모로 쓰므로 두 경로 논리 일관. 진폭은 불변(MapGamepad 가
+        // GP_MAX_SIDE_MM 로 확정·거버너가 28mm 클램프) — period/foot 스케줄만 보정.
         double si = fabs(x_mm) / GP_MAX_STRIDE_MM;
-        double yi = fabs(y_mm) / GP_MAX_STRIDE_MM;
+        double yi = fabs(y_mm) / GP_MAX_SIDE_MM;
         double ti = fabs(a_deg) / GP_MAX_TURN_DEG;
         // **Anbernic 고도화 P1 — 결합강도**: max-of-axes 대신 L2 magnitude. 복합 stride 는
         // 총 발 이동이 단축보다 크므로 더 높은 케이던스+발높이를 받아야 자연스럽다(종전엔
@@ -284,10 +299,10 @@ namespace Robotis {
     GamepadPilot::GamepadPilot()
         : m_slot(), m_running(false), m_threadless(true),
           m_fd(-1), m_node_ok(false), m_had_device(false),
-          m_armed(false), m_balltrack(0),
+          m_armed(false), m_rearm_requires_neutral(false), m_balltrack(0),
           m_decoder(), m_snap(), m_hold(), m_have_snap(false),
-          m_last_event_ms(0), m_adopt_ms(0), m_last_offer_ms(0),
-          m_last_map_ms(0), m_seq(0),
+          m_last_event_ms(0), m_last_activity_ms(0), m_adopt_ms(0),
+          m_last_offer_ms(0), m_last_map_ms(0), m_seq(0),
           m_pending_arm_edge(false), m_pending_estop_edge(false),
           m_pending_recover_edge(false),
           m_pending_left_kick_edge(false), m_pending_right_kick_edge(false),
@@ -362,12 +377,31 @@ namespace Robotis {
         return ok;
     }
 
+    void GamepadPilot::ForceDisarm() {
+        // **하드닝 A1** — 외부 E-STOP(UDP/Switch/Mac flag)이 ARM 을 latch-해제 + 재ARM
+        // 중립 게이트 설정. ISO 13850: reset 은 재기동 "허용"만, 실제 재보행은 명시적
+        // A 재ARM(+중립 경유)만 트리거. m_mtx 보유 구간 밖에서만 호출(헤더 재진입 불변식).
+        pthread_mutex_lock(&m_mtx);
+        m_armed = false;
+        m_rearm_requires_neutral = true;
+        pthread_mutex_unlock(&m_mtx);
+    }
+
+    bool GamepadPilot::Armed() {
+        pthread_mutex_lock(&m_mtx);
+        bool a = m_armed;
+        pthread_mutex_unlock(&m_mtx);
+        return a;
+    }
+
     void GamepadPilot::AdoptDevice(int fd, long long now_ms) {
         pthread_mutex_lock(&m_mtx);
         m_fd = fd;
         m_node_ok = true;
         m_had_device = true;
         m_armed = false;            // H2-2 — 노드 (재)획득 후 재 ARM 필수
+        m_rearm_requires_neutral = false;  // 하드닝 A1 — 물리 재연결은 깨끗한 슬레이트
+        m_last_activity_ms = now_ms;       // 하드닝 B3 — idle timeout 기준 리셋
         m_decoder.Reset();
         m_have_snap = false;
         m_pending_arm_edge = false;
@@ -396,6 +430,7 @@ namespace Robotis {
             // B 를 영구 침묵시켰다. 중복 발화는 멱등(Stop+flag touch)이라 무해.
             m_pending_estop_edge = true;
             m_armed = false;
+            m_rearm_requires_neutral = true;  // 하드닝 A1 — B(명시적 E-STOP)도 재ARM 중립 게이트
             fire_estop = (m_estop_cb != 0);
         } else if (ev.type == GP_EV_KEY && ev.value == 1 &&
                    !m_decoder.ButtonState(ev.code)) {
@@ -437,6 +472,18 @@ namespace Robotis {
                 if (m_pending_left_kick_edge)  fire_kick_left = true;
                 if (m_pending_right_kick_edge) fire_kick_right = true;
             }
+            // **하드닝 B3** — ARM idle timeout 활동 카운트: 의도적 입력(이동/턴/머리/버튼
+            // 보유)이면 타이머 리셋. 스틱 데드존 노이즈는 데드존이 걸러 활동으로 안 친다
+            // → 거치 중 미세 드리프트로는 무장이 유지되지 않는다(킥 셋업 중 버튼 보유는 활동).
+            bool head_active = (GpApplyDeadzone(m_snap.rx) != 0.0) ||
+                               (GpApplyDeadzone(m_snap.ry) != 0.0);
+            // btn_b(E-STOP)는 활동에서 제외 — 눌리면 m_armed=false 라 idle-timeout 자체가
+            // 무의미하고, "조종 의도"가 아닌 비상정지다(리뷰 MEDIUM-4).
+            bool btn_active = m_snap.btn_a || m_snap.btn_x || m_snap.btn_y ||
+                              m_snap.btn_lb || m_snap.btn_rb;
+            if (GpMovingIntent(m_snap) || head_active || btn_active) {
+                m_last_activity_ms = now_ms;
+            }
             m_pending_arm_edge = false;
             m_pending_estop_edge = false;
             m_pending_recover_edge = false;
@@ -455,13 +502,24 @@ namespace Robotis {
 
     void GamepadPilot::OfferCurrentLocked(long long now_ms) {
         if (!m_have_snap) return;
+        // **하드닝 A1** — 외부/B E-STOP 후 재ARM 했어도, 스틱이 중립을 한 번 거치기 전엔
+        // 이동을 억제(reset≠restart 완성 — 잔여 스틱 즉시 재보행 차단). 중립 관측 시 게이트
+        // 해제. 머리/킥은 비영향(머리 비게이트, 킥은 fresh 버튼 rising 필요).
+        bool eff_armed = m_armed;
+        if (m_rearm_requires_neutral) {
+            if (!GpMovingIntent(m_snap)) {
+                m_rearm_requires_neutral = false;   // 중립 관측 → 게이트 해제
+            } else {
+                eff_armed = false;                   // 잔여 이동 입력 → enabled 억제
+            }
+        }
         GamepadWalkFields f;
         // F10 — 머리 레이트 적분 dt: 직전 매핑 이후 경과(이벤트·50ms 재공급 공용).
         // 첫 매핑(m_last_map_ms==0)은 dt=0 으로 적분 생략(획득 직후 점프 방지).
         double dt_ms = (m_last_map_ms > 0 && now_ms > m_last_map_ms)
                            ? (double)(now_ms - m_last_map_ms) : 0.0;
         m_last_map_ms = now_ms;
-        MapGamepad(m_snap, m_armed, dt_ms, &m_hold, &f);
+        MapGamepad(m_snap, eff_armed, dt_ms, &m_hold, &f);
         char line[192];
         m_seq++;
         int n = BuildGamepadLine(line, sizeof(line), m_seq, f, m_balltrack);
@@ -471,6 +529,14 @@ namespace Robotis {
 
     void GamepadPilot::MaybeRefresh(long long now_ms) {
         pthread_mutex_lock(&m_mtx);
+        // **하드닝 B3** — ARM idle timeout: ARM 후 의도적 입력이 GP_ARM_IDLE_TIMEOUT_MS
+        // 없으면 auto-disarm(+재ARM 중립 게이트). 데드맨 제거의 완화책 — 거치 중 스틱
+        // 오접촉으로 인한 의도치 않은 보행 차단. 활동 기준은 ProcessEvent 가 갱신.
+        if (m_armed && m_last_activity_ms > 0 &&
+            (now_ms - m_last_activity_ms) >= GP_ARM_IDLE_TIMEOUT_MS) {
+            m_armed = false;
+            m_rearm_requires_neutral = true;
+        }
         if (m_node_ok && m_have_snap && m_last_event_ms > 0 &&
             (now_ms - m_last_event_ms) < GP_SILENCE_SLEW_MS &&
             (now_ms - m_last_offer_ms) >= GP_REFRESH_MS) {
@@ -482,32 +548,27 @@ namespace Robotis {
     }
 
     void GamepadPilot::HandleNodeLost(long long now_ms) {
+        (void)now_ms;
         pthread_mutex_lock(&m_mtx);
-        // pending 강제 커밋 — release 합성이 SYN 없이 끊겨도 데드맨 해제 반영(①티어).
-        GamepadSnapshot snap;
-        if (m_decoder.ForceCommit(&snap)) {
-            m_snap = snap;
-            m_have_snap = true;
-        }
         m_pending_arm_edge = false;
         m_pending_estop_edge = false;
         m_pending_recover_edge = false;
         m_pending_left_kick_edge = false;    // F12 — 단절 시 보류 킥 폐기
         m_pending_right_kick_edge = false;
         m_armed = false;                // H2-2 — 재획득 후 재 ARM 필수
-        // **codex P1 fix (2026-06-12)**: 최종 정지 라인은 ①티어(데드맨 해제 관측 —
-        // graceful 단절의 release 합성)에만 발행. 데드맨이 여전히 눌린 채 노드만
-        // 소멸한 비정상 단절은 라인을 내지 않는다 — disarm 게이트 라인(enabled=0)이
-        // 즉시 Walking::Stop 을 유발해 ②티어 스펙("제자리 슬루 → WD_STOP")을
-        // 풀스트라이드에서 위반하기 때문. ②티어는 PollFailsafe(SLEW_ZERO)가 소화.
-        if (m_have_snap && !m_snap.btn_lb) {
-            OfferCurrentLocked(now_ms); // ①티어 — release 반영 정지 라인(enabled=0)
-        }
+        // **하드닝 A2/P0-3 (2026-06-14)**: 노드 소멸 시 최종 enabled=0 라인을 발행하지
+        // 않는다(버튼 상태와 무관 — 단일 안전상태). 종전엔 release 합성(!btn_lb)일 때만
+        // enabled=0 라인을 내, "직전 버튼 상태"가 단절 정지 방식(즉시 Walking::Stop vs
+        // 완만한 ②티어 슬루)을 갈랐다 — IEC 62745(무선 link-loss 는 신호 부재 자체가
+        // 정지 결정, 마지막 버튼 상태 무관) 위반 패턴. 이제 모든 노드 소멸은 동일하게
+        // PollFailsafe ②티어(GP_FS_SLEW_ZERO, controlled stop/cat-1)가 단일 소유한다.
+        // (ForceCommit/스냅 갱신도 제거 — 발행하지 않으므로 불필요.)
         m_node_ok = false;
         m_have_snap = false;            // 재획득 전 refresh 발행 금지
         if (m_fd >= 0) { close(m_fd); m_fd = -1; }
         pthread_mutex_unlock(&m_mtx);
-        printf("[GamepadPilot] input source lost — rescan every %dms\n", GP_RESCAN_MS);
+        printf("[GamepadPilot] input source lost — rescan every %dms (slew owns stop)\n",
+               GP_RESCAN_MS);
     }
 
     // ── 호스트 테스트 주입 ───────────────────────────────────────────────────

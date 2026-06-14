@@ -520,10 +520,11 @@ static void test_format_tel2_full() {
                        true, fsr8,
                        true, 20, -5,
                        0, false, 0.0,
-                       122, "udp", 18);
+                       122, "udp", 18,
+                       1, 0);   // 하드닝 B3 — armed=1, estop_latched=0
     const char* expect =
         "TEL2 1748736000123 42 2 28.00 10.00 5.00 600.00 "
-        "511 530 498 512 489 760 100 110 120 130 140 150 160 170 20 -5 0 - 122 udp 18\n";
+        "511 530 498 512 489 760 100 110 120 130 140 150 160 170 20 -5 0 - 122 udp 18 1 0\n";
     CHECK(n == (int)strlen(expect), "tel2 full length matches");
     CHECK(strcmp(buf, expect) == 0, "tel2 full line exact");
 }
@@ -539,12 +540,15 @@ static void test_format_tel2_fsr_missing() {
                        false, 0,
                        false, 0, 0,
                        -1, false, 0.0,
-                       0, "file", 5);
+                       0, "file", 5,
+                       0, 1);   // 하드닝 B3 — armed=0, estop_latched=1
     const char* expect =
         "TEL2 1000 7 0 0.00 0.00 0.00 600.00 "
-        "512 512 512 512 512 700 - - -1 - 0 file 5\n";
+        "512 512 512 512 512 700 - - -1 - 0 file 5 0 1\n";
     CHECK(n == (int)strlen(expect), "tel2 fsr-missing length");
     CHECK(strcmp(buf, expect) == 0, "tel2 fsr/cop '-' fallback exact");
+    // 하드닝 B3 — armed/estop_latched 토큰 노출 확인(IEC 60204-1 §10.3 관찰가능성).
+    CHECK(strstr(buf, " 0 1\n") != 0, "tel2 말미 armed=0 estop_latched=1 토큰");
 }
 
 static void test_format_tel2_risk_present() {
@@ -559,7 +563,8 @@ static void test_format_tel2_risk_present() {
                true, fsr8,
                true, 0, 0,
                0, true, 16.25,
-               120, "udp", 20);
+               120, "udp", 20,
+               1, 0);   // 하드닝 B3 — armed=1, estop_latched=0
     CHECK(strstr(buf, " 16.25 ") != 0, "risk present → 16.25 formatted");
     CHECK(strstr(buf, " - ") == 0, "no '-' tokens when fsr/cop/risk all present");
 }

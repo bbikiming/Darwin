@@ -3,10 +3,17 @@
  *
  * 2026-06-12 (handheld-direct-pilot-upgrade Wave H1+H2, P7) — 로봇 USB 의 RG G01
  * 동글(XInput 045e:028e → xpad 네이티브, H0 실측 보고서
- * docs/reports/2026-06-12-rgg01-usb-probe.md)을 읽어 콕핏 RG G01 프리셋과 1:1
- * 의미론으로 보행/머리 명령을 만들고, O1 latest-wins 슬롯(source=local)으로
- * supervisor 에 합류시킨다. E-STOP(B)만 예외 — 슬롯 경유 없이 읽기 스레드에서
- * 즉시 콜백(브로커리지 TriggerEstopImmediate).
+ * docs/reports/2026-06-12-rgg01-usb-probe.md)을 읽어 보행/머리 명령을 만들고, O1
+ * latest-wins 슬롯(source=local)으로 supervisor 에 합류시킨다. E-STOP(B)만 예외 —
+ * 슬롯 경유 없이 읽기 스레드에서 즉시 콜백(브로커리지 TriggerEstopImmediate).
+ *
+ * 매핑은 H0/P7 초기엔 콕핏 RG G01 프리셋과 1:1 이었으나, 실기 F10/F12(2026-06-13)에서
+ * 의도적으로 이탈했다(데드맨 해제·LT/RT 회전·우스틱 헤드 레이트·LB/RB 킥·터보 제거).
+ * 본문 주석이 각 이탈을 기록한다 — 파일을 "1:1 패리티"로 읽지 말 것.
+ *
+ * 2026-06-14 (anbernic-dongle-direct-control-hardening) — Batch A/B: 외부 E-STOP 의
+ * ForceDisarm(reset≠restart), 노드소멸 단일 안전상태(버튼무관), local 신선창=침묵창
+ * 정렬(선점 결함 제거), 측보 축별 정규화, ARM idle timeout.
  *
  * 구조: 순수 로직(디코더/매핑/성형/settle/failsafe 판정)은 Robot:: 의존 0 —
  * 호스트 단위 테스트(tests/test_gamepad.cpp). 장치 I/O(/dev/input 스캔·읽기
@@ -84,8 +91,14 @@ static const double GP_DRIVE_CURVE = 1.35;  // 통일안 (Switch drive_curve)
 // A_MAX 와 **항상 동일값**(작은 쪽이 클램프). 2단계(좌우 32·회전 20)는 온스탠드
 // IK-freeze 스윕(좌우)·발yaw 무스컬프 14°(회전) 검증 후에만 — P7 보류.
 static const double GP_MAX_STRIDE_MM = 38.0;  // UI 클램프 — 최종은 거버너(O2)
-static const double GP_MAX_SIDE_MM   = 28.0;  // P2: 22→28 (per-leg half-amp 14mm, IK NaN 여유)
-static const double GP_MAX_TURN_DEG  = 18.0;  // P4: 12→18 (발 yaw peak 9°, 충돌 ~40° 마진)
+// **하드닝 B2 (2026-06-14)**: 측보/회전 상한을 거버너 ENVELOPE_*_MAX 로 **직접** 정의 —
+// 불변식 GP_MAX_SIDE_MM==ENVELOPE_Y_MAX, GP_MAX_TURN_DEG==ENVELOPE_A_MAX 가 구조적으로
+// 보장되어 한쪽만 바꿔도 발산 불가(종전엔 양쪽 헤더 주석에만 — 조용히 깨질 수 있었다).
+// GpGaitSchedule 측보 정규화가 GP_MAX_SIDE_MM 를 분모로 쓰므로(P1-1) 이 정렬이 핵심.
+// 값은 WalkLabTransport.h: ENVELOPE_Y_MAX=28(P2), ENVELOPE_A_MAX=18(P4). C++03 라 const
+// double 은 정수상수식이 아니어서 컴파일타임 array-assert 불가 → 구조적 동일 정의로 대체.
+static const double GP_MAX_SIDE_MM   = ENVELOPE_Y_MAX;  // ==28 (per-leg half-amp 14mm, IK NaN 여유)
+static const double GP_MAX_TURN_DEG  = ENVELOPE_A_MAX;  // ==18 (발 yaw peak 9°, 충돌 ~40° 마진)
 static const double GP_MAX_HEAD_PAN_DEG  = 70.0;  // Switch max_head_pan 패리티
 static const double GP_MAX_HEAD_TILT_DEG = 35.0;  // Switch max_head_tilt 패리티
 // 실기 F10b (2026-06-13): 데드존 0.05→0.02 — 트리거 살짝 눌러도 회전 시작.
@@ -126,12 +139,25 @@ static const double GP_GAIT_FOOT_DEFAULT   = 40.0;
 static const double GP_HIP_DEG             = 13.0;   // ROBOTIS 원본 고정
 
 // ===== H2 타이밍 상수 =========================================================
-static const long long GP_LOCAL_FRESH_MS  = 1000;  // H2-1 — local 우선권 창(최근 입력 ≤1s)
+// **하드닝 P1-2/A2 (2026-06-14)**: local 우선권 창 = ③티어 침묵 창(1500ms). 종전엔
+// local 1000 < 침묵 1500 이라, 1.0~1.5s 구간에 GamepadPilot 이 보유 상태를 계속 offer
+// 하는데도 supervisor 는 drain 만 하고 UDP/파일이 제어권을 선점할 수 있었다(P1-2). 두
+// 창을 정렬해 선점 구간을 제거 — 신선 창 내내 local 이 SRC_LOCAL 을 유지하므로 P0-3↔P1-2
+// 결합 결함(active_source 플립으로 ②티어 슬루 무장해제)도 근본 차단된다.
+static const long long GP_SILENCE_SLEW_MS = 1500;
+static const long long GP_LOCAL_FRESH_MS  = GP_SILENCE_SLEW_MS;  // 침묵 창과 단일화(정렬)
 // ③티어 — 마지막 *이벤트* 경과 ≥1.5s = 단절 의심(초기값 — 실기에서 정속 보행 침묵
 // 분포 실측 후 확정). EVIOCGKEY 폴은 생존 판정 금지(H0 실측 반증 — 보고서 §5 함의 4).
-static const long long GP_SILENCE_SLEW_MS = 1500;
+// 정렬 불변식 컴파일타임 강제(한쪽만 바꾸면 선점 결함 부활 → 빌드 실패로 차단).
+typedef char GpAssert_LocalFreshEqSilence[(GP_LOCAL_FRESH_MS == GP_SILENCE_SLEW_MS) ? 1 : -1];
 static const int GP_REFRESH_MS = 50;    // 보유 상태 재공급(스트림 워치독 600/2500ms 정합)
 static const int GP_RESCAN_MS  = 1000;  // 장치 미발견/소실 시 재스캔 주기(핫플러그 겸용)
+// **하드닝 B3 (2026-06-14)**: 데드맨 제거 후 ARM 무기한 유지의 완화책 — ARM 후 모든
+// 입력(이동·턴·머리·트리거·버튼)이 N초 없으면 auto-disarm(거치 중 스틱 오접촉 차단).
+// enabling-device 정석은 hold-to-run(3-position, ISO 10218-1 Annex C)이나 RG G01 엔
+// 하드웨어가 없어 idle-timeout 이 약식 등가 — 표준 충족 아닌 완화책. 값 15s 는 설계
+// 초기값(실기 idle gap p99 분포 실측 후 확정 — P1-4/측정 프로토콜).
+static const long long GP_ARM_IDLE_TIMEOUT_MS = 15000;
 
 // ===== 16B input_event 디코드 (H0: i686 timeval 8 + type 2 + code 2 + value 4) ==
 // 원시 바이트를 리틀엔디언 명시 조립으로 해석 — struct 레이아웃 이식성 문제 차단
@@ -258,6 +284,16 @@ public:
     GamepadFailsafe PollFailsafe(long long now_ms);
     /// 장치 노드 보유 여부 (진단용).
     bool DevicePresent();
+    /// **하드닝 A1 (2026-06-14)** — 외부 E-STOP(UDP/Switch/Mac flag)이 ARM 을 latch-해제.
+    /// ISO 13850: reset(flag clear)은 재기동을 "허용"만 하고 그 자체로 재기동 금지 →
+    /// 외부 E-STOP 후엔 명시적 A 재ARM 없이 재보행 불가. 재ARM 후에도 스틱이 중립을
+    /// 한 번 거쳐야 enabled=1(잔여 스틱 즉시 재보행 차단). thread-safe(m_mtx).
+    /// **재진입 불변식**: m_mtx 를 잡으므로 m_mtx 보유 구간에서 호출 금지. Gamepad-B
+    /// estop 콜백은 ProcessEvent 가 unlock 한 뒤(락 밖) 발화하므로 안전. UDP/supervisor
+    /// flag 경로는 락 미보유라 무문제. (non-recursive mutex 가정.)
+    void ForceDisarm();
+    /// ARM 상태(TEL2 armed 노출용 — IEC 60204-1 §10.3 관찰가능성). thread-safe.
+    bool Armed();
 
     // ── 호스트 테스트 주입 (장치 없이 전체 상태기계 검증 — __linux__ 불요) ──
     void InjectAdoptForTest(long long now_ms);            // 노드 (재)획득 시뮬
@@ -297,6 +333,9 @@ private:
     bool m_node_ok;
     bool m_had_device;             // 한 번이라도 획득 — ②티어 게이트
     bool m_armed;                  // H2-2 ARM (A rising). 노드 (재)획득 시 false.
+    // **하드닝 A1** — 외부/B E-STOP latch-disarm 후, 재ARM 해도 스틱이 중립을 한 번
+    // 거치기 전엔 enabled=1 억제(reset≠restart 완성 — 잔여 스틱 즉시 재보행 차단).
+    bool m_rearm_requires_neutral;
     int  m_balltrack;              // X 토글 (0/1)
 
     GamepadDecoder  m_decoder;
@@ -305,6 +344,8 @@ private:
     bool m_have_snap;
 
     long long m_last_event_ms;     // 마지막 *이벤트* 수신 — HasControl/③티어 기준
+    long long m_last_activity_ms;  // **하드닝 B3** — 마지막 *의도적* 입력(이동/턴/머리/
+                                   // 버튼) 시각. ARM idle timeout 기준(스틱 데드존 노이즈 제외).
     long long m_adopt_ms;          // 노드 획득 시각 — ③티어 즉발 방지(이벤트 전)
     long long m_last_offer_ms;     // refresh cadence
     long long m_last_map_ms;       // F10 — 머리 레이트 적분 dt 기준(직전 매핑 시각)
