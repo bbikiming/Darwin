@@ -1291,6 +1291,66 @@ static void test_pilot_ballfollow_toggle() {
     p.Stop();
 }
 
+// ---- D-패드 모션 (2026-06-14) — 상하좌우 → 액션 코드(공식 페이지) -----------------
+
+static void test_pilot_dpad_motions() {
+    printf("test_pilot_dpad_motions (D-패드 → STAND/SIT/PASS_L/PASS_R, edge only)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1010);   // ARM
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(p.ArmedForTest(), "ARM");
+    // 위(HAT0Y=-1) → STAND.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0Y, GP_DPAD_UP), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(g_kick_calls == 1 && g_kick_last_side == GP_ACTION_STAND, "위 → STAND(2)");
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0Y, 0), 1030);   // 중립 복귀
+    p.InjectEventForTest(Syn(), 1030);
+    // 아래(HAT0Y=+1) → SIT.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0Y, GP_DPAD_DOWN), 1040);
+    p.InjectEventForTest(Syn(), 1040);
+    CHECK(g_kick_calls == 2 && g_kick_last_side == GP_ACTION_SIT, "아래 → SIT(3)");
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0Y, 0), 1050);
+    p.InjectEventForTest(Syn(), 1050);
+    // 좌(HAT0X=-1) → PASS_LEFT.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0X, GP_DPAD_LEFT), 1060);
+    p.InjectEventForTest(Syn(), 1060);
+    CHECK(g_kick_calls == 3 && g_kick_last_side == GP_ACTION_PASS_LEFT, "좌 → PASS_LEFT(4)");
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0X, 0), 1070);
+    p.InjectEventForTest(Syn(), 1070);
+    // 우(HAT0X=+1) → PASS_RIGHT.
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0X, GP_DPAD_RIGHT), 1080);
+    p.InjectEventForTest(Syn(), 1080);
+    CHECK(g_kick_calls == 4 && g_kick_last_side == GP_ACTION_PASS_RIGHT, "우 → PASS_RIGHT(5)");
+    // 홀드 유지(release 없는 추가 SYN) → 재발화 없음(edge only).
+    p.InjectEventForTest(Syn(), 1090);
+    CHECK(g_kick_calls == 4, "D-패드 홀드 유지 → 재발화 없음(edge only)");
+    p.Stop();
+}
+
+static void test_pilot_dpad_requires_arm() {
+    printf("test_pilot_dpad_requires_arm (미ARM D-패드 → 무시)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0Y, GP_DPAD_UP), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(g_kick_calls == 0, "미ARM D-패드 위 → 무시");
+    // E-STOP 동률 — D-패드 + B 같은 틱 → estop 승리(D-패드 억제).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0Y, 0), 1025);
+    p.InjectEventForTest(Syn(), 1025);
+    p.InjectEventForTest(Ev(GP_EV_ABS, GP_ABS_HAT0Y, GP_DPAD_UP), 1030);
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_B, 1), 1030);
+    p.InjectEventForTest(Syn(), 1030);
+    CHECK(g_kick_calls == 0, "D-패드+B 같은 틱 → estop 승리(D-패드 억제)");
+    p.Stop();
+}
+
 // ---- main --------------------------------------------------------------------
 
 int main() {
@@ -1348,6 +1408,8 @@ int main() {
     test_pilot_arm_idle_timeout();
     test_pilot_kick_setup_not_idle();
     test_pilot_ballfollow_toggle();
+    test_pilot_dpad_motions();
+    test_pilot_dpad_requires_arm();
 
     printf("== %d checks, %d failures ==\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

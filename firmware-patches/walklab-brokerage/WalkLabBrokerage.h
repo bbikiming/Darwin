@@ -103,6 +103,14 @@ public:
     static const int KICK_PAGE_RIGHT = 12;
     static const int KICK_PAGE_LEFT  = 13;
 
+    /// **D-패드 모션 (2026-06-14)** — 공식 Action 페이지(motion_4096.bin, op2 카탈로그
+    /// 교차검증). 위=stand up(16)·아래=sit down(15)·좌=lPASS(71)·우=rPASS(70). 페이지
+    /// 자체 속도 준수. side(GP_ACTION_*) → page 매핑은 CheckAndExecuteKick 단일 지점이 소유.
+    static const int STAND_PAGE      = 16;
+    static const int SIT_PAGE        = 15;
+    static const int PASS_LEFT_PAGE  = 71;
+    static const int PASS_RIGHT_PAGE = 70;
+
     /// **C (2026-06-13)** — 킥 착지 안정화 settle 틱 수 (×8ms). 모션 완료 직후 Action
     /// 최종 스탠스를 이만큼 유지(서보 홀드)해 스윙 잔여 진동을 감쇠한 뒤 Walking 으로
     /// 반납한다 — 핸드오프 bump 로 인한 낙상 마진 회복. 37×8ms ≈ 296ms.
@@ -296,6 +304,10 @@ private:
     /// take+clear. m_kick_mtx 로 배타. last-wins(동시 LB+RB 극히 드묾 — 무해).
     int m_pending_kick_side;
     pthread_mutex_t m_kick_mtx;
+    /// **D-패드 모션 (2026-06-14)** — 앉음(SIT) 상태 플래그. true 면 (1) 자동 getup 억제
+    /// (앉았는데 "넘어졌다"고 자동 기립하는 충돌 방지), (2) 보행 Start 차단(앉은 채 걷기
+    /// 금지 — 먼저 STAND), (3) STAND 외 D-패드/킥 차단. STAND/E-STOP 시 해제. supervisor 단독.
+    bool m_sitting;
 
     // ===== O2 셰이핑 상태 (2026-06-12, walklab-onboard-teleop-upgrade Wave O2) =====
     /// 거버너 적용 후의 명령 목표값(X/Y/A/period) — 슬루가 이 목표로 전진. 래치 사이엔 재적용.

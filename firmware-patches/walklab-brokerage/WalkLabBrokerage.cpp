@@ -202,6 +202,10 @@ namespace Robotis {
             return false;
         }
 
+        // **D-패드 앉음(2026-06-14, 리뷰 HIGH-1)** — auto-getup 을 *억제하지 않는다*. 앉음
+        // (page15)은 몸통 직립=STANDUP 이라 아래 STANDUP 분기가 자연히 getup 을 막고(앉음 유지),
+        // 앉다 진짜로 넘어지면(FALLEN) auto-getup 이 정상 복구해야 안전하다(억제 시 deadlock).
+        // getup 이 실제 발화하면(아래) 로봇은 일어선 것이므로 m_sitting 을 해제한다.
         int fallen = Robot::MotionStatus::FALLEN;
         if (fallen == Robot::STANDUP) {
             m_fall_count = 0;   // 똑바로 서 있음 — 카운터 reset.
@@ -277,6 +281,7 @@ namespace Robotis {
         walking->m_Joint.SetEnableBodyWithoutHead(true, true);
 
         m_fall_count = 0;   // 복구 완료 — 카운터 reset.
+        m_sitting = false;  // **D-패드(2026-06-14)** — getup 으로 일어섰으니 앉음 상태 해제.
         printf("[WalkLabBrokerage] getup complete — joints returned to Walking, idle\n");
         return true;   // 보행은 정지 유지 — 다음 Mac 명령까지 대기.
     }
@@ -312,22 +317,37 @@ namespace Robotis {
         //    이미 estop 을 처리하지만 호출 순서 무관하게 안전하도록 재확인.
         if (EstopRequested()) return false;
 
-        // 4) 안전 게이트 — STANDUP 아니면 폐기. 낙상/불안정 중 킥 금지(getup 이 우선).
-        int fallen = Robot::MotionStatus::FALLEN;
-        if (fallen != Robot::STANDUP) {
-            printf("[WalkLabBrokerage] kick 무시 — not STANDUP (FALLEN=%d)\n", fallen);
+        // 3.5) **D-패드(2026-06-14)** — 앉음 상태에선 STAND(위) 외 모션 차단(먼저 일어서기).
+        if (m_sitting && side != Robotis::GP_ACTION_STAND) {
+            printf("[WalkLabBrokerage] 앉은 상태 — STAND(D-패드 위) 먼저. action 무시(side=%d)\n", side);
             return false;
         }
 
-        // 5) side → page (비대칭: LEFT→13, RIGHT→12). 단일 매핑 지점 + 방어적 검증
-        //    (콜백은 0/1 만 넘기지만 예상밖 값에 fail-fast — 비대칭 실수 차단).
-        if (side != Robotis::GP_KICK_LEFT && side != Robotis::GP_KICK_RIGHT) {
-            fprintf(stderr, "[WalkLabBrokerage] kick invalid side=%d — 무시\n", side);
+        // 4) side → page + 이름. **단일 매핑 지점**(킥 비대칭 + D-패드 공식 페이지, op2 교차검증).
+        int page = -1; const char* name = "?";   // default 가 return 하나 g++ uninit 경고 방지.
+        switch (side) {
+            case Robotis::GP_KICK_LEFT:         page = KICK_PAGE_LEFT;   name = "KICK LEFT";  break;
+            case Robotis::GP_KICK_RIGHT:        page = KICK_PAGE_RIGHT;  name = "KICK RIGHT"; break;
+            case Robotis::GP_ACTION_STAND:      page = STAND_PAGE;       name = "STAND";      break;
+            case Robotis::GP_ACTION_SIT:        page = SIT_PAGE;         name = "SIT";        break;
+            case Robotis::GP_ACTION_PASS_LEFT:  page = PASS_LEFT_PAGE;   name = "PASS LEFT";  break;
+            case Robotis::GP_ACTION_PASS_RIGHT: page = PASS_RIGHT_PAGE;  name = "PASS RIGHT"; break;
+            default:
+                fprintf(stderr, "[WalkLabBrokerage] invalid action side=%d — 무시\n", side);
+                return false;
+        }
+
+        // 5) 안전 게이트 — STANDUP(직립 몸통) 일 때만. 낙상/불안정 중 모션 금지(getup 우선).
+        //    **STAND 도 STANDUP 요구**(리뷰 HIGH-2): 앉음(page15)은 몸통 직립=STANDUP 이라
+        //    통과하고, 진짜 낙상(FORWARD/BACKWARD)에선 page16(앉은자세→서기)이 아니라
+        //    auto-getup(page10/11)이 올바른 방향으로 일으킨다 — 넘어진 로봇에 page16 재생 차단.
+        int fallen = Robot::MotionStatus::FALLEN;
+        if (fallen != Robot::STANDUP) {
+            printf("[WalkLabBrokerage] %s 무시 — not STANDUP (FALLEN=%d → auto-getup 이 처리)\n",
+                   name, fallen);
             return false;
         }
-        int page = (side == Robotis::GP_KICK_RIGHT) ? KICK_PAGE_RIGHT : KICK_PAGE_LEFT;
-        const char* name = (side == Robotis::GP_KICK_RIGHT) ? "RIGHT" : "LEFT";
-        printf("[WalkLabBrokerage] KICK %s — page %d\n", name, page);
+        printf("[WalkLabBrokerage] ACTION %s — page %d\n", name, page);
 
         // 6) getup 과 동일 모듈 스왑 (검증된 패턴) ─────────────────────────────
         // 6-1) 보행 중단 + 완전 정지 대기(안정 스탠스로 수렴). telemetry 계속.
@@ -343,8 +363,10 @@ namespace Robotis {
         // 를 막고 getup 에 인계(쓰러진 채 킥 금지, 리뷰 safety-1). Action 시작 *후*엔 킥
         // 모션 자체가 자세를 바꾸므로 FALLEN 검사 안 함(estop 만 중단). return true =
         // 보행 정지함→이번 poll 명령 skip(getup 의 estop-대기-bail 과 동일 계약, 안전).
+        // 정지 후 STANDUP 재확인(감속 transient 회피). 비STANDUP(정지 사이 실제 낙상)이면
+        // Action 시작 전 중단 → getup 인계(STAND 포함 — page16 은 STANDUP 전제, 낙상 시 부적합).
         if (Robot::MotionStatus::FALLEN != Robot::STANDUP) {
-            printf("[WalkLabBrokerage] kick 중단 — 정지 후 낙상 감지 → getup 인계\n");
+            printf("[WalkLabBrokerage] %s 중단 — 정지 후 낙상 감지 → getup 인계\n", name);
             m_fall_count = 0;
             return true;
         }
@@ -396,13 +418,23 @@ namespace Robotis {
         //    넘어뜨림"의 신뢰 신호. STANDUP 이면 종전처럼 카운터 리셋(transient 오발 억제).
         //    FALLEN 이면 m_fall_count 를 임계로 올려 다음 poll 의 CheckAndRecoverFall 이
         //    즉시 복구(getup)하게 인계한다 — 종전의 무조건 리셋이 만들던 ~600ms 복구 지연 제거.
+        // **D-패드 자세(2026-06-14)**: SIT 은 의도된 앉음 — 낙상 판정 건너뛰고 앉음 상태로.
+        // (앉음 자세가 비STANDUP 으로 읽혀도 m_sitting 이 auto-getup 을 추가 차단한다.)
+        if (side == Robotis::GP_ACTION_SIT) {
+            m_sitting = true;
+            m_fall_count = 0;
+            printf("[WalkLabBrokerage] SIT complete — 앉음(보행/getup 차단; STAND 로 해제)\n");
+            return true;
+        }
+        if (side == Robotis::GP_ACTION_STAND) m_sitting = false;   // 일어섬 — 앉음 해제.
+
         if (Robot::MotionStatus::FALLEN == Robot::STANDUP) {
             m_fall_count = 0;   // 똑바로 섬 — 착지 transient 의 auto-getup 오발 억제(기존 동작).
-            printf("[WalkLabBrokerage] kick complete — STANDUP, joints returned, idle\n");
+            printf("[WalkLabBrokerage] ACTION complete — STANDUP, joints returned, idle\n");
         } else {
             // settle 후에도 낙상 — 억제 금지. 다음 poll 이 즉시 debounce 충족하도록 임계 set.
             m_fall_count = FALL_DEBOUNCE_POLLS;
-            fprintf(stderr, "[WalkLabBrokerage] kick 후 FALLEN(%d) — auto-getup 에 인계\n",
+            fprintf(stderr, "[WalkLabBrokerage] action 후 FALLEN(%d) — auto-getup 에 인계\n",
                     Robot::MotionStatus::FALLEN);
         }
         return true;   // 보행 정지 유지 — 다음 명령까지 idle(getup 과 동일).
@@ -810,6 +842,8 @@ namespace Robotis {
         // **볼-추종(2026-06-14)**: E-STOP 시 자동 추종 모드 해제 — flag 해제 후 잔여 모드로
         // 자동 재보행 방지(재개하려면 START 재토글 필요). 안전 측 편향.
         m_ballfollow_enabled = false;
+        // **D-패드 앉음(2026-06-14)**: E-STOP 시 앉음 상태 해제 — 복구 후 정상 게이트로.
+        m_sitting = false;
     }
 
     void WalkLabBrokerage::TouchEstopFlag() {
@@ -1071,6 +1105,7 @@ namespace Robotis {
         m_balltrack_prev = false;
         m_ballfollow_enabled = false;   // 볼-추종 보행(2026-06-14) — START 토글
         m_follower = 0;                 // lazy-init (첫 추종 시)
+        m_sitting = false;              // D-패드 앉음 상태(2026-06-14)
         m_vision_ready = false;
         m_ball_finder = 0;
         m_tracker = 0;
@@ -1205,6 +1240,7 @@ namespace Robotis {
                     walking_active = false;
                     estop_latched = true;
                     m_ballfollow_enabled = false;  // 볼-추종(리뷰 HIGH-1): flag E-STOP 도 추종 해제(TriggerEstopImmediate 와 대칭)
+                    m_sitting = false;             // D-패드(리뷰 HIGH-1): flag E-STOP 도 앉음 해제(deadlock 방지)
                     // **하드닝 A1 (2026-06-14)**: Switch/Mac flag-only E-STOP 의 물리정지는
                     // 이 블록이 TriggerEstopImmediate 를 거치지 않고 직접 수행한다 — 그래서
                     // ForceDisarm 을 TriggerEstopImmediate 에만 넣으면 이 경로의 GamepadPilot
@@ -1646,7 +1682,15 @@ namespace Robotis {
         // 가 루프 말미에 공 추종값으로 덮어쓴다(슬루는 중립 0 추종 → 추종 해제 시 깨끗).
         if (!m_ballfollow_enabled) {
             bool want_active = (cmd.enabled != 0);
-            if (want_active && !walking_active) {
+            // **D-패드 앉음(2026-06-14)** — 앉은 채 보행 Start 금지(먼저 D-패드 위로 STAND).
+            // 앉은 자세에서 walk 진입은 불안정/낙상 위험. STAND 가 m_sitting 을 해제한다.
+            if (want_active && !walking_active && m_sitting) {
+                static long long last_sit_warn = 0;
+                if (now_ms - last_sit_warn > 1000) {
+                    printf("[WalkLabBrokerage] 앉은 상태 — 보행 무시(먼저 D-패드 위로 일어서기)\n");
+                    last_sit_warn = now_ms;
+                }
+            } else if (want_active && !walking_active) {
                 walking->Start();
                 walking_active = true;
                 printf("[WalkLabBrokerage] start (x=%.2f y=%.2f a=%.2f p=%.0f f=%.0f h=%.2f)\n",

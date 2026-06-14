@@ -436,6 +436,7 @@ namespace Robotis {
         bool fire_recover = false;
         bool fire_kick_left = false;    // F12
         bool fire_kick_right = false;
+        int  fire_action = -1;          // D-패드 모션 코드(2026-06-14, -1=없음)
         pthread_mutex_lock(&m_mtx);
         m_last_event_ms = now_ms;
         if (ev.type == GP_EV_KEY && ev.value == 1 && ev.code == GP_BTN_B) {
@@ -479,17 +480,25 @@ namespace Robotis {
         GamepadSnapshot snap;
         int fr = m_decoder.FeedEvent(ev, &snap);
         if (fr & GP_FEED_COMMITTED) {
+            // D-패드 모션(2026-06-14) — edge(0→±1) 판정용 직전 hat 값 보존(m_snap 갱신 전).
+            int prev_hat_x = m_have_snap ? m_snap.hat_x : 0;
+            int prev_hat_y = m_have_snap ? m_snap.hat_y : 0;
             m_snap = snap;
             m_have_snap = true;
             m_armed = SettleArmed(m_armed, m_pending_arm_edge, m_pending_estop_edge);
             if (m_pending_recover_edge && !m_pending_estop_edge) {
                 fire_recover = (m_recover_cb != 0);
             }
-            // F12 킥 — estop 동률 패(억제) + ARM 게이트(settle 후 armed 필요). 콜백은
-            // brokerage 플래그만 세팅(비블로킹) → supervisor 가 getup 패턴으로 실행.
+            // F12 킥 + D-패드 모션 — estop 동률 패(억제) + ARM 게이트(settle 후 armed 필요).
+            // 콜백은 brokerage 플래그만 세팅(비블로킹) → supervisor 가 getup 패턴으로 실행.
             if (!m_pending_estop_edge && m_armed && m_kick_cb != 0) {
                 if (m_pending_left_kick_edge)  fire_kick_left = true;
                 if (m_pending_right_kick_edge) fire_kick_right = true;
+                // D-패드 0→±1 edge → 액션 코드(공식 Action 페이지). last-wins(동시 입력 희박).
+                if (snap.hat_y == GP_DPAD_UP   && prev_hat_y == 0)      fire_action = GP_ACTION_STAND;
+                else if (snap.hat_y == GP_DPAD_DOWN  && prev_hat_y == 0) fire_action = GP_ACTION_SIT;
+                else if (snap.hat_x == GP_DPAD_LEFT  && prev_hat_x == 0) fire_action = GP_ACTION_PASS_LEFT;
+                else if (snap.hat_x == GP_DPAD_RIGHT && prev_hat_x == 0) fire_action = GP_ACTION_PASS_RIGHT;
             }
             // **하드닝 B3** — ARM idle timeout 활동 카운트: 의도적 입력(이동/턴/머리/버튼
             // 보유)이면 타이머 리셋. 스틱 데드존 노이즈는 데드존이 걸러 활동으로 안 친다
@@ -500,7 +509,8 @@ namespace Robotis {
             // 무의미하고, "조종 의도"가 아닌 비상정지다(리뷰 MEDIUM-4).
             bool btn_active = m_snap.btn_a || m_snap.btn_x || m_snap.btn_y ||
                               m_snap.btn_lb || m_snap.btn_rb;
-            if (GpMovingIntent(m_snap) || head_active || btn_active) {
+            bool dpad_active = (m_snap.hat_x != 0) || (m_snap.hat_y != 0);  // D-패드 보유=활동
+            if (GpMovingIntent(m_snap) || head_active || btn_active || dpad_active) {
                 m_last_activity_ms = now_ms;
             }
             m_pending_arm_edge = false;
@@ -517,6 +527,8 @@ namespace Robotis {
         // F12 — 킥: brokerage 가 m_pending_kick_side 세팅 후 즉시 반환(supervisor 실행).
         if (fire_kick_left)  m_kick_cb(m_cb_ctx, GP_KICK_LEFT);
         if (fire_kick_right) m_kick_cb(m_cb_ctx, GP_KICK_RIGHT);
+        // D-패드 모션(2026-06-14) — 킥과 동일 콜백 경로(액션 코드). brokerage 가 페이지 매핑.
+        if (fire_action >= 0) m_kick_cb(m_cb_ctx, fire_action);
     }
 
     void GamepadPilot::OfferCurrentLocked(long long now_ms) {

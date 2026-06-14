@@ -81,6 +81,20 @@ static const unsigned short GP_BTN_THUMBR = 318;  // 예약
 static const int GP_KICK_LEFT  = 0;
 static const int GP_KICK_RIGHT = 1;
 
+// ===== D-패드 모션 (2026-06-14): 상하좌우 → 공식 Action 페이지 =================
+// kick_cb 을 재사용해 "액션 코드"를 전달(킥+D-패드 통합). 페이지 매핑은 brokerage 단일
+// 지점이 소유(STAND→16, SIT→15, PASS_LEFT→71, PASS_RIGHT→70). rising edge(D-패드 0→±1)
+// + ARM 게이트(킥과 동일) + estop 동률 패. 실행은 supervisor 의 모듈 스왑(페이지 속도 준수).
+static const int GP_ACTION_STAND      = 2;   // 위  — stand up (page 16)
+static const int GP_ACTION_SIT        = 3;   // 아래 — sit down (page 15)
+static const int GP_ACTION_PASS_LEFT  = 4;   // 좌  — lPASS (page 71)
+static const int GP_ACTION_PASS_RIGHT = 5;   // 우  — rPASS (page 70)
+// D-패드 부호(표준 evdev): 위=−1·아래=+1(HAT0Y), 좌=−1·우=+1(HAT0X). 실기서 반대면 반전.
+static const int GP_DPAD_UP    = -1;
+static const int GP_DPAD_DOWN  =  1;
+static const int GP_DPAD_LEFT  = -1;
+static const int GP_DPAD_RIGHT =  1;
+
 // ===== 매핑·성형 상수 (콕핏 RG G01 프리셋 1:1 + §5 통일안) ===================
 static const double GP_DEADZONE    = 0.10;  // 통일안 (콕핏 0.10)
 static const double GP_DRIVE_CURVE = 1.35;  // 통일안 (Switch drive_curve)
