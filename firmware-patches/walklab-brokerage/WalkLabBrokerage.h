@@ -21,6 +21,7 @@ namespace Robot { class Head; }
 // 볼 트래킹 (2026-06-02) — 헤더 include 없이 forward 선언 (impl 에서만 사용).
 namespace Robot { class ColorFinder; }
 namespace Robot { class BallTracker; }
+namespace Robot { class BallFollower; }   // 볼-추종 보행(2026-06-14)
 // **C1 카메라 스트림 (2026-06-12)** — demo main.cpp 의 8080 MJPEG 서버. 전역 namespace
 // (ROBOTIS Linux/build/streamer — Robot:: 아님). impl 에서만 사용, 헤더는 forward 선언.
 class mjpg_streamer;
@@ -368,10 +369,22 @@ private:
     /// 볼 위치 → Head::MoveTracking PD 추적기. lazy-init.
     Robot::BallTracker* m_tracker;
 
+    /// **볼-추종 보행 (2026-06-14)** — START 토글(명령라인 balltrack 값=2). true 면 머리추적
+    /// (ProcessBallTracking) 위에 BallFollower 가 Head 각도로 공을 향해 보행한다(싸커 데모 응용).
+    /// 사용자 선택: 추종만(자동 킥 없음 — 킥은 LB/RB 수동). ARM 필요·E-STOP 시 해제.
+    bool m_ballfollow_enabled;
+    /// Head 각도 → Walking X/A_MOVE 추종 보행기(ROBOTIS 프레임워크). lazy-init.
+    Robot::BallFollower* m_follower;
+
     /// **볼 트래킹** — 매 poll 호출 (enabled 시). 카메라 프레임 캡처 → 볼 위치 검출 →
     /// BallTracker::Process 가 Head::MoveTracking(offset) 또는 검색 scan 을 수행한다.
     /// 보행 여부와 무관 (헤드 전용). 카메라/Head 는 진입 시 이미 초기화돼 있음.
     void ProcessBallTracking();
+
+    /// **볼-추종 보행 (2026-06-14)** — m_ballfollow_enabled && ARM 시 매 poll 호출. 머리추적
+    /// 직후 BallFollower::Process(tracker.ball_position)로 공을 향해 Walking 직접 구동. 공 미검출
+    /// 시 보행 정지(머리는 tracker 스캔). 자동 킥 없음(KickBall 무시 — 킥은 LB/RB 수동).
+    void ProcessBallFollow(Robot::Walking* walking, bool& walking_active);
 
     /// **공 색상 로드 (2026-06-03)** — config(balltrack.ini)의 [Find Color] 섹션을
     /// m_ball_finder 에 적용 (싸커 데모의 ColorFinder::LoadINISettings 와 동일).

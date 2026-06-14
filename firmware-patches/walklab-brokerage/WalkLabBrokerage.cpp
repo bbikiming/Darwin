@@ -57,6 +57,7 @@
 #include "LinuxCamera.h"    // Robot::LinuxCamera::GetInstance() — main.cpp 가 이미 Initialize
 #include "ColorFinder.h"    // Robot::ColorFinder — HSV 볼 검출
 #include "BallTracker.h"    // Robot::BallTracker — 볼 위치 → Head::MoveTracking
+#include "BallFollower.h"   // Robot::BallFollower — 볼-추종 보행(2026-06-14). Head 각도 → Walking X/A_MOVE
 #include "Point.h"          // Robot::Point2D
 #include "Camera.h"         // Robot::Camera::WIDTH/HEIGHT (예측 시 프레임 clamp)
 #include "minIni.h"         // Robot::minIni — config 에서 공 색상(HSV) 로드 (싸커 데모와 동일)
@@ -589,6 +590,33 @@ namespace Robotis {
         }
     }
 
+    // ===== 볼-추종 보행 (2026-06-14) — 싸커 데모 응용 =============================
+    // ProcessBallTracking 이 머리를 추적·갱신한 직후 호출(tracker.ball_position 신선).
+    // BallFollower 가 Head 각도(pan/tilt %)로 전진/회전량을 산출해 Walking::X/A_MOVE 를
+    // **직접** 구동한다(거버너/슬루 우회 — 공식 싸커 데모와 동일 메커니즘). 사용자 선택:
+    // 추종만(자동 킥 없음 — KickBall 무시, 킥은 LB/RB 수동). 호출 게이트는 supervisor 가
+    // (m_ballfollow_enabled && Armed) 로 소유. E-STOP/disarm/미ARM 은 보행을 막는다.
+    void WalkLabBrokerage::ProcessBallFollow(Robot::Walking* walking, bool& walking_active) {
+        if (!m_tracker) return;   // 방어(리뷰 LOW-3) — ProcessBallTracking 이 먼저 init 하나 가드.
+        if (!m_follower) m_follower = new Robot::BallFollower();
+        if (m_track_valid && !m_scanning) {
+            // 공 추적 중 — 공을 향해 보행. KickBall 신호는 무시(추종만, 사용자 선택).
+            m_follower->Process(m_tracker->ball_position);
+            // follower 는 X(전진)/A(회전)만 구동 — Y(측보) 미사용. 수동 ApplyCommandLine 이
+            // 둔 측보 진폭이 누출되지 않게 0 고정(자동 중 스틱 측보 무시 — 완전 follower 전용).
+            // 슬루 목표/상태의 Y 도 0 으로 끌어 다음 루프 WriteShapedCommand 가 Y 를 안 쓰게
+            // (리뷰 MEDIUM-1: 직전 측보 명령의 m_tgt_y 잔존이 20ms 측보 누출되던 것 차단).
+            walking->Y_MOVE_AMPLITUDE = 0.0;
+            m_tgt_y = 0.0; m_slew.y = 0.0;
+        } else {
+            // 공 미검출 — 보행 정지(머리는 ProcessBallTracking 스캔이 탐색). follower 의
+            // MoveToHome(머리)와 스캔 충돌을 피해 follower 미호출, Walking 직접 정지.
+            if (walking->IsRunning()) walking->Stop();
+        }
+        // follower 가 Walking 을 직접 Start/Stop 하므로 walking_active 를 실제 상태로 동기화.
+        walking_active = walking->IsRunning();
+    }
+
     // ===== C1 카메라 스트림 펌프 (2026-06-12) =====================================
     // 근본 원인: walklab 분기는 demo 원본 메인 루프(CaptureFrame→send_image, 원본 main.cpp
     // L159/L249) **진입 전에** Run() 으로 빠진다 → 8080 httpd 스레드와 /dev/video0 은 살아
@@ -773,6 +801,9 @@ namespace Robotis {
         // m_mtx 를 잡지만 이 함수는 락 미보유 컨텍스트(B 콜백은 ProcessEvent unlock 후
         // 발화)라 재진입 데드락 없음. Switch/Mac flag-only 경로는 별도 배선(아래 supervisor).
         m_gamepad.ForceDisarm();
+        // **볼-추종(2026-06-14)**: E-STOP 시 자동 추종 모드 해제 — flag 해제 후 잔여 모드로
+        // 자동 재보행 방지(재개하려면 START 재토글 필요). 안전 측 편향.
+        m_ballfollow_enabled = false;
     }
 
     void WalkLabBrokerage::TouchEstopFlag() {
@@ -1032,6 +1063,8 @@ namespace Robotis {
         // 볼 트래킹 (2026-06-02) — vision 상태 초기화 (lazy-init 은 첫 enable 시).
         m_balltrack_enabled = false;
         m_balltrack_prev = false;
+        m_ballfollow_enabled = false;   // 볼-추종 보행(2026-06-14) — START 토글
+        m_follower = 0;                 // lazy-init (첫 추종 시)
         m_vision_ready = false;
         m_ball_finder = 0;
         m_tracker = 0;
@@ -1165,6 +1198,7 @@ namespace Robotis {
                     walking->m_Joint.SetEnableBody(false);
                     walking_active = false;
                     estop_latched = true;
+                    m_ballfollow_enabled = false;  // 볼-추종(리뷰 HIGH-1): flag E-STOP 도 추종 해제(TriggerEstopImmediate 와 대칭)
                     // **하드닝 A1 (2026-06-14)**: Switch/Mac flag-only E-STOP 의 물리정지는
                     // 이 블록이 TriggerEstopImmediate 를 거치지 않고 직접 수행한다 — 그래서
                     // ForceDisarm 을 TriggerEstopImmediate 에만 넣으면 이 경로의 GamepadPilot
@@ -1318,6 +1352,7 @@ namespace Robotis {
                                STALE_TIMEOUT_MS);
                         walking->Stop();
                         walking_active = false;
+                        m_ballfollow_enabled = false;   // 볼-추종(리뷰 CRITICAL-1): stale 정지 시 추종 해제
                     }
                 } else {
                     // 파일 없음 — Mac 측 미연결. transport 가 없으면 정지(종전 동작).
@@ -1330,6 +1365,7 @@ namespace Robotis {
                             walking_active = false;
                         }
                         m_balltrack_enabled = false;   // 헤드 scan 무한지속 방지.
+                        m_ballfollow_enabled = false;  // 볼-추종(리뷰 CRITICAL-1): 정지 시 추종 해제
                     }
                 }
             }
@@ -1370,6 +1406,10 @@ namespace Robotis {
                         walking->Stop();
                         walking_active = false;
                     }
+                    // **볼-추종(2026-06-14, 리뷰 CRITICAL-1)**: 명령 stale 안전정지 시 자동
+                    // 추종 해제 — follower 가 다음 카메라 프레임에 보행을 재개해 정지를 무효화
+                    // 하지 못하게(재개하려면 START 재토글). 평시엔 패드 refresh 로 미발화.
+                    m_ballfollow_enabled = false;
                 }
             }
 
@@ -1411,8 +1451,19 @@ namespace Robotis {
 
             // 볼 트래킹 (2026-06-02): enabled 면 매 poll 카메라+BallTracker 로 헤드를 움직인다.
             // 보행 여부와 무관 (헤드 전용). e-stop/getup 은 위에서 continue 하므로 여기 미도달.
+            // **볼-추종 보행 (2026-06-14)**: balltrack 값 2(START)면 m_ballfollow_enabled — 머리
+            // 추적 직후 BallFollower 로 공을 향해 보행. ARM 필요(미ARM 자동보행 금지·안전).
+            // 수동 Start/Stop 은 ApplyCommandLine 에서 억제됨 → follower 가 Walking 을 소유.
             if (m_balltrack_enabled) {
                 ProcessBallTracking();
+                if (m_ballfollow_enabled) {
+                    if (m_gamepad.Armed()) {
+                        ProcessBallFollow(walking, walking_active);
+                    } else {
+                        if (walking->IsRunning()) walking->Stop();
+                        walking_active = false;
+                    }
+                }
             }
 
             // **v1.12 (§A) + UDP push (2026-06-03)** — telemetry uplink.
@@ -1555,8 +1606,10 @@ namespace Robotis {
         walking->BALANCE_HIP_ROLL_GAIN    = Robotis::BASE_BALANCE_HIP_ROLL_GAIN * bscale;
         walking->BALANCE_ANKLE_ROLL_GAIN  = Robotis::BASE_BALANCE_ANKLE_ROLL_GAIN * bscale;
 
-        // 볼 트래킹 토글 (edge 처리 — 종전과 동일).
-        bool want_balltrack = (cmd.balltrack != 0);
+        // 볼 트래킹/추종 토글 (edge 처리). **볼-추종(2026-06-14)**: balltrack 0=off,
+        // 1=머리추적(X), 2=볼-추종 보행(START). 1·2 모두 머리추적 포함, 2 는 추가로 보행.
+        bool want_balltrack = (cmd.balltrack >= 1);
+        m_ballfollow_enabled = (cmd.balltrack == 2);
         if (want_balltrack && !m_balltrack_prev && m_ball_finder) {
             ReloadBallColor();
             printf("[WalkLabBrokerage] ball color reloaded from %s\n", BALLCOLOR_INI);
@@ -1581,17 +1634,22 @@ namespace Robotis {
             if (head) head->MoveByAngle(cmd.head_pan, cmd.head_tilt);
         }
 
-        // enabled 토글 — Start/Stop edge 감지.
-        bool want_active = (cmd.enabled != 0);
-        if (want_active && !walking_active) {
-            walking->Start();
-            walking_active = true;
-            printf("[WalkLabBrokerage] start (x=%.2f y=%.2f a=%.2f p=%.0f f=%.0f h=%.2f)\n",
-                   cmd.x, cmd.y, cmd.a, cmd.period, cmd.foot, cmd.hip);
-        } else if (!want_active && walking_active) {
-            walking->Stop();
-            walking_active = false;
-            printf("[WalkLabBrokerage] stop\n");
+        // enabled 토글 — Start/Stop edge 감지. **볼-추종(2026-06-14)**: 추종 모드에선
+        // BallFollower 가 Walking Start/Stop 을 소유하므로 수동 Start/Stop 억제(stop↔start
+        // 매 루프 충돌 방지). 진폭은 위 WriteShapedCommand 가 중립(0)으로 두고 ProcessBallFollow
+        // 가 루프 말미에 공 추종값으로 덮어쓴다(슬루는 중립 0 추종 → 추종 해제 시 깨끗).
+        if (!m_ballfollow_enabled) {
+            bool want_active = (cmd.enabled != 0);
+            if (want_active && !walking_active) {
+                walking->Start();
+                walking_active = true;
+                printf("[WalkLabBrokerage] start (x=%.2f y=%.2f a=%.2f p=%.0f f=%.0f h=%.2f)\n",
+                       cmd.x, cmd.y, cmd.a, cmd.period, cmd.foot, cmd.hip);
+            } else if (!want_active && walking_active) {
+                walking->Stop();
+                walking_active = false;
+                printf("[WalkLabBrokerage] stop\n");
+            }
         }
 
         // O0 계측 — 적용된 cmd_id 보존(TEL last_cmd_id 토큰 → Mac 폐루프 확인).

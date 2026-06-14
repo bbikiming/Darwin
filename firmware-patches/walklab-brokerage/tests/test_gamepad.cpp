@@ -1253,6 +1253,44 @@ static void test_pilot_kick_setup_not_idle() {
     p.Stop();
 }
 
+// ---- 볼-추종 (2026-06-14) — START 토글, balltrack 값 0/1/2 ----------------------
+
+static void test_pilot_ballfollow_toggle() {
+    printf("test_pilot_ballfollow_toggle (볼-추종 START 토글 — balltrack 0/1/2)\n");
+    ResetCallbacks();
+    GamepadPilot p;
+    p.Start(OnEstop, OnRecover, OnKick, 0, false);
+    p.InjectAdoptForTest(1000);
+    WalkCommand c;
+    // 초기: balltrack=0.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_A, 1), 1005);
+    p.InjectEventForTest(Syn(), 1005);
+    CHECK(TakeParsed(p, &c) && c.balltrack == 0, "초기 → balltrack=0");
+    // X → 머리추적(balltrack=1).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_X, 1), 1010);
+    p.InjectEventForTest(Syn(), 1010);
+    CHECK(TakeParsed(p, &c) && c.balltrack == 1, "X → balltrack=1 (머리추적)");
+    CHECK(p.BalltrackForTest() == 1 && p.BallfollowForTest() == 0, "내부: track=1, follow=0");
+    // START → 추종(balltrack=2, follow 가 track 포함·우선).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_START, 1), 1020);
+    p.InjectEventForTest(Syn(), 1020);
+    CHECK(TakeParsed(p, &c) && c.balltrack == 2, "START → balltrack=2 (추종, track 포함)");
+    CHECK(p.BallfollowForTest() == 1, "내부: follow=1");
+    // START release → 재토글 준비.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_START, 0), 1030);
+    p.InjectEventForTest(Syn(), 1030);
+    // START 재토글 → follow off, X(track) 잔존 → balltrack=1.
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_START, 1), 1040);
+    p.InjectEventForTest(Syn(), 1040);
+    CHECK(TakeParsed(p, &c) && c.balltrack == 1, "START 재토글 → follow off, X 잔존 → balltrack=1");
+    CHECK(p.BallfollowForTest() == 0 && p.BalltrackForTest() == 1, "내부: follow=0, track=1");
+    // START autorepeat(value=2) → 재토글 없음(rising 만).
+    p.InjectEventForTest(Ev(GP_EV_KEY, GP_BTN_START, 2), 1050);
+    p.InjectEventForTest(Syn(), 1050);
+    CHECK(p.BallfollowForTest() == 0, "START autorepeat(2) → 재토글 없음 (rising only)");
+    p.Stop();
+}
+
 // ---- main --------------------------------------------------------------------
 
 int main() {
@@ -1309,6 +1347,7 @@ int main() {
     test_pilot_held_input_continuous();
     test_pilot_arm_idle_timeout();
     test_pilot_kick_setup_not_idle();
+    test_pilot_ballfollow_toggle();
 
     printf("== %d checks, %d failures ==\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

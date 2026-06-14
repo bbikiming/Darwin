@@ -176,6 +176,7 @@ struct GamepadSnapshot {
     double lt, rt;           // 트리거 [0,1]
     int hat_x, hat_y;        // D-pad −1/0/+1 (1차 미배선 — 디코드만)
     bool btn_a, btn_b, btn_x, btn_y, btn_lb, btn_rb;
+    bool btn_start;   // 볼-추종 토글 (2026-06-14) — rising edge 판정용 추적
     GamepadSnapshot();
 };
 
@@ -302,6 +303,7 @@ public:
     void TickForTest(long long now_ms);                   // refresh cadence 시뮬
     bool ArmedForTest();
     int  BalltrackForTest();
+    int  BallfollowForTest();   // 볼-추종 토글 상태(2026-06-14)
 
 private:
     // 이벤트 1건 처리(읽기 스레드/테스트 공용): edge 수집 → SYN 커밋 시 settle +
@@ -336,7 +338,8 @@ private:
     // **하드닝 A1** — 외부/B E-STOP latch-disarm 후, 재ARM 해도 스틱이 중립을 한 번
     // 거치기 전엔 enabled=1 억제(reset≠restart 완성 — 잔여 스틱 즉시 재보행 차단).
     bool m_rearm_requires_neutral;
-    int  m_balltrack;              // X 토글 (0/1)
+    int  m_balltrack;              // X 토글 (0/1) — 머리 추적
+    int  m_ballfollow;             // START 토글 (0/1) — 볼-추종 보행(2026-06-14). 명령라인 balltrack 값=2 로 송출
 
     GamepadDecoder  m_decoder;
     GamepadSnapshot m_snap;        // 마지막 커밋 스냅샷

@@ -31,7 +31,7 @@ struct WalkCommand {
     int    blevel;        // balance level 0..3 → 게인 ×{0,.5,1,1.5} (O2 결선)
     double head_pan;      // deg, clamp [-90,90]
     double head_tilt;     // deg, clamp [-45,65]
-    int    balltrack;     // 0/1
+    int    balltrack;     // 0=off, 1=머리추적(X), 2=볼-추종 보행(START) — 볼추종 2026-06-14
     int    flags;         // V2 flags 비트필드(v1=0). FLAG_* 참조. 게이트 스케줄 OFF 등.
     bool   head_explicit; // 이 라인이 non-zero head 를 지시했는가
     WalkCommand();

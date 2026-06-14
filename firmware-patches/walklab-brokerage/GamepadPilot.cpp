@@ -44,7 +44,7 @@ namespace Robotis {
         : lx(0.0), ly(0.0), rx(0.0), ry(0.0), lt(0.0), rt(0.0),
           hat_x(0), hat_y(0),
           btn_a(false), btn_b(false), btn_x(false), btn_y(false),
-          btn_lb(false), btn_rb(false) {}
+          btn_lb(false), btn_rb(false), btn_start(false) {}
 
     GamepadDecoder::GamepadDecoder() : m_pending(), m_dirty(false) {}
 
@@ -98,7 +98,8 @@ namespace Robotis {
             case GP_BTN_Y:  m_pending.btn_y = down; break;
             case GP_BTN_LB: m_pending.btn_lb = down; break;
             case GP_BTN_RB: m_pending.btn_rb = down; break;
-            default: return 0;   // Back/Start/Home/스틱클릭 — 예약(미배선)
+            case GP_BTN_START: m_pending.btn_start = down; break;  // 볼-추종 토글
+            default: return 0;   // Back/Home/스틱클릭 — 예약(미배선)
             }
             m_dirty = true;
             return 0;
@@ -133,6 +134,7 @@ namespace Robotis {
         case GP_BTN_Y:  return m_pending.btn_y;
         case GP_BTN_LB: return m_pending.btn_lb;
         case GP_BTN_RB: return m_pending.btn_rb;
+        case GP_BTN_START: return m_pending.btn_start;  // 볼-추종 토글
         default: return false;
         }
     }
@@ -270,12 +272,16 @@ namespace Robotis {
 
     int BuildGamepadLine(char* out, int cap, long long seq,
                          const GamepadWalkFields& f, int balltrack) {
+        // 볼-추종(2026-06-14): balltrack 0=off/1=머리추적/2=추종. 종전 ?1:0 클램프 제거.
+        int bt = balltrack;
+        if (bt < 0) bt = 0;
+        if (bt > 2) bt = 2;
         // v1 14-token — ParseCommandLine 의 full 방언과 동일(형식 불변·P9).
         // bgain/benable 는 deprecated 토큰(switch 와 동일 "1.0 0"), blevel=2(×1.0).
         return snprintf(out, (size_t)cap,
                         "gp%lld %d %.2f %.2f %.2f %.0f %.0f %.2f 1.0 0 2 %.2f %.2f %d",
                         seq, f.enabled, f.x, f.y, f.a, f.period, f.foot, f.hip,
-                        f.pan, f.tilt, balltrack ? 1 : 0);
+                        f.pan, f.tilt, bt);
     }
 
     // ===== settle / failsafe 판정 ===========================================
@@ -299,7 +305,7 @@ namespace Robotis {
     GamepadPilot::GamepadPilot()
         : m_slot(), m_running(false), m_threadless(true),
           m_fd(-1), m_node_ok(false), m_had_device(false),
-          m_armed(false), m_rearm_requires_neutral(false), m_balltrack(0),
+          m_armed(false), m_rearm_requires_neutral(false), m_balltrack(0), m_ballfollow(0),
           m_decoder(), m_snap(), m_hold(), m_have_snap(false),
           m_last_event_ms(0), m_last_activity_ms(0), m_adopt_ms(0),
           m_last_offer_ms(0), m_last_map_ms(0), m_seq(0),
@@ -452,6 +458,10 @@ namespace Robotis {
                 m_pending_recover_edge = true;
             } else if (ev.code == GP_BTN_X) {
                 m_balltrack = m_balltrack ? 0 : 1;
+            } else if (ev.code == GP_BTN_START) {
+                // 볼-추종(자동 사커) 토글 (2026-06-14). 명령라인 balltrack 값=2 로 송출 →
+                // 브로커리지가 머리추적 + BallFollower 보행. X(머리만)와 독립 토글.
+                m_ballfollow = m_ballfollow ? 0 : 1;
             } else if (ev.code == GP_BTN_LB) {
                 m_pending_left_kick_edge = true;   // F12 — 왼발 킥(ARM/estop 게이트는 SYN 커밋)
             } else if (ev.code == GP_BTN_RB) {
@@ -531,7 +541,9 @@ namespace Robotis {
         MapGamepad(m_snap, eff_armed, dt_ms, &m_hold, &f);
         char line[192];
         m_seq++;
-        int n = BuildGamepadLine(line, sizeof(line), m_seq, f, m_balltrack);
+        // 볼-추종(2026-06-14): 추종(START)=2 가 머리추적(X)=1 을 포함·우선. 명령라인 단일 토큰.
+        int bt_value = m_ballfollow ? 2 : (m_balltrack ? 1 : 0);
+        int n = BuildGamepadLine(line, sizeof(line), m_seq, f, bt_value);
         if (n > 0 && n < (int)sizeof(line)) m_slot.Offer(line, 0);   // 스트림 소스(seq=0)
         m_last_offer_ms = now_ms;
     }
@@ -598,6 +610,12 @@ namespace Robotis {
     int GamepadPilot::BalltrackForTest() {
         pthread_mutex_lock(&m_mtx);
         int b = m_balltrack;
+        pthread_mutex_unlock(&m_mtx);
+        return b;
+    }
+    int GamepadPilot::BallfollowForTest() {
+        pthread_mutex_lock(&m_mtx);
+        int b = m_ballfollow;
         pthread_mutex_unlock(&m_mtx);
         return b;
     }

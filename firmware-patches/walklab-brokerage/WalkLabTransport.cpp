@@ -122,7 +122,15 @@ bool ParseCommandLine(const char* line, WalkCommand* out) {
     c.period = period; c.foot = foot; c.hip = hip;
     c.bgain = bgain; c.benable = benable; c.blevel = blevel;
     c.head_pan = head_pan; c.head_tilt = head_tilt;
-    c.balltrack = (balltrack > 0.5f) ? 1 : 0;
+    // **볼-추종 (2026-06-14)**: balltrack 0/1/2 보존(0=off, 1=머리추적[X], 2=추종[START]).
+    // 종전 (>0.5?1:0) 클램프는 값 2 를 1 로 뭉갰다. 반올림+클램프로 다중값 보존.
+    // P9 불변(토큰 추가 없음 — 기존 balltrack 토큰의 값 공간만 확장). Mac 의 0/1 은 불변.
+    {
+        int bt = (int)(balltrack + 0.5f);
+        if (bt < 0) bt = 0;
+        if (bt > 2) bt = 2;
+        c.balltrack = bt;
+    }
     c.head_explicit = (head_pan != 0.0f) || (head_tilt != 0.0f);
 
     *out = c;
