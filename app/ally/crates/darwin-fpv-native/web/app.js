@@ -316,11 +316,12 @@ function render(data) {
   }
 
   setText("armed", data.armed ? "준비됨" : "잠김");
-  setText("deadman", data.deadman ? "잡음" : "놓음");
+  // 좌측 레일 '전송' 타일 — UDP 패스트레인 / SSH 폴백 / 미연결(Ally 는 데드맨 없음).
+  setText("deadman", data.transport === "ssh_file" ? "SSH" : (data.transport === "udp" ? "UDP" : "—"));
   setText("estop", data.estopped ? "작동" : "정상");
   setStateClass("tile-arm", "safety-tile", data.armed ? "good" : "warn");
   setStateClass("tile-estop", "safety-tile", data.estopped ? "bad" : "good");
-  setStateClass("trigger-deadman", "trigger-state", data.deadman ? "good" : "warn");
+  setStateClass("trigger-deadman", "trigger-state", data.transport === "udp" ? "good" : (data.transport === "ssh_file" ? "warn" : "bad"));
   setStateClass("trigger-link", "trigger-state", linked && !stale ? "good" : (stale ? "bad" : "warn"));
 
   setText("stride-num", `${fixed(command.stride_mm)} mm`);

@@ -112,6 +112,12 @@ pub fn build_state(app: &AppState) -> Value {
     } else {
         json!({ "status": "disabled" })
     };
+    // 활성 전송 경로 — UDP 패스트레인 vs SSH 파일 폴백(FPV 신뢰도 핵심 신호). 미연결=none.
+    let transport = if link_up {
+        snap.conn.transport.as_str()
+    } else {
+        "none"
+    };
     // 워치독 라벨 — 안전/링크 상태 파생.
     let watchdog_label = if snap.safety.estop_latched {
         "정지"
@@ -140,6 +146,7 @@ pub fn build_state(app: &AppState) -> Value {
         "uptime_sec": uptime_sec,
         "input_status": input_status,
         "watchdog_label": watchdog_label,
+        "transport": transport,
         "command": command,
         "controller": controller,
         "switch_battery": switch_battery,
@@ -220,6 +227,7 @@ mod tests {
         assert!(v.get("signal_dbm").is_some());
         assert!(v.get("wifi_dbm").is_some());
         assert_eq!(v["watchdog_label"], "—", "미연결 → —");
+        assert_eq!(v["transport"], "none", "미연결 → 전송 none(좌측 레일 '전송' 타일)");
         assert_eq!(
             v["camera_runtime"]["status"], "disabled",
             "host 없음 → disabled"

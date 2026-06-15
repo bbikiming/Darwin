@@ -126,8 +126,10 @@ fn serve_static(req: Request, path: &str) {
     };
     match WEB.get_file(rel) {
         Some(file) => {
+            // no-store: 바이너리(임베드 web/) 갱신 후 Edge/브라우저가 옛 콕핏을 캐시하지 않게.
             let resp = Response::from_data(file.contents().to_vec())
-                .with_header(hdr("Content-Type", content_type(rel)));
+                .with_header(hdr("Content-Type", content_type(rel)))
+                .with_header(hdr("Cache-Control", "no-store"));
             let _ = req.respond(resp);
         }
         None => {
