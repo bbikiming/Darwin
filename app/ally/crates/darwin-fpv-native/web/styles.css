@@ -3706,3 +3706,51 @@ body[data-ui-theme="light"] .drive-cluster .gyro-row span {
     font-size: 30px;
   }
 }
+
+/* ── 모션 레이어 (Ally) ───────────────────────────────────────────────────────
+   스위치는 GPU 제약으로 트랜지션을 최소화했다. Ally(고성능)에 맞춰 프리미엄 모션을
+   더하되 컨트롤 UI 규율을 지킨다: ① 상태·텔레메트리·게이지에만 이징 ② 실시간 파일럿
+   요소(스틱·크로스헤어·트리거·FPV 수평선)는 즉각(랙 금지) ③ E-STOP 은 색은 빠르게,
+   펄스는 부가(지연 없는 주의). prefers-reduced-motion: reduce 는 위 전역 블록이 무력화. */
+@media (prefers-reduced-motion: no-preference) {
+  /* 상태 타일·칩 — 전이를 빠르게 이징(주의 지연 방지 .14s). */
+  .safety-tile, .trigger-state, .instrument-state-tile, .status-chip,
+  .robot-flag, .balance-pill, .switch-batt-chip, .robot-batt, .direction-chip,
+  .instrument-card, .instrument-link-tile, .stage-panel, .readout-panel {
+    transition: background-color .14s ease, border-color .14s ease,
+                color .14s ease, box-shadow .14s ease;
+  }
+  /* 게이지 바늘 — 아날로그 스윕(텔레메트리라 이징 OK). */
+  .instrument-needle, #dash-speed-needle, #dash-angle-needle,
+  #inst-speed-needle, #inst-turn-needle {
+    transition: transform .2s cubic-bezier(.22, .61, .36, 1);
+  }
+  /* 미터·축·배터리 게이지 폭 — 부드럽게. */
+  .meter i, .instrument-axis-track i, .instrument-axis-track b,
+  .gyro-row i, .switch-batt-meter i, #batt-fill, #switch-batt-fill {
+    transition: width .18s ease, left .18s ease, right .18s ease;
+  }
+  /* 계기판 인공수평선 — IMU 반영, 살짝 이징(가독성). FPV 수평선은 제외(즉각). */
+  #dash-horizon, #inst-horizon { transition: transform .12s linear; }
+  /* 버튼 마이크로인터랙션 — 호버 리프트 + 프레스 스케일. */
+  .dock-button, .hud-cluster button, .control-switch button, .dash-switch button,
+  .theme-switch button, .power-button, .readout-panel button {
+    transition: transform .12s ease, background-color .15s ease,
+                border-color .15s ease, box-shadow .15s ease, color .15s ease;
+  }
+  .dock-button:hover, .readout-panel button:hover,
+  .hud-cluster button:hover { transform: translateY(-1px); }
+  .dock-button:active, .dock-button.pressed, .hud-cluster button:active,
+  .power-button:active, .readout-panel button:active { transform: scale(.95); }
+  /* E-STOP — 색 전이는 빠르고(위 .14s), 펄스로 주의 환기(지연 아님). */
+  .safety-tile.bad, .instrument-state-tile.bad {
+    animation: estop-attn 1s ease-in-out infinite;
+  }
+  @keyframes estop-attn {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, .28); }
+  }
+  /* 실시간 파일럿 요소 — 즉각(입력 랙 금지). */
+  #left-mini-dot, #right-mini-dot, #ls, #rs, #lt, #rt,
+  #motion-vector, #fpv-horizon { transition: none !important; }
+}
