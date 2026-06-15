@@ -35,6 +35,11 @@ fn main() {
     let app = AppState::new(prefer.clone());
     eprintln!("[fpv-native] DARwIn FPV 네이티브 콕핏 시작 — port={port} prefer={prefer}");
 
+    // 방화벽 인바운드 UDP 허용(best-effort) — 로봇 TEL2(robot→Ally)는 cmd 와 다른 소스
+    // 포트라 Windows stateful 매핑이 없어 기본 차단된다(→ 텔레메트리 빈 화면). 관리자면
+    // 자동 적용, 아니면 무해 실패(영구 규칙은 ally-bootstrap.ps1 §2.5 가 관리자로 등록).
+    try_firewall_allow();
+
     // 자동 연결(백그라운드) — 스위치 에이전트 자동연결 등가. 로봇 미가동이면 콕핏이 '연결
     // 대기' 표시, '재연결' 버튼으로 재시도.
     control::connect_async(app.clone());
@@ -131,3 +136,41 @@ fn launch_browser(url: &str, _kiosk: bool) {
         .spawn()
         .or_else(|_| Command::new("xdg-open").arg(url).spawn());
 }
+
+/// 인바운드 UDP 허용 규칙을 현재 exe 기준으로 best-effort 등록(멱등: delete→add). 관리자
+/// 권한이면 적용되고, 아니면 netsh 가 무해하게 실패한다(stdout/stderr 무시). 영구·확실한
+/// 등록은 ally-bootstrap.ps1(관리자) 가 담당하고, 이건 그게 안 돈 경우의 보조 경로다.
+#[cfg(windows)]
+fn try_firewall_allow() {
+    use std::process::{Command, Stdio};
+    let exe = match std::env::current_exe() {
+        Ok(p) => p.to_string_lossy().into_owned(),
+        Err(_) => return,
+    };
+    let name = "name=DARwIn-FPV-In-UDP-self";
+    let _ = Command::new("netsh")
+        .args(["advfirewall", "firewall", "delete", "rule", name])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = Command::new("netsh")
+        .args([
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            name,
+            "dir=in",
+            "action=allow",
+            &format!("program={exe}"),
+            "protocol=udp",
+            "profile=private,domain",
+            "enable=yes",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(not(windows))]
+fn try_firewall_allow() {}

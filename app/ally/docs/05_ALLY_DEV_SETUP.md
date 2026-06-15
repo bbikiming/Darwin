@@ -194,6 +194,7 @@ Ally ──USB-C LAN 어댑터──▶ 로봇 192.168.123.1 (W1 유선 게이�
 
 | 항목 | 조치 | 시점 |
 |---|---|---|
+| **TEL2 텔레메트리 안 옴** (배터리/IMU/낙상/3D 포즈 빈 화면, 조종은 됨) | 인바운드 UDP 허용 필요 — Ally→robot:17374 의 ACK 는 stateful 통과하나 TEL2(robot:17371→Ally)는 다른 소스포트라 기본 차단. **`ally-bootstrap.ps1` §2.5 가 프로그램 규칙 등록**(release/debug). 또는 `darwin-fpv-native` 첫 실행 시 방화벽 프롬프트 **"허용"**. exe 가 비관리자면 startup best-effort netsh 는 무해 실패 → bootstrap/프롬프트가 주 경로 | 1회 |
 | 절전/화면 꺼짐 | bootstrap 이 AC 전원 기준 해제 (`powercfg`) | 1회 |
 | Windows Update | 설정 → 활성 시간 지정 (테스트 중 재부팅 차단) | 1회 |
 | Game Bar | Win+G → 캡처/녹화 끔 (입력 가로채기·오버레이 회피) | 1회 |

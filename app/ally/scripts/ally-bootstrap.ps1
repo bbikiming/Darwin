@@ -10,6 +10,7 @@
 #   2) rustup stable-msvc + clippy + rustfmt
 #   3) Claude Code (네이티브 인스톨러, 실패 시 npm 폴백)
 #   4) OpenSSH Server 활성화 + 관리자 키 경로(administrators_authorized_keys) 처리
+#   4.5) FPV 텔레메트리 방화벽 (darwin-fpv-native 인바운드 UDP 허용 — TEL2 수신)
 #   5) 전원: AC 기준 절전·화면 꺼짐 해제
 #   6) git: autocrlf=input (리포는 LF 기준 — macOS 에서 생성된 골든 픽스처 보호)
 #   7) 리포가 있으면 W0 스모크 테스트 (cargo test — 기대 21 passed)
@@ -92,6 +93,30 @@ if (-not $SkipSsh) {
     $ip = (Get-NetIPAddress -AddressFamily IPv4 |
         Where-Object { $_.IPAddress -like "192.168.*" } | Select-Object -First 1).IPAddress
     Write-Host "→ Ally IP: $ip — Mac ~/.ssh/config 의 'Host ally' HostName 으로 사용"
+}
+
+# --- 2.5) FPV 텔레메트리 방화벽 (TEL2 인바운드 UDP) ----------------------------
+# darwin-fpv-native 가 로봇 TEL2(robot:17371 → Ally) 를 받으려면 인바운드 UDP 허용이
+# 필요하다. Ally 는 cmd 를 robot:17374 로 보내므로 ACK 는 stateful 로 통과하지만, TEL2 는
+# 다른 소스 포트라 stateful 매핑이 없어 기본 차단된다 → 텔레메트리(배터리/IMU/낙상/3D
+# 포즈피드) 가 빈다(조종 자체는 outbound 라 영향 없음). 프로그램 기준 규칙(포트·원격IP
+# 무관)을 release/debug 두 경로에 선등록한다(exe 부재여도 등록 가능 — 실행 시 매칭). 멱등.
+if (-not $SkipSsh) {
+    Step "FPV 텔레메트리 방화벽 (인바운드 UDP 허용)"
+    $fpvExes = @(
+        (Join-Path $RepoPath "app\ally\target\release\darwin-fpv-native.exe"),
+        (Join-Path $RepoPath "app\ally\target\debug\darwin-fpv-native.exe")
+    )
+    foreach ($exe in $fpvExes) {
+        $variant = Split-Path (Split-Path $exe -Parent) -Leaf   # release / debug
+        $rn = "DARwIn-FPV-In-UDP-$variant"
+        Get-NetFirewallRule -Name $rn -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule -ErrorAction SilentlyContinue
+        New-NetFirewallRule -Name $rn -DisplayName "DARwIn FPV inbound UDP ($variant)" `
+            -Enabled True -Direction Inbound -Protocol UDP -Action Allow `
+            -Program $exe -Profile Private,Domain | Out-Null
+    }
+    Write-Host "→ darwin-fpv-native 인바운드 UDP 허용(release/debug) 등록 — TEL2 텔레메트리 수신용"
 }
 
 # --- 3) 전원 (테스트 중 절전 금지 — AC 기준) --------------------------------
