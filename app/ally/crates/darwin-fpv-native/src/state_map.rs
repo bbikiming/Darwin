@@ -227,7 +227,10 @@ mod tests {
         assert!(v.get("signal_dbm").is_some());
         assert!(v.get("wifi_dbm").is_some());
         assert_eq!(v["watchdog_label"], "—", "미연결 → —");
-        assert_eq!(v["transport"], "none", "미연결 → 전송 none(좌측 레일 '전송' 타일)");
+        assert_eq!(
+            v["transport"], "none",
+            "미연결 → 전송 none(좌측 레일 '전송' 타일)"
+        );
         assert_eq!(
             v["camera_runtime"]["status"], "disabled",
             "host 없음 → disabled"
