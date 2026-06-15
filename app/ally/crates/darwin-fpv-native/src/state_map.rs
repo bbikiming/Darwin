@@ -38,13 +38,13 @@ pub fn build_state(app: &AppState) -> Value {
     // 링크 살아있음 = 런타임 활성 + ACK 흐름(eff_hz≥1). UDP 도달 신호.
     let link_up = connected_rt && eff_hz >= 1.0;
 
-    // 명령(머리 pan/tilt 는 Snapshot.cmd 에 없어 0 — 보행 3축만 추적).
+    // 명령 5축 — 보행 3축(stride/side/turn) + 머리 pan/tilt(RS 헤드 레이트 적분).
     let command = json!({
         "stride_mm": snap.cmd.x,
         "side_mm": snap.cmd.y,
         "turn_deg": snap.cmd.a,
-        "head_pan_deg": 0.0,
-        "head_tilt_deg": 0.0,
+        "head_pan_deg": snap.cmd.head_pan,
+        "head_tilt_deg": snap.cmd.head_tilt,
     });
     let moving = snap.cmd.x.abs() > 0.2 || snap.cmd.y.abs() > 0.2 || snap.cmd.a.abs() > 0.2;
 
@@ -99,6 +99,32 @@ pub fn build_state(app: &AppState) -> Value {
         now - 60_000
     };
 
+    // ROG Ally 호스트 배터리(Windows GetSystemPowerStatus) — 콕핏 핸드헬드 배터리 칩.
+    let switch_battery = match crate::platform::host_battery() {
+        Some((pct, charging)) => json!({ "percent": pct, "charging": charging }),
+        None => Value::Null,
+    };
+    // WiFi 신호(dBm) — 백그라운드 캐시(없으면 null → 콕핏 "--").
+    let signal_dbm = app.wifi_dbm.lock().ok().and_then(|g| *g);
+    // 카메라 경로 — Ally 는 직결(SSH 터널 불요). host 알면 port_open.
+    let camera_runtime = if host.is_some() {
+        json!({ "local_port_open": true, "status": "port_open", "port": 8080 })
+    } else {
+        json!({ "status": "disabled" })
+    };
+    // 워치독 라벨 — 안전/링크 상태 파생.
+    let watchdog_label = if snap.safety.estop_latched {
+        "정지"
+    } else if snap.safety.recovering {
+        "복구 중"
+    } else if link_up {
+        "정상"
+    } else if connected_rt {
+        "감시 중"
+    } else {
+        "—"
+    };
+
     json!({
         "mode": "robot_udp",
         "connected": link_up,
@@ -113,19 +139,21 @@ pub fn build_state(app: &AppState) -> Value {
         "local_ip": local_ip.unwrap_or_else(|| "-".to_string()),
         "uptime_sec": uptime_sec,
         "input_status": input_status,
-        "watchdog_label": if link_up { "정상" } else { "—" },
+        "watchdog_label": watchdog_label,
         "command": command,
         "controller": controller,
-        // ROG Ally 배터리(Windows)는 v1 미연동 — null.
-        "switch_battery": Value::Null,
+        "switch_battery": switch_battery,
         "battery_v": battery_v,
         "battery_pct": battery_pct,
         "robot_fallen": robot_fallen,
         "robot_walking": robot_walking,
         "link_latency_ms": snap.conn.rtt_ms,
         "packet_loss_pct": packet_loss,
+        "signal_dbm": signal_dbm,
+        "wifi_dbm": signal_dbm,
         "imu": imu,
         "camera": camera_config(host.as_deref()),
+        "camera_runtime": camera_runtime,
         "logs": logs,
     })
 }
@@ -159,6 +187,8 @@ mod tests {
             s.cmd.x = 38.0;
             s.cmd.y = -10.0;
             s.cmd.a = 5.0;
+            s.cmd.head_pan = 12.0;
+            s.cmd.head_tilt = -7.0;
             s.safety.armed = true;
             s.pad.connected = true;
             s.conn.path = ConnPath::Wireless;
@@ -166,7 +196,7 @@ mod tests {
         *app.shared.sticks.write().unwrap() = [0.5, -0.3, 0.1, 0.2, 0.0, 0.0];
 
         let v = build_state(&app);
-        // app.js 계약 필드.
+        // app.js 계약 필드 — 28개 top-level + 5축 command 전부 공급.
         assert_eq!(v["mode"], "robot_udp");
         assert_eq!(v["connected"], false, "rt None → 미연결");
         assert_eq!(v["armed"], true);
@@ -175,6 +205,8 @@ mod tests {
         assert_eq!(v["command"]["stride_mm"], 38.0);
         assert_eq!(v["command"]["side_mm"], -10.0);
         assert_eq!(v["command"]["turn_deg"], 5.0);
+        assert_eq!(v["command"]["head_pan_deg"], 12.0, "머리 pan 노출");
+        assert_eq!(v["command"]["head_tilt_deg"], -7.0, "머리 tilt 노출");
         assert_eq!(v["moving"], true);
         assert_eq!(v["controller"]["left_x"], 0.5);
         assert_eq!(v["controller"]["right_y"], 0.2);
@@ -183,6 +215,15 @@ mod tests {
         assert_eq!(v["battery_v"], Value::Null);
         assert_eq!(v["robot_walking"], false);
         assert!(v["logs"].is_array());
+        // 갭 보강 필드 — 키 존재(값은 플랫폼/연결에 따라).
+        assert!(v.get("switch_battery").is_some(), "switch_battery 키 존재");
+        assert!(v.get("signal_dbm").is_some());
+        assert!(v.get("wifi_dbm").is_some());
+        assert_eq!(v["watchdog_label"], "—", "미연결 → —");
+        assert_eq!(
+            v["camera_runtime"]["status"], "disabled",
+            "host 없음 → disabled"
+        );
     }
 
     #[test]
@@ -196,6 +237,10 @@ mod tests {
             "http://192.168.0.33:8080/?action=snapshot"
         );
         assert_eq!(v["target"], "robotis@192.168.0.33");
+        assert_eq!(
+            v["camera_runtime"]["status"], "port_open",
+            "host 있으면 직결 port_open"
+        );
     }
 
     #[test]

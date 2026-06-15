@@ -60,12 +60,14 @@ pub struct SafetySnapshot {
 }
 
 /// §3 `cmd.*` — TX 가 보낸 **명령값**(mm/mm/deg). TEL2 의 `latch_*`(적용값)와 쌍이 되어
-/// HUD "명령 vs 적용" 인디케이터를 이룬다.
+/// HUD "명령 vs 적용" 인디케이터를 이룬다. 머리 pan/tilt(deg)는 RS 헤드 레이트 적분값.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CmdSnapshot {
     pub x: f64,
     pub y: f64,
     pub a: f64,
+    pub head_pan: f64,
+    pub head_tilt: f64,
 }
 
 /// §3 `pad.*` — 패드 존재·터보.

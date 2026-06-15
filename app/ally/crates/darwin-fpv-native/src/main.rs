@@ -10,6 +10,7 @@
 mod app_state;
 mod camera;
 mod control;
+mod platform;
 mod server;
 mod state_map;
 
@@ -37,6 +38,18 @@ fn main() {
     // 자동 연결(백그라운드) — 스위치 에이전트 자동연결 등가. 로봇 미가동이면 콕핏이 '연결
     // 대기' 표시, '재연결' 버튼으로 재시도.
     control::connect_async(app.clone());
+
+    // WiFi 신호 백그라운드 갱신(~5s 캐시 — netsh 호출이 느려 핫패스 분리). 비-Windows None.
+    {
+        let app = app.clone();
+        std::thread::spawn(move || loop {
+            let dbm = platform::wifi_dbm();
+            if let Ok(mut g) = app.wifi_dbm.lock() {
+                *g = dbm;
+            }
+            std::thread::sleep(Duration::from_secs(5));
+        });
+    }
 
     // 서버가 뜨면 Edge 기동(별도 스레드 — serve 는 블로킹).
     if !no_browser {

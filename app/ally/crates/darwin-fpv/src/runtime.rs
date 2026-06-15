@@ -293,6 +293,8 @@ impl Runtime {
                         s.cmd.x = out.cmd.stride_mm;
                         s.cmd.y = out.cmd.side_mm;
                         s.cmd.a = out.cmd.turn_deg;
+                        s.cmd.head_pan = out.cmd.head_pan_deg;
+                        s.cmd.head_tilt = out.cmd.head_tilt_deg;
                         s.safety.armed = out.armed;
                         s.safety.estop_latched = out.estop_latched;
                         s.safety.recovering = out.recovering;
