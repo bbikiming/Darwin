@@ -97,6 +97,9 @@ pub struct Runtime {
     state: Arc<StateHub>,
     ssh: Option<Arc<SshClient>>,
     estop: EstopBus,
+    /// 외부 버튼 에지 주입단(콕핏 터치 ARM/복구/E-STOP). control-tx 가 게임패드 edge_rx
+    /// 와 함께 매 틱 드레인·OR 한다 — 게이트엔 추가 발원일 뿐(안전 모델 불변).
+    inject: Sender<ButtonEdges>,
 }
 
 impl Runtime {
@@ -160,6 +163,10 @@ impl Runtime {
         // 입력 서비스(250Hz gilrs 내부 스레드) + 무손실 B 채널 + 버튼 에지.
         let (svc, estop_rx, edge_rx) = InputService::spawn().map_err(io::Error::other)?;
         let input = Arc::new(svc);
+
+        // 외부 버튼 에지 주입(콕핏 터치 ARM/복구/E-STOP) — control-tx 가 단일 소비하며
+        // 게임패드 edge_rx 와 함께 OR 한다. inject_tx 는 Runtime 핸들이 보관.
+        let (inject_tx, inject_rx) = std::sync::mpsc::channel::<ButtonEdges>();
 
         let (bus, bus_rx) = EstopBus::channel();
         let heartbeat = Heartbeat::new();
@@ -229,9 +236,14 @@ impl Runtime {
                     tick_n += 1;
                     let deadline = start + tick * tick_n;
 
-                    // 이번 틱 버튼 에지 누적(OR).
+                    // 이번 틱 버튼 에지 누적(OR) — 게임패드 + 외부 주입(콕핏 터치).
                     let mut e = ButtonEdges::default();
                     while let Ok(be) = edge_rx.try_recv() {
+                        e.arm |= be.arm;
+                        e.estop |= be.estop;
+                        e.recover |= be.recover;
+                    }
+                    while let Ok(be) = inject_rx.try_recv() {
                         e.arm |= be.arm;
                         e.estop |= be.estop;
                         e.recover |= be.recover;
@@ -414,6 +426,7 @@ impl Runtime {
             state,
             ssh,
             estop: bus,
+            inject: inject_tx,
         })
     }
 
@@ -425,6 +438,13 @@ impl Runtime {
     /// E-STOP 버스 핸들 — 터치 E-STOP(보조 경로, §3) 등 외부 발원이 합류한다.
     pub fn estop_handle(&self) -> EstopBus {
         self.estop.clone()
+    }
+
+    /// 외부 버튼 에지 주입단(콕핏 터치 ARM/복구/E-STOP). 반환한 `Sender` 로 보낸
+    /// `ButtonEdges` 는 control-tx 가 게임패드 에지와 함께 게이트에 OR 한다 — 추가 발원일
+    /// 뿐 안전 모델 불변(E-STOP 의 빠른 UDP 버스트는 별도 `estop_handle` 경로가 담당).
+    pub fn edge_injector(&self) -> Sender<ButtonEdges> {
+        self.inject.clone()
     }
 
     /// 정지 + 스레드 합류 + 핸드셰이크 철회(§7-7 MUST: 스테일 토큰 금지).

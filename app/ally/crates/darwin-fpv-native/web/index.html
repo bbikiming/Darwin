@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#090b0e" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="다윈 조종석">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>다윈 스위치 조종석</title>
+  <link rel="icon" type="image/png" href="/assets/darwin-icon.png">
+  <link rel="apple-touch-icon" href="/assets/darwin-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-ui-theme="light">
+  <svg class="svg-sprite" aria-hidden="true" focusable="false">
+    <symbol id="icon-robot" viewBox="0 0 24 24"><path d="M8 7V5a4 4 0 0 1 8 0v2"/><rect x="5" y="7" width="14" height="11" rx="4"/><path d="M8 18v3m8-3v3M4 12H2m20 0h-2"/><path d="M9 12h.01M15 12h.01"/><path d="M10 15h4"/></symbol>
+    <symbol id="icon-model" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="M12 12v9M4.5 7.5 12 12l7.5-4.5"/></symbol>
+    <symbol id="icon-camera" viewBox="0 0 24 24"><path d="M4 7h4l1.6-2h4.8L16 7h4v12H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="icon-crosshair" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="1.5"/></symbol>
+    <symbol id="icon-gauge" viewBox="0 0 24 24"><path d="M4 17a8 8 0 1 1 16 0"/><path d="m12 17 4-5"/><path d="M7 17h10"/></symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20 14.5A7.8 7.8 0 0 1 9.5 4a8.2 8.2 0 1 0 10.5 10.5Z"/></symbol>
+    <symbol id="icon-link" viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5"/><path d="M8 10H6.8A4.2 4.2 0 0 0 6.8 18H10"/><path d="M16 14h1.2a4.2 4.2 0 1 0 0-8H14"/></symbol>
+    <symbol id="icon-route" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 6h3a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h7"/></symbol>
+    <symbol id="icon-foot" viewBox="0 0 24 24"><path d="M9 5c2 0 3.5 1.4 3.5 3.4 0 3.7-3.5 4.3-3.5 8.1 0 1.6-1.2 2.5-2.6 2.5S4 18 4 16.5C4 12.4 7 10.8 7 8.2 7 6.3 7.5 5 9 5Z"/><path d="M15.5 4.5c1.6.3 2.5 1.6 2.2 3.2-.6 3-3.5 3-4.2 6.1-.3 1.4-1.5 2-2.6 1.8"/></symbol>
+    <symbol id="icon-head" viewBox="0 0 24 24"><path d="M12 4a6 6 0 0 1 6 6v2.5c0 1.5-.8 2.8-2 3.5v3H8v-3a4 4 0 0 1-2-3.5V10a6 6 0 0 1 6-6Z"/><path d="M9 11h.01M15 11h.01M9.5 14h5"/></symbol>
+    <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.4-2.6 8-7 10-4.4-2-7-5.6-7-10V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="icon-alert" viewBox="0 0 24 24"><path d="M12 3 22 20H2z"/><path d="M12 9v5m0 3h.01"/></symbol>
+    <symbol id="icon-activity" viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
+    <symbol id="icon-battery" viewBox="0 0 24 24"><rect x="3" y="7" width="16" height="10" rx="2"/><path d="M21 11v2M7 11v2"/></symbol>
+    <symbol id="icon-power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M7.1 6.1a8 8 0 1 0 9.8 0"/></symbol>
+    <symbol id="icon-history" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 5v5h5"/><path d="M12 8v5l3 2"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.5 9A7 7 0 0 0 6 7.5M5.5 15A7 7 0 0 0 18 16.5"/></symbol>
+    <symbol id="icon-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0 5 5L11 20l-5-5 8.7-8.7Z"/><path d="m6 15 3 3"/></symbol>
+    <symbol id="icon-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.5 1a8 8 0 0 0-1.8-1L14 3h-4l-.6 3a8 8 0 0 0-1.8 1L5.1 6l-2 3.5 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.5-1a8 8 0 0 0 1.8 1l.6 3h4l.6-3a8 8 0 0 0 1.8-1l2.5 1 2-3.5-2-1.5c.1-.3.1-.7.1-1Z"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+    <symbol id="icon-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="icon-command" viewBox="0 0 24 24"><path d="M7 7h10v10H7z"/><path d="M4 12h3m10 0h3M12 4v3m0 10v3"/></symbol>
+    <symbol id="icon-speed" viewBox="0 0 24 24"><path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l5-7"/><path d="M8 16h8"/></symbol>
+    <symbol id="icon-turn" viewBox="0 0 24 24"><path d="M7 7h7a5 5 0 0 1 0 10H5"/><path d="m8 13-4 4 4 4"/></symbol>
+    <symbol id="icon-axis" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="m8 7 4-4 4 4M17 8l4 4-4 4"/></symbol>
+    <symbol id="icon-horizon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M4 12h16"/><path d="M9 16h6"/></symbol>
+    <symbol id="icon-gyro" viewBox="0 0 24 24"><path d="M5 12a7 7 0 0 1 12-5"/><path d="M17 3v4h-4"/><path d="M19 12a7 7 0 0 1-12 5"/><path d="M7 21v-4h4"/></symbol>
+    <symbol id="icon-timer" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 3h6"/></symbol>
+    <symbol id="icon-terminal" viewBox="0 0 24 24"><path d="m5 8 4 4-4 4"/><path d="M11 17h8"/><rect x="3" y="4" width="18" height="16" rx="3"/></symbol>
+    <symbol id="icon-wifi" viewBox="0 0 24 24"><path d="M4 10.5a12 12 0 0 1 16 0"/><path d="M7.5 14a7 7 0 0 1 9 0"/><path d="M10.8 17.2a2.1 2.1 0 0 1 2.4 0"/><circle cx="12" cy="20" r=".7"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="6" y="10" width="12" height="10" rx="2"/><path d="M9 10V7a3 3 0 0 1 6 0v3"/><path d="M12 14v2"/></symbol>
+    <symbol id="icon-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="m15 9-2 6-4 2 2-6z"/></symbol>
+  </svg>
+  <main class="console-shell" id="console-shell">
+    <header class="hud-top">
+      <div class="title-lockup">
+        <span class="switch-mark" aria-hidden="true"><i></i></span>
+        <div>
+          <h1>다윈 조종석</h1>
+          <p id="mission-caption"><span id="mission-caption-text">시동 중…</span></p>
+        </div>
+      </div>
+      <div class="hud-cluster">
+        <div class="control-switch" aria-label="조종 모드">
+          <button type="button" data-control-mode="model" aria-pressed="true"><svg class="ui-icon"><use href="#icon-model"></use></svg><span>모델</span></button>
+          <button type="button" data-control-mode="camera" aria-pressed="false"><svg class="ui-icon"><use href="#icon-camera"></use></svg><span>카메라</span></button>
+        </div>
+        <div class="dash-switch" aria-label="계기판 스타일">
+          <button type="button" data-dash-style="tactical" aria-pressed="true"><svg class="ui-icon"><use href="#icon-crosshair"></use></svg><span>전술</span></button>
+          <button type="button" data-dash-style="drive" aria-pressed="false"><svg class="ui-icon"><use href="#icon-gauge"></use></svg><span>계기판</span></button>
+        </div>
+        <div class="theme-switch" aria-label="GUI 테마">
+          <button type="button" data-ui-theme="light" aria-pressed="true"><svg class="ui-icon"><use href="#icon-sun"></use></svg><span>라이트</span></button>
+          <button type="button" data-ui-theme="dark" aria-pressed="false"><svg class="ui-icon"><use href="#icon-moon"></use></svg><span>다크</span></button>
+        </div>
+        <div class="status-chip" id="link-pill"><span></span><svg class="ui-icon"><use href="#icon-link"></use></svg><b id="link-text">연결 끊김</b></div>
+        <div class="status-chip mode"><svg class="ui-icon"><use href="#icon-route"></use></svg><b id="mode">연습</b></div>
+        <div class="switch-batt-chip unknown" id="switch-batt-chip" aria-label="스위치 배터리">
+          <svg class="ui-icon"><use href="#icon-battery"></use></svg>
+          <span class="switch-batt-meter" aria-hidden="true"><i id="switch-batt-fill"></i></span>
+          <b id="switch-battery-pct">--%</b>
+          <small id="switch-power-state">Switch</small>
+        </div>
+        <div class="hud-clock" id="clock">--:--:--</div>
+        <button type="button" class="power-button" id="shutdown-button" aria-label="스위치 종료">
+          <svg class="ui-icon"><use href="#icon-power"></use></svg><span>종료</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="playfield">
+      <aside class="joy-rail left-joy" aria-label="왼쪽 조이콘 상태">
+        <div class="rail-tag">L</div>
+        <div class="stick-card">
+          <div class="mini-stick" aria-hidden="true"><span id="left-mini-dot"></span></div>
+          <strong><svg class="ui-icon"><use href="#icon-foot"></use></svg>보행</strong>
+          <small>전후 / 회전</small>
+        </div>
+        <div class="trigger-state" id="trigger-deadman">
+          <label>ZL</label>
+          <b id="deadman">놓음</b>
+        </div>
+      </aside>
+
+      <section class="stage-panel" id="stage-panel" aria-label="조종 상태">
+        <div class="mission-strip">
+          <span id="mission-kicker">대기</span>
+          <strong id="mission-title">잠김</strong>
+        </div>
+
+        <div class="robot-stage">
+          <img class="camera-stream" id="camera-stream" alt="">
+          <div class="robot3d" id="robot3d" aria-hidden="true"></div>
+          <div class="camera-vignette" aria-hidden="true"></div>
+          <div class="camera-hud" aria-label="카메라 상태">
+            <span id="camera-mode">카메라 연결 중</span>
+            <strong id="camera-label">로봇 카메라</strong>
+            <small id="camera-route">ssh-tunnel</small>
+            <em id="model-mode">3D 준비 중</em>
+            <div class="camera-actions" aria-label="카메라 터널 제어">
+              <button type="button" data-service="camera_tunnel" data-service-action="enable_now">
+                <svg class="ui-icon"><use href="#icon-camera"></use></svg><span>카메라 연결</span>
+              </button>
+              <button type="button" data-service="camera_tunnel" data-service-action="restart">
+                <svg class="ui-icon"><use href="#icon-refresh"></use></svg><span>재시작</span>
+              </button>
+              <small id="camera-service-state">터널 대기</small>
+            </div>
+          </div>
+          <div class="combat-reticle" aria-hidden="true">
+            <i></i>
+            <b></b>
+          </div>
+          <div class="pilot-overlay" id="pilot-overlay" aria-label="카메라 조종 오버레이">
+            <div class="fpv-statusbar">
+              <span id="fpv-camera-state">CAM WAIT</span>
+              <b id="fpv-link">SSH --</b>
+              <b id="fpv-latency">-- ms</b>
+              <b id="fpv-battery">SW --%</b>
+            </div>
+            <div class="fpv-horizon" id="fpv-horizon" aria-hidden="true">
+              <i></i>
+              <b></b>
+            </div>
+            <div class="fpv-rail fpv-rail-left">
+              <div><span>STRIDE</span><b id="fpv-stride">0.0</b></div>
+              <div><span>SIDE</span><b id="fpv-side">0.0</b></div>
+              <div><span>TURN</span><b id="fpv-turn">0.0°</b></div>
+            </div>
+            <div class="fpv-rail fpv-rail-right">
+              <div><span>PAN</span><b id="fpv-pan">0.0°</b></div>
+              <div><span>TILT</span><b id="fpv-tilt">0.0°</b></div>
+              <div><span>IMU</span><b id="fpv-imu">--</b></div>
+            </div>
+            <div class="overlay-speed">
+              <span class="overlay-label"><svg class="ui-icon"><use href="#icon-speed"></use></svg>SPD</span>
+              <strong id="overlay-speed">0</strong>
+              <small id="overlay-direction">정지</small>
+            </div>
+            <div class="overlay-input">
+              <div>
+                <span class="overlay-label"><svg class="ui-icon"><use href="#icon-foot"></use></svg>STRIDE</span>
+                <b id="overlay-stride">0.0</b>
+              </div>
+              <div>
+                <span class="overlay-label"><svg class="ui-icon"><use href="#icon-turn"></use></svg>TURN</span>
+                <b id="overlay-turn">0.0°</b>
+              </div>
+              <div>
+                <span class="overlay-label"><svg class="ui-icon"><use href="#icon-head"></use></svg>HEAD</span>
+                <b id="overlay-head">0.0 / 0.0</b>
+              </div>
+            </div>
+            <div class="overlay-gyro">
+              <div class="gyro-source"><svg class="ui-icon"><use href="#icon-gyro"></use></svg><span id="overlay-imu-source">입력 추정</span></div>
+              <div><label>GX</label><b id="overlay-gyro-x">0</b></div>
+              <div><label>GY</label><b id="overlay-gyro-y">0</b></div>
+              <div><label>GZ</label><b id="overlay-gyro-z">0</b></div>
+            </div>
+          </div>
+          <div class="range-grid" aria-hidden="true"></div>
+          <div class="motion-vector" id="motion-vector" aria-hidden="true"></div>
+          <div class="robot-figure" aria-hidden="true">
+            <span class="head"></span>
+            <span class="torso"></span>
+            <span class="arm left"></span>
+            <span class="arm right"></span>
+            <span class="leg left"></span>
+            <span class="leg right"></span>
+          </div>
+        </div>
+
+        <div class="instrument-panel" aria-label="계기판 데이터">
+          <div class="instrument-main">
+            <section class="instrument-card instrument-speed-card" id="inst-speed-card" aria-label="속도와 보폭">
+              <h2><svg class="ui-icon"><use href="#icon-speed"></use></svg>속도 / 보폭</h2>
+              <div class="instrument-speed-gauge" aria-hidden="true">
+                <div class="gauge-labels speed-labels">
+                  <span class="tick-neg-100">-100</span>
+                  <span class="tick-neg-50">-50</span>
+                  <span class="tick-zero">0</span>
+                  <span class="tick-pos-50">50</span>
+                  <span class="tick-pos-100">100</span>
+                </div>
+                <i class="instrument-needle" id="inst-speed-needle"></i>
+                <span class="instrument-hub"></span>
+                <strong id="inst-speed">0</strong>
+                <small class="direction-chip idle" id="inst-speed-direction">정지</small>
+              </div>
+              <div class="instrument-scale"><span>후진</span><span>정지</span><span>전진</span></div>
+              <p id="inst-stride">0.0 mm stride</p>
+              <div class="instrument-axis-readout" aria-hidden="true">
+                <span>후진</span>
+                <div class="instrument-axis-track" id="inst-stride-axis"><i></i><b></b></div>
+                <span>전진</span>
+              </div>
+            </section>
+
+            <section class="instrument-card instrument-turn-card" id="inst-turn-card" aria-label="방향과 회전">
+              <h2><svg class="ui-icon"><use href="#icon-turn"></use></svg>방향 / 회전</h2>
+              <div class="instrument-turn-dial" aria-hidden="true">
+                <div class="gauge-labels turn-labels">
+                  <span class="tick-left">-90°</span>
+                  <span class="tick-zero">0°</span>
+                  <span class="tick-right">90°</span>
+                </div>
+                <i class="instrument-needle" id="inst-turn-needle"></i>
+                <span class="instrument-hub"></span>
+                <strong id="inst-turn">0.0°</strong>
+                <small>회전각</small>
+              </div>
+              <div class="instrument-axis-readout turn-axis" aria-hidden="true">
+                <span>좌회전</span>
+                <div class="instrument-axis-track" id="inst-turn-axis"><i></i><b></b></div>
+                <span>우회전</span>
+              </div>
+              <div class="instrument-angle-stack">
+                <div><span><svg class="ui-icon"><use href="#icon-axis"></use></svg>머리 좌우</span><b id="inst-pan">0.0°</b></div>
+                <div><span><svg class="ui-icon"><use href="#icon-head"></use></svg>머리 상하</span><b id="inst-tilt">0.0°</b></div>
+              </div>
+            </section>
+
+            <section class="instrument-card instrument-state-card" aria-label="시스템 상태">
+              <h2><svg class="ui-icon"><use href="#icon-shield"></use></svg>시스템 상태</h2>
+              <div class="instrument-state-grid">
+                <div class="instrument-state-tile warn" id="inst-tile-arm">
+                  <span><svg class="ui-icon"><use href="#icon-lock"></use></svg>조종 권한</span>
+                  <strong id="inst-armed">잠김</strong>
+                </div>
+                <div class="instrument-state-tile good" id="inst-tile-estop">
+                  <span><svg class="ui-icon"><use href="#icon-alert"></use></svg>비상정지</span>
+                  <strong id="inst-estop">정상</strong>
+                </div>
+                <div class="instrument-state-tile" id="inst-tile-watchdog">
+                  <span><svg class="ui-icon"><use href="#icon-activity"></use></svg>통신 감시</span>
+                  <strong id="inst-watchdog">—</strong>
+                </div>
+                <div class="instrument-state-tile" id="inst-tile-age">
+                  <span><svg class="ui-icon"><use href="#icon-history"></use></svg>갱신</span>
+                  <strong id="inst-age">-- ms</strong>
+                </div>
+              </div>
+            </section>
+
+            <section class="instrument-card instrument-attitude-card" id="inst-attitude-card" aria-label="자세와 밸런스">
+              <h2><svg class="ui-icon"><use href="#icon-horizon"></use></svg>자세 / 밸런스</h2>
+              <div class="instrument-attitude-layout">
+                <div class="instrument-attitude-ball">
+                  <i id="inst-horizon"></i>
+                  <span></span>
+                </div>
+                <div class="instrument-attitude-values">
+                  <div><span><svg class="ui-icon"><use href="#icon-horizon"></use></svg>Pitch</span><b id="inst-pitch">0.0°</b></div>
+                  <div><span><svg class="ui-icon"><use href="#icon-axis"></use></svg>Roll</span><b id="inst-roll">0.0°</b></div>
+                  <div class="balance-state"><span><svg class="ui-icon"><use href="#icon-shield"></use></svg>Balance</span><b class="balance-pill good" id="inst-balance-state">수평</b></div>
+                  <em id="inst-imu-source">입력 추정</em>
+                </div>
+              </div>
+            </section>
+
+            <section class="instrument-card instrument-gyro-card" id="inst-gyro-card" aria-label="자이로와 IMU">
+              <h2><svg class="ui-icon"><use href="#icon-gyro"></use></svg>자이로 / IMU</h2>
+              <div class="instrument-gyro-total">
+                <span>GYRO</span>
+                <strong id="inst-gyro-load">0</strong>
+              </div>
+              <div class="instrument-gyro-bars">
+                <div class="gyro-row"><label>X</label><b id="inst-gyro-x">0</b><span><i id="inst-gyro-x-bar"></i></span></div>
+                <div class="gyro-row"><label>Y</label><b id="inst-gyro-y">0</b><span><i id="inst-gyro-y-bar"></i></span></div>
+                <div class="gyro-row"><label>Z</label><b id="inst-gyro-z">0</b><span><i id="inst-gyro-z-bar"></i></span></div>
+              </div>
+            </section>
+          </div>
+
+          <div class="instrument-connection" aria-label="연결 상태">
+            <div class="instrument-link-tile" id="inst-link-tile">
+              <span class="link-dot" aria-hidden="true"></span>
+              <div><span>연결 상태</span><strong id="inst-link-state">연결 중</strong><small id="inst-link-detail">Link OK</small></div>
+            </div>
+            <div><span><svg class="ui-icon"><use href="#icon-command"></use></svg>모드</span><strong id="inst-mode">연습</strong><small>Control</small></div>
+            <div><span><svg class="ui-icon"><use href="#icon-link"></use></svg>IP 주소</span><strong id="inst-ip">-</strong><small>IPv4</small></div>
+            <div><span><svg class="ui-icon"><use href="#icon-activity"></use></svg>패킷 손실</span><strong id="inst-packet-loss">0%</strong><small>Received</small></div>
+            <div><span><svg class="ui-icon"><use href="#icon-timer"></use></svg>지연 시간</span><strong id="inst-latency">-- ms</strong><small>RTT</small></div>
+            <div><span><svg class="ui-icon"><use href="#icon-history"></use></svg>업타임</span><strong id="inst-uptime">--:--</strong><small>Session</small></div>
+            <div class="instrument-signal-tile"><span><svg class="ui-icon"><use href="#icon-wifi"></use></svg>신호 강도</span><strong id="inst-signal">대기</strong><small id="inst-signal-detail">--</small></div>
+          </div>
+        </div>
+
+        <div class="safety-board">
+          <div class="safety-tile" id="tile-arm">
+            <label><svg class="ui-icon"><use href="#icon-shield"></use></svg>조종 권한</label>
+            <strong id="armed">잠김</strong>
+          </div>
+          <div class="safety-tile" id="tile-estop">
+            <label><svg class="ui-icon"><use href="#icon-alert"></use></svg>비상정지</label>
+            <strong id="estop">정상</strong>
+          </div>
+          <div class="safety-tile">
+            <label><svg class="ui-icon"><use href="#icon-activity"></use></svg>통신 감시</label>
+            <strong id="watchdog">—</strong>
+          </div>
+          <div class="safety-tile">
+            <label><svg class="ui-icon"><use href="#icon-history"></use></svg>갱신</label>
+            <strong id="age">-- ms</strong>
+          </div>
+        </div>
+      </section>
+
+      <aside class="joy-rail right-joy" aria-label="오른쪽 조이콘 상태">
+        <div class="rail-tag">R</div>
+        <div class="stick-card">
+          <div class="mini-stick" aria-hidden="true"><span id="right-mini-dot"></span></div>
+          <strong><svg class="ui-icon"><use href="#icon-head"></use></svg>머리</strong>
+          <small>좌우 / 상하</small>
+        </div>
+        <div class="trigger-state" id="trigger-link">
+          <label>연결</label>
+          <b id="route-state">연결 끊김</b>
+        </div>
+      </aside>
+    </section>
+
+    <section class="readout-grid" aria-label="상태 표시">
+      <article class="readout-panel">
+        <div class="panel-head">
+          <h2><svg class="ui-icon"><use href="#icon-foot"></use></svg>보행</h2>
+          <span>왼쪽 스틱</span>
+        </div>
+        <div class="meter-line">
+          <label>전후</label>
+          <strong id="stride-num">0.0 mm</strong>
+          <div class="meter" id="stride-bar"><i></i></div>
+        </div>
+        <div class="meter-line">
+          <label>회전</label>
+          <strong id="turn-num">0.0°</strong>
+          <div class="meter" id="turn-bar"><i></i></div>
+        </div>
+      </article>
+
+      <article class="readout-panel">
+        <div class="panel-head">
+          <h2><svg class="ui-icon"><use href="#icon-head"></use></svg>머리</h2>
+          <span>오른쪽 스틱</span>
+        </div>
+        <div class="meter-line">
+          <label>좌우</label>
+          <strong id="pan-num">0.0°</strong>
+          <div class="meter" id="pan-bar"><i></i></div>
+        </div>
+        <div class="meter-line">
+          <label>상하</label>
+          <strong id="tilt-num">0.0°</strong>
+          <div class="meter" id="tilt-bar"><i></i></div>
+        </div>
+      </article>
+
+      <article class="readout-panel robot-panel" id="robot-panel">
+        <div class="panel-head">
+          <h2><svg class="ui-icon"><use href="#icon-robot"></use></svg>로봇</h2>
+          <span id="robot-walk-flag">정지</span>
+        </div>
+        <div class="robot-readout">
+          <div class="robot-batt" id="robot-batt">
+            <div class="batt-glyph" aria-hidden="true"><i id="batt-fill"></i></div>
+            <div class="batt-figs">
+              <strong id="battery-pct">--%</strong>
+              <small id="battery-v">-- V</small>
+            </div>
+          </div>
+        <div class="robot-flags">
+            <div class="robot-flag" id="robot-pose">
+              <label><svg class="ui-icon"><use href="#icon-horizon"></use></svg>자세</label>
+              <b id="robot-pose-val">--</b>
+            </div>
+            <div class="robot-flag" id="robot-link">
+              <label><svg class="ui-icon"><use href="#icon-timer"></use></svg>지연</label>
+              <b id="robot-latency">-- ms</b>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="readout-panel connection-panel" id="link-state-panel">
+        <div class="panel-head">
+          <h2><svg class="ui-icon"><use href="#icon-link"></use></svg><span id="target-type">연결</span></h2>
+          <span id="runtime">0초</span>
+        </div>
+        <div class="link-status" id="link-status">
+          <span class="link-dot" aria-hidden="true"></span>
+          <strong id="link-state-text">연결 중</strong>
+        </div>
+        <dl class="connection-list diag-list" aria-label="진단 정보">
+          <div><dt><svg class="ui-icon"><use href="#icon-route"></use></svg>대상</dt><dd id="target">-</dd></div>
+          <div><dt><svg class="ui-icon"><use href="#icon-link"></use></svg>내 IP</dt><dd id="ip">-</dd></div>
+          <div><dt><svg class="ui-icon"><use href="#icon-command"></use></svg>모드</dt><dd id="diag-mode">-</dd></div>
+          <div><dt><svg class="ui-icon"><use href="#icon-terminal"></use></svg>입력장치</dt><dd id="input-status">장치 없음</dd></div>
+        </dl>
+      </article>
+
+      <article class="readout-panel recovery-panel" id="recovery-panel">
+        <div class="panel-head">
+          <h2><svg class="ui-icon"><use href="#icon-wrench"></use></svg>복구</h2>
+          <span id="recovery-state">대기</span>
+        </div>
+        <div class="recovery-message">
+          <strong id="recovery-title">상태 확인 중</strong>
+          <small id="recovery-hint">연결 상태를 읽고 있어요.</small>
+        </div>
+        <div class="recovery-actions">
+          <button type="button" data-action="reconnect"><svg class="ui-icon"><use href="#icon-refresh"></use></svg><span>재연결</span></button>
+          <button type="button" data-action="ping"><svg class="ui-icon"><use href="#icon-check"></use></svg><span>점검</span></button>
+          <a href="/setup.html"><svg class="ui-icon"><use href="#icon-gear"></use></svg><span>설정</span></a>
+        </div>
+        <div class="log-list recovery-log" id="logs"></div>
+      </article>
+
+      <article class="drive-cluster" id="drive-cluster" aria-label="클래식 자동차형 조종 계기판">
+        <section class="dial-card speed-dial">
+          <div class="dial-shell">
+            <div class="dial-face">
+              <i class="dial-needle" id="dash-speed-needle"></i>
+              <span class="dial-hub"></span>
+              <strong id="dash-speed">0</strong>
+              <small>속도</small>
+            </div>
+          </div>
+          <div class="dial-caption">
+            <b><svg class="ui-icon"><use href="#icon-speed"></use></svg><span id="dash-drive-direction">정지</span></b>
+            <span class="dial-subvalue"><svg class="ui-icon"><use href="#icon-foot"></use></svg><span id="dash-stride">0.0 mm stride</span></span>
+          </div>
+        </section>
+
+        <section class="dial-card angle-dial">
+          <div class="compact-dial">
+            <i class="dial-needle" id="dash-angle-needle"></i>
+            <span class="dial-hub"></span>
+            <strong id="dash-angle">0.0°</strong>
+            <small>회전각</small>
+          </div>
+          <div class="angle-stack">
+            <div><span><svg class="ui-icon"><use href="#icon-axis"></use></svg>머리 좌우</span><b id="dash-head-pan">0.0°</b></div>
+            <div><span><svg class="ui-icon"><use href="#icon-head"></use></svg>머리 상하</span><b id="dash-head-tilt">0.0°</b></div>
+          </div>
+        </section>
+
+        <section class="dial-card attitude-card">
+          <div class="attitude-ball">
+            <i id="dash-horizon"></i>
+            <span></span>
+          </div>
+          <div class="attitude-readout">
+            <div><span><svg class="ui-icon"><use href="#icon-horizon"></use></svg>Pitch</span><b id="dash-pitch">0.0°</b></div>
+            <div><span><svg class="ui-icon"><use href="#icon-axis"></use></svg>Roll</span><b id="dash-roll">0.0°</b></div>
+            <em><svg class="ui-icon"><use href="#icon-gyro"></use></svg><span id="dash-imu-source">입력 추정</span></em>
+          </div>
+        </section>
+
+        <section class="dial-card gyro-card">
+          <div class="gyro-total">
+            <span><svg class="ui-icon"><use href="#icon-gyro"></use></svg>GYRO</span>
+            <strong id="dash-gyro-load">0</strong>
+          </div>
+          <div class="gyro-bars">
+            <div class="gyro-row"><label>X</label><b id="dash-gyro-x">0</b><span><i id="dash-gyro-x-bar"></i></span></div>
+            <div class="gyro-row"><label>Y</label><b id="dash-gyro-y">0</b><span><i id="dash-gyro-y-bar"></i></span></div>
+            <div class="gyro-row"><label>Z</label><b id="dash-gyro-z">0</b><span><i id="dash-gyro-z-bar"></i></span></div>
+          </div>
+        </section>
+      </article>
+    </section>
+
+    <footer class="action-dock" aria-label="명령">
+      <div class="dock-help">
+        <span><svg class="ui-icon"><use href="#icon-command"></use></svg>명령</span>
+        <strong id="dock-focus-label">조종 시작</strong>
+        <small id="dock-focus-hint">← → 로 선택</small>
+      </div>
+      <button class="dock-button arm" data-action="arm" data-label="조종 시작" data-hint="A: 조종 권한 켜기">
+        <kbd>A</kbd><svg class="ui-icon"><use href="#icon-play"></use></svg><span>조종 시작</span>
+      </button>
+      <button class="dock-button recover" data-action="recover" data-label="복구" data-hint="X: 비상정지 해제">
+        <kbd>X</kbd><svg class="ui-icon"><use href="#icon-refresh"></use></svg><span>복구</span>
+      </button>
+      <button class="dock-button stop" data-action="stop" data-label="정지" data-hint="B: 즉시 멈춤(걸리지 않음)">
+        <kbd>B</kbd><svg class="ui-icon"><use href="#icon-stop"></use></svg><span>정지</span>
+      </button>
+      <button class="dock-button ping" data-action="ping" data-label="점검" data-hint="Y: 진단 기록 남기기">
+        <kbd>Y</kbd><svg class="ui-icon"><use href="#icon-check"></use></svg><span>점검</span>
+      </button>
+      <button class="dock-button estop" data-action="estop" data-label="비상정지" data-hint="+: 즉시 비상정지 걸기">
+        <kbd>+</kbd><svg class="ui-icon"><use href="#icon-alert"></use></svg><span>비상정지</span>
+      </button>
+    </footer>
+  </main>
+
+  <script src="/app.js"></script>
+  <script type="module">
+    // Live WebGL DARwIn model as the camera-fallback. Lazy-mounted on first use,
+    // paused whenever the real camera is live (never run WebGL + MJPEG together),
+    // and fully optional: if WebGL is unavailable, localStorage is blocked, or
+    // the GLB fails to load, the cockpit keeps the lightweight CSS robot figure.
+    // No import maps are used (vendored Three.js imports are relative). Disable
+    // explicitly via localStorage 'darwinNo3D' (set from the setup page).
+    function safeFlag(key) {
+      try { return window.localStorage && window.localStorage.getItem(key); }
+      catch (_e) { return null; }
+    }
+    function webglSupported() {
+      try {
+        const c = document.createElement("canvas");
+        return !!(window.WebGLRenderingContext &&
+          (c.getContext("webgl") || c.getContext("experimental-webgl")));
+      } catch (_e) { return false; }
+    }
+    const box = document.getElementById("robot3d");
+    const stage = document.getElementById("stage-panel");
+    const no3d = safeFlag("darwinNo3D");
+    if (no3d) {
+      document.body.dataset.robot3d = "disabled";
+    } else if (!webglSupported()) {
+      document.body.dataset.robot3d = "unsupported";
+    }
+    if (box && !no3d && webglSupported()) {
+      let ctl = null, mounting = null, failed = false, wanted = false, disposeGeneration = 0;
+      function disposeViewer() {
+        wanted = false;
+        disposeGeneration += 1;
+        if (ctl) ctl.dispose();
+        ctl = null;
+        mounting = null;
+        document.body.classList.remove("has-robot3d");
+        document.body.dataset.robot3d = "unmounted";
+        box.style.display = "none";
+      }
+      // Mount once; pre-warmed at load so the model is ready instantly (and
+      // reliably rendered) the moment the camera is not live. Quietly keeps the
+      // CSS figure if the GLB/WebGL fails — not an error state.
+      function ensure() {
+        if (ctl || failed) return Promise.resolve(ctl);
+        if (!mounting) {
+          const generation = disposeGeneration;
+          document.body.dataset.robot3d = "loading";
+          box.style.display = "block";
+          mounting = import("./robot3d.js")
+            .then((m) => m.mountRobot(box, {
+              autoRotate: true,
+              distanceScale: 0.82,
+              lighting: "inspection",
+            }))
+            .then((c) => {
+              if (generation !== disposeGeneration) {
+                c.dispose();
+                return null;
+              }
+              ctl = c;
+              // Marker on <body> (app.js rewrites .stage-panel's class every tick,
+              // so a class there would be wiped and the CSS figure would re-cover
+              // the 3D canvas). body.has-robot3d hides the figure for good.
+              document.body.classList.add("has-robot3d");
+              c.setActive(wanted && !document.hidden);
+              document.body.dataset.robot3d = "ready";
+              box.style.display = wanted ? "block" : "none";
+              return c;
+            })
+            .catch(() => {
+              failed = true;
+              document.body.dataset.robot3d = "failed";
+              return null;
+            });
+        }
+        return mounting;
+      }
+      window.__darwinRobot3D = {
+        setActive(on) {
+          wanted = on;
+          if (!wanted && !ctl && !mounting) {
+            box.style.display = "none";
+            return;
+          }
+          ensure().then((c) => {
+            if (!c) return;
+            c.setActive(wanted && !document.hidden);
+            box.style.display = wanted ? "block" : "none";
+          });
+        },
+        dispose: disposeViewer
+      };
+      document.addEventListener("visibilitychange", () => {
+        if (ctl) ctl.setActive(wanted && !document.hidden);
+      });
+      // Pre-warm only outside dashboard mode. The dashboard is a data-only
+      // instrument cluster and should not spend Switch GPU/memory on GLB/WebGL.
+      if (safeFlag("darwinDashStyle") !== "drive" && safeFlag("darwinControlMode") !== "camera") {
+        ensure();
+      }
+    }
+  </script>
+</body>
+</html>

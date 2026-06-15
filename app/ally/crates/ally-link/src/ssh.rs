@@ -166,9 +166,13 @@ impl SshClient {
         self.atomic_write(CHANNEL_PATH, &df_wire::handshake_line(token, estop_port, cmd_port))
     }
 
-    /// §7-5 업링크 등록: "ip:port".
+    /// §7-5 업링크 등록: "ip port\n" (공백 2토큰). 로봇 `WalkLabBrokerage` 가
+    /// `fscanf("%63s %d")` 로 파싱하므로 **콜론이 아니라 공백**이어야 한다 — 콜론이면
+    /// TEL2 목적지 파싱이 실패해 텔레메트리가 Ally 로 안 돌아온다. 검증된 지상진실=
+    /// `RobotSetupCommand.walkLabWriteUplink`(`printf '%s %d\n'`)·`onboard-bench.py`
+    /// (계약 docs/ssh-parity-contract.md §G.1a, eb67132 H4).
     pub fn write_uplink(&self, ip: &str, port: u16) -> io::Result<()> {
-        self.atomic_write(UPLINK_PATH, &format!("{ip}:{port}"))
+        self.atomic_write(UPLINK_PATH, &format!("{ip} {port}\n"))
     }
 
     /// §7-6 폴백: 14-token 명령 라인을 명령 파일에 원자 기록(5Hz).

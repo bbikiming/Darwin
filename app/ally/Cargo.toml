@@ -18,6 +18,7 @@ members = [
     "crates/ally-pose",
     "crates/ally-cli",
     "crates/darwin-fpv",
+    "crates/darwin-fpv-native",
 ]
 
 [workspace.package]

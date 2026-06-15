@@ -1,0 +1,22 @@
+[package]
+name = "darwin-fpv-native"
+description = "DARwIn FPV 네이티브 콕핏 — 스위치 HTML 콕핏을 Ally Rust 코어(darwin-fpv 런타임 + ally-link) 위에 로컬 HTTP 서버로 올리고 Edge 로 렌더. Tauri/WebView2 미사용(CSP 무관)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 재사용 — Ally Windows-검증 Rust 코어(전부 tauri-free).
+darwin-fpv = { path = "../darwin-fpv" }
+ally-link = { path = "../ally-link" }
+ally-input = { path = "../ally-input" }
+df-wire = { path = "../df-wire" }
+# 로컬 HTTP 서버(동기·경량 — tokio/axum 불요, 폴링 REST).
+tiny_http = "0.12"
+# 스위치 web/ 번들 임베드(단일 .exe 자족).
+include_dir = "0.7"
+serde_json = "1"
+
+[[bin]]
+name = "darwin-fpv-native"
+path = "src/main.rs"

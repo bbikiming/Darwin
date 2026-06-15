@@ -1,0 +1,24 @@
+{
+  "name": "다윈 스위치 조종석",
+  "short_name": "다윈 조종석",
+  "description": "Nintendo Switch Linux cockpit for controlling a DARwIn robot.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#f7f9fc",
+  "theme_color": "#f7f9fc",
+  "icons": [
+    {
+      "src": "/assets/darwin-icon.png",
+      "sizes": "96x96",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/darwin-icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
