@@ -306,6 +306,13 @@ private:
     /// supervisor 가 R/W → 크로스-스레드 가시성. 단일 바이트 bool 이라 torn write 무.
     volatile bool m_sitting;
 
+    /// **햅틱(2026-06-15)** — 전진 최대속도 캡 도달 상태(WriteShapedCommand 갱신, supervisor 단독).
+    bool m_at_speed_cap;
+    /// 최대속도 유지 중 마지막 반복 진동 시각(ms). 캡 이탈/정지 시 0 리셋 → 재도달 즉시 발화.
+    long long m_last_speed_rumble_ms;
+    /// 최대속도 유지 중 반복 진동 주기(ms) — 스틱 계속 밀고 있을 때 주기적 피드백.
+    static const int HAPTIC_SPEED_REPEAT_MS = 450;
+
     // ===== O2 셰이핑 상태 (2026-06-12, walklab-onboard-teleop-upgrade Wave O2) =====
     /// 거버너 적용 후의 명령 목표값(X/Y/A/period) — 슬루가 이 목표로 전진. 래치 사이엔 재적용.
     double m_tgt_x, m_tgt_y, m_tgt_a, m_tgt_period;

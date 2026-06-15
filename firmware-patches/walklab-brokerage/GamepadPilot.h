@@ -311,6 +311,14 @@ public:
     /// ARM 상태(TEL2 armed 노출용 — IEC 60204-1 §10.3 관찰가능성). thread-safe.
     bool Armed();
 
+    /// **햅틱(진동) (2026-06-15)** — 동글 force feedback rumble 재생. strong/weak=0..100%,
+    /// duration_ms. supervisor(브로커리지)가 트리거(낙상/최대속도/킥) 시 호출. thread-safe
+    /// (m_mtx 짧게). non-blocking write — E-STOP/입력 패스트레인과 무관(드문 이벤트). FF 미지원
+    /// (O_RDONLY 폴백·업로드 실패)·미연결·비활성이면 무동작(graceful). 로봇 전용(__linux__).
+    void Rumble(int strong_pct, int weak_pct, int duration_ms);
+    /// 햅틱 on/off 토글 (balltrack.ini [Haptics] enabled). thread-safe.
+    void SetHapticsEnabled(bool enabled);
+
     // ── 호스트 테스트 주입 (장치 없이 전체 상태기계 검증 — __linux__ 불요) ──
     void InjectAdoptForTest(long long now_ms);            // 노드 (재)획득 시뮬
     void InjectEventForTest(const GpEvent& ev, long long now_ms);
@@ -346,7 +354,9 @@ private:
     volatile bool m_running;
     bool m_threadless;             // with_thread=false(호스트 테스트) — Stop 의 join 생략
 
-    int  m_fd;                     // event 노드 fd (−1 = 미보유)
+    int  m_fd;                     // event 노드 fd (−1 = 미보유). 햅틱 위해 O_RDWR(폴백 O_RDONLY).
+    int  m_ff_id;                  // 현재 업로드된 rumble effect id (−1 = 없음). Rumble 이 갱신.
+    bool m_haptics_enabled;        // [Haptics] enabled 토글 (기본 true).
     bool m_node_ok;
     bool m_had_device;             // 한 번이라도 획득 — ②티어 게이트
     bool m_armed;                  // H2-2 ARM (A rising). 노드 (재)획득 시 false.

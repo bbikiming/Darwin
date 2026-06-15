@@ -246,6 +246,9 @@ namespace Robotis {
         }
         printf("[WalkLabBrokerage] FALL detected (%s, %d polls) — getup page %d\n",
                dir, m_fall_count, page);
+        // **햅틱(2026-06-15)** — 낙상 확정: 최강·길게 진동(양모터 100%, 2000ms). 낙상 1회당
+        //   1번(getup 완료 후 m_fall_count=0 리셋 → 다음 낙상 때 재발화). non-blocking.
+        m_gamepad.Rumble(100, 100, 2000);
 
         // 1) 보행 중단 + 완전 정지 대기. (telemetry 계속 write.)
         walking->Stop();
@@ -410,6 +413,11 @@ namespace Robotis {
         // 이라 안전상 무해. 헤드 허용은 ROBOTIS 프레임워크가 부분 인계를 직접 지원 안 해
         // 비용이 크므로 현행 유지. 동작 완료 후(아래 SetEnableHeadOnly 반납) 추적 재개.
         action->m_Joint.SetEnableBody(true, true);
+        // **햅틱(2026-06-15)** — 킥 순간: 최강·길게 진동 1회(양모터 100%, 1000ms). 킥(LEFT/RIGHT)
+        //   에만 — SIT/STAND/PASS 제외(사용자 요청 3트리거: 낙상·최대속도·킥). Start 직전 발화.
+        if (side == Robotis::GP_KICK_LEFT || side == Robotis::GP_KICK_RIGHT) {
+            m_gamepad.Rumble(100, 100, 1000);
+        }
         // 6-3) 킥 모션 재생. Start() false 면 모듈 busy — 재시도(estop bail + 토크 off).
         //   getup 패리티: Start()가 false 면 아직 미시작 → Stop() 불요(중단할 모션 없음).
         while (action->Start(page) == false) {
@@ -1151,6 +1159,8 @@ namespace Robotis {
         m_last_cmd_from_stream = false;
         // H2-4 — TEL2 active_source 초기값(종전 "file" 표시와 동일).
         m_active_source = SRC_FILE;
+        m_at_speed_cap = false;   // 햅틱 — 최대속도 캡 상태 초기화.
+        m_last_speed_rumble_ms = 0;
         // O2 셰이핑 — 목표/슬루 초기화(첫 명령은 SlewState.valid=false 라 즉시 수용).
         m_tgt_x = 0.0; m_tgt_y = 0.0; m_tgt_a = 0.0; m_tgt_period = 600.0;
         m_tgt_foot = 40.0; m_tgt_hip = 13.0; m_tgt_flags = 0;
@@ -1210,6 +1220,8 @@ namespace Robotis {
             m_stream_enabled = sini.geti("Stream", "enabled", 1) != 0;
             m_stream_send_every = sini.geti("Stream", "send_every", 2);
             if (m_stream_send_every < 1) m_stream_send_every = 1;
+            // 햅틱(진동) on/off (2026-06-15) — [Haptics] enabled, 기본 1(ON). 재빌드 없이 토글.
+            m_gamepad.SetHapticsEnabled(sini.geti("Haptics", "enabled", 1) != 0);
         }
         InstallSignalHandlers();
 
@@ -1569,6 +1581,19 @@ namespace Robotis {
                 WriteShapedCommand(walking, sx, sy, sa, sp);
             }
 
+            // **햅틱(2026-06-15) — 최대 전진속도 유지 중 주기 반복 진동**. WriteShapedCommand 가
+            //   m_at_speed_cap 을 갱신; 여기(매 루프, now_ms 가용)서 캡 유지·보행 중이면
+            //   HAPTIC_SPEED_REPEAT_MS 마다 반복(스틱 계속 밀고 있을 때 주기적 피드백). 캡 이탈
+            //   시 타이머 리셋 → 재도달 즉시 발화. 보행 정지(walking_active=false) 시도 리셋.
+            if (m_at_speed_cap && walking_active) {
+                if (now_ms - m_last_speed_rumble_ms >= HAPTIC_SPEED_REPEAT_MS) {
+                    m_gamepad.Rumble(80, 80, 200);   // 더 세게(양모터 80%) 짧은 펄스
+                    m_last_speed_rumble_ms = now_ms;
+                }
+            } else {
+                m_last_speed_rumble_ms = 0;   // 캡 이탈/정지 — 재도달 시 즉시 발화하도록 리셋
+            }
+
             // 볼 트래킹 (2026-06-02): enabled 면 매 poll 카메라+BallTracker 로 헤드를 움직인다.
             // 보행 여부와 무관 (헤드 전용). e-stop/getup 은 위에서 continue 하므로 여기 미도달.
             // **볼-추종 보행 (2026-06-14)**: balltrack 값 2(START)면 m_ballfollow_enabled — 머리
@@ -1668,6 +1693,10 @@ namespace Robotis {
         // O4 — 래치값 기록(TEL2 x/y/a/period_lat). 게이트 부스트는 측정 셰이핑 후 진폭만 표시
         // (z_move/y_swap/hip 부스트는 별도 노출 안 함 — "명령 vs 적용" 차이는 x/y/a/period 로 충분).
         m_lat_x = sx; m_lat_y = sy; m_lat_a = sa; m_lat_period = sp;
+
+        // **햅틱(2026-06-15)** — 전진 최대속도 캡 도달 상태만 기록(엣지/주기 발화는 supervisor
+        //   루프가 now_ms 로 처리 — 스틱 계속 밀면 주기 반복). 적용된 보폭 sx vs period 종속 x_max.
+        m_at_speed_cap = Robotis::AtForwardSpeedCap(sx, Robotis::EnvelopeXMax(sp));
     }
 
     bool WalkLabBrokerage::ApplyCommandLine(Robot::Walking* walking, bool& walking_active,

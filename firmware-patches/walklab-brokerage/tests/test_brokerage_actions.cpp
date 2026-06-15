@@ -98,6 +98,18 @@ static void test_sit_hold_and_stand_bypass() {
     CHECK(ShouldBypassStandupGate(false, GP_KICK_RIGHT) == false,   "비앉음+킥 → 우회 아님");
 }
 
+// ---- 햅틱 트리거: 최대속도 캡 도달 엣지 ----------------------------------------
+static void test_haptic_speed_cap_edge() {
+    CHECK(AtForwardSpeedCap(38.0, 38.0) == true,  "x==x_max → 캡 도달");
+    CHECK(AtForwardSpeedCap(37.6, 38.0) == true,  "0.5mm 여유 안 → 도달");
+    CHECK(AtForwardSpeedCap(30.0, 38.0) == false, "캡 미달");
+    CHECK(AtForwardSpeedCap(38.0, 0.0)  == false, "x_max=0(보호) → false");
+    CHECK(RisingEdge(false, true)  == true,  "미달→도달 = 발화");
+    CHECK(RisingEdge(true,  true)  == false, "도달 유지 = 발화 안 함(연속 윙윙 방지)");
+    CHECK(RisingEdge(true,  false) == false, "도달→미달 = 발화 안 함");
+    CHECK(RisingEdge(false, false) == false, "계속 미달 = 발화 안 함");
+}
+
 int main() {
     test_action_side_to_page();
     test_ballfollow_enabled_for();
@@ -105,6 +117,7 @@ int main() {
     test_should_block_manual_walk_for_sit();
     test_should_skip_redundant_stand();
     test_sit_hold_and_stand_bypass();
+    test_haptic_speed_cap_edge();
     printf("== test_brokerage_actions: %d checks, %d failures ==\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

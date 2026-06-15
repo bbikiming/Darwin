@@ -314,6 +314,8 @@ namespace Robotis {
           m_pending_left_kick_edge(false), m_pending_right_kick_edge(false),
           m_estop_cb(0), m_recover_cb(0), m_kick_cb(0), m_cb_ctx(0) {
         pthread_mutex_init(&m_mtx, 0);
+        m_ff_id = -1;               // 햅틱: 업로드된 effect 없음
+        m_haptics_enabled = true;   // 기본 ON (balltrack.ini [Haptics] enabled 로 토글)
     }
 
     GamepadPilot::~GamepadPilot() {
@@ -409,9 +411,53 @@ namespace Robotis {
         return a;
     }
 
+    void GamepadPilot::SetHapticsEnabled(bool enabled) {
+        pthread_mutex_lock(&m_mtx);
+        m_haptics_enabled = enabled;
+        pthread_mutex_unlock(&m_mtx);
+    }
+
+    // **햅틱(진동) (2026-06-15)** — rumble effect 를 lazy 업로드(직전 것 제거)하고 1회 재생.
+    // supervisor 가 트리거 시 호출 — m_mtx 짧게(드문 이벤트), write 는 non-blocking(O_NONBLOCK).
+    // E-STOP/입력 패스트레인과 무관(reader 는 select 밖에서만 m_mtx 보유). 미연결/비활성/FF
+    // 미지원(O_RDONLY 폴백·업로드 실패)이면 무동작. 진동 write 는 로봇 USB-로컬 — Mac 통신 무관.
+    void GamepadPilot::Rumble(int strong_pct, int weak_pct, int duration_ms) {
+#ifdef __linux__
+        if (strong_pct < 0) strong_pct = 0; if (strong_pct > 100) strong_pct = 100;
+        if (weak_pct   < 0) weak_pct   = 0; if (weak_pct   > 100) weak_pct   = 100;
+        if (duration_ms < 1) duration_ms = 1; if (duration_ms > 5000) duration_ms = 5000;
+        pthread_mutex_lock(&m_mtx);
+        if (m_haptics_enabled && m_fd >= 0) {
+            if (m_ff_id >= 0) { ioctl(m_fd, EVIOCRMFF, m_ff_id); m_ff_id = -1; }  // 직전 effect 제거(슬롯 누수 방지)
+            struct ff_effect e;
+            memset(&e, 0, sizeof(e));
+            e.type = FF_RUMBLE;
+            e.id   = -1;   // 커널 할당
+            e.u.rumble.strong_magnitude = (unsigned short)(0xFFFF * strong_pct / 100);
+            e.u.rumble.weak_magnitude   = (unsigned short)(0xFFFF * weak_pct   / 100);
+            e.replay.length = (unsigned short)duration_ms;
+            e.replay.delay  = 0;
+            if (ioctl(m_fd, EVIOCSFF, &e) >= 0) {
+                m_ff_id = e.id;
+                struct input_event play;
+                memset(&play, 0, sizeof(play));
+                play.type  = EV_FF;
+                play.code  = (unsigned short)e.id;
+                play.value = 1;   // 1회 재생
+                ssize_t wr = write(m_fd, &play, sizeof(play));
+                (void)wr;         // non-blocking — 실패(O_RDONLY 폴백 등) 무시(graceful)
+            }
+        }
+        pthread_mutex_unlock(&m_mtx);
+#else
+        (void)strong_pct; (void)weak_pct; (void)duration_ms;   // 호스트: 무동작 스텁
+#endif
+    }
+
     void GamepadPilot::AdoptDevice(int fd, long long now_ms) {
         pthread_mutex_lock(&m_mtx);
         m_fd = fd;
+        m_ff_id = -1;               // 새 fd — 직전 effect id 무효(재업로드는 Rumble 이 lazy).
         m_node_ok = true;
         m_had_device = true;
         m_armed = false;            // H2-2 — 노드 (재)획득 후 재 ARM 필수
@@ -651,8 +697,11 @@ namespace Robotis {
             if (strncmp(e->d_name, "event", 5) != 0) continue;
             char path[64];
             snprintf(path, sizeof(path), "/dev/input/%s", e->d_name);
-            int fd = open(path, O_RDONLY | O_NONBLOCK);
-            if (fd < 0) continue;   // 권한(root 0640) — brokerage 는 root demo 내부라 무문제
+            // 햅틱(force feedback) write 를 위해 O_RDWR 시도, 실패 시 O_RDONLY 폴백
+            // (진동만 비활성, 입력은 정상). event 노드 ACL(user:robotis:rw) 또는 root demo.
+            int fd = open(path, O_RDWR | O_NONBLOCK);
+            if (fd < 0) fd = open(path, O_RDONLY | O_NONBLOCK);
+            if (fd < 0) continue;
             char name[80] = {0};
             struct input_id iid;
             memset(&iid, 0, sizeof(iid));

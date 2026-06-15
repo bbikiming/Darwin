@@ -97,6 +97,20 @@ inline bool ShouldSkipRedundantStand(int side, bool sitting) {
     return (side == GP_ACTION_STAND) && !sitting;
 }
 
+// ===== 햅틱(진동) 트리거 결정 (2026-06-15) =========================================
+// 안베르닉 동글 force feedback. 3 트리거: 낙상(강·길)·최대속도 도달(약)·킥(강·짧).
+// 진동 write 자체는 GamepadPilot(로봇 전용); 여기선 "언제 울릴지" 순수 판정만 host 테스트.
+
+/// 전진 보폭(applied_x, mm)이 period 종속 x_max 캡에 도달했는가(0.5mm 여유).
+inline bool AtForwardSpeedCap(double applied_x, double x_max) {
+    return x_max > 0.0 && applied_x >= (x_max - 0.5);
+}
+
+/// 상승 엣지(직전 false·현재 true) — 최대속도 도달 1회만 발화(연속 윙윙 방지).
+inline bool RisingEdge(bool prev, bool now) {
+    return (!prev) && now;
+}
+
 }  // namespace Robotis
 
 #endif  // WALKLAB_BROKERAGE_ACTIONS_H_
