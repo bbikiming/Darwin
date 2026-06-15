@@ -76,6 +76,20 @@ inline bool ShouldBlockManualWalkStartForSit(bool want_active, bool walking_acti
     return want_active && !walking_active && sitting;
 }
 
+/// **SIT 앉음 유지 (2026-06-15 실기)** — SIT 완료 시 관절을 Walking 에 반납하지 않는다
+/// (반납하면 Walking::Process()가 직립 standby 포즈를 매 tick 서보에 써 앉음→기립). Action 이
+/// body 를 계속 소유해 page15 마지막 포즈를 홀드. STAND/킥/패스는 정상 반납.
+inline bool ShouldHoldSitPose(int side) {
+    return side == GP_ACTION_SIT;
+}
+
+/// **STAND-from-SIT (2026-06-15 실기)** — 앉음 자세(page15)가 실기 IMU 에 비STANDUP 으로
+/// 읽히므로, m_sitting 상태의 STAND 는 STANDUP 안전게이트를 우회한다(m_sitting=의도된 앉음=
+/// 신뢰 신호, IMU 보다 우선). 그 외엔 게이트 유지 — 진짜 낙상엔 auto-getup 이 처리.
+inline bool ShouldBypassStandupGate(bool sitting, int side) {
+    return sitting && side == GP_ACTION_STAND;
+}
+
 /// **D2 (2026-06-15)** — 이미 서 있을 때(비-앉음) STAND(D-패드 위)는 의미 없는 no-op.
 /// STAND=page16 은 "앉은자세→서기" 모션이라 서 있는 로봇에 재생하면 불필요한 크라우치→
 /// 기립으로 불안정해진다. STAND 는 앉음 해제 용도로만 유효 → 비-앉음이면 건너뛴다.

@@ -138,7 +138,10 @@ namespace Robotis {
         // MODE 종료와 동일 계약(설계 §7). Stop()은 멱등 플래그 셋(stdio 없음)이라 위
         // Walking::Stop 과 동일 클래스로 async-signal 안전.
         Robot::Action* action = Robot::Action::GetInstance();
-        if (action && action->IsRunning()) action->Stop();
+        if (action) {
+            if (action->IsRunning()) action->Stop();
+            action->m_Joint.SetEnableBody(false);   // 앉음(SIT) 중 Action body 홀드도 토크 OFF(일관)
+        }
         _exit(0);
     }
 
@@ -349,11 +352,13 @@ namespace Robotis {
         }
 
         // 5) 안전 게이트 — STANDUP(직립 몸통) 일 때만. 낙상/불안정 중 모션 금지(getup 우선).
-        //    **STAND 도 STANDUP 요구**(리뷰 HIGH-2): 앉음(page15)은 몸통 직립=STANDUP 이라
-        //    통과하고, 진짜 낙상(FORWARD/BACKWARD)에선 page16(앉은자세→서기)이 아니라
-        //    auto-getup(page10/11)이 올바른 방향으로 일으킨다 — 넘어진 로봇에 page16 재생 차단.
+        //    **STAND-from-SIT 예외 (2026-06-15 실기)**: 앉음 자세(page15)가 실기 IMU 에 비STANDUP
+        //    으로 읽혀, 종전엔 앉은 채 STAND 를 눌러도 이 게이트가 막아 일어설 수 없었다. m_sitting
+        //    상태의 STAND 는 STANDUP 게이트를 우회한다(m_sitting=의도된 앉음=신뢰 신호, IMU 우선).
+        //    그 외엔 종전대로 — 진짜 낙상(FORWARD/BACKWARD)엔 page16 이 아니라 auto-getup 이 처리.
+        bool stand_from_sit = Robotis::ShouldBypassStandupGate(m_sitting, side);
         int fallen = Robot::MotionStatus::FALLEN;
-        if (fallen != Robot::STANDUP) {
+        if (fallen != Robot::STANDUP && !stand_from_sit) {
             printf("[WalkLabBrokerage] %s 무시 — not STANDUP (FALLEN=%d → auto-getup 이 처리)\n",
                    name, fallen);
             return false;
@@ -383,7 +388,7 @@ namespace Robotis {
         // 보행 정지함→이번 poll 명령 skip(getup 의 estop-대기-bail 과 동일 계약, 안전).
         // 정지 후 STANDUP 재확인(감속 transient 회피). 비STANDUP(정지 사이 실제 낙상)이면
         // Action 시작 전 중단 → getup 인계(STAND 포함 — page16 은 STANDUP 전제, 낙상 시 부적합).
-        if (Robot::MotionStatus::FALLEN != Robot::STANDUP) {
+        if (Robot::MotionStatus::FALLEN != Robot::STANDUP && !stand_from_sit) {
             printf("[WalkLabBrokerage] %s 중단 — 정지 후 낙상 감지 → getup 즉시 인계\n", name);
             // **F1 (2026-06-15, 리뷰 high)** — 카운터를 임계로 올려 다음 poll 의
             // CheckAndRecoverFall 이 즉시 getup 발화하게 한다(settle 후 낙상 경로와 동일).
@@ -429,6 +434,24 @@ namespace Robotis {
             WriteTelemetry(cm730, walking, walking_active, true);
             usleep(8000);
         }
+
+        // **SIT 앉음 유지 (2026-06-15 실기·병렬진단 root-cause)** — SIT 은 여기서 조기 종료해
+        // 아래 Walking 반납(7)을 **건너뛴다**. 반납하면 Walking::Process()가 IsRunning=false
+        // 여도 매 8ms 직립 standby 포즈(initAngle 0°)를 m_Joint 에 써 MotionManager 가 서보에
+        // 주입 → 앉음→기립으로 끌려갔다(진범; auto-getup 아님 — MotionManager 는 enable 만 보고
+        // running 무관). Action 은 m_Playing=false 시 Process()가 즉시 return 하므로, body 를
+        // Action 이 계속 소유(위 6-2 SetEnableBody(true,true) 유지)하면 page15 마지막 앉음
+        // 포즈가 m_Joint 에 동결돼 유지된다. head 만 추적용으로 Head 모듈에 반납. STAND(D-패드
+        // 위)·E-STOP/복구 가 m_sitting 해제 + Walking 반납을 수행(STAND 경로는 7 에 도달).
+        if (Robotis::ShouldHoldSitPose(side)) {
+            Robot::Head* sit_head = Robot::Head::GetInstance();
+            if (sit_head) sit_head->m_Joint.SetEnableHeadOnly(true, true);
+            m_sitting = true;
+            m_fall_count = 0;
+            printf("[WalkLabBrokerage] SIT complete — Action 이 앉음 포즈 홀드(Walking 미반납; STAND 로 해제)\n");
+            return true;
+        }
+
         // 7) joint 을 Walking/Head 로 반납 — ★F9: Walking::Start()는 enable 복구 안 함★
         //    (MotionManager 는 enable==true 만 서보 기록). getup 반납과 동일 패턴.
         //    (estop bail 경로는 의도적으로 반납 안 함 — estop=토크 OFF 유지, 재enable 은
@@ -445,17 +468,8 @@ namespace Robotis {
         //    넘어뜨림"의 신뢰 신호. STANDUP 이면 종전처럼 카운터 리셋(transient 오발 억제).
         //    FALLEN 이면 m_fall_count 를 임계로 올려 다음 poll 의 CheckAndRecoverFall 이
         //    즉시 복구(getup)하게 인계한다 — 종전의 무조건 리셋이 만들던 ~600ms 복구 지연 제거.
-        // **D-패드 자세(2026-06-14)**: SIT 은 의도된 앉음 — 낙상 판정 건너뛰고 앉음 상태로.
-        // **F2/F4 실기 확정 (2026-06-15)**: SIT(page15) 자세는 실기 IMU 에서 비STANDUP(FALLEN)
-        // 으로 읽힌다 → 종전엔 다음 poll 의 auto-getup 이 오발("앉으면 혼자 벌떡 일어남").
-        // 이제 CheckAndRecoverFall 진입부의 `if (m_sitting) return false` 가 앉음 중 auto-getup
-        // 을 억제하므로 앉음 자세가 유지된다. STAND(D-패드 위)·E-STOP/복구 가 m_sitting 해제.
-        if (side == Robotis::GP_ACTION_SIT) {
-            m_sitting = true;
-            m_fall_count = 0;
-            printf("[WalkLabBrokerage] SIT complete — 앉음(보행/getup 차단; STAND 로 해제)\n");
-            return true;
-        }
+        // **STAND/킥/패스 경로** (SIT 은 위에서 조기 종료 — Walking 반납 후 여기 도달).
+        // STAND 가 page16 완료·Walking 반납을 마쳤으므로 앉음 해제(이후 보행/getup 정상).
         if (side == Robotis::GP_ACTION_STAND) m_sitting = false;   // 일어섬 — 앉음 해제.
 
         if (Robot::MotionStatus::FALLEN == Robot::STANDUP) {
@@ -862,8 +876,10 @@ namespace Robotis {
     // 공유하는 단일 즉시-정지 경로 — 중복 구현 금지. 어느 스레드에서든 호출 가능.
     void WalkLabBrokerage::TriggerEstopImmediate() {
         Robot::Walking* w = Robot::Walking::GetInstance();
-        // body 토크는 여기서 즉시 OFF — 킥 중이라 body joint 가 Action 소유여도, 같은
-        // 물리 joint 의 enable 비트를 끄므로 로봇은 Action 상태와 무관하게 즉시 limp.
+        // body 토크 즉시 OFF. body joint 는 Walking 또는 Action 이 배타 소유한다(보행=Walking,
+        // 앉음 SIT/킥/패스=Action). 한쪽만 끄면 다른 모듈이 enable 을 유지해 MotionManager 가
+        // 그 포즈를 계속 서보에 써 토크가 안 풀린다 → **양쪽 모듈 모두** body enable 을 끈다.
+        // (앉음 중 E-STOP 갭 — 2026-06-15 SIT 홀드 수정이 드러낸 결함. Action 비활성은 아래.)
         if (w) { w->Stop(); w->m_Joint.SetEnableBody(false); }
         // F12 (2026-06-13) — 킥(Action) 진행 중이면 즉시 중단. 종전엔 Walking 만 멈춰
         // 킥 중 B 를 눌러도 모션이 1~2s 계속됐다(결함).
@@ -875,7 +891,12 @@ namespace Robotis {
         // 타이머 스레드(프레임워크 미계측)와는 동기화 불가라 효과 없고, getup 이 이미
         // supervisor↔타이머 동일 패턴으로 프로덕션 검증됨(리뷰 concurrency-1 판정).
         Robot::Action* a = Robot::Action::GetInstance();
-        if (a && a->IsRunning()) a->Stop();
+        if (a) {
+            if (a->IsRunning()) a->Stop();
+            // 앉음(SIT)처럼 Action 이 body 를 홀드(m_Playing=false, IsRunning=false) 중이어도
+            // body enable 을 꺼 토크 OFF — Stop() 만으론 enable 이 남아 포즈가 유지된다.
+            a->m_Joint.SetEnableBody(false);
+        }
         // F12 — estop 시 보류 킥 요청 폐기(리뷰 R2-FIX-4). armed 상태에서 킥 직전 B 를
         // 누르면 큐된 m_pending_kick_side 가 Y 복구 후 깜짝 발화할 수 있다. m_kick_mtx 는
         // estop 호출 스레드(reader/UDP) 기동 전 Run() init(L1014)에서 초기화됨(순서 보장).
@@ -1288,6 +1309,10 @@ namespace Robotis {
                     printf("[WalkLabBrokerage] E-STOP flag detected — stop + torque off\n");
                     walking->Stop();
                     walking->m_Joint.SetEnableBody(false);
+                    // 앉음(SIT) 중이면 body 를 Action 이 홀드 → Walking 만 끄면 토크가 안 풀린다.
+                    // Action body 도 끈다(2026-06-15 SIT 홀드 수정 동반 — flag E-STOP 도 limp 보장).
+                    { Robot::Action* ea = Robot::Action::GetInstance();
+                      if (ea) { if (ea->IsRunning()) ea->Stop(); ea->m_Joint.SetEnableBody(false); } }
                     walking_active = false;
                     estop_latched = true;
                     m_ballfollow_enabled = false;  // 볼-추종(리뷰 HIGH-1): flag E-STOP 도 추종 해제(TriggerEstopImmediate 와 대칭)

@@ -84,12 +84,27 @@ static void test_should_skip_redundant_stand() {
     CHECK(ShouldSkipRedundantStand(GP_ACTION_PASS_RIGHT, false) == false, "패스는 STAND 가드 무관");
 }
 
+// ---- ShouldHoldSitPose / ShouldBypassStandupGate (앉음 유지·STAND-from-SIT) ----
+static void test_sit_hold_and_stand_bypass() {
+    CHECK(ShouldHoldSitPose(GP_ACTION_SIT) == true,   "SIT 은 Walking 미반납(포즈 홀드)");
+    CHECK(ShouldHoldSitPose(GP_ACTION_STAND) == false, "STAND 은 정상 반납");
+    CHECK(ShouldHoldSitPose(GP_KICK_LEFT) == false,    "킥은 정상 반납");
+    CHECK(ShouldHoldSitPose(GP_ACTION_PASS_RIGHT) == false, "패스는 정상 반납");
+    // STAND-from-SIT: 앉음+STAND 만 STANDUP 게이트 우회
+    CHECK(ShouldBypassStandupGate(true,  GP_ACTION_STAND) == true,  "앉음+STAND → 게이트 우회");
+    CHECK(ShouldBypassStandupGate(false, GP_ACTION_STAND) == false, "비앉음+STAND → 게이트 유지");
+    CHECK(ShouldBypassStandupGate(true,  GP_ACTION_SIT) == false,   "앉음+SIT → 우회 아님");
+    CHECK(ShouldBypassStandupGate(true,  GP_KICK_LEFT) == false,    "앉음+킥 → 우회 아님(킥은 m_sitting 게이트서 차단)");
+    CHECK(ShouldBypassStandupGate(false, GP_KICK_RIGHT) == false,   "비앉음+킥 → 우회 아님");
+}
+
 int main() {
     test_action_side_to_page();
     test_ballfollow_enabled_for();
     test_should_run_ballfollow();
     test_should_block_manual_walk_for_sit();
     test_should_skip_redundant_stand();
+    test_sit_hold_and_stand_bypass();
     printf("== test_brokerage_actions: %d checks, %d failures ==\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
