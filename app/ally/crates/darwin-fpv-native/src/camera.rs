@@ -4,6 +4,7 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use crate::app_state::{epoch_ms, AppState};
@@ -25,7 +26,20 @@ pub fn camera_frame(app: &AppState) -> Option<Vec<u8>> {
         }
     }
 
-    match fetch_snapshot(&host) {
+    // in-flight 가드(P2-3): 한 워커만 로봇을 읽는다. 다른 워커는 stale 캐시(있으면) 즉시
+    // 반환해 4워커가 카메라 fetch 에 동시 묶여 /api/state 가 굶는 것을 막는다.
+    if app.camera_fetching.swap(true, Ordering::SeqCst) {
+        let cache = app.camera.lock().ok()?;
+        return if !cache.jpeg.is_empty() && now - cache.fetched_epoch_ms < STALE_MS {
+            Some(cache.jpeg.clone())
+        } else {
+            None
+        };
+    }
+    let fetched = fetch_snapshot(&host);
+    app.camera_fetching.store(false, Ordering::SeqCst);
+
+    match fetched {
         Ok(jpeg) => {
             if let Ok(mut cache) = app.camera.lock() {
                 cache.jpeg = jpeg.clone();
@@ -60,8 +74,23 @@ fn fetch_snapshot(host: &str) -> std::io::Result<Vec<u8>> {
         "GET /?action=snapshot HTTP/1.0\r\nHost: {host}\r\nUser-Agent: darwin-fpv-native\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(req.as_bytes())?;
+    // 바운드 읽기(P2-3): 스트림(트리클) 응답에 무한 점유되지 않게 4MB 상한. 매 read 가
+    // 타임아웃(900ms)이라 정체 시 종료. snapshot 은 단일 JPEG + close 라 정상은 EOF 에서 끝.
     let mut buf = Vec::new();
-    stream.read_to_end(&mut buf)?;
+    let mut chunk = [0u8; 16384];
+    const MAX_BODY: usize = 4 * 1024 * 1024;
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() > MAX_BODY {
+                    break;
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
 
     let pos = find(&buf, b"\r\n\r\n")
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "HTTP 헤더 끝 없음"))?;

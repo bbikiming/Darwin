@@ -57,6 +57,11 @@ pub fn wifi_dbm() -> Option<i32> {
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
         let l = line.trim();
+        // P3-1: "Signal"(영문)·"신호"(한글) 라인만 파싱 — SSID/프로필명에 든 "...50%" 같은
+        // 숫자+% 가 Signal 줄보다 먼저 와도 오판하지 않게.
+        if !(l.to_ascii_lowercase().contains("signal") || l.contains("신호")) {
+            continue;
+        }
         if let (Some(pct_end), Some(colon)) = (l.find('%'), l.rfind(':')) {
             if colon < pct_end {
                 let digits: String = l[colon + 1..pct_end]

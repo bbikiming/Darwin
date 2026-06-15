@@ -70,9 +70,11 @@ fn handle(app: &Arc<AppState>, mut req: Request) {
             let body = read_body(&mut req);
             if body.get("action").and_then(Value::as_str) == Some("exit_app") {
                 json_ok(req, &json!({ "ok": true }));
-                control::disconnect(app);
-                std::thread::spawn(|| {
-                    std::thread::sleep(std::time::Duration::from_millis(250));
+                // 응답 후 종료를 별도 스레드에서(P2-4): disconnect 가 SSH 합류로 막혀도 워커는
+                // 즉시 풀리고, 핸드셰이크 철회 뒤 프로세스를 종료한다.
+                let app = Arc::clone(app);
+                std::thread::spawn(move || {
+                    control::disconnect(&app);
                     std::process::exit(0);
                 });
                 return;

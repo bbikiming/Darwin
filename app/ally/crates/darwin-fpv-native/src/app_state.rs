@@ -110,6 +110,8 @@ pub struct AppState {
     pub logs: Mutex<VecDeque<String>>,
     /// 카메라 프레임 캐시.
     pub camera: Mutex<CameraCache>,
+    /// 카메라 fetch 진행 가드(P2-3) — 한 워커만 로봇 8080 을 읽게 해 4워커 점유를 막는다.
+    pub camera_fetching: AtomicBool,
     /// WiFi 신호(dBm) — 백그라운드 poller 가 ~5s 갱신(느린 netsh 호출 캐시). None=미상.
     pub wifi_dbm: Mutex<Option<i32>>,
 }
@@ -128,6 +130,7 @@ impl AppState {
             connecting: AtomicBool::new(false),
             logs: Mutex::new(VecDeque::new()),
             camera: Mutex::new(CameraCache::default()),
+            camera_fetching: AtomicBool::new(false),
             wifi_dbm: Mutex::new(None),
         })
     }

@@ -183,7 +183,7 @@ async function serviceAction(service, serviceActionName, options = {}) {
 
 async function shutdownSwitch() {
   const button = $("shutdown-button");
-  const ok = window.confirm("다윈 조종석을 종료하고 Linux 화면으로 돌아갈까요?");
+  const ok = window.confirm("다윈 FPV 콕핏을 종료할까요?");
   if (!ok) return;
   if (button) button.classList.add("pressed");
   setText("mission-caption-text", "조종석 종료 중…");
@@ -193,7 +193,7 @@ async function shutdownSwitch() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({action: "exit_app"})
     }, ACTION_FETCH_TIMEOUT_MS);
-    setText("mission-caption-text", "Linux 화면으로 돌아갑니다");
+    setText("mission-caption-text", "콕핏을 종료합니다");
   } catch (_err) {
     setText("mission-caption-text", "조종석 종료 실패");
   } finally {
@@ -740,7 +740,7 @@ function renderSwitchBattery(power) {
   const level = pct === null ? "unknown" : (charging ? "charging" : batteryLevel(pct));
   setStateClass("switch-batt-chip", "switch-batt-chip", level);
   setText("switch-battery-pct", pct === null ? "--%" : `${Math.round(pct)}%`);
-  setText("switch-power-state", charging ? "충전" : "Switch");
+  setText("switch-power-state", charging ? "충전" : "기기");
   const fill = $("switch-batt-fill");
   if (fill) {
     const width = pct === null ? "0%" : `${clamp(pct, 0, 100)}%`;

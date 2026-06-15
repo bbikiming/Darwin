@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="다윈 조종석">
   <meta name="mobile-web-app-capable" content="yes">
-  <title>다윈 스위치 조종석</title>
+  <title>다윈 FPV 조종석</title>
   <link rel="icon" type="image/png" href="/assets/darwin-icon.png">
   <link rel="apple-touch-icon" href="/assets/darwin-icon.png">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -75,14 +75,14 @@
         </div>
         <div class="status-chip" id="link-pill"><span></span><svg class="ui-icon"><use href="#icon-link"></use></svg><b id="link-text">연결 끊김</b></div>
         <div class="status-chip mode"><svg class="ui-icon"><use href="#icon-route"></use></svg><b id="mode">연습</b></div>
-        <div class="switch-batt-chip unknown" id="switch-batt-chip" aria-label="스위치 배터리">
+        <div class="switch-batt-chip unknown" id="switch-batt-chip" aria-label="기기 배터리">
           <svg class="ui-icon"><use href="#icon-battery"></use></svg>
           <span class="switch-batt-meter" aria-hidden="true"><i id="switch-batt-fill"></i></span>
           <b id="switch-battery-pct">--%</b>
-          <small id="switch-power-state">Switch</small>
+          <small id="switch-power-state">기기</small>
         </div>
         <div class="hud-clock" id="clock">--:--:--</div>
-        <button type="button" class="power-button" id="shutdown-button" aria-label="스위치 종료">
+        <button type="button" class="power-button" id="shutdown-button" aria-label="콕핏 종료">
           <svg class="ui-icon"><use href="#icon-power"></use></svg><span>종료</span>
         </button>
       </div>
@@ -502,7 +502,7 @@
       <button class="dock-button recover" data-action="recover" data-label="복구" data-hint="X: 비상정지 해제">
         <kbd>X</kbd><svg class="ui-icon"><use href="#icon-refresh"></use></svg><span>복구</span>
       </button>
-      <button class="dock-button stop" data-action="stop" data-label="정지" data-hint="B: 즉시 멈춤(걸리지 않음)">
+      <button class="dock-button stop" data-action="stop" data-label="정지" data-hint="B: 즉시 정지 — E-STOP 래치(복구로 해제)">
         <kbd>B</kbd><svg class="ui-icon"><use href="#icon-stop"></use></svg><span>정지</span>
       </button>
       <button class="dock-button ping" data-action="ping" data-label="점검" data-hint="Y: 진단 기록 남기기">

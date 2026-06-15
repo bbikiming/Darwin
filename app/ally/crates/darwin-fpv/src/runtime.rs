@@ -150,9 +150,17 @@ impl Runtime {
         let ssh = if is_robot {
             let c = Arc::new(SshClient::new(host.as_str(), identity));
             c.write_handshake(&token, estop_port, cmd_port)?;
-            let local_ip = local_ip_toward(host.as_str())?;
-            let local_port = udp.local_port()?;
-            c.write_uplink(&local_ip.to_string(), local_port)?;
+            // 핸드셰이크 후 실패하면 로봇에 stale 채널이 남으므로 retract 후 전파(§7-7 MUST, P2-1).
+            let setup = (|| -> io::Result<()> {
+                let local_ip = local_ip_toward(host.as_str())?;
+                let local_port = udp.local_port()?;
+                c.write_uplink(&local_ip.to_string(), local_port)?;
+                Ok(())
+            })();
+            if let Err(e) = setup {
+                let _ = c.retract_handshake();
+                return Err(e);
+            }
             Some(c)
         } else {
             None
@@ -161,7 +169,16 @@ impl Runtime {
         state.write(|s| s.conn.path = conn_path);
 
         // 입력 서비스(250Hz gilrs 내부 스레드) + 무손실 B 채널 + 버튼 에지.
-        let (svc, estop_rx, edge_rx) = InputService::spawn().map_err(io::Error::other)?;
+        let (svc, estop_rx, edge_rx) = match InputService::spawn() {
+            Ok(v) => v,
+            Err(e) => {
+                // 핸드셰이크 후 입력 서비스 실패 → stale 채널 방지 retract(P2-1).
+                if let Some(c) = &ssh {
+                    let _ = c.retract_handshake();
+                }
+                return Err(io::Error::other(e));
+            }
+        };
         let input = Arc::new(svc);
 
         // 외부 버튼 에지 주입(콕핏 터치 ARM/복구/E-STOP) — control-tx 가 단일 소비하며
@@ -338,12 +355,9 @@ impl Runtime {
                             }
                             eff.record(t);
                             last_ack.store(t, Ordering::Relaxed);
-                            let hz = eff.rate(t);
-                            let r = rtt.value();
-                            state.write(|s| {
-                                s.conn.eff_hz = hz;
-                                s.conn.rtt_ms = r;
-                            });
+                            // eff_hz/rtt 의 StateHub 반영은 주기 emit 블록에서(매 33ms) 한다 —
+                            // ACK 침묵 시 eff.rate 가 윈도 노후로 0 까지 감쇠해 connected 가
+                            // false 로 떨어지게(링크손실 정직 표시). 여기선 표본만 적재.
                         }
                         Ok(Some(Inbound::Telemetry(tel))) => {
                             let t = now_ms();
@@ -354,6 +368,14 @@ impl Runtime {
                     let t = now_ms();
                     if t - last_emit >= 33 {
                         last_emit = t;
+                        // 매 emit 마다 eff_hz/rtt 갱신 — ACK 가 끊기면 eff.rate 가 0 으로
+                        // 감쇠해 connected=false(링크손실)가 UI 에 즉시 드러난다(P1-1).
+                        let hz = eff.rate(t);
+                        let r = rtt.value();
+                        state.write(|s| {
+                            s.conn.eff_hz = hz;
+                            s.conn.rtt_ms = r;
+                        });
                         let snap = state.read();
                         sink.emit_state(&snap);
                     }
@@ -506,12 +528,14 @@ fn ssh_worker(ssh: Arc<SshClient>, rx: Receiver<SshJob>, stop: Arc<AtomicBool>) 
                 SshJob::EstopTouch => touch = true,
             }
         }
-        // 안전 우선: touch → recover → 최신 cmd.
-        if touch {
-            let _ = ssh.touch_estop();
-        }
+        // 안전 우선(P1-3): 같은 배치에 recover 와 touch 가 섞이면 E-STOP 이 이긴다(게이트
+        // settle 동일). recover(rm) 를 먼저, touch(생성) 를 나중에 실행해 estop 플래그가 SET
+        // 으로 끝나게 한다 — 큐가 시간순서를 잃어도 정지가 우선.
         if recover {
             let _ = ssh.run(&format!("rm -f {ESTOP_PATH}"));
+        }
+        if touch {
+            let _ = ssh.touch_estop();
         }
         if let Some(l) = latest_cmd {
             let _ = ssh.write_cmd_file(&l);
