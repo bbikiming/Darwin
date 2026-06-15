@@ -117,24 +117,32 @@ scp motion_retimed.bin <user@host>:/robotis/Data/motion_4096.bin
 - 검증: `forge-cli motion play --slot 70 --dry-run` 등으로 page 70/71 가 7스텝·체크섬
   정상인지 확인. 요람 거치 상태에서 패스 1회 재생해 스냅 안정성 실측(입회 게이트).
 
-## 단일동작 상호배타 안전 수정 (리뷰 2026-06-15) — 실기 검증 대기
+## 단일동작 상호배타 안전 수정 (리뷰 2026-06-15)
 
 > 코드리뷰(86-에이전트 적대검증)에서 확정된 단일동작(킥/앉기/일어서기/패스) 안전 결함을
-> 수정했다. **전부 호스트 빌드 불가 경로(brokerage.cpp) — 아래 입회 검증 필요.**
+> 수정했다. **전부 호스트 빌드 불가 경로(brokerage.cpp) — 입회 검증 필요.**
 
-- [ ] **D1 앉음+볼추종**: SIT 후 볼-추종(START) 명령 → 앉은 채 보행 시작 안 함(정지 유지).
-- [ ] **C2 동작후 자동재보행**: 볼-추종 ON 중 킥/D-패드 → 동작 후 자동 보행 재개 안 함
-      (재개하려면 START 재토글). getup 후에도 동일.
+### ★ 실기 성공 기록 — 앉기/일어서기 (2026-06-15 19:00 KST, 사용자 입회)
+
+무선 darwin-wifi 배포(scp+make rc=0)·walklab 재기동(demo PID 2156)·안베르닉 045e:028e 인식
+후 **D-패드 앉기/일어서기 정상 동작 확인("잘 움직여")**. 진범이었던 SIT 후 Walking 반납
+(직립 standby 포즈 상시 출력 → 혼자 기립)을 제거하고 Action 이 앉음 포즈를 홀드하도록 수정
+(`ShouldHoldSitPose`) — **앉으면 앉은 자세 유지, D-패드 위로 정상 기립** 성공.
+- [x] **앉기 앉음 유지**: D-패드 아래 → 앉고 그대로 유지(혼자 일어나지 않음). ✅ 실기 확인
+- [x] **일어서기**: 앉은 뒤 D-패드 위 → 정상 기립(STAND-from-SIT STANDUP 게이트 우회 작동). ✅
+- 근본원인/수정: SIT=Walking 미반납·Action 홀드 / STAND=게이트 우회(ShouldBypassStandupGate).
+  관련 커밋 `8ed3c18`(+`62a0213` auto-getup 억제). 진단=7-에이전트 병렬 + cpp-reviewer 적대검증.
+
+### 잔여 입회 항목 (세부 안전 — 미개별확인)
+- [ ] **앉음 중 E-STOP limp**: 앉은 채 B → Action body 토크 OFF(8ed3c18 보강 — 3경로 action disable).
+- [ ] **앉음 지속(30s+)·무릎 서보 온도**: Action 무한 토크홀드 과열 여부(운용 제약 고지).
+- [ ] **D1 앉음+볼추종**: SIT 후 볼-추종(START) → 앉은 채 보행 시작 안 함(정지 유지).
+- [ ] **C2 동작후 자동재보행**: 볼-추종 ON 중 킥/D-패드 → 동작 후 자동 보행 재개 안 함(START 재토글).
 - [ ] **C1/C5 stale 보행라인**: 스틱 앞으로 민 채 킥/동작 → 동작 직후 의도치 않은 보행 없음.
-- [ ] **F1 getup 인계**: 킥 정지 중 실제 낙상 → 다음 poll 즉시 getup(≤~100ms, 종전 ~600ms).
-- [ ] **B1 패스 감속**: rPASS/lPASS 스냅 144ms 로 재생(요람 거치 안정성 실측).
-- [ ] **F4 SIT 후 FALLEN 실측 ★중요★**: SIT(D-패드 아래) 완료 후 `MotionStatus::FALLEN`
-      (telemetry TEL 마지막 필드)이 **STANDUP(0)** 인지 측정. 앉음 안전 전체가 이 가정에
-      의존한다(F2 참조 — m_sitting 은 auto-getup 을 막지 않음). 만약 FORWARD/BACKWARD 로
-      읽히면 앉자마자 auto-getup 오발 위험 → CheckAndRecoverFall 에 m_sitting 방어 게이트
-      추가가 필수 후속. STANDUP 으로 읽히면 현행 설계 안전.
-- [ ] **D2 STAND no-op**: 서 있는 상태에서 D-패드 위(STAND) → 무동작(콘솔 "STAND 무시 —
-      이미 서 있음"). 앉은 상태에서만 기립 재생.
+- [ ] **F1 getup 인계**: 킥 정지 중 실제 낙상 → 다음 poll 즉시 getup(≤~100ms).
+- [ ] **B1 패스 감속**: rPASS/lPASS 스냅 144ms 재생(요람 거치 안정성).
+- [ ] **D2 STAND no-op**: 서 있는 상태에서 D-패드 위 → 무동작("STAND 무시 — 이미 서 있음").
+- [ ] **킥(LB/RB)·패스(좌/우) 발화**: ARM 후 각 키 → 콘솔 ACTION 로그 + 모션.
 
 ## 회귀 위험
 
