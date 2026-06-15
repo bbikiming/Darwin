@@ -201,3 +201,41 @@ Ally ──USB-C LAN 어댑터──▶ 로봇 192.168.123.1 (W1 유선 게이�
 | WiFi 어댑터 절전 | 장치 관리자 → WiFi → 전원 관리 → 절전 해제 (RTT 스파이크 방지) | 1회 |
 | Armoury Crate | 개발 중 운영 모드 무관, W4 패키징 게이트에서 게임 등록 검증 | W4 |
 | 백신/Defender | cargo target 폴더 실시간 검사 제외(선택 — 빌드 속도) | 선택 |
+
+---
+
+## 8. 온디바이스 브링업 (로봇+Ally 연결 시 — 빌드→검증→실행)
+
+로봇과 Ally 가 같은 네트워크에 떠 있으면 한 줄로 빌드·검증·실행한다.
+
+### 8.1 Ally 에서 (주 경로 — GUI/패드/실조종 포함)
+
+```powershell
+cd C:\dev\Darwin
+# 안전 기본(pull+build+selftest+probe+run) — 플래그 없으면 -All 과 동일:
+.\app\ally\scripts\ally-fpv-bringup.ps1
+```
+
+단계별:
+
+```powershell
+.\app\ally\scripts\ally-fpv-bringup.ps1 -AxisDump   # 게임패드 축/트리거 현장 보정(스틱 끝까지)
+.\app\ally\scripts\ally-fpv-bringup.ps1 -Connect    # 실로봇 W1 게이트(eff_hz>=19·RTT) — 로봇에 명령 송출
+.\app\ally\scripts\ally-fpv-bringup.ps1 -Run -Wired # 유선(123.1) 콕핏 실행
+.\app\ally\scripts\ally-fpv-bringup.ps1 -Release -All
+```
+
+스크립트가 끝에 **W1 하드웨어 게이트 체크리스트**를 출력한다(axis 부호·eff_hz≥19·텔레메트리·
+ARM/E-STOP/패드단절). `-Connect`/`-Run` 전에 로봇 `walklab-active` 와 도달성을 자동 점검한다.
+
+### 8.2 Mac 에서 원격(헤드리스만 — build/selftest/probe)
+
+```sh
+bash app/ally/scripts/ally-fpv-remote.sh        # ssh host 기본 = ally
+```
+
+SSH 로는 GUI·게임패드를 못 띄우므로 빌드·로봇불요 검증·도달성까지만 원격으로 돌리고,
+콕핏(`-Run`)·`-AxisDump`·실로봇 `-Connect` 는 Ally 데스크톱에서 직접 한다(§8.1).
+
+> 전제(실로봇 단계): 로봇 **walklab-active** · **Mac DarwinForge 앱 OFF**(단일세션 §6) ·
+> Ally 게임패드. 텔레메트리가 비면 방화벽(§7 1행) 허용.
