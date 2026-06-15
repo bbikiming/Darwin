@@ -5,6 +5,20 @@
 
 ---
 
+## 🟠 활성 (2026-06) — 실기·심사·레이턴시
+
+| # | 영역 | 이슈 | 상태 |
+|---|------|------|------|
+| **B-LAT1** | 레이턴시 | E-STOP/UDP 명령 패스트레인은 완비됐으나 **Mac 핸드셰이크 미사용으로 100% 미배선** | 활성 — 설계 `docs/design/cockpit-latency-hardening.md`, [조사 보고서](docs/reports/2026-06-13-latency-network-investigation.md)(9-에이전트, 2026-06-13) |
+| **B-LAT2** | 네트워크 | **무선 경로 고착** — 유선 192.168.123.1이 무선보다 ~166x 빠르나 폴러가 무선에 고착, SSH 폴링 4~8Hz | 활성 — 앱 '유선' 재프로브 배너(`f1af504`)로 일부 완화 |
+| **B-LAT3** | 계측 | E-STOP 물리정지 타임스탬프 계측 수단 부재 → **레이턴시 0샘플**, 외부 UDP estop이 파일럿 disarm 미동작, 무장 타임아웃 부재 | 활성 |
+| **B-AS1** | App Store | 코드(P0/P1 시나리오 B) 완료, **개발자 포털 잔여**: 새 App ID·provisioning profile 재발급·App Store Connect 새 앱 레코드 + 아카이브 실기 검증·데모 영상 | 활성 — 사용자 포털 작업 |
+| **B-HW1** | Switch | Switch 어플라이언스 **하드웨어 미검증**(RCM jig 미보유) — 부팅·kiosk·전원버튼·read-only rootfs 경로 미검증. 코드 레벨(bash -n·compileall)만 통과 | 활성 — 실기 게이트 |
+| **B-FLD1** | 실기 필드 | WalkLab P7(32/20/L2)·킥 K3·D1/D2·H1/H2 호스트 테스트만 GREEN, **필드 게이트 미수행**. O3(FSR/IMU 밸런스) 코드 미구현 | 활성 — 입회 일정 미정 |
+| **B-FLD2** | 실기 필드 | **Anbernic 하드닝(`1c7f35c`) + 게임패드 회전/측보 튜닝 + D-패드 모션(`8cdc282`) + 볼-추종 자동보행(`c67fd4a`) 전부 로봇 미배포(OFF)** — 호스트 279 checks GREEN, 실기 미검증. 잔여 게이트 = M2M p95·침묵 임계·단절 매트릭스 4종. 배포 = `firmware-patches/walklab-brokerage` 6파일 재배포 + demo-pilot 재기동 필요(디스크만 반영, 재기동 시 적용) | 활성 — 입회 일정 미정 |
+
+> 실기 측정 시 **Mac 앱 종료 필수**(시리얼 경합). 로봇·워크트리는 단일 공유 자원 — 세션당 한 번만 접근.
+
 ## 🔴 Critical — 즉시 수정 (실 motor 손상 위험 또는 광고-구현 모순)
 
 발견: 2026-05-12 코드 감사 (`docs/reports/AUDIT_MOTION_WALK_SYNTH.md`)
@@ -103,3 +117,12 @@
 - BLOCKER H2 (calibration 데이터 미공개) → 해결.
 
 검증: `cargo test --workspace` 329 tests (forge-core 292 + forge-cli 10 + forge-mcp-synth 30 + 기타) 통과.
+
+검증(2026-06-14 실측): `cargo test --workspace` exit 0, 382 passed / 0 failed / 2 ignored(doc-test).
+
+### 2026-06 — 실기 브링업 결함 해소
+
+- **F9 E-STOP 복구 결함** (`1d8c6ff`): E-STOP 복구 시 관절 enable 미복원('ACK≠서보 기록') 결함 수정 — `GamepadPilot.cpp` 재무장 분기에 SetEnableHeadOnly/SetEnableBodyWithoutHead 추가, stale cmd 가드. 실기 입회 확인(2026-06-13).
+- **F6/F7 버스 선점** (`465b7d9`): 연결 시 버스 선점·하드 타임아웃·cmd 쓰기 폴백 — 무선 고착 연결 실패 완화.
+- **킥 안정성** (`58efaa8`): 사커킥 스냅 72ms 과속 → steps2~4 감속(72→144ms, 체크섬 byte31 sum≡0xFF)·착지 settle ~300ms·사후 낙상 즉시 getup. 실기 배포.
+- 참고: 기존 H1(self_collision 5번째 룰)은 여전히 미해결(Medium M5/M6 포함).

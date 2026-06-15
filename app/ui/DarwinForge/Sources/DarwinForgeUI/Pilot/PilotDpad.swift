@@ -63,6 +63,18 @@ public enum DpadZone: String, CaseIterable, Sendable {
         }
     }
 
+    /// 사이클 143 (IMPLEMENTATION audit #3): D-pad 단일 누름 의 실제 동작 설명.
+    /// 게임 연속 보행 오해 차단용 — tooltip / accessibility 에서 사용.
+    /// 본 구현은 단발 pose 1회 적용 후 700ms 뒤 walkReady 복귀.
+    /// 사이클 149 (codex MINOR #3 fix): Optional → 비-Optional — 모든 case 가 non-nil.
+    public var pressBehaviorKo: String {
+        switch self {
+        case .stop:        return "walkReady 자세로 복귀"
+        case .up, .down, .left, .right, .rotateLeft, .rotateRight:
+            return "단발 자세 · 700ms 후 walkReady 복귀 (연속 보행 아님)"
+        }
+    }
+
     /// walkReady 베이스에 zone 별로 덮어쓸 관절 각도 (°).
     /// stop 은 walkReady 그대로 (override 없음).
     fileprivate var poseOverrideDegrees: [JointID: Double] {
@@ -131,8 +143,11 @@ public struct PilotDpad: View {
     public var body: some View {
         DFPanel(
             "방향 조작 (D-pad)",
+            // **사이클 122 (audit #26, P0)**: continuous 보행 아닌 단발 pose 명시.
+            // 종전 "방향 실 송출 활성" → 사용자가 연속 보행으로 오해. 실제 동작은
+            // walkReady 베이스에 단일 zone override 적용 (one-shot pose).
             subtitle: dpadDirectionsActive
-                ? "방향 실 송출 활성 — Stop 은 항상 walkReady 송출"
+                ? "단일 자세 송출 — 연속 보행 아님 (walkReady 베이스 + zone 자세). Stop = walkReady."
                 : "방향 비활성 — \(directionUnavailableReason())",
             icon: "dpad",
             tint: PilotColor.dpadActive,
@@ -262,9 +277,11 @@ public struct PilotDpad: View {
             .opacity(dim ? 0.85 : (isDirectionDisabled ? DFOpacity.disabled : 1.0))
         }
         .buttonStyle(.plain)
+        // 사이클 143 (IMPLEMENTATION audit #3): 방향 D-pad 는 단발 자세 → 700ms 뒤 walkReady.
+        // 게임 연속 보행 오해 차단 — tooltip 에 "단발 자세" 명시.
         .help(isDirectionDisabled
               ? "\(zone.koreanLabel) — 현재 비활성 (\(directionUnavailableReason()))"
-              : "\(zone.koreanLabel) — 키 \(zone.keyChar ?? "")")
+              : "\(zone.koreanLabel) — 키 \(zone.keyChar ?? "") · \(zone.pressBehaviorKo)")
         .accessibilityLabel(zone.koreanLabel)
         .accessibilityHint(zone.keyChar.map { "단축키 \($0)" } ?? "")
         // 2026-05-17 a11y CRITICAL fix (WCAG 2.1.1 keyboard): 키보드 전용 사용자

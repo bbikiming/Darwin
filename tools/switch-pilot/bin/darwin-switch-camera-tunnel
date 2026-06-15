@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_PATH="${DARWIN_SWITCH_CONFIG:-/etc/darwin-switch-agent/config.json}"
+if [[ "${1:-}" == "--from-config" ]]; then
+  CONFIG_PATH="${2:-${CONFIG_PATH}}"
+  if command -v python3 >/dev/null 2>&1 && [[ -f "${CONFIG_PATH}" ]]; then
+    eval "$(
+      python3 - "${CONFIG_PATH}" <<'PY'
+import json
+import shlex
+import sys
+from urllib.parse import urlparse
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fp:
+    cfg = json.load(fp)
+
+ssh = cfg.get("ssh") if isinstance(cfg.get("ssh"), dict) else {}
+camera = cfg.get("camera") if isinstance(cfg.get("camera"), dict) else {}
+
+def emit(name, value):
+    if value is None or value == "":
+        return
+    print(f"{name}={shlex.quote(str(value))}")
+
+stream = str(camera.get("stream_url", "http://127.0.0.1:18080/?action=stream"))
+parsed = urlparse(stream)
+local_port = parsed.port or 18080
+
+emit("ROBOT_HOST", ssh.get("host", "192.168.123.1"))
+emit("ROBOT_USER", ssh.get("user", "robotis"))
+emit("SWITCH_CAMERA_LOCAL_PORT", camera.get("local_port", local_port))
+emit("ROBOT_CAMERA_REMOTE_PORT", camera.get("remote_port", 8080))
+emit("SSH_IDENTITY_FILE", ssh.get("identity_file", ""))
+PY
+    )"
+  else
+    echo "WARNING: could not read ${CONFIG_PATH}; using camera tunnel defaults." >&2
+  fi
+fi
+
+ROBOT_HOST="${ROBOT_HOST:-192.168.123.1}"
+ROBOT_USER="${ROBOT_USER:-robotis}"
+LOCAL_PORT="${SWITCH_CAMERA_LOCAL_PORT:-18080}"
+REMOTE_PORT="${ROBOT_CAMERA_REMOTE_PORT:-8080}"
+SSH_TARGET="${ROBOT_USER}@${ROBOT_HOST}"
+SSH_IDENTITY_FILE="${SSH_IDENTITY_FILE:-}"
+CAMERA_HEALTH_TIMEOUT="${DARWIN_SWITCH_CAMERA_HEALTH_TIMEOUT:-2}"
+case "${SSH_IDENTITY_FILE}" in
+  "~/"*) SSH_IDENTITY_FILE="${HOME}/${SSH_IDENTITY_FILE#\~/}" ;;
+esac
+
+# SSH options shared by the start-up call and the persistent tunnel.
+#
+# Keepalives let a dropped link be detected fast so autossh (or our own retry
+# loop) can reconnect instead of hanging on a dead socket.
+#
+# The robot ships OpenSSH 5.9, which a modern client refuses by default (it
+# disables the legacy ssh-rsa host-key + pubkey algorithms). Re-enabling
+# ssh-rsa with '+ssh-rsa' keeps us compatible without weakening anything else.
+SSH_COMMON_OPTS=(
+  -o ServerAliveInterval=3
+  -o ServerAliveCountMax=2
+  -o ExitOnForwardFailure=yes
+  -o BatchMode=yes
+  -o ConnectTimeout=3
+  -o Compression=no
+  -o TCPKeepAlive=yes
+  -o IPQoS=lowdelay
+  -o HostKeyAlgorithms=+ssh-rsa
+  -o PubkeyAcceptedAlgorithms=+ssh-rsa
+)
+
+if [[ -n "${SSH_IDENTITY_FILE}" ]]; then
+  SSH_COMMON_OPTS+=(-i "${SSH_IDENTITY_FILE}")
+fi
+
+REMOTE_START='
+set +e
+CAMERA_HEALTH_TIMEOUT="${DARWIN_SWITCH_CAMERA_HEALTH_TIMEOUT:-2}"
+
+camera_listening() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -lnt 2>/dev/null | grep ":8080" >/dev/null
+  else
+    netstat -lnt 2>/dev/null | grep ":8080" >/dev/null
+  fi
+}
+
+describe_camera_owners() {
+  echo "camera process state:" >&2
+  ps ax 2>/dev/null | grep -E "[c]amera_tutorial|[v]ision_demo|[d]emo" >&2 || true
+  echo "camera port owner:" >&2
+  lsof -nP -iTCP:8080 -sTCP:LISTEN 2>/dev/null >&2 || true
+  echo "video device owner:" >&2
+  fuser -v /dev/video* 2>&1 >&2 || true
+}
+
+camera_snapshot_ok() {
+  rm -f /tmp/df-camera-health.jpg 2>/dev/null
+  if command -v curl >/dev/null 2>&1; then
+    curl --max-time "$CAMERA_HEALTH_TIMEOUT" -fsS "http://127.0.0.1:8080/?action=snapshot" -o /tmp/df-camera-health.jpg >/dev/null 2>&1
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -T "$CAMERA_HEALTH_TIMEOUT" -O /tmp/df-camera-health.jpg "http://127.0.0.1:8080/?action=snapshot" >/dev/null 2>&1
+  else
+    return 2
+  fi
+  test -s /tmp/df-camera-health.jpg
+}
+
+camera_healthy() {
+  camera_listening || return 1
+  # Port-open is not enough on the robot: demo/old camera processes can leave
+  # :8080 listening while snapshot/stream never emits a frame. Treat a real
+  # JPEG snapshot as the readiness contract. This keeps the cockpit from showing
+  # a false "live" camera when the HTTP socket is stuck.
+  camera_snapshot_ok
+}
+
+if camera_healthy; then
+  exit 0
+fi
+if camera_listening; then
+  echo "camera_tutorial port is open but snapshot is unhealthy; restarting camera_tutorial" >&2
+  describe_camera_owners
+fi
+
+CAM_DIR=""
+for d in "$HOME/Framework/Linux/project/tutorial/camera" \
+         "$HOME/darwin/Linux/project/tutorial/camera" \
+         "/darwin/Linux/project/tutorial/camera" \
+         "/robotis/Linux/project/tutorial/camera"; do
+  if [ -d "$d" ]; then
+    CAM_DIR="$d"
+    break
+  fi
+done
+
+if [ -z "$CAM_DIR" ]; then
+  echo "camera tutorial directory not found" >&2
+  exit 1
+fi
+
+cd "$CAM_DIR" || exit 1
+if [ ! -x ./camera_tutorial ]; then
+  make || exit 1
+fi
+
+RUN_AS_ROOT=""
+if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+  RUN_AS_ROOT="sudo -n"
+fi
+
+if [ -n "$RUN_AS_ROOT" ]; then
+  $RUN_AS_ROOT killall camera_tutorial 2>/dev/null
+else
+  killall camera_tutorial 2>/dev/null
+fi
+killall vision_demo 2>/dev/null || true
+
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  pgrep -x camera_tutorial >/dev/null 2>&1 || break
+  sleep 0.1
+done
+
+if camera_listening && ! camera_healthy; then
+  echo "camera port 8080 is still occupied after stopping camera_tutorial; leaving control demo untouched." >&2
+  echo "real-time camera cannot start until the process holding :8080 releases it." >&2
+  describe_camera_owners
+  exit 1
+fi
+
+if [ -n "$RUN_AS_ROOT" ]; then
+  $RUN_AS_ROOT ./camera_tutorial >/tmp/df-camera.log 2>&1 &
+else
+  ./camera_tutorial >/tmp/df-camera.log 2>&1 &
+fi
+
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  camera_healthy && exit 0
+  sleep 0.2
+done
+if camera_listening && ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+  echo "camera_tutorial is listening, but no curl/wget is available for snapshot health check" >&2
+  exit 0
+fi
+echo "camera_tutorial did not produce a snapshot frame." >&2
+describe_camera_owners
+tail -40 /tmp/df-camera.log 2>/dev/null >&2
+exit 1
+'
+
+echo "Starting robot camera on ${SSH_TARGET}:${REMOTE_PORT} ..."
+# Don't let a failed camera launch (robot unreachable / build missing) abort the
+# whole script under 'set -e'. Warn and continue — the tunnel below will surface
+# the real connectivity state, and the camera may already be running.
+if ! ssh "${SSH_COMMON_OPTS[@]}" "${SSH_TARGET}" "${REMOTE_START}"; then
+  echo "WARNING: could not start camera_tutorial on the robot (unreachable or not built?)." >&2
+  echo "         Continuing to open the tunnel anyway in case the stream is already up." >&2
+fi
+
+echo "Opening SSH tunnel: http://127.0.0.1:${LOCAL_PORT}/?action=stream"
+
+# Auto-reconnect: prefer autossh (purpose-built tunnel keeper). With -M 0 we
+# disable autossh's own monitoring port and rely on SSH ServerAlive keepalives
+# (set in SSH_COMMON_OPTS) to detect a dead link and trigger a reconnect.
+# Fall back to plain ssh with the same keepalive options when autossh is absent.
+FORWARD_SPEC="127.0.0.1:${LOCAL_PORT}:127.0.0.1:${REMOTE_PORT}"
+if command -v autossh >/dev/null 2>&1; then
+  echo "(using autossh: tunnel auto-reconnects on drop)"
+  exec autossh -M 0 \
+    "${SSH_COMMON_OPTS[@]}" \
+    -T \
+    -N \
+    -L "${FORWARD_SPEC}" \
+    "${SSH_TARGET}"
+else
+  echo "WARNING: autossh not found; using plain ssh (no auto-reconnect on drop)." >&2
+  echo "         Install it for resilient tunnels:  sudo apt-get install autossh" >&2
+  exec ssh \
+    "${SSH_COMMON_OPTS[@]}" \
+    -T \
+    -N \
+    -L "${FORWARD_SPEC}" \
+    "${SSH_TARGET}"
+fi

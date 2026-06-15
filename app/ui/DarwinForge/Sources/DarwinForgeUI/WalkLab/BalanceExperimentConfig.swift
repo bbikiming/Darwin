@@ -85,6 +85,31 @@ public enum BalancePitchInputConvention: String, CaseIterable, Codable, Sendable
     }
 }
 
+/// 사이클 161 (P0-4, gyro closed-loop review): roll 부호 정규화 축.
+///
+/// pitch 와 동일 패턴. roll 부호가 ROBOTIS Walking.cpp 코드 컨벤션 (양수 = 왼쪽 기울)
+/// 과 실 robot IMU 출력 일치 여부에 따라 입력 단계에서 정규화.
+///
+/// 기존 동작 보존을 위해 default = `.imuRaw`.
+/// 실 robot 검증 후 `.negateLeftIsNegative` 옵션 사용 가능.
+public enum BalanceRollInputConvention: String, CaseIterable, Codable, Sendable, Identifiable {
+    /// **Default** — `corrections(rollErrDeg: imuRollDeg)` 그대로 전달 (현재 동작).
+    /// 코드 컨벤션 가정: 양수 = 왼쪽 기울.
+    case imuRaw
+    /// **Opt-in** — `corrections(rollErrDeg: -imuRollDeg)`. 실 robot 에서 왼쪽 기울 = 음수
+    /// 일 때 정규화.
+    case negateLeftIsNegative
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .imuRaw:               return "원본 (양수=왼쪽 기울 가정)"
+        case .negateLeftIsNegative: return "정규화 (음수=왼쪽 기울 보정)"
+        }
+    }
+}
+
 /// Gain profile 축.
 public enum BalanceGainProfile: String, CaseIterable, Codable, Sendable, Identifiable {
     /// ROBOTIS Walking.cpp oracle gain (hipR 0.5, knee 0.3, ankP 0.9, ankR 1.0).
@@ -117,27 +142,34 @@ public struct BalanceExperimentConfig: Codable, Equatable, Sendable {
     /// Default `.imuRaw` = 현재 동작 (코드 컨벤션 가정 그대로). 사용자가 P1.0 정적
     /// 캘리브레이션 결과 보고 `.negateForwardIsNegative` 로 전환 가능.
     public var pitchInputConvention: BalancePitchInputConvention
+    /// 사이클 161 (P0-4, gyro closed-loop review) — roll 입력 부호 정규화 (pitch 와 동일 패턴).
+    /// Default `.imuRaw` = 현재 동작. 실 robot 검증 후 `.negateLeftIsNegative` 전환 가능.
+    public var rollInputConvention: BalanceRollInputConvention
 
     public init(
         algorithmMode: BalanceAlgorithmMode = .robotisPControl,
         signConvention: BalanceSignConvention = .robotisWalkingCpp,
         gainProfile: BalanceGainProfile = .robotisOriginal,
         applyToRobot: Bool = true,
-        pitchInputConvention: BalancePitchInputConvention = .imuRaw
+        pitchInputConvention: BalancePitchInputConvention = .imuRaw,
+        rollInputConvention: BalanceRollInputConvention = .imuRaw
     ) {
         self.algorithmMode = algorithmMode
         self.signConvention = signConvention
         self.gainProfile = gainProfile
         self.applyToRobot = applyToRobot
         self.pitchInputConvention = pitchInputConvention
+        self.rollInputConvention = rollInputConvention
     }
 
     // MARK: - Codable backward compat
     //
     // v1.11.3 신규 필드 `pitchInputConvention` 은 기존 JSON / persisted state 디코드
     // 시 default = `.imuRaw` 적용. 명시적 init(from:) 으로 옵션 처리.
+    // 사이클 161: rollInputConvention 도 동일 패턴 — decodeIfPresent + default.
     private enum CodingKeys: String, CodingKey {
-        case algorithmMode, signConvention, gainProfile, applyToRobot, pitchInputConvention
+        case algorithmMode, signConvention, gainProfile, applyToRobot,
+             pitchInputConvention, rollInputConvention
     }
 
     public init(from decoder: Decoder) throws {
@@ -147,6 +179,8 @@ public struct BalanceExperimentConfig: Codable, Equatable, Sendable {
         self.gainProfile = try c.decode(BalanceGainProfile.self, forKey: .gainProfile)
         self.applyToRobot = try c.decode(Bool.self, forKey: .applyToRobot)
         self.pitchInputConvention = try c.decodeIfPresent(BalancePitchInputConvention.self, forKey: .pitchInputConvention) ?? .imuRaw
+        // 사이클 161 — rollInputConvention 신규 필드 backward compat.
+        self.rollInputConvention = try c.decodeIfPresent(BalanceRollInputConvention.self, forKey: .rollInputConvention) ?? .imuRaw
     }
 
     /// **Default — 사용자 robot 의 baseline. ROBOTIS 검증된 기준.**

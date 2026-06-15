@@ -1,6 +1,36 @@
 import SwiftUI
 import Charts
+import Accessibility
 import ForgeCore
+
+/// **V272-1 (2026-05-24) WCAG 1.4.1 fix — Scene attitude severity dual encoding**.
+///
+/// Color-only 인디케이터 (다른 컴포넌트 LiveGyroPanel/FallPredictionCard 와 동일한
+/// 25/35/45/50° tier) 가 WCAG 1.4.1 (정보를 색상만으로 전달 금지) 위반. color +
+/// systemImage 아이콘 dual encoding 으로 color-blind 사용자도 tier 전환 인식 가능.
+///
+/// Domain: 자세 (roll/pitch) 각도 — danger 임계값 비례 (기본 50°).
+enum SceneSeverity {
+    /// 자세 각도 (절대값) 에 따른 systemImage 이름.
+    static func icon(forAttitudeDeg value: Double, danger: Double = 50) -> String {
+        let absV = abs(value)
+        if absV >= danger        { return "octagon.fill" }                  // 50°+ critical
+        if absV >= danger * 0.90 { return "exclamationmark.triangle.fill" } // 45°+ severe
+        if absV >= danger * 0.70 { return "exclamationmark.circle.fill" }   // 35°+ warning
+        if absV >= danger * 0.50 { return "circle.fill" }                   // 25°+ caution
+        return "circle"                                                     // normal
+    }
+
+    /// 자세 각도 (절대값) 에 따른 색상 — 기존 angleColor 패턴 그대로 유지.
+    static func color(forAttitudeDeg value: Double, danger: Double = 50) -> Color {
+        let absV = abs(value)
+        if absV >= danger        { return DFColor.danger }
+        if absV >= danger * 0.90 { return DFColor.severe }
+        if absV >= danger * 0.70 { return DFColor.warning }
+        if absV >= danger * 0.50 { return DFColor.warning.opacity(0.7) }
+        return DFColor.textPrimary
+    }
+}
 
 /// **v1.11.18 (2026-05-19)** — RobotScene3D 위에 떠 있는 두 overlay.
 ///
@@ -20,47 +50,48 @@ import ForgeCore
 
 /// **v1.11.18**: 좌측 하단 attitude indicator overlay.
 public struct SceneGyroMiniOverlay: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @EnvironmentObject private var store: ConnectionStore
     @Environment(\.dfTheme) private var theme: DFTheme
 
     public init() {}
 
     public var body: some View {
-        // v1.11.23 (2026-05-21, Codex MED fix): tick 0.1s 유지 — WalkLab tick (50ms=20Hz)
-        // 와 IMU polling 정합. 0.2s 로 늘리면 4 sample/redraw 로 attitude indicator
-        // 부드러움 저하. 시각 hero 인 attitude indicator 는 데이터 갱신 따라 10Hz 유지.
-        TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-            VStack(alignment: .leading, spacing: DFSpace.xs2) {
-                attitudeIndicator
-                HStack(spacing: DFSpace.xs) {
-                    label("R", session.displayImuRollDeg, danger: 50)
-                    label("P", session.displayImuPitchDeg, danger: 50)
-                    Spacer(minLength: 0)
-                    sourceChip
-                }
-                if let imu = store.lastImuRaw {
-                    HStack(spacing: 6) {
-                        Text("ω")
-                            .font(DFFont.micro)
-                            .foregroundStyle(DFColor.textSecondary)
-                        Text(String(format: "%d°/s", Int(abs(imu.gyroXDps) + abs(imu.gyroYDps))))
-                            .font(DFFont.micro.monospacedDigit())
-                            .foregroundStyle(DFColor.textPrimary)
-                    }
+        // **v1.14.8 (2026-05-21) perf #3**: TimelineView(.periodic, by: 0.1) 제거.
+        // 종전: 10Hz 독립 redraw (시뮬 tick 20Hz 와 별개 clock) → attitude indicator
+        //       매 100ms 강제 재합성 (rotationEffect + clipShape + .regularMaterial
+        //       blur GPU 비용 누적). 사용자가 IMU 정체 시에도 반복 redraw.
+        // 신규: session.imuRollDeg / imuPitchDeg @Published 가 IMU update 마다 발화.
+        //       SwiftUI 가 reactive 하게 attitude indicator 갱신 — 정체 시 redraw X.
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            attitudeIndicator
+            HStack(spacing: DFSpace.xs) {
+                label("R", session.displayImuRollDeg, danger: 50)
+                label("P", session.displayImuPitchDeg, danger: 50)
+                Spacer(minLength: 0)
+                sourceChip
+            }
+            if let imu = store.lastImuRaw {
+                HStack(spacing: 6) {
+                    Text("ω")
+                        .font(DFFont.micro)
+                        .foregroundStyle(DFColor.textSecondary)
+                    Text(String(format: "%d°/s", Int(abs(imu.gyroXDps) + abs(imu.gyroYDps))))
+                        .font(DFFont.micro.monospacedDigit())
+                        .foregroundStyle(DFColor.textPrimary)
                 }
             }
-            .padding(DFSpace.xs2)
-            .frame(width: 120)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-            .overlay(
-                RoundedRectangle(cornerRadius: DFRadius.xs2)
-                    .stroke(sourceColor.opacity(DFOpacity.o30),
-                            lineWidth: DFSize.borderHairline)
-            )
-            .accessibilityLabel("IMU 자세 인디케이터 — roll \(Int(session.displayImuRollDeg))도, pitch \(Int(session.displayImuPitchDeg))도")
         }
+        .padding(DFSpace.xs2)
+        .frame(width: 120)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .stroke(sourceColor.opacity(DFOpacity.o30),
+                        lineWidth: DFSize.borderHairline)
+        )
+        .accessibilityLabel("IMU 자세 인디케이터 — roll \(Int(session.displayImuRollDeg))도, pitch \(Int(session.displayImuPitchDeg))도")
     }
 
     /// Artificial horizon style — roll 로 회전, pitch 로 horizon line 위/아래.
@@ -95,16 +126,15 @@ public struct SceneGyroMiniOverlay: View {
     }
 
     /// BalanceState 5-tier (25/35/45/50°) 정합 — 다른 컴포넌트와 색 일관성.
+    /// **V272-1 WCAG 1.4.1 fix**: 색상-only 인디케이터 → 색 + 아이콘 dual encoding.
+    /// color-blind 사용자도 tier 전환을 아이콘 변화로 인식 가능.
     private func label(_ axis: String, _ value: Double, danger: Double) -> some View {
-        let absV = abs(value)
-        let color: Color = {
-            if absV >= danger        { return DFColor.danger }                    // 50°
-            if absV >= danger * 0.90 { return DFColor.severe }                    // 45°
-            if absV >= danger * 0.70 { return DFColor.warning }                   // 35°
-            if absV >= danger * 0.50 { return DFColor.warning.opacity(0.7) }      // 25°
-            return DFColor.textPrimary
-        }()
+        let color = SceneSeverity.color(forAttitudeDeg: value, danger: danger)
+        let icon = SceneSeverity.icon(forAttitudeDeg: value, danger: danger)
         return HStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(DFIcon.micro)
+                .foregroundStyle(color)
             Text(axis)
                 .font(DFFont.micro)
                 .foregroundStyle(DFColor.textSecondary)
@@ -116,7 +146,7 @@ public struct SceneGyroMiniOverlay: View {
 
     private var sourceChip: some View {
         Text(sourceLabel)
-            .font(.system(size: 8, weight: .bold))
+            .font(DFFont.hudPillBold)
             .foregroundStyle(sourceColor)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
@@ -143,7 +173,7 @@ public struct SceneGyroMiniOverlay: View {
 
 /// **v1.11.18**: 우측 하단 walking 그래프 overlay.
 public struct SceneWalkGraphOverlay: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @Environment(\.dfTheme) private var theme: DFTheme
 
     /// 10초 sparkline 용 sample buffer.
@@ -153,29 +183,30 @@ public struct SceneWalkGraphOverlay: View {
     public init() {}
 
     public var body: some View {
-        // v1.11.23 (Codex MED fix): tick 0.1s 유지. WalkLab 50ms tick 의 4 sample/redraw
-        // 대신 2 sample/redraw 으로 sparkline 부드러움 보존.
-        TimelineView(.periodic(from: .now, by: 0.1)) { context in
-            VStack(alignment: .leading, spacing: DFSpace.xs2) {
-                headerRow
-                if !phaseHistory.isEmpty {
-                    sparkline
-                }
-                statsRow
+        // **v1.14.8 (2026-05-21) perf #3**: TimelineView(.periodic, by: 0.1) 제거.
+        // 종전: 10Hz 독립 redraw + .regularMaterial blur + Chart 재합성 → 좌측 overlay 와
+        //       합산 20Hz GPU 부담.
+        // 신규: session.elapsedMs (tick 마다 @Published) 변화로 appendSample 호출.
+        //       walking idle 시엔 elapsedMs 정체 → sparkline 자연스럽게 freeze.
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            headerRow
+            if !phaseHistory.isEmpty {
+                sparkline
             }
-            .padding(DFSpace.xs2)
-            .frame(width: 180)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
-            .overlay(
-                RoundedRectangle(cornerRadius: DFRadius.xs2)
-                    .stroke(DFColor.accent.opacity(DFOpacity.o30),
-                            lineWidth: DFSize.borderHairline)
-            )
-            .accessibilityLabel("보행 그래프 — phase \(session.phaseLabel)")
-            .onChange(of: context.date) { _, now in
-                appendSample(at: now)
-            }
+            statsRow
+        }
+        .padding(DFSpace.xs2)
+        .frame(width: 180)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.xs2)
+                .stroke(DFColor.accent.opacity(DFOpacity.o30),
+                        lineWidth: DFSize.borderHairline)
+        )
+        .accessibilityLabel("보행 그래프 — phase \(session.phaseLabel)")
+        .onChange(of: session.elapsedMs) { _, _ in
+            appendSample(at: Date())
         }
     }
 
@@ -197,23 +228,10 @@ public struct SceneWalkGraphOverlay: View {
 
     private var sparkline: some View {
         // Roll 진동 + walking phase line 합성.
-        Chart {
-            ForEach(Array(rollHistory.enumerated()), id: \.offset) { _, sample in
-                LineMark(
-                    x: .value("t", sample.0),
-                    y: .value("roll", sample.1)
-                )
-                .foregroundStyle(DFColor.accent)
-                .interpolationMethod(.catmullRom)
-            }
-            RuleMark(y: .value("zero", 0))
-                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
-                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
-        }
-        .chartYScale(domain: -20...20)
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        .frame(height: 32)
+        SceneWalkSparklineChart(
+            rollHistory: rollHistory,
+            phaseLabel: session.phaseLabel
+        )
     }
 
     private var statsRow: some View {
@@ -231,10 +249,10 @@ public struct SceneWalkGraphOverlay: View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label)
                 .foregroundStyle(DFColor.textSecondary)
-                .font(.system(size: 8))
+                .font(DFFont.pill)
             Text(value)
                 .foregroundStyle(DFColor.textPrimary)
-                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .font(DFFont.hudValueSemibold)
         }
     }
 
@@ -258,5 +276,74 @@ public struct SceneWalkGraphOverlay: View {
         let cutoff = now.addingTimeInterval(-10.0)
         phaseHistory.removeAll { $0.0 < cutoff }
         rollHistory.removeAll { $0.0 < cutoff }
+    }
+}
+
+// MARK: - Scene walk sparkline chart (V274-4 a11y)
+//
+// **V274-4 (2026-05-24) WCAG 1.1.1 + 1.3.1 fix — chart 구조 VoiceOver 노출**.
+// Scene overlay 의 작은 sparkline 도 chart 데이터를 갖고 있으므로 AXChartDescriptor
+// 로 series / axis 노출. VoiceOver 사용자가 보행 중 roll 진동 추이 청취 가능.
+struct SceneWalkSparklineChart: View {
+    let rollHistory: [(Date, Double)]
+    let phaseLabel: String
+
+    var body: some View {
+        Chart {
+            ForEach(Array(rollHistory.enumerated()), id: \.offset) { _, sample in
+                LineMark(
+                    x: .value("t", sample.0),
+                    y: .value("roll", sample.1)
+                )
+                .foregroundStyle(DFColor.accent)
+                .interpolationMethod(.catmullRom)
+            }
+            RuleMark(y: .value("zero", 0))
+                .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
+                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+        }
+        .chartYScale(domain: -20...20)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .frame(height: 32)
+        .accessibilityChartDescriptor(self)
+    }
+}
+
+extension SceneWalkSparklineChart: AXChartDescriptorRepresentable {
+    func makeChartDescriptor() -> AXChartDescriptor {
+        let pts = WalkLabChartA11y.timeOffsetPoints(rollHistory)
+        let xMin = pts.map(\.x).min() ?? -10.0
+        let xMax = pts.map(\.x).max() ?? 0.0
+        let xAxis = AXNumericDataAxisDescriptor(
+            title: "시간 (초)",
+            range: xMin...xMax,
+            gridlinePositions: [xMin, (xMin + xMax) / 2, xMax]
+        ) { value in
+            String(format: "%.1f초 전", -value)
+        }
+        let yAxis = AXNumericDataAxisDescriptor(
+            title: "Roll (도)",
+            range: -20.0...20.0,
+            gridlinePositions: [-10, 0, 10]
+        ) { value in
+            "\(Int(value))도"
+        }
+        let series = AXDataSeriesDescriptor(
+            name: "Roll 진동",
+            isContinuous: true,
+            dataPoints: pts.map { AXDataPoint(x: $0.x, y: $0.y) }
+        )
+        return AXChartDescriptor(
+            title: "보행 sparkline (최근 10초)",
+            summary: WalkLabChartA11y.sceneWalkSparklineSummary(
+                rollHistory: rollHistory,
+                phaseLabel: phaseLabel
+            ),
+            xAxis: xAxis,
+            yAxis: yAxis,
+            additionalAxes: [],
+            series: [series]
+        )
     }
 }

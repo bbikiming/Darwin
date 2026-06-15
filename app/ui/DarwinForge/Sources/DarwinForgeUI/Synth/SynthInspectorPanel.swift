@@ -9,6 +9,9 @@ public struct SynthInspectorPanel: View {
     @ObservedObject var model: SynthModel
     @State private var bridge = SynthBridge()
     @State private var showingHelp = false
+    /// 사이클 180: Motion Studio 로 보내기 button 의 사용자 피드백 (성공/실패 메시지).
+    /// 2초 후 자동 dismiss.
+    @State private var exportToast: (message: String, isError: Bool)? = nil
 
     public var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.sm3) {
@@ -107,10 +110,68 @@ public struct SynthInspectorPanel: View {
                     .padding(.horizontal)
             }
 
+            // 사이클 180 (P0 #3.2 fix, cycle 177 audit): Motion Studio 로 export.
+            // resultJSON 없으면 disabled.
+            if model.resultJSON != nil {
+                Divider()
+                exportToMotionStudioButton
+                    .padding(.horizontal)
+            }
+
             Spacer()
         }
         .sheet(isPresented: $showingHelp) {
             helpSheet()
+        }
+    }
+
+    /// 사이클 180: Synth 결과 → Motion Studio 통합 export 버튼.
+    /// resultJSON 디코딩 + NotificationCenter 발화 + section 자동 전환.
+    private var exportToMotionStudioButton: some View {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            Button(action: { exportToMotionStudio() }) {
+                Label("Motion 스튜디오 로 보내기", systemImage: "arrow.up.forward.square")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .help("합성 결과 페이지를 Motion Studio 에 import 하고 화면을 전환합니다. " +
+                  "외부 forge CLI 없이 한 클릭으로 작업 흐름 연결.")
+
+            if let toast = exportToast {
+                Text(toast.message)
+                    .font(.caption)
+                    .foregroundStyle(toast.isError ? DFColor.danger : DFColor.success)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private func exportToMotionStudio() {
+        let result = SynthMotionExporter.pages(from: model.resultJSON)
+        switch result {
+        case .success(let pages):
+            NotificationCenter.default.post(
+                name: .dfImportSynthPagesToMotionStudio,
+                object: pages
+            )
+            NotificationCenter.default.post(
+                name: .dfSwitchSection, object: "motion"
+            )
+            exportToast = (
+                message: "✓ \(pages.count) 페이지 Motion 스튜디오 로 전송",
+                isError: false
+            )
+        case .failure(let err):
+            exportToast = (
+                message: SynthMotionExporter.koreanMessage(for: err),
+                isError: true
+            )
+        }
+        // 2초 후 toast 제거.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            exportToast = nil
         }
     }
 

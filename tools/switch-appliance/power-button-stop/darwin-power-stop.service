@@ -1,0 +1,19 @@
+[Unit]
+Description=Darwin Switch Appliance — Power/Sleep Button Robot STOP (L4 safety)
+# Ordered after the cockpit agent so /api/action is reachable when we fire.
+After=darwin-switch-agent.service
+Wants=darwin-switch-agent.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+# Installer copies the script here (see appliance install layout).
+ExecStart=/usr/bin/python3 /opt/darwin-switch-agent/appliance/power-button-stop/darwin-power-stop.py
+# Needs /dev/input read access.
+User=root
+Group=root
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

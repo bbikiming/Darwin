@@ -12,11 +12,14 @@ import SwiftUI
 /// 4. **알고리즘 / 부호 분리** — 종전 v1.10 에서 Hybrid B+A 와 ROBOTIS 부호가
 ///    한 묶음으로 묶여 "어느 차원이 효과를 냈는지" 분리 검증 불가했던 문제 해결.
 public struct BalanceExperimentControls: View {
-    @ObservedObject var session: WalkLabSession
+    @Bindable var session: WalkLabSession  // $session.foo binding 사용 → @Bindable
     @State private var showExpert: Bool = false
     /// **v1.11.1 (2026-05-18 사용자 review MEDIUM-6)**: hybridBA + applyToRobot 또는
     /// v110Experimental gain + applyToRobot 토글 시 명시 확인 sheet.
     @State private var pendingRiskyApply: BalanceExperimentConfig? = nil
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
 
     public init(session: WalkLabSession) {
         self.session = session
@@ -36,6 +39,15 @@ public struct BalanceExperimentControls: View {
     /// 이므로 "사용자가 확인하면 적용" 패턴 자체가 부적절. session.didSet / startWalkCycle
     /// 진입 가드가 이중 안전망이지만 UI 단에서도 명시 거부하여 사용자 의도 오해 차단.
     private func requestConfigChange(_ newConfig: BalanceExperimentConfig) {
+        harness.record(
+            .walklabBalanceProfileChanged, level: .info, actor: .user,
+            data: [
+                "algorithm": AnyCodable(newConfig.algorithmMode.rawValue),
+                "sign": AnyCodable(newConfig.signConvention.rawValue),
+                "gain": AnyCodable(newConfig.gainProfile.rawValue),
+                "apply_to_robot": AnyCodable(newConfig.applyToRobot),
+            ]
+        )
         if case .blocked = newConfig.safetyVerdict {
             // 사용자 의도 (algorithm/sign/gain/pitchInputConvention 변경) 는 보존하되
             // applyToRobot 만 강제 OFF. **v1.11.4 (2026-05-18) fix**: pitchInputConvention
@@ -64,6 +76,18 @@ public struct BalanceExperimentControls: View {
 
             // 2) Profile picker — 한 줄로 자주 쓰는 4개 프로파일.
             profileRow
+
+            // **v1.15.5 (2026-05-21) Phase 1.5 — ApplyScope badge**.
+            // verification §4.2 — balanceExperimentConfig 가 Onboard 모드에서 미송신.
+            // observeOnly algorithm 은 pose 변경 X → .previewOnly 자동 선택.
+            // engine 별 + algorithm 별 정확한 scope 표시.
+            WalkLabApplyScopeBadge(
+                scope: WalkLabApplyScopeResolver.scopeForBalanceConfig(
+                    engine: session.walkingEngine,
+                    algorithmMode: session.balanceExperimentConfig.algorithmMode
+                ),
+                style: .full
+            )
 
             // **v1.11.8 (2026-05-18) — HIGH-1 fix**: .robotisOnboard 모드에선 Mac
             // corrector path 자체가 우회되므로 5축 토글 (algorithm/sign/gain/pitchInput
@@ -301,12 +325,29 @@ public struct BalanceExperimentControls: View {
 
             HStack {
                 Button("취소") {
+                    harness.record(
+                        .walklabBalanceRiskyCancelled, level: .info, actor: .user,
+                        data: [
+                            "algorithm": AnyCodable(config.algorithmMode.rawValue),
+                            "sign": AnyCodable(config.signConvention.rawValue),
+                            "gain": AnyCodable(config.gainProfile.rawValue),
+                        ]
+                    )
                     pendingRiskyApply = nil
                 }
                 .buttonStyle(.bordered)
                 .keyboardShortcut(.escape)
                 Spacer()
                 Button(isAlternateSign ? "관찰 전용으로 진행" : "이해함, 실 적용 진행") {
+                    harness.record(
+                        .walklabBalanceRiskyConfirmed, level: .warn, actor: .user,
+                        data: [
+                            "algorithm": AnyCodable(config.algorithmMode.rawValue),
+                            "sign": AnyCodable(config.signConvention.rawValue),
+                            "gain": AnyCodable(config.gainProfile.rawValue),
+                            "apply_to_robot": AnyCodable(config.applyToRobot),
+                        ]
+                    )
                     session.balanceExperimentConfig = config
                     pendingRiskyApply = nil
                 }
@@ -332,21 +373,15 @@ public struct BalanceExperimentControls: View {
     /// **v1.11.8 (2026-05-18) — HIGH-1 fix**: .robotisOnboard 모드에선 Mac corrector
     /// path 가 우회되므로 5축 토글이 무효임을 명시. expert disclosure 내 토글들도
     /// 자동 disabled 처리.
+    ///
+    /// **V280-E (2026-05-24)**: hardcoded HStack/background → DFBanner (.info).
     @ViewBuilder
     private var onboardModeNotice: some View {
-        HStack(alignment: .top, spacing: DFSpace.xs2) {
-            Image(systemName: "info.circle.fill")
-                .font(DFFont.label)
-                .foregroundStyle(DFColor.info)
-            Text("ROBOTIS Onboard 모드에선 Mac balance corrector 가 우회됩니다. 아래 5축 토글은 robot-side Walking 엔진에 영향 없음 (record 만).")
-                .font(DFFont.micro)
-                .foregroundStyle(DFColor.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(DFSpace.xs2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DFColor.info.opacity(DFOpacity.o10))
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+        DFBanner(
+            title: "ROBOTIS Onboard 모드 — Mac corrector 우회",
+            message: "아래 5축 토글은 robot-side Walking 엔진에 영향 없음 (record 만).",
+            severity: .info
+        )
     }
 
     /// **v1.11.8**: .robotisOnboard 시 5축 토글 disabled 헬퍼.
@@ -356,39 +391,16 @@ public struct BalanceExperimentControls: View {
 
     // MARK: - Safety banner
 
+    /// **V280-E (2026-05-24)**: hardcoded HStack/background → DFBanner (.warning/.error).
     @ViewBuilder
     private var safetyBanner: some View {
         switch session.balanceExperimentConfig.safetyVerdict {
         case .safe:
             EmptyView()
         case .caution(let msg):
-            HStack(alignment: .top, spacing: DFSpace.xs2) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(DFColor.warning)
-                Text(msg)
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.warning)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(DFSpace.xs2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DFColor.warning.opacity(DFOpacity.o15))
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+            DFBanner(title: msg, severity: .warning)
         case .blocked(let msg):
-            HStack(alignment: .top, spacing: DFSpace.xs2) {
-                Image(systemName: "hand.raised.fill")
-                    .foregroundStyle(DFColor.danger)
-                Text(msg)
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.danger)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(DFSpace.xs2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DFColor.danger.opacity(DFOpacity.o15))
-            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs2))
+            DFBanner(title: msg, severity: .error)
         }
     }
 
@@ -542,6 +554,17 @@ public struct BalanceExperimentControls: View {
                 Text(title)
                     .font(DFFont.micro)
                     .foregroundStyle(DFColor.textSecondary)
+                // V279-2 (P1 discoverability fix): 각 axis 옆 info icon — 옵션이
+                // 무엇이고 언제 쓰는지 hover 안내. segmented picker 는 segment 별
+                // help 불가 → 전체 옵션 안내를 axis 라벨 옆 info 에 통합.
+                if let axisHelp = axisHelpText(for: Mode.self) {
+                    Image(systemName: "info.circle")
+                        .font(DFFont.micro)
+                        .foregroundStyle(DFColor.info.opacity(DFOpacity.subtle))
+                        .help(axisHelp)
+                        .accessibilityLabel("\(title) 옵션 설명")
+                        .accessibilityHint(axisHelp)
+                }
             }
             Picker(title, selection: selection) {
                 ForEach(Array(Mode.allCases), id: \.id) { (mode: Mode) in
@@ -560,6 +583,37 @@ public struct BalanceExperimentControls: View {
         if let m = mode as? BalanceGainProfile { return m.label }
         if let m = mode as? BalancePitchInputConvention { return m.label }
         return mode.rawValue
+    }
+
+    /// V279-2 (P1 discoverability fix): axis 별 옵션 안내 — 각 enum 옵션의 의미와
+    /// 언제 쓰는지 1줄 안내. segmented picker 는 옵션 별 help 가 불가 → axis 라벨
+    /// 옆 info icon 에서 모든 옵션을 한 번에 안내.
+    ///
+    /// **주의**: `alternateDiagnostic` 은 fall 가속 위험 — observe-only 권장.
+    /// (BalanceExperimentConfig.swift 의 enum 주석과 일치.)
+    private func axisHelpText<Mode>(for type: Mode.Type) -> String? {
+        if type == BalanceAlgorithmMode.self {
+            return "보정 알고리즘 — ROBOTIS 공식 / Hybrid 등 선택. " +
+                   "Hybrid 는 시뮬 검증만 — 실 robot 적용 시 주의."
+        }
+        if type == BalanceSignConvention.self {
+            return "부호 규약 — corrections 의 sagittal 부호 적용 방식.\n" +
+                   "• ROBOTIS 기준: 공식 walking_engine 부호 (기본 권장)\n" +
+                   "• 반대 부호 실험: 부호 반전 진단 실험. 실 robot 적용 시 fall " +
+                   "가속 위험 — observe-only 모드 권장."
+        }
+        if type == BalancePitchInputConvention.self {
+            return "Pitch 입력 정규화 — IMU pitch 부호 처리 방식.\n" +
+                   "• 원본: IMU 값 그대로 사용 (양수=앞기울 가정, 기본)\n" +
+                   "• 정규화: IMU 값 반전 (실 robot 에서 음수=앞기울 캘리브 후 사용)"
+        }
+        if type == BalanceGainProfile.self {
+            return "Gain 프로파일 — 4 관절 (hipRoll/knee/anklePitch/ankleRoll) 게인.\n" +
+                   "• ROBOTIS 원본: 공식 검증 게인 (기본 권장)\n" +
+                   "• v1.10 실험: random search 결과 — 실 검증 전\n" +
+                   "• 사용자 지정: 4 게인 직접 슬라이더 조절 (expert)"
+        }
+        return nil
     }
 
     // MARK: - Helpers

@@ -13,7 +13,7 @@ import SwiftUI
 /// 4. WalkLab preset 시작 → Mac sparse 합성 우회, robot 측 Walking::GetInstance() 사용
 /// 5. 사용자가 종료 시 "ROBOTIS 측 종료" 버튼 → walkLabRobotisStop send
 public struct WalkingEnginePicker: View {
-    @ObservedObject var session: WalkLabSession
+    @Bindable var session: WalkLabSession  // $session.foo binding 사용 → @Bindable
     /// RemoteShell 명령 전송 callback — 부모 view 가 inject. nil 이면 버튼 disabled.
     public var onStartOnboard: (() -> Void)? = nil
     public var onStopOnboard: (() -> Void)? = nil
@@ -41,7 +41,9 @@ public struct WalkingEnginePicker: View {
                 Image(systemName: "cpu.fill")
                     .font(DFFont.label)
                     .foregroundStyle(engineTint)
-                Text("보행 엔진 (v1.11.5)")
+                // V279-1 (2026-05-24) cognitive load P0 — UI label internal version
+                // strip. 사용자 의미 없는 "(v1.11.5)" 제거. docstring 보존.
+                Text("보행 엔진")
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textPrimary)
                 Spacer()
@@ -68,10 +70,11 @@ public struct WalkingEnginePicker: View {
                 .foregroundStyle(DFColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // ROBOTIS onboard 시 안전 경고 + 시작/종료 버튼
+            // ROBOTIS onboard 시 안전 경고 + 시작/종료 버튼 + 온보드 패드 조작 안내
             if session.walkingEngine == .robotisOnboard {
                 onboardWarning
                 onboardActions
+                onboardGamepadReference
             }
         }
         .padding(DFSpace.xs2)
@@ -137,9 +140,18 @@ public struct WalkingEnginePicker: View {
             // **v1.11.5.1 (2026-05-18)** — x/y/a 명령 brokering 송출 버튼.
             // 사용자가 preset 또는 tuning 변경 후 누르면 robot 의 `/tmp/df-walklab-cmd`
             // 에 한 줄 write — robot-side patch 가 5Hz polling 으로 read.
+            //
+            // **v1.11.24 (2026-05-20) audit iter2-E** — quickPreflight 와 동일한 차단 사유
+            // (cradle / caution + balance OFF / SSH / IMU) 를 버튼 단계에서 적용.
+            // 종전: 사용자가 fastWalk + 보정 OFF 상태로 본 버튼 눌러 robot 에 직접 송출 가능 → 낙상 위험.
+            // v1.11.24 audit iter3-B — enabled 는 실 motor task 가 active 인 preset 우선.
+            // 종전: session.current 만 보고 enabled 결정 → preflight 차단으로 current 가
+            // 바뀌지 않더라도 stale `enabled` 송출. 일관성을 위해 bridge 와 같은 source.
+            let effectivePreset = session.activeRobotPreset ?? session.current
             let currentCmd = session.currentWalkingEngineCommand(
-                enabled: session.current != .idle
+                enabled: effectivePreset != .idle
             )
+            let manualSendBlock = session.onboardManualSendBlockReason
             HStack(spacing: DFSpace.xs2) {
                 Button {
                     onSendCommand?(currentCmd)
@@ -151,7 +163,14 @@ public struct WalkingEnginePicker: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(onSendCommand == nil)
+                .disabled(onSendCommand == nil || manualSendBlock != nil)
+                .help(manualSendBlock ?? "현재 preset/tuning 을 robot 에 송출")
+                if let reason = manualSendBlock {
+                    Text(reason)
+                        .font(DFFont.micro)
+                        .foregroundStyle(DFColor.warning)
+                        .lineLimit(1)
+                }
                 Spacer()
             }
 
@@ -171,6 +190,60 @@ public struct WalkingEnginePicker: View {
             }
             .toggleStyle(.switch)
             .controlSize(.mini)
+        }
+    }
+
+    // MARK: - 온보드 패드 (RG G01) 조작 안내 (F12, 2026-06-13)
+
+    /// 온보드 demo 가 직접 읽는 RG G01 동글 매핑 — Mac 측 GCController 어댑터와 별개
+    /// (이 패드는 로봇에 직결, 킥은 온보드 펌웨어 전용). 매핑은 펌웨어
+    /// `GamepadPilot.h` 가 정본 — 여기는 그 표시 미러. 킥(LB/RB)을 강조.
+    @ViewBuilder
+    private var onboardGamepadReference: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "gamecontroller.fill")
+                    .font(DFFont.micro)
+                    .foregroundStyle(engineTint)
+                Text("온보드 패드 (RG G01) 조작")
+                    .font(DFFont.sectionLabel)
+                    .foregroundStyle(DFColor.textPrimary)
+                Spacer()
+                Text("로봇 직결")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+            mappingRow("LB", "왼발 킥", highlight: true)
+            mappingRow("RB", "오른발 킥", highlight: true)
+            mappingRow("A", "ARM (이동 게이트)")
+            mappingRow("B", "E-STOP (즉시 정지)")
+            mappingRow("Y", "복구 (E-STOP 해제)")
+            mappingRow("X", "볼 트래킹 토글")
+            mappingRow("LS", "이동 · 횡")
+            mappingRow("RS", "머리 제어")
+            mappingRow("LT / RT", "좌 / 우 회전")
+            Text("킥은 ARM 후 STANDUP(서 있는) 상태에서만 발화. 킥 중 B = 즉시 중단.")
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+        }
+        .padding(DFSpace.xs2)
+        .background(DFColor.warning.opacity(DFOpacity.o06))
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+    }
+
+    private func mappingRow(_ button: String, _ action: String,
+                            highlight: Bool = false) -> some View {
+        HStack(spacing: DFSpace.xs2) {
+            Text(button)
+                .font(DFFont.micro)
+                .foregroundStyle(highlight ? DFColor.warning : DFColor.textPrimary)
+                .frame(width: 48, alignment: .leading)
+            Text(action)
+                .font(DFFont.micro)
+                .foregroundStyle(DFColor.textSecondary)
+            Spacer()
         }
     }
 }

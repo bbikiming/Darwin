@@ -1,0 +1,17 @@
+[Unit]
+Description=Darwin Switch Robot Camera SSH Tunnel
+After=network-online.target
+Wants=network-online.target
+PartOf=darwin-switch-agent.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/local/bin/darwin-switch-camera-tunnel --from-config /etc/darwin-switch-agent/config.json
+Restart=always
+RestartSec=3
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

@@ -14,17 +14,23 @@ public struct PilotTransitionOverlay: View {
     let steps: [PilotTransitionStep]
     /// 현재 진행 중인 step 의 index — nil 이면 모두 완료.
     let activeIndex: Int?
+    /// **사이클 119 (audit #15, P0)**: 추정 진행 vs 실 진행 polling 명시.
+    /// `true` = patched demo 의 progress 파일 polling (실 진행 sync).
+    /// `false` = `Task.sleep(estimatedSeconds)` 만 사용 (사용자에게 추정임을 표시 필요).
+    let usesRealPolling: Bool
     /// 사용자가 .waitingForUser 단계에서 "확인" 누르면 호출 — RemotePilotView 가 다음 step 으로.
     let onAdvance: () -> Void
     let onCancel: () -> Void
 
     public init(title: String, steps: [PilotTransitionStep],
                 activeIndex: Int?,
+                usesRealPolling: Bool = true,
                 onAdvance: @escaping () -> Void = {},
                 onCancel: @escaping () -> Void) {
         self.title = title
         self.steps = steps
         self.activeIndex = activeIndex
+        self.usesRealPolling = usesRealPolling
         self.onAdvance = onAdvance
         self.onCancel = onCancel
     }
@@ -32,6 +38,11 @@ public struct PilotTransitionOverlay: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: DFSpace.md) {
             header
+            // **사이클 119 (audit #15, P0)**: fake/추정 진행 명시 — patched demo 가 아닐 때
+            // 실 robot 상태 polling 안 됨 → 사용자가 progress bar 진행을 "실 진행" 으로 오해 방지.
+            if !usesRealPolling {
+                estimatedProgressBadge
+            }
             Divider()
             stepsList
             Divider()
@@ -83,6 +94,27 @@ public struct PilotTransitionOverlay: View {
             return "단계 \(i + 1) / \(steps.count) — \(steps[i].title)"
         }
         return "모든 단계 완료"
+    }
+
+    /// **사이클 119 (audit #15)**: estimated progress 진행 시 사용자 명시 badge.
+    /// patched demo (`/tmp/df-pilot-progress` 파일 polling) 가 없으면 robot 측 실 진행
+    /// 추적 불가 → `Task.sleep(estimatedSeconds)` 만 사용 → "진행 중" 이 사실은 timer.
+    private var estimatedProgressBadge: some View {
+        HStack(spacing: DFSpace.xs2) {
+            Image(systemName: "clock.badge.exclamationmark")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+            Text("추정 진행 — 실 robot 단계 미확인 (patched demo 미설치)")
+                .font(DFFont.caption)
+                .foregroundStyle(.orange)
+        }
+        .padding(.horizontal, DFSpace.sm)
+        .padding(.vertical, DFSpace.xs2)
+        .background(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .accessibilityIdentifier("pilot.transition.estimated.badge")
     }
 
     private var stepsList: some View {
@@ -168,11 +200,27 @@ public struct PilotTransitionOverlay: View {
                     .foregroundStyle(DFColor.warning)
             }
         case .completed:
-            ZStack {
-                Circle().fill(DFColor.success.opacity(DFOpacity.o15))
-                Image(systemName: "checkmark")
-                    .font(.system(size: DFFontSize.s14, weight: .bold))
-                    .foregroundStyle(DFColor.success)
+            // 사이클 146 (IMPLEMENTATION audit #5): estimated 모드에서는 checkmark 대신
+            // clock badge — "추정 진행 — 실 robot 확인 아님" 명시. green 그대로면 사용자가
+            // robot 측 검증 완료로 오해 가능. orange clock = "timer 종료, robot 확인 안 됨".
+            // 사이클 149 (codex MINOR #1 fix): accessibility label 추가 — 색맹 사용자
+            // 위한 WCAG 1.4.1 보강 (shape 변경만으로는 부족).
+            if usesRealPolling {
+                ZStack {
+                    Circle().fill(DFColor.success.opacity(DFOpacity.o15))
+                    Image(systemName: "checkmark")
+                        .font(.system(size: DFFontSize.s14, weight: .bold))
+                        .foregroundStyle(DFColor.success)
+                }
+                .accessibilityLabel("로봇 확인 완료")
+            } else {
+                ZStack {
+                    Circle().fill(Color.orange.opacity(DFOpacity.o15))
+                    Image(systemName: "clock.badge.checkmark")
+                        .font(.system(size: DFFontSize.s14, weight: .bold))
+                        .foregroundStyle(.orange)
+                }
+                .accessibilityLabel("추정 완료 — 로봇 미확인")
             }
         case .failed:
             ZStack {

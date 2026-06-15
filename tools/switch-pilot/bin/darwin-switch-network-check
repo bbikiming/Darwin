@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALLED_ROOT="${DARWIN_SWITCH_ROOT:-/opt/darwin-switch-agent}"
+if [[ -d "${SCRIPT_ROOT}/src/darwin_switch_agent" ]]; then
+  ROOT_DIR="${SCRIPT_ROOT}"
+elif [[ -d "${INSTALLED_ROOT}/src/darwin_switch_agent" ]]; then
+  ROOT_DIR="${INSTALLED_ROOT}"
+else
+  ROOT_DIR="${SCRIPT_ROOT}"
+fi
+PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+  exec python3 -m darwin_switch_agent.network_check --root "${ROOT_DIR}" "$@"

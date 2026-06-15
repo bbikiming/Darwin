@@ -6,10 +6,16 @@ public struct TeachModeView: View {
     @EnvironmentObject var store: ConnectionStore
     @StateObject private var capture = TeachCapture()
     @StateObject private var camera = CameraController()
+    /// **W3**: 로봇공학 오버레이 토글 store(Teach 기본값).
+    @StateObject private var overlayStore = OverlayToggleStore(preset: .teach)
     @State private var snapshotName: String = ""
     @State private var selectedSnapshot: TeachCapture.PoseSnapshot?
+    @State private var showComparison: Bool = false
     @State private var torqueSidebarOpen: Bool = true
     @Environment(\.dfWindowWidth) private var winWidth
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
 
     public init() {}
 
@@ -31,6 +37,9 @@ public struct TeachModeView: View {
             }
         }
         .onAppear {
+            // 사이클 197 (cycle 190 audit P2 #6): cross-menu 재진입 시 navigation telemetry.
+            harness.record(.uiViewAppeared, level: .trace, actor: .user,
+                                  data: ["view": AnyCodable("teach")])
             if store.bus != nil {
                 capture.startCapture(store: store)
             }
@@ -87,13 +96,15 @@ public struct TeachModeView: View {
             RobotScene3D(pose: capture.livePose,
                          footTrace: [],
                          showAxes: true,
-                         cameraController: camera)
+                         cameraController: camera,
+                         preset: .teach,
+                         overlays: overlayStore.overlays)
                 .background(LinearGradient(
                     colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                     startPoint: .top, endPoint: .bottom))
             sceneOverlay
                 .padding(DFSpace.md)
-            ViewportControls(camera: camera)
+            ViewportControls(camera: camera, overlayStore: overlayStore)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topTrailing)
         }
@@ -238,6 +249,7 @@ public struct TeachModeView: View {
                         }
                         .buttonStyle(.plain)
                         .help("모두 삭제")
+                        .accessibilityLabel("스냅샷 모두 삭제")
                     }
                 }) {
             VStack(spacing: DFSpace.sm) {
@@ -256,11 +268,20 @@ public struct TeachModeView: View {
                 }
 
                 if capture.snapshots.isEmpty {
-                    Text("저장된 자세 없음 — [스냅샷] 으로 현재 자세 캡처")
-                        .font(DFFont.caption)
-                        .foregroundStyle(DFColor.textSecondary)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity)
+                    VStack(spacing: DFSpace.xs) {
+                        Text("저장된 자세 없음 — [스냅샷] 으로 현재 자세 캡처")
+                            .font(DFFont.caption)
+                            .foregroundStyle(DFColor.textSecondary)
+                        // 사이클 212: 이전 세션 스냅샷 메타데이터 복원 힌트.
+                        if capture.persistedSnapshotCount > 0 {
+                            Label("이전 세션에서 \(capture.persistedSnapshotCount)개의 스냅샷이 있었습니다 (재캡처 필요)",
+                                  systemImage: "clock.arrow.circlepath")
+                                .font(.system(size: DFFontSize.s10))
+                                .foregroundStyle(DFColor.info)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
                 } else {
                     VStack(spacing: DFSpace.xs) {
                         ForEach(capture.snapshots) { s in
@@ -268,7 +289,72 @@ public struct TeachModeView: View {
                         }
                     }
                 }
+
+                // 사이클 212: PoseDeltaCalculator UI wire-up (cycle 207 model).
+                if capture.snapshots.count >= 2 {
+                    Divider()
+                    poseDeltaSection
+                }
             }
+        }
+    }
+
+    // MARK: - Pose Delta Comparison (사이클 212)
+
+    @ViewBuilder
+    private var poseDeltaSection: some View {
+        let snaps = capture.snapshots
+        if snaps.count >= 2 {
+            let cmp = PoseDeltaCalculator.compare(
+                baseline: snaps[1].pose,
+                candidate: snaps[0].pose,
+                baselineLabel: snaps[1].name,
+                candidateLabel: snaps[0].name
+            )
+            DisclosureGroup("자세 비교 — \(snaps[0].name) vs \(snaps[1].name)") {
+                VStack(alignment: .leading, spacing: DFSpace.xs2) {
+                    HStack {
+                        Text("RMS Δ")
+                            .font(DFFont.caption.bold())
+                            .foregroundStyle(DFColor.textSecondary)
+                        Text(String(format: "%.1f°", cmp.rmsDeg))
+                            .font(.system(size: DFFontSize.s13, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(cmp.rmsDeg > 10 ? DFColor.warning : DFColor.success)
+                    }
+                    if let peak = cmp.peakJoint {
+                        HStack {
+                            Text("최대 편차")
+                                .font(DFFont.caption.bold())
+                                .foregroundStyle(DFColor.textSecondary)
+                            Text("\(peak.jointName) \(String(format: "%+.1f°", peak.deltaDeg))")
+                                .font(.system(size: DFFontSize.s11, design: .monospaced))
+                                .foregroundStyle(DFColor.accent)
+                        }
+                    }
+                    // top 5 관절 delta bar
+                    let sorted = cmp.perJointDeltas.sorted { $0.absDeltaDeg > $1.absDeltaDeg }.prefix(5)
+                    ForEach(Array(sorted.enumerated()), id: \.offset) { _, d in
+                        HStack(spacing: DFSpace.xs) {
+                            Text(d.jointName)
+                                .font(.system(size: DFFontSize.s9, design: .monospaced))
+                                .frame(width: 70, alignment: .leading)
+                            GeometryReader { geo in
+                                let maxDeg = cmp.peakJoint?.absDeltaDeg ?? 1
+                                let ratio = maxDeg > 0 ? d.absDeltaDeg / maxDeg : 0
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(d.deltaDeg > 0 ? DFColor.info : DFColor.warning)
+                                    .frame(width: geo.size.width * ratio)
+                            }
+                            .frame(height: 8)
+                            Text(String(format: "%+.1f°", d.deltaDeg))
+                                .font(.system(size: DFFontSize.s9, design: .monospaced))
+                                .frame(width: 50, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding(.top, DFSpace.xs)
+            }
+            .font(DFFont.caption)
         }
     }
 
@@ -287,6 +373,15 @@ public struct TeachModeView: View {
             // 사용자 자세 라이브러리에 영구 저장.
             Button {
                 UserPoseLibrary.shared.save(name: s.name, pose: s.pose)
+                // v1.12.2 telemetry — 사용자 라이브러리 저장 (name redacted).
+                harness.record(
+                    .poseLibrarySaved, level: .notice, actor: .user,
+                    data: ["name_hash": AnyCodable(Harness.shortHash(s.name)),
+                           "name_len": AnyCodable(s.name.count),
+                           "snapshot_id": AnyCodable(s.id.uuidString),
+                           "joint_count": AnyCodable(s.pose.positions.count),
+                           "library_size_after": AnyCodable(UserPoseLibrary.shared.entries.count)]
+                )
             } label: {
                 Image(systemName: "bookmark.fill")
                     .font(.system(size: DFFontSize.s10))
@@ -294,6 +389,7 @@ public struct TeachModeView: View {
             }
             .buttonStyle(.plain)
             .help("사용자 라이브러리에 영구 저장 — 다른 메뉴에서 활용")
+            .accessibilityLabel("사용자 라이브러리에 저장")
 
             Button {
                 NotificationCenter.default.post(
@@ -309,6 +405,32 @@ public struct TeachModeView: View {
             }
             .buttonStyle(.plain)
             .help("Studio 에서 세부 편집 — 자동으로 스튜디오로 이동")
+            .accessibilityLabel("Studio 에서 편집")
+
+            // 사이클 193 (P0 #2): Teach → Motion Studio 자세 전달.
+            // V279-2 (P1 discoverability fix): "→ Motion" label 노출 — 아이콘만으로는
+            // 자세 snapshot 다음 단계 (Motion Studio 페이지 만들기) 가 안 보임. 사용자
+            // mental model: snapshot 찍은 후 "이제 뭐?" 에 대한 명시 진입점.
+            Button {
+                NotificationCenter.default.post(
+                    name: .dfTransferPoseToMotion, object: s.pose
+                )
+                NotificationCenter.default.post(
+                    name: .dfSwitchSection, object: "motion"
+                )
+            } label: {
+                HStack(spacing: 2) {
+                    Image(systemName: "film.stack")
+                        .font(.system(size: DFFontSize.s10))
+                    Text("→ Motion")
+                        .font(DFFont.micro)
+                }
+                .foregroundStyle(DFColor.forge)
+            }
+            .buttonStyle(.plain)
+            .help("이 자세를 Motion Studio 의 새 페이지로 추가하고 자동 이동 — " +
+                  "여러 자세를 시퀀스로 묶어 동작 동영상처럼 재생할 수 있어요.")
+            .accessibilityLabel("Motion Studio 에 페이지로 보내기")
 
             Button {
                 capture.applySnapshot(s, store: store)
@@ -319,6 +441,7 @@ public struct TeachModeView: View {
             }
             .buttonStyle(.plain)
             .help("로봇에 적용 — 토크 ON 필요")
+            .accessibilityLabel("로봇에 적용")
 
             Button {
                 capture.deleteSnapshot(s)
@@ -329,6 +452,7 @@ public struct TeachModeView: View {
             }
             .buttonStyle(.plain)
             .help("삭제")
+            .accessibilityLabel("스냅샷 삭제")
         }
         .padding(6)
         .background(DFColor.card)
@@ -343,15 +467,12 @@ public struct TeachModeView: View {
 
     // MARK: - Not connected
 
+    /// 미연결/보행 모드 게이트. 보행 모드면 관절편집 전환 CTA, 오프라인이면 기존 빠른 연결 안내.
     private var notConnectedPanel: some View {
-        DFEmptyState(
-            icon: "antenna.radiowaves.left.and.right.slash",
-            title: "로봇 연결 필요",
-            message: "티칭 모드는 실시간 통신이 필요합니다. 우측 상단 [⚡ 빠른 연결] 을 먼저 클릭하세요.",
-            tint: DFColor.warning
-        ) {
-            EmptyView()
-        }
+        ConnectionModeBanner(
+            offlineTitle: "로봇 연결 필요",
+            offlineMessage: "티칭 모드는 실시간 통신이 필요합니다. 우측 상단 [⚡ 빠른 연결] 을 먼저 클릭하세요."
+        )
     }
 
     // MARK: - Helpers

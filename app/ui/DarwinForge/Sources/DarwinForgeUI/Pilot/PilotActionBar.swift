@@ -19,6 +19,19 @@ public struct PilotActionBar: View {
 
     @State private var pendingConfirm: MotionPageMetadata?
     @State private var showMoreSheet: Bool = false
+    /// **사이클 121 (audit #11, P0)**: send 실패 시 사용자 보이게 표시. 종전 silent fail
+    /// (Task 결과 `_ = await`) → 사용자가 "왜 안 움직이지?" 혼동. 본 state 가 lastError
+    /// observe → banner 표시 + auto-dismiss.
+    @State private var displayedError: String?
+    /// 본 banner 자동 dismiss task — 재발화 시 cancel + 재시작.
+    @State private var errorDismissTask: Task<Void, Never>?
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    //
+    // 종전: `Harness.shared.record(...)` 직접 호출 (4 사이트) — 테스트/Preview 에서
+    //       NoopHarness 주입 불가 → 실제 디스크 IO 발생.
+    // 신규: SwiftUI Environment 주입. Root 가 LiveHarness 주입 (RootView).
+    @Environment(\.harness) private var harness
 
     public init(channel: TeleopChannel, gate: PilotSafetyGate, flags: PilotFeatureFlags,
                 demoOccupiesBus: Bool = false) {
@@ -42,6 +55,11 @@ public struct PilotActionBar: View {
             }
         ) {
             VStack(alignment: .leading, spacing: DFSpace.sm) {
+                // **사이클 121 (audit #11, P0)**: 송출 실패 시 사용자 명시 banner.
+                if let err = displayedError {
+                    errorBanner(err)
+                }
+
                 LazyVGrid(columns: gridColumns, spacing: DFSpace.sm) {
                     ForEach(Array(MotionCatalog.actionBarMain.enumerated()), id: \.element.slot) { idx, meta in
                         actionButton(meta, keyIndex: idx + 1)
@@ -49,6 +67,27 @@ public struct PilotActionBar: View {
                 }
 
                 moreButton
+            }
+        }
+        // **사이클 121 (audit #11)**: channel.lastError observer — 비-nil 변경 시 banner 표시 + 5초 후 dismiss.
+        .onChange(of: channel.lastError) { _, newError in
+            guard let err = newError, !err.isEmpty else { return }
+            // Gate-rejection 메시지는 pilotSafetyGateBlocked 에서 이미 기록됨 — errorException 중복 방지.
+            let isGateRejection = err.hasPrefix("먼저 ARM") || err.hasPrefix("위험 동작")
+            if !isGateRejection {
+                harness.record(
+                    .errorException, level: .error, actor: .system,
+                    data: ["source": AnyCodable("pilot.action_bar"),
+                           "error_hash": AnyCodable(Harness.shortHash(err))]
+                )
+            }
+            displayedError = err
+            errorDismissTask?.cancel()
+            errorDismissTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if !Task.isCancelled, displayedError == err {
+                    displayedError = nil
+                }
             }
         }
         .alert(item: $pendingConfirm) { meta in
@@ -63,9 +102,23 @@ public struct PilotActionBar: View {
                 title: Text("위험 동작 확인"),
                 message: Text("\(meta.displayNameKo)\n실행하면 \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초 동안 \(meta.bodyRegions.first?.rawValue ?? "관절") 가(이) 움직입니다.\(chainNote)\n\ncradle 거치를 확인했나요?"),
                 primaryButton: .destructive(Text("확인 후 실행")) {
+                    // .warn 의도적 — safety override 이벤트를 대시보드에서 플래그하기 위함.
+                    harness.record(
+                        .pilotActionBarRiskConfirmed, level: .warn, actor: .user,
+                        data: ["slot": AnyCodable(meta.slot),
+                               "safety_class": AnyCodable(meta.safetyClass.rawValue),
+                               "display_name_hash": AnyCodable(Harness.shortHash(meta.displayNameKo))]
+                    )
                     Task { _ = await channel.sendMotion(slot: meta.slot, confirmRisk: true) }
                 },
-                secondaryButton: .cancel(Text("취소"))
+                secondaryButton: .cancel(Text("취소")) {
+                    harness.record(
+                        .pilotActionBarRiskCancelled, level: .info, actor: .user,
+                        data: ["slot": AnyCodable(meta.slot),
+                               "safety_class": AnyCodable(meta.safetyClass.rawValue),
+                               "display_name_hash": AnyCodable(Harness.shortHash(meta.displayNameKo))]
+                    )
+                }
             )
         }
         .sheet(isPresented: $showMoreSheet) { moreSheet }
@@ -74,6 +127,42 @@ public struct PilotActionBar: View {
     /// 적응형 컬럼 — 110pt 미만으로 좁아지지 않음. 윈도우 폭에 따라 2~4 컬럼.
     private var gridColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 110, maximum: 200), spacing: 8, alignment: .top)]
+    }
+
+    /// **사이클 121 (audit #11, P0)**: 송출 실패 banner. orange tint, dismiss 버튼 포함.
+    /// 5초 후 자동 사라지지만 사용자가 명시 dismiss 가능.
+    @ViewBuilder
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: DFSpace.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(DFFont.caption)
+                .foregroundStyle(.orange)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                displayedError = nil
+                errorDismissTask?.cancel()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("오류 메시지 닫기")
+        }
+        .padding(.horizontal, DFSpace.sm)
+        .padding(.vertical, DFSpace.xs2)
+        .background(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 0.5)
+        )
+        .transition(.opacity.combined(with: .move(edge: .top)))
+        .accessibilityIdentifier("pilot.actionbar.error.banner")
     }
 
     /// Action Bar 의 상태별 부제목 — sim 미연결 / demo 점유 / ARM 전/후 분리.
@@ -181,7 +270,7 @@ public struct PilotActionBar: View {
         // 종전엔 라벨 VStack 안 텍스트 3개 (이름/duration/등급) 가 한 줄로 합쳐져
         // 읽혔음 → 사용자 인지 어려움.
         .accessibilityLabel(meta.displayNameKo)
-        .accessibilityHint("\(meta.safetyClass.koreanLabel), \(meta.durationMs/1000)초, 단축키 \(keyIndex)")
+        .accessibilityHint("\(meta.safetyClass.koreanLabel), \(String(format: "%.1f", Double(meta.durationMs)/1000.0))초, 단축키 \(keyIndex)")
     }
 
     private func safetyColor(_ s: SafetyClass) -> Color {
@@ -209,6 +298,12 @@ public struct PilotActionBar: View {
     }
 
     private func press(_ meta: MotionPageMetadata) {
+        harness.record(
+            .pilotActionBarPressed, level: .info, actor: .user,
+            data: ["slot": AnyCodable(meta.slot),
+                   "safety_class": AnyCodable(meta.safetyClass.rawValue),
+                   "is_sim": AnyCodable(isSimMode)]
+        )
         if meta.safetyClass.requiresConfirm {
             pendingConfirm = meta
         } else {
@@ -233,6 +328,9 @@ public struct PilotActionBar: View {
                 .frame(maxWidth: .infinity)
             }
         } else {
+            // App Store 빌드(§4): '더 보기' 미출시 placeholder + '다음 업데이트'
+            // affordance 제거 — 출시된 기능만 노출(가이드라인 2.1). PilotHudStrip 2건과 일관.
+            #if !APPSTORE
             HStack(spacing: DFSpace.xs2) {
                 Image(systemName: "ellipsis.circle")
                 Text("+ 더 보기 (\(MotionCatalog.actionBarMore.count) 페이지)")
@@ -245,13 +343,19 @@ public struct PilotActionBar: View {
             .background(
                 RoundedRectangle(cornerRadius: DFRadius.sm).fill(DFColor.elev2)
             )
+            // **사이클 127 (audit #13, P1)**: ComingSoonOverlay 3사용처 일관성 — "when" 형식
+            // 통일. 종전 "Sprint 17" (내부 개발 일정 누설) → 사용자 친화 "다음 업데이트" 채택.
+            // PilotHudStrip 2건과 동일.
             .comingSoon(
                 "v1.5",
                 title: "9 추가 페이지 (끄덕임 / 가로젓기 / 박수 요청 / 등)",
                 why: "메인 7 페이지로 v1.0 의 사용성 안정 후 확장",
-                when: "Sprint 17",
+                when: "다음 업데이트",
                 alternative: "지금: 메인 7 페이지 + Motion Studio 의 사용자 모션"
             )
+            #else
+            EmptyView()
+            #endif
         }
     }
 
@@ -261,7 +365,8 @@ public struct PilotActionBar: View {
             HStack {
                 Text("추가 페이지").font(DFFont.title)
                 Spacer()
-                Button("닫기") { showMoreSheet = false }
+                // 사이클 138 (audit #24 codex sweep)
+                Button("닫기", role: .cancel) { showMoreSheet = false }
                     .keyboardShortcut(.cancelAction)
             }
             Divider()

@@ -1,0 +1,36 @@
+# darwin-kiosk.service — PRIMARY appliance kiosk (cage / Wayland).
+#
+# Boots straight to the sealed cockpit on /dev/tty1 as the unprivileged
+# `darwin` user, no display manager. cage is a minimal Wayland kiosk
+# compositor; it execs the kiosk entry point full-screen with no chrome.
+#
+# FALLBACK: if cage is not installed on this image, do NOT use this service.
+# Use the openbox (X11) fallback instead — autologin `darwin` on tty1, run
+# `startx` from ~/.bash_profile, and let ~/.config/openbox/autostart exec
+# /usr/local/bin/darwin-kiosk.sh. apply-appliance.sh chooses cage vs openbox
+# based on what the image provides and enables only one of the two paths.
+
+[Unit]
+Description=Darwin Switch Appliance Kiosk (cage/Wayland)
+After=darwin-switch-agent.service systemd-user-sessions.service
+After=getty@tty1.service
+Wants=darwin-switch-agent.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=darwin
+# XDG_RUNTIME_DIR is required for the Wayland socket. systemd expands %U to the
+# numeric UID of `darwin`; /run/user/<uid> is created by the login PAM stack.
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+# cage is the Wayland kiosk compositor; it execs the kiosk entry point.
+ExecStart=/usr/bin/cage -- /usr/local/bin/darwin-kiosk.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target

@@ -2,7 +2,7 @@ import ForgeCore
 import Foundation
 
 /// 외부 커뮤니티 reference (`research/community/`, `motions/external/`) 기반
-/// 추가 starter 모션 페이지. `MotionStudioView.starterPages()` 가 append.
+/// 추가 starter 모션 페이지. `StarterMotionLibrary.starterPages()` 가 append.
 ///
 /// 4 카테고리:
 ///   1. **보행 점진 테스트** — `motions/test/walk-progression-v1.bin` 의 slot 110~115

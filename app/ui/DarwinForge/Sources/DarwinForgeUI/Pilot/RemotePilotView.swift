@@ -1,4 +1,5 @@
 import ForgeCore
+import OSLog
 import SwiftUI
 
 /// Remote Pilot 메인 화면 — ⌘8.
@@ -58,6 +59,9 @@ public struct RemotePilotView: View {
         case .idle, .stopping, .manualActive, .failure: return false
         }
     }
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
 
     public init() {}
 
@@ -202,6 +206,9 @@ public struct RemotePilotView: View {
                 title: transitionTitle,
                 steps: transitionSteps,
                 activeIndex: transitionActiveIndex,
+                // **사이클 119 (audit #15, P0)**: patched demo 설치 → 실 진행 polling.
+                // 그 외 → `Task.sleep(estimatedSeconds)` 만 → "추정 진행" 사용자 명시.
+                usesRealPolling: (mode == .ballFollow && patchedDemoInstalled == true),
                 onAdvance: { advanceUserStep() },
                 onCancel: { cancelTransition() }
             )
@@ -213,12 +220,26 @@ public struct RemotePilotView: View {
 
     /// 사용자가 후면 버튼을 눌렀음을 알리는 액션 — waitingForUser step 진행.
     private func advanceUserStep() {
+        // step_id 추출 — activeIndex nil 또는 out-of-range 시 "unknown" 으로 처리.
+        let stepId: String = {
+            guard let activeIdx = transitionActiveIndex,
+                  transitionSteps.indices.contains(activeIdx) else { return "unknown" }
+            return transitionSteps[activeIdx].id
+        }()
+        harness.record(
+            .pilotTransitionAdvance, level: .info, actor: .user,
+            data: ["step_index": AnyCodable(transitionActiveIndex ?? -1),
+                   "step_id": AnyCodable(stepId)])
         waitingForUserAdvance?.resume()
         waitingForUserAdvance = nil
     }
 
     /// 사용자가 cancel 누름 — task 중단 + step UI 정리.
     private func cancelTransition() {
+        harness.record(
+            .pilotTransitionCancel, level: .info, actor: .user,
+            data: ["step_index": AnyCodable(transitionActiveIndex ?? -1),
+                   "step_count": AnyCodable(transitionSteps.count)])
         transitionTask?.cancel()
         transitionTask = nil
         // continuation 도 정리 — leak 방지.
@@ -258,6 +279,12 @@ public struct RemotePilotView: View {
         if alreadyInDesiredState { return }
 
         pendingModeChange = newMode
+
+        harness.record(
+            .pilotDemoModeRequested, level: .info, actor: .user,
+            data: ["from_mode": AnyCodable(mode == .ballFollow ? "ballFollow" : "manual"),
+                   "to_mode": AnyCodable(newMode == .ballFollow ? "ballFollow" : "manual"),
+                   "patched_demo": AnyCodable(patchedDemoInstalled ?? false)])
 
         // 진행 중 ARM 은 명시 disarm — demo 가 bus 를 곧 점유.
         if newMode == .ballFollow && gate.armed {
@@ -314,6 +341,10 @@ public struct RemotePilotView: View {
             !result.lowercased().contains("미설치")
 
         if success {
+            harness.record(
+                .pilotDemoModeResult, level: .info, actor: .system,
+                data: ["mode": AnyCodable(newMode == .ballFollow ? "ballFollow" : "manual"),
+                       "success": AnyCodable(true)])
             // 마지막 step 을 completed 로.
             if let last = transitionSteps.indices.last {
                 updateStep(at: last, kind: .completed)
@@ -328,6 +359,12 @@ public struct RemotePilotView: View {
             let snippet = result.split(separator: "\n")
                 .first(where: { !$0.hasPrefix("DF_STATUS=") })
                 .map(String.init) ?? "원격 명령 실패"
+            // PII-safe: SSH error 원문 대신 hash 만 telemetry 기록.
+            harness.record(
+                .pilotDemoModeResult, level: .warn, actor: .system,
+                data: ["mode": AnyCodable(newMode == .ballFollow ? "ballFollow" : "manual"),
+                       "success": AnyCodable(false),
+                       "error_hash": AnyCodable(Harness.shortHash(snippet))])
             // 마지막 active step 또는 첫 step 을 failed 로.
             let idx = transitionActiveIndex ?? 0
             updateStep(at: idx, kind: .failed(snippet))
@@ -530,7 +567,12 @@ public struct RemotePilotView: View {
         Menu {
             ForEach(PilotFeatureLevel.allCases) { lv in
                 Button {
+                    let oldLevel = level.rawValue
                     featureLevelRaw = lv.rawValue
+                    harness.record(
+                        .pilotFeatureLevelChanged, level: .info, actor: .user,
+                        data: ["from": AnyCodable(oldLevel),
+                               "to": AnyCodable(lv.rawValue)])
                 } label: {
                     Label {
                         VStack(alignment: .leading) {
@@ -588,7 +630,8 @@ public struct RemotePilotView: View {
                     footTrace: [],
                     highlight: nil,
                     showAxes: true,
-                    onMeshFallback: { fallback in meshFallback = fallback }
+                    onMeshFallback: { fallback in meshFallback = fallback },
+                    preset: .cockpit
                 )
                 .background(
                     LinearGradient(
@@ -602,6 +645,11 @@ public struct RemotePilotView: View {
                     meshFallbackBanner
                         .padding(DFSpace.sm)
                 }
+
+                // 조명·머티리얼 튜닝 — 우상단(이 화면은 top-trailing 비어 있음).
+                SceneTuningControl()
+                    .padding(DFSpace.sm)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 220)
@@ -677,7 +725,7 @@ public struct RemotePilotView: View {
         if !manualHost.isEmpty {
             return PilotCameraEndpoint(host: manualHost)
         }
-        return PilotCameraEndpoint(host: "192.168.123.1")
+        return PilotCameraEndpoint(host: DFConnectionConstants.robotEthernetIP)
     }
 
     // MARK: - HUD panel
@@ -726,6 +774,10 @@ public struct RemotePilotView: View {
             if store.lastSuccessfulEndpoint != nil {
                 Button {
                     if let ep = store.lastSuccessfulEndpoint {
+                        harness.record(
+                            .pilotReconnectTapped, level: .info, actor: .user,
+                            data: ["endpoint_hash": AnyCodable(
+                                Harness.shortHash(String(describing: ep)))])
                         store.connect(endpoint: ep)
                     }
                 } label: {

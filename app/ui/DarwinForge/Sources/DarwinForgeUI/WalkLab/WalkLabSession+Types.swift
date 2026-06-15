@@ -20,6 +20,55 @@ import ForgeCore
 /// 통합 테스트 30+ 케이스 선결 (T3.1 deferral 문서 참조).
 
 extension WalkLabSession {
+    /// **v1.11.25 (2026-05-21) audit log-G** — emergencyStop 호출 출처.
+    ///
+    /// 종전: 모든 trigger 가 Harness 의 actor=.user 로 기록 → 사용자 클릭 vs 자동 trigger
+    /// (balance lost / thermal / voltage) 발생률 통계 추출 불가.
+    ///
+    /// **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: `.unknown` fallback case 추가.
+    /// `WalkPreflightFailure.emergencyActive(trigger:)` payload 가 trigger 정보를 보존
+    /// — `_lastEmergencyTrigger` 가 nil 인 edge case (init 직후 race) 에 안전한 fallback.
+    public enum EmergencyTrigger: String, Sendable, Codable {
+        /// 사용자 비상정지 버튼 / ESC 키.
+        case userClick
+        /// L3 hard gate — IMU tilt ≥ 50° 3 sample 연속.
+        case balanceLostL3
+        /// L4 — 모터 평균 온도 ≥ 60°C.
+        case thermalOverheat
+        /// L0 — battery voltage < 9.5V 지속.
+        case voltageDroop
+        /// fall predictor 가 recommend emergency rising-edge.
+        case fallPredictorRecommend
+        /// 외부 emergency (Pilot ESC, RootView 전역 단축키 등).
+        case externalEStop
+        /// **사이클 67 신규** — emergency 활성 상태 진입은 알지만 trigger 출처 미상.
+        /// 보통 `_lastEmergencyTrigger` race 또는 외부 상태 직접 set 시.
+        case unknown
+
+        /// Harness telemetry actor — `.user` 만 사용자, 그 외는 자동.
+        public var harnessActor: TelemetryActor {
+            switch self {
+            case .userClick, .externalEStop: return .user
+            case .balanceLostL3, .thermalOverheat, .voltageDroop, .fallPredictorRecommend, .unknown:
+                return .robot
+            }
+        }
+
+        /// **사이클 67 신규** — 사용자 메시지용 한국어 라벨.
+        /// `.emergencyActive` cause 의 userMessage 가 trigger 출처를 명시 노출.
+        public var koreanLabel: String {
+            switch self {
+            case .userClick:              return "사용자 정지"
+            case .balanceLostL3:          return "L3 균형 손실"
+            case .thermalOverheat:        return "모터 과열"
+            case .voltageDroop:           return "전압 droop"
+            case .fallPredictorRecommend: return "낙상 예측"
+            case .externalEStop:          return "외부 E-Stop"
+            case .unknown:                return "출처 미상"
+            }
+        }
+    }
+
     /// 모터 온도 데이터 출처 — Stage 1 분석 후 추가 (2026-05-16).
     public enum MotorTempSource: Equatable, Sendable {
         /// 실 robot 미연결 또는 telemetry 미수신 — `updateSimThermal` 모델 값.
@@ -70,7 +119,7 @@ extension WalkLabSession {
     /// | `.warning` | 35-45° | 보행 속도 70% 자동 감속 |
     /// | `.danger` | 45-50° | 자세 동결 |
     /// | `.emergency` | ≥ 50° | 토크 OFF + walkReady (ROBOTIS FALLEN 수준) |
-    public enum BalanceState: Int, Comparable, Equatable, Sendable {
+    public enum BalanceState: Int, Comparable, Equatable, Sendable, Codable {
         case normal = 0, caution, warning, danger, emergency
 
         public static func < (l: BalanceState, r: BalanceState) -> Bool {
@@ -108,7 +157,7 @@ extension WalkLabSession {
     }
 
     /// 안전 상태 한 시점 스냅샷 — sparkline 차트 source.
-    public struct SafetySample: Equatable, Sendable {
+    public struct SafetySample: Equatable, Sendable, Codable {
         public let timestamp: Date
         public let rollDeg: Double
         public let pitchDeg: Double
@@ -118,9 +167,25 @@ extension WalkLabSession {
         public let correctorMaxDelta: Double
     }
 
+    /// **v1.14.8 (2026-05-21) perf #6**: 정규화 (convention 적용) 된 sample.
+    /// 종전: FallPreventionMonitor.timeSeriesRow 가 매 body 재평가 마다 250 sample 을
+    ///       loop 돌며 ImuAttitudeDisplayMapping.normalizeConvention 호출 (750+ atan/asin).
+    ///       SwiftUI body 가 10Hz tick 마다 재평가되면 7,500+ 회/초 → main actor 부담.
+    /// 신규: session 안에서 sample append 시 1회 정규화 → 캐시. View 는 read only.
+    public struct NormalizedSafetySample: Equatable, Sendable, Identifiable {
+        public let timestamp: Date
+        /// convention 정규화 + NaN/Inf guard 적용된 roll (deg).
+        public let rollDeg: Double
+        /// convention 정규화 + NaN/Inf guard 적용된 pitch (deg).
+        public let pitchDeg: Double
+        public let predictionScore: Double
+
+        public var id: Date { timestamp }
+    }
+
     /// 안전 이벤트 한 건 — 이벤트 로그 row.
-    public struct SafetyEvent: Identifiable, Equatable, Sendable {
-        public enum Kind: String, Equatable, Sendable {
+    public struct SafetyEvent: Identifiable, Equatable, Sendable, Codable {
+        public enum Kind: String, Equatable, Sendable, Codable {
             case sessionStart
             case sessionStop
             case stateChange
@@ -137,6 +202,21 @@ extension WalkLabSession {
             case motorTempSourceChange
             case thermalAlarm
             case preflightFailure
+            // v1.11.25 audit log-D — kind 재사용 제거를 위한 dedicated case.
+            /// 보행 엔진 전환 (Mac sparse ↔ ROBOTIS onboard).
+            case engineSwitched
+            /// A/B 실험 적용 (applyExperimentChange).
+            case experimentApplied
+            /// A/B 실험 rollback.
+            case experimentRolledBack
+            /// AutoTuner 가 권고 자동 적용.
+            case autoTunerApplied
+            /// L0 voltage droop trigger (전압 임계 도달).
+            case voltageDroop
+            /// 사용자가 onboard 수동 송출 성공.
+            case manualSendSucceeded
+            /// **v1.20.12 사이클 18** — 사용자 emergency recovery (flag clear, walking 미시작).
+            case recovery
         }
         public let id = UUID()
         public let timestamp: Date
@@ -191,8 +271,8 @@ extension WalkLabSession {
     }
 
     /// 보행 cycle 시작 전 preflight 실패 사유.
-    public struct WalkPreflightFailure: Equatable, Sendable {
-        public enum Cause: Equatable, Sendable {
+    public struct WalkPreflightFailure: Equatable, Sendable, Codable {
+        public enum Cause: Equatable, Sendable, Codable {
             case noConnection
             case cradleNotConfirmed
             case dxlPowerFailed(String)
@@ -206,6 +286,41 @@ extension WalkLabSession {
             case imuUnavailable
             case imuStale
             case imuPlausibilityFailed(String)
+            // v1.11.24 (2026-05-20 audit P0-1, P0-2) — 상태 일관성 가드:
+            // 다른 cycle 활성 상태에서 새 preset 클릭 시 UI/log/robot mismatch 방지.
+            case alreadyWalking(activePresetLabel: String, requestedLabel: String)
+            /// 고급 모드에서 stability 점수가 critical 인 슬라이더 조합.
+            case advancedStabilityCritical
+            /// preset.requiresRiskConfirmation true 이지만 사용자 risk 미확인.
+            case highRiskNotAcknowledged(presetLabel: String)
+            // v1.11.24 audit P1-3 — ROBOTIS onboard 시작 차단 사유.
+            case onboardSshNotConnected
+            case onboardAutoBrokeringOff
+            case onboardAckTimeout
+            // v1.11.25 audit-D — thermal cool-down 강제. 60°C 도달 후 50°C 미만까지 재시작 차단.
+            case motorTempCoolDownRequired(currentTempC: Double, exitTempC: Double)
+            /// **v1.21.1 사이클 66 (코덱스 CRITICAL-1)** — emergency 활성 상태에서 preset
+            /// 재시작 차단. 종전 cycle 61 이 `.noConnection` 을 재사용 → 사용자에게 "시뮬 모드"
+            /// 로 잘못 노출. 전용 cause 추가 — recovery 명확 안내.
+            ///
+            /// **v1.21.2 사이클 67 (코덱스 MEDIUM-3 fix)** — `trigger` payload 추가.
+            /// 종전: `.emergencyActive` 가 associated value 없음 → 사용자 메시지가 generic
+            /// "긴급 정지 상태" → 어떤 trigger (userClick / balanceLostL3 / thermalOverheat
+            /// 등) 가 emergency 유발했는지 알 수 없음. payload 가 mental model + telemetry
+            /// 정확도 모두 회복.
+            case emergencyActive(trigger: EmergencyTrigger)
+            /// **V288-4 (2026-05-24) — OC8 STPA 이행**: LiPo 3S 안전 한계 (셀당 3.5V × 3 = 10.5V)
+            /// 이하에서 보행 시작 하드 차단.
+            ///
+            /// # 비유
+            ///
+            /// 자동차 연료 게이지가 바닥을 가리키면 시동 자체를 걸 수 없는 것과 같다.
+            /// 도중에 서는 것보다 출발 전 차단이 안전하다. voltage 정보가 없으면 차단하지
+            /// 않음 (fail-safe: 텔레메트리 미수신 중에도 보행 허용).
+            ///
+            /// - `voltage`: 현재 측정된 배터리 전압 (V).
+            /// - `threshold`: 차단 기준 전압 (`WalkLabSession.lowBatteryThreshold` = 10.5V).
+            case lowBatteryStartBlocked(voltage: Double, threshold: Double)
         }
         public let cause: Cause
         public var userMessage: String {
@@ -229,6 +344,52 @@ extension WalkLabSession {
                 return "🛑 IMU 지연 5초+ — outdated 데이터로 보정 시 fall 위험. 연결 확인 후 재시도"
             case .imuPlausibilityFailed(let detail):
                 return "🛑 IMU plausibility 실패 (\(detail)) — 1g 중력 감지 안 됨. chip 확인 후 재시도"
+            case .alreadyWalking(let active, let requested):
+                return "⚠️ '\(active)' 진행 중 — '\(requested)' 으로 바꾸려면 먼저 정지(■) 누르세요"
+            case .advancedStabilityCritical:
+                return "🛑 고급 슬라이더 위험도 critical — 슬라이더 조합 점검 후 재시도"
+            case .highRiskNotAcknowledged(let label):
+                return "⚠️ '\(label)' 위험 동의 필요 — 위험 시나리오 확인 후 재시도"
+            case .onboardSshNotConnected:
+                return "🛑 ROBOTIS Onboard 시작 차단 — SSH (RemoteShell) 미연결. 연결 후 재시도"
+            case .onboardAutoBrokeringOff:
+                return "🛑 ROBOTIS Onboard 시작 차단 — 자동 brokering OFF. 토글을 ON 으로 바꾼 뒤 재시도"
+            case .onboardAckTimeout:
+                return "🛑 ROBOTIS Onboard ACK 타임아웃 — robot-side demo-pilot patch 미설치/구버전 의심"
+            case .motorTempCoolDownRequired(let current, let exit):
+                return String(format: "🌡️ 모터 냉각 필요 — 현재 %.1f°C, %.1f°C 미만까지 대기 (60°C 알람 후 cool-down)",
+                              current, exit)
+            case .emergencyActive(let trigger):
+                // **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: trigger 출처 명시 노출.
+                return "🛑 긴급 정지 상태 (\(trigger.koreanLabel)) — recovery (R 키 또는 Recover 버튼) 후 재시작"
+            case .lowBatteryStartBlocked(let voltage, let threshold):
+                return String(format: "🔋 배터리 %.1fV (한계 %.1fV) — 충전 후 재시작. LiPo 3S 안전 한계 미달",
+                              voltage, threshold)
+            }
+        }
+
+        /// 진단/로그용 한 단어 코드. 세션 헤더의 startBlockedReason 에 기록.
+        public var diagnosticCode: String {
+            switch cause {
+            case .noConnection:                                 return "noConnection"
+            case .cradleNotConfirmed:                           return "cradleNotConfirmed"
+            case .dxlPowerFailed:                               return "dxlPowerFailed"
+            case .lowerBodyTorqueFailed:                        return "lowerBodyTorqueFailed"
+            case .bulkTorqueFailed:                             return "bulkTorqueFailed"
+            case .balanceCorrectorRequiredForCautionPreset:     return "balanceCorrectorRequiredForCautionPreset"
+            case .imuUnavailable:                               return "imuUnavailable"
+            case .imuStale:                                     return "imuStale"
+            case .imuPlausibilityFailed:                        return "imuPlausibilityFailed"
+            case .alreadyWalking:                               return "alreadyWalking"
+            case .advancedStabilityCritical:                    return "advancedStabilityCritical"
+            case .highRiskNotAcknowledged:                      return "highRiskNotAcknowledged"
+            case .onboardSshNotConnected:                       return "onboardSshNotConnected"
+            case .onboardAutoBrokeringOff:                      return "onboardAutoBrokeringOff"
+            case .onboardAckTimeout:                            return "onboardAckTimeout"
+            case .motorTempCoolDownRequired:                    return "motorTempCoolDownRequired"
+            // **v1.21.2 사이클 67 — 코덱스 MEDIUM-3 fix**: trigger 별 telemetry 추적.
+            case .emergencyActive(let trigger):                 return "emergencyActive_\(trigger.rawValue)"
+            case .lowBatteryStartBlocked:                       return "lowBatteryStartBlocked"
             }
         }
     }

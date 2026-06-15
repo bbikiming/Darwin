@@ -92,6 +92,17 @@ public enum WalkMotionLibrary {
             break
         }
         let tuning = resolvedTuning(for: preset, custom: customTuning)
+        return makeContinuousPlan(tuning: tuning)
+    }
+
+    /// Mobile freeform joystick path. Unlike preset tuning, this keeps a small
+    /// negative stride range so joystick-down can produce controlled backward
+    /// steps. Preset/default walking remains unchanged.
+    public static func freeformContinuousWalkPlan(tuning customTuning: AdvancedTuning) -> ContinuousWalkPlan? {
+        makeContinuousPlan(tuning: resolvedFreeformTuning(customTuning))
+    }
+
+    private static func makeContinuousPlan(tuning: AdvancedTuning) -> ContinuousWalkPlan {
         let period = tuning.periodMs.clamped(to: 350...1000)
         let samplePhases: [Double] = [0.03, 0.18, 0.42, 0.52, 0.68, 0.92]
         let playMs = max(80, Int((period / Double(samplePhases.count)).rounded()))
@@ -156,6 +167,14 @@ public enum WalkMotionLibrary {
 
     // MARK: - Preset tuning
 
+    /// **D1 (2026-06-12)**: 시간 기반 모드용 resolved tuning 노출. `continuousWalkPlan`
+    /// 이 키프레임을 빌드할 때 쓰는 것과 **동일한 클램프 결과**를 반환해, 시간 기반
+    /// 샘플러가 같은 진폭으로 평가되도록(동치 보장) 한다.
+    public static func resolvedPresetTuning(for preset: WalkLabPreset,
+                                            custom: AdvancedTuning? = nil) -> AdvancedTuning {
+        resolvedTuning(for: preset, custom: custom)
+    }
+
     private static func resolvedTuning(for preset: WalkLabPreset, custom: AdvancedTuning?) -> AdvancedTuning {
         let base = custom ?? defaultTuning(for: preset)
         return AdvancedTuning(
@@ -167,6 +186,24 @@ public enum WalkMotionLibrary {
             balanceGain: base.balanceGain.clamped(to: 0...5),
             // **v1.11.4 (2026-05-18) fix**: custom 의 hipPitchOffsetDeg 전달. 종전엔
             // 누락되어 모든 custom tuning 의 trim 이 default 13.0 으로 reset 되는 버그.
+            hipPitchOffsetDeg: base.hipPitchOffsetDeg.clamped(to: 0...20)
+        )
+    }
+
+    /// **D1 (2026-06-12)**: freeform 시간 기반 모드용 resolved tuning 노출 —
+    /// `freeformContinuousWalkPlan` 키프레임과 동일 클램프(동치 보장).
+    public static func freeformResolvedTuning(_ base: AdvancedTuning) -> AdvancedTuning {
+        resolvedFreeformTuning(base)
+    }
+
+    private static func resolvedFreeformTuning(_ base: AdvancedTuning) -> AdvancedTuning {
+        AdvancedTuning(
+            strideMm: base.strideMm.clamped(to: -30...50),
+            sideMm: base.sideMm.clamped(to: -25...25),
+            turnDeg: base.turnDeg.clamped(to: -45...45),
+            periodMs: base.periodMs.clamped(to: 350...1000),
+            footHeightMm: base.footHeightMm.clamped(to: 15...80),
+            balanceGain: base.balanceGain.clamped(to: 0...5),
             hipPitchOffsetDeg: base.hipPitchOffsetDeg.clamped(to: 0...20)
         )
     }
@@ -314,7 +351,7 @@ public enum WalkMotionLibrary {
             sspStartR = (3.0 - sspRatio) * periodTime / 4
             sspEndR = (3.0 + sspRatio) * periodTime / 4
 
-            xMoveAmplitude = tuning.strideMm.clamped(to: 0...50)
+            xMoveAmplitude = tuning.strideMm.clamped(to: -30...50)
             xSwapAmplitude = xMoveAmplitude * 0.28
 
             yMoveAmplitude = tuning.sideMm.clamped(to: -25...25) / 2

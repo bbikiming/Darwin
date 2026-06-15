@@ -1,3 +1,4 @@
+import ForgeCore
 import SwiftUI
 
 /// L5 — 하드웨어 비상정지 (LLM 경로 우회).
@@ -17,6 +18,9 @@ public struct EStopButton: View {
     @State private var isPressing = false
     @State private var pulse = false
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
 
     public init(
         dispatcher: IntentDispatcher,
@@ -64,6 +68,9 @@ public struct EStopButton: View {
     }
 
     private func trigger() {
+        // UI 레벨 기록만 — pilotEStop SOT 는 WalkLabRCBridge.
+        harness.record(.uiButtonTapped, level: .trace, actor: .user,
+                              data: ["button": AnyCodable("estop_button")])
         Task { @MainActor in
             let r = await dispatcher.emergencyStop()
             lastAcknowledgement = r.speak

@@ -15,6 +15,9 @@ public struct PilotHeadTrackerSettingsSheet: View {
     @ObservedObject var tracker: PilotHeadTracker
     let onClose: () -> Void
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(tracker: PilotHeadTracker, onClose: @escaping () -> Void) {
         self.tracker = tracker
         self.onClose = onClose
@@ -60,7 +63,8 @@ public struct PilotHeadTrackerSettingsSheet: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
             Spacer(minLength: 0)
-            Button("닫기") { onClose() }
+            // 사이클 138 (audit #24 codex sweep)
+            Button("닫기", role: .cancel) { onClose() }
                 .keyboardShortcut(.cancelAction)
         }
     }
@@ -92,7 +96,11 @@ public struct PilotHeadTrackerSettingsSheet: View {
                 ? "진동 위험 — 보수적 권장 (0.30 ± 0.05)"
                 : nil,
             help: "오차에 비례한 head 이동량. 클수록 빠른 응답, 작을수록 안정."
-        ) { $0 } setter: { tracker.kp = $0 }
+        ) { $0 } setter: { newVal in
+            harness.record(.pilotHeadTrackerGainChanged, level: .info, actor: .user,
+                                  data: ["param": "kp", "value": AnyCodable(newVal)])
+            tracker.kp = newVal
+        }
     }
 
     private var kdSlider: some View {
@@ -107,7 +115,11 @@ public struct PilotHeadTrackerSettingsSheet: View {
                 ? "Kd 가 Kp 비율 80% 초과 — 진동 회피용으로만 사용"
                 : nil,
             help: "오차 변화율로 진동 억제. Kp 의 50% 정도가 일반적."
-        ) { $0 } setter: { tracker.kd = $0 }
+        ) { $0 } setter: { newVal in
+            harness.record(.pilotHeadTrackerGainChanged, level: .info, actor: .user,
+                                  data: ["param": "kd", "value": AnyCodable(newVal)])
+            tracker.kd = newVal
+        }
     }
 
     private var deadbandSlider: some View {
@@ -122,7 +134,11 @@ public struct PilotHeadTrackerSettingsSheet: View {
                 ? "너무 작으면 화면 중앙에서 head 떨림"
                 : nil,
             help: "공이 화면 중앙 근처일 때 head 송출 skip. 0.04 = ±2.3° (FOV 58°)."
-        ) { $0 } setter: { tracker.deadbandNormalized = $0 }
+        ) { $0 } setter: { newVal in
+            harness.record(.pilotHeadTrackerGainChanged, level: .info, actor: .user,
+                                  data: ["param": "deadband", "value": AnyCodable(newVal)])
+            tracker.deadbandNormalized = newVal
+        }
     }
 
     private var maxStepSlider: some View {
@@ -138,7 +154,11 @@ public struct PilotHeadTrackerSettingsSheet: View {
                 ? "Kp × maxStep = \(String(format: "%.1f", tracker.kp * tracker.maxStepDeg)) — 한 frame 변화 큼"
                 : nil,
             help: "한 카메라 frame 당 허용된 최대 head 변화. 너무 작으면 따라잡기 못 함."
-        ) { $0 } setter: { tracker.maxStepDeg = $0 }
+        ) { $0 } setter: { newVal in
+            harness.record(.pilotHeadTrackerGainChanged, level: .info, actor: .user,
+                                  data: ["param": "maxStepDeg", "value": AnyCodable(newVal)])
+            tracker.maxStepDeg = newVal
+        }
     }
 
     private var lostHoldSlider: some View {
@@ -151,7 +171,11 @@ public struct PilotHeadTrackerSettingsSheet: View {
             format: "%.0f frame",
             warning: nil,
             help: "공 검출 안 된 frame 이 이 수보다 적으면 head 위치 유지. 카메라 깜빡임 대응."
-        ) { Double($0) } setter: { tracker.lostTargetHoldFrames = Int($0) }
+        ) { Double($0) } setter: { newVal in
+            harness.record(.pilotHeadTrackerGainChanged, level: .info, actor: .user,
+                                  data: ["param": "lostTargetHoldFrames", "value": AnyCodable(Int(newVal))])
+            tracker.lostTargetHoldFrames = Int(newVal)
+        }
     }
 
     /// 게인 한 개의 슬라이더 + 라벨 + 경고 + 기본값.
@@ -187,6 +211,7 @@ public struct PilotHeadTrackerSettingsSheet: View {
                     }
                     .buttonStyle(.plain)
                     .help("기본값 \(String(format: format, defaultValue)) 로 복원")
+                    .accessibilityLabel("기본값으로 복원")
                 }
             }
             Slider(value: binding, in: range, step: step)
@@ -269,6 +294,7 @@ public struct PilotHeadTrackerSettingsSheet: View {
     }
 
     private func resetToDefaults() {
+        harness.record(.pilotHeadTrackerResetDefaults, level: .info, actor: .user)
         tracker.kp = 0.32
         tracker.kd = 0.18
         tracker.deadbandNormalized = 0.04

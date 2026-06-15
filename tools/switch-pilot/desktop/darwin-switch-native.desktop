@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Darwin Switch Native Cockpit
+Comment=Native Linux controller for Darwin robot on Switchroot Ubuntu
+Exec=/usr/local/bin/darwin-switch-native-cockpit
+Icon=/opt/darwin-switch-agent/web/assets/darwin-icon.png
+Terminal=false
+Categories=Utility;Robotics;

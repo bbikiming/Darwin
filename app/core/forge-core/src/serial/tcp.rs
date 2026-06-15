@@ -76,28 +76,56 @@ impl SerialPort for TcpBus {
         Ok(())
     }
 
-    /// TCP 측 input buffer 비우기 — 매우 짧은 timeout으로 EOF/blocking까지 read.
-    /// socat 의 byte-stream 환경에서 stale byte 누적이 가장 큰 misalignment 원인.
+    /// TCP 측 input buffer 비우기 (J11, 2026-06-11) — **빈 버퍼면 즉시 반환**.
+    ///
+    /// 종전엔 매 패킷 전 2 ms 고정 read timeout 을 물어 한 사이클 step·read 마다
+    /// 2 ms 가 무조건 가산됐다. 정상 운용에서 버퍼는 대개 비어 있으므로, nonblocking
+    /// peek 으로 잔여 byte 유무를 먼저 확인하고 — 비었으면 수십 µs 안에 반환, stale
+    /// byte 가 *감지된 경우에만* 기존 2 ms grace drain 으로 misalignment 를 방어한다.
     fn drain_input(&mut self) -> Result<()> {
-        // 기존 timeout 백업해뒀다가 복구.
         let prev_timeout = self.stream.read_timeout().ok().flatten();
-        let _ = self.stream.set_read_timeout(Some(Duration::from_millis(2)));
-        let mut buf = [0u8; 256];
-        loop {
-            match Read::read(&mut self.stream, &mut buf) {
-                Ok(0) => break,
-                Ok(_) => continue,
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut =>
-                {
-                    break
+        let _ = self.stream.set_nonblocking(true);
+
+        // 1) nonblocking peek — 버퍼에 잔여 byte 가 있는지만 확인 (소비 없음).
+        let mut probe = [0u8; 1];
+        let has_stale = match self.stream.peek(&mut probe) {
+            Ok(0) => false,                                                // peer EOF
+            Ok(_) => true,                                                 // 잔여 byte 존재
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => false, // 빈 버퍼
+            Err(_) => false,
+        };
+
+        // 2) stale 감지 시에만 blocking 2 ms grace drain.
+        if has_stale {
+            let _ = self.stream.set_nonblocking(false);
+            let _ = self.stream.set_read_timeout(Some(Duration::from_millis(2)));
+            let mut buf = [0u8; 256];
+            loop {
+                match Read::read(&mut self.stream, &mut buf) {
+                    Ok(0) => break,
+                    Ok(_) => continue,
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        break
+                    }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
         }
+
+        let _ = self.stream.set_nonblocking(false);
         let _ = self.stream.set_read_timeout(prev_timeout);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl TcpBus {
+    /// 테스트 헬퍼 — drain 후 read_timeout 이 None(기본)으로 복구됐는지 확인.
+    fn read_timeout_is_restored(&self) -> bool {
+        self.stream.read_timeout().ok().flatten().is_none()
     }
 }
 
@@ -146,6 +174,58 @@ mod tests {
         bus.read_exact(&mut buf, Duration::from_millis(500))
             .unwrap();
         assert_eq!(buf, [0xAA, 0xBB, 0xCC, 0xDD]);
+        h.join().ok();
+    }
+
+    // J11 — 빈 버퍼 drain 은 blocking 없이 즉시 반환.
+    #[test]
+    fn drain_input_on_empty_buffer_returns_fast() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let h = thread::spawn(move || {
+            // 아무것도 보내지 않고 연결만 유지.
+            let _s = listener.accept();
+            thread::sleep(Duration::from_millis(100));
+        });
+        let mut bus = TcpBus::connect(&addr.to_string(), Duration::from_millis(500)).unwrap();
+        let start = std::time::Instant::now();
+        bus.drain_input().unwrap();
+        // 2 ms 고정 대기를 제거했으므로 — 넉넉히 1 ms 미만 기대(여유 두고 1 ms 상한).
+        assert!(
+            start.elapsed() < Duration::from_millis(1),
+            "빈 버퍼 drain 은 즉시 반환해야 함 (실제 {:?})",
+            start.elapsed()
+        );
+        // drain 후에도 정상 read/write 가능해야 함.
+        let _ = bus.read_timeout_is_restored();
+        h.join().ok();
+    }
+
+    // J11 — stale byte 가 있으면 drain 이 실제로 소비한다.
+    #[test]
+    fn drain_input_consumes_stale_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let h = thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                // stale prefix 송신 후 잠시 유지.
+                let _ = Write::write_all(&mut s, &[0xAA, 0xBB, 0xCC]);
+                let _ = Write::flush(&mut s);
+                thread::sleep(Duration::from_millis(80));
+            }
+        });
+        let mut bus = TcpBus::connect(&addr.to_string(), Duration::from_millis(500)).unwrap();
+        // peer write 가 도착할 시간을 잠깐 준다.
+        thread::sleep(Duration::from_millis(20));
+        bus.drain_input().unwrap();
+        // drain 이 stale 을 소비했으면 후속 read 는 timeout (버퍼 비어 있음).
+        let mut buf = [0u8; 1];
+        let r = bus.read_exact(&mut buf, Duration::from_millis(30));
+        assert!(
+            matches!(r, Err(Error::Timeout(_))),
+            "stale 소비 후 버퍼가 비어 timeout 이어야 함, got {:?}",
+            r
+        );
         h.join().ok();
     }
 }

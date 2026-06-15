@@ -1,0 +1,111 @@
+{
+  "mode": "dry_run",
+  "device_name": "Darwin Switch",
+  "device_id": "darwin-switch-001",
+  "log_level": "INFO",
+  "gui": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8765,
+    "kiosk": true,
+    "autostart": true
+  },
+  "input": {
+    "event_globs": [
+      "/dev/input/event*"
+    ],
+    "prefer_names": [
+      "Joy-Con",
+      "Nintendo",
+      "Pro Controller"
+    ]
+  },
+  "mapping": {
+    "_comment": "Nintendo layout via hid-nintendo: A=BTN_EAST(305), B=BTN_SOUTH(304), L=BTN_TL(310), R=BTN_TR(311), ZL=BTN_TL2(312), ZR=BTN_TR2(313), Home=BTN_MODE(316). A latches control permission; ZL/ZR request in-place walking while held. Codes here are an override; the agent also resolves roles at runtime against the device's real capabilities (verify with evtest).",
+    "deadzone": 0.12,
+    "deadman_key_codes": [312, 313],
+    "arm_key_codes": [305],
+    "stop_key_codes": [304],
+    "estop_key_codes": [316],
+    "turn_left_key_codes": [310],
+    "turn_right_key_codes": [311],
+    "left_x_abs_codes": [0],
+    "left_y_abs_codes": [1],
+    "right_x_abs_codes": [3],
+    "right_y_abs_codes": [4],
+    "invert_left_y": true,
+    "invert_right_y": true,
+    "invert_right_x": true,
+    "invert_side": true,
+    "invert_turn": true
+  },
+  "motion": {
+    "_speed_profile_2026_06_08": "running — 자이로 안정 확인 후 ROBOTIS 안전 마진 안 +30~50% 상향 (period min 500→440, foot 40→48, turn 14→18). robot 측 WalkLabBrokerage 가 period/foot 에 클램프 없음(HIP_PITCH만 [0,20]) 이라 robot 재빌드 불필요.",
+    "_stride_parity_2026_06_12": "H3 — stride 기본 50→38mm 하향. 콕핏(Mac)·Switch·데몬 '한 조종 문법' 통일안(handheld-direct-pilot-upgrade §5 표): UI 38mm. 로봇 거버너(O2-3, ssh-parity-contract §G.8)가 주기별 x_max(600→38)로 최종 클램프하므로 50mm 표기는 UX 과속일 뿐 실제 보폭은 거버너가 깎았다. 38 로 내려 표시값=실제값 패리티 확보.",
+    "max_stride_mm": 38.0,
+    "max_side_mm": 26.0,
+    "max_turn_deg": 18.0,
+    "turn_from_side_ratio": 0.75,
+    "max_head_pan_deg": 70.0,
+    "max_head_tilt_deg": 35.0,
+    "max_head_tilt_up_deg": 55.0,
+    "max_head_tilt_down_deg": 35.0,
+    "hold_head_position": true,
+    "drive_curve": 1.35,
+    "speed_scale": 0.8,
+    "send_hz": 20
+  },
+  "camera": {
+    "enabled": true,
+    "label": "Darwin Head Camera",
+    "route": "ssh-tunnel",
+    "stream_url": "http://127.0.0.1:18080/?action=stream",
+    "snapshot_url": "http://127.0.0.1:18080/?action=snapshot",
+    "local_port": 18080,
+    "remote_port": 8080
+  },
+  "mac": {
+    "host": "127.0.0.1",
+    "port": 0,
+    "path": "/mobile-relay",
+    "pairing_code": "000000",
+    "connect_timeout_sec": 5.0,
+    "heartbeat_ms": 100,
+    "send_head": false
+  },
+  "robot": {
+    "host": "192.168.0.100",
+    "port": 55310,
+    "token": "change-me",
+    "send_hz": 20
+  },
+  "ssh": {
+    "host": "192.168.123.1",
+    "user": "robotis",
+    "port": 22,
+    "identity_file": "~/.ssh/id_rsa_darwin",
+    "_darwinforge_parity": "OpenSSH 5.9 robot compatibility: BatchMode, accept-new known_hosts, ServerAlive 2x2, +ssh-rsa, ControlMaster when the RSA identity exists.",
+    "_robot_ready": "Run darwin-switch-robot-ready plan/keygen/copy-key/probe/status/start-walklab on the Switch before real piloting.",
+    "_transport_o1_2026_06_12": "transport=auto (H3): 핸드셰이크(/tmp/df-walklab-channel) 기록→UDP 명령(17374)·E-STOP(17372) 시도→ACK 무응답 1.5s 시 SSH 파일 폴백 자동 전환. udp_send_hz 20 / SSH 폴백 send_hz 5. ssh-parity-contract §G 계약 소비, 로봇·Mac 코드 무변경. 단일 네트워크 조종자 가정 — Switch 가 핸드셰이크를 쓰면 Mac 토큰이 무효화된다(마지막 작성자 승리). 'ssh' 로 강제하면 종전 파일 경로만.",
+    "transport": "auto",
+    "connect_timeout_seconds": 3,
+    "timeout_seconds": 8,
+    "period_ms": 560,
+    "foot_mm": 48,
+    "min_period_ms": 440,
+    "max_period_ms": 700,
+    "min_foot_mm": 18,
+    "stride_ref_mm": 38,
+    "turn_ref_deg": 18,
+    "hip_deg": 14,
+    "send_hz": 5,
+    "udp_send_hz": 20,
+    "cmd_port": 17374,
+    "estop_port": 17372,
+    "telemetry_port": 17371,
+    "ack_probe_ms": 1500,
+    "udp_tel_fresh_s": 1.0,
+    "telemetry_hz": 1,
+    "heartbeat_ms": 900
+  }
+}

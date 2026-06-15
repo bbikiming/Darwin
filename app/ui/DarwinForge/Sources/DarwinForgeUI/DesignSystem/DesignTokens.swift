@@ -199,6 +199,22 @@ public enum DFFont {
     /// 12pt semibold — body section heading (toggle bar title).
     public static let sectionBody = Font.system(size: 12, weight: .semibold)
     /// 10pt medium — sub-section heading (dashboard sub-section labels).
+    ///
+    /// **HIG sub-11pt 예외 justification** (HUD 토큰 Boeing 787 PFD 패턴과 동일 근거 체계):
+    /// Apple HIG 본문 가독 floor 는 11pt 이나, `sectionLabel` 은 **본문 텍스트가 아닌
+    /// sub-section heading label** (예: "성공 metric", "Rollback 조건", "메트릭", "리스크" 등
+    /// 8자 이내 한국어 또는 영문 짧은 라벨). dashboard 의 dense layout 에서 11pt section
+    /// heading 의 하위 sub-section 구분이 필요하나 `caption`(11pt regular) 와 weight 만
+    /// 다르면 위계 차이 모호.
+    ///
+    /// **사용 site (실측)**: `WalkDataClaudeV2Panel` (3 callsite), `ExperimentApprovalUI`
+    /// (8 callsite), `ActiveExperimentBanner` (1 callsite) 등 — 모두 사용자가 한 번 읽고
+    /// 그 아래 본문 (≥ 11pt) 으로 시선이 이동하는 **고정 라벨**. 본문 / 데이터 / 인용 등
+    /// 장문 텍스트에 사용 **금지**. 위계가 더 작은 helper text 는 `DFFont.micro` (9pt) 또는
+    /// `DFFont.label` (10pt regular) 사용.
+    ///
+    /// **WCAG 1.4.4 호환**: 사용자가 시스템 글자 크기 조정 시 SwiftUI `.system(size:)` 가
+    /// Dynamic Type 자동 scale. 본 토큰은 base size 만 정의 (런타임 확대 차단 X).
     public static let sectionLabel = Font.system(size: 10, weight: .medium)
 
     // Body / Caption / Label
@@ -249,6 +265,53 @@ public enum DFFont {
     public static let labelStrong = Font.system(size: 10, weight: .semibold)
     // 2026-05-17 dead code purge: microThreshold (7pt) 토큰 제거.
     // SafetySparkline 리팩토링 (chart axis column 분리) 후 0 callers.
+
+    // MARK: - V274-3 (2026-05-24) HUD tokens (Boeing 787 PFD-style overlay)
+    //
+    // SceneSpeedometerOverlay (220pt wide aviation HUD) 의 dense typography 전용.
+    // 일반 본문 / UI 텍스트에선 **사용 금지** — Apple HIG 11pt 미만 가독 floor 위반.
+    // HUD overlay 는 정보 밀집을 위해 의도된 예외 (Boeing 787 PFD / NASA EICAS 참조).
+    //
+    // 명명: `hud{Size}{Weight}` — size = micro(9pt)/label(10pt)/pill(8pt)/badge(7pt),
+    // weight = Heavy/Bold/Semibold/Medium. mono variant 는 design: .monospaced 적용.
+
+    /// HUD 7pt heavy mono — section badge (EST / SIM / IDLE).
+    public static let hudBadge = Font.system(size: 7, weight: .heavy, design: .monospaced)
+    /// HUD 8pt bold — status pill icon weight.
+    public static let hudPillBold = Font.system(size: 8, weight: .bold)
+    /// HUD 8pt bold mono — section header (ATTITUDE / CENTER OF MASS / LINK).
+    public static let hudSection = Font.system(size: 8, weight: .bold, design: .monospaced)
+    /// HUD 8pt medium mono — unit suffix (km/h, °).
+    public static let hudUnit = Font.system(size: 8, weight: .medium, design: .monospaced)
+    /// HUD 9pt bold mono — axis label (PIT / ROL / FWD / LAT / BUS / IMU).
+    public static let hudAxis = Font.system(size: 9, weight: .bold, design: .monospaced)
+    /// HUD 9pt heavy mono — pill badge (BAL ON / OFF).
+    public static let hudPillHeavy = Font.system(size: 9, weight: .heavy, design: .monospaced)
+    /// HUD 9pt semibold mono — secondary readout (placeholder dashes).
+    public static let hudReadout = Font.system(size: 9, weight: .semibold, design: .monospaced)
+    /// HUD 9pt semibold mono digit — extra readout (rtt / status num).
+    public static let hudReadoutDigit = Font.system(size: 9, weight: .semibold,
+                                                     design: .monospaced).monospacedDigit()
+    /// HUD 9pt heavy mono digit — lag display (ms count).
+    public static let hudLagDigit = Font.system(size: 9, weight: .heavy,
+                                                 design: .monospaced).monospacedDigit()
+    /// HUD 10pt heavy mono — L/R ankle label.
+    public static let hudLabelHeavy = Font.system(size: 10, weight: .heavy, design: .monospaced)
+    /// HUD 10pt bold mono — corrector Δ glyph.
+    public static let hudLabelBold = Font.system(size: 10, weight: .bold, design: .monospaced)
+    /// HUD 10pt heavy mono digit — value display (CoM offset, ankle residual).
+    public static let hudValueDigit = Font.system(size: 10, weight: .heavy,
+                                                   design: .monospaced).monospacedDigit()
+    /// HUD 10pt semibold mono digit — auxiliary value (graph stats).
+    public static let hudValueSemibold = Font.system(size: 10, weight: .semibold)
+        .monospacedDigit()
+    /// HUD 10pt bold — title bar icon (bolt).
+    public static let hudTitleBold = Font.system(size: 10, weight: .bold)
+    /// HUD 10pt heavy mono — title bar text (FLT HUD).
+    public static let hudTitleHeavy = Font.system(size: 10, weight: .heavy, design: .monospaced)
+    /// HUD 10pt semibold mono digit — elapsed time display.
+    public static let hudElapsedDigit = Font.system(size: 10, weight: .semibold,
+                                                     design: .monospaced).monospacedDigit()
 }
 
 /// 타이포 raw size 토큰 — `font.system(size: ...)` 사용 시 raw 숫자 대신 사용.

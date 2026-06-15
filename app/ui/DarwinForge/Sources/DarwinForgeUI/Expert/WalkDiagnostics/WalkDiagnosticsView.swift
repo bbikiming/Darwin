@@ -28,7 +28,7 @@ public struct WalkDiagnosticsView: View {
     // MARK: - Connection store (live mode IMU source)
     @EnvironmentObject private var store: ConnectionStore
     // v1.11.21: 워크랩 세션 — 운영 상태 / corrector / fallPrediction 통합 표시용.
-    @EnvironmentObject private var walkLabSession: WalkLabSession
+    @Environment(WalkLabSession.self) private var walkLabSession
 
     // MARK: - Data source mode
     @State private var source: DiagnosticsSource = .preview
@@ -93,6 +93,9 @@ public struct WalkDiagnosticsView: View {
     // MARK: - Toolbar / commands
     @State private var lastExportPath: String?
     @State private var showExportToast: Bool = false
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
 
     public init() {}
 
@@ -223,7 +226,11 @@ public struct WalkDiagnosticsView: View {
                 .controlSize(.small)
                 .labelsHidden()
                 .frame(width: 200)
-                .onChange(of: source) { _, _ in
+                .onChange(of: source) { _, newSource in
+                    harness.record(
+                        .walklabDiagnosticsSourceChanged, level: .info, actor: .user,
+                        data: ["source": AnyCodable(newSource.rawValue)]
+                    )
                     // 모드 전환 = 데이터 의미가 달라짐 → 차트 초기화.
                     stop()
                     reset()
@@ -324,7 +331,9 @@ public struct WalkDiagnosticsView: View {
     private var statusPill: some View {
         let on = enabled
         let modeTint: Color = source == .preview ? DFColor.info : DFColor.success
-        let modeTag: String = source == .preview ? "미리보기" : "실측"
+        // **사이클 123 (audit #9, P0)**: preview 모드의 합성 IMU 명시.
+        // 종전 "미리보기" → 사용자가 실 IMU 데이터로 오해 가능. "(합성)" 추가.
+        let modeTag: String = source == .preview ? "미리보기 (합성 IMU)" : "실측"
         return HStack(spacing: DFSpace.xs2) {
             // 모드 배지 — 합성/실측 구분.
             Text(modeTag)
@@ -488,7 +497,13 @@ public struct WalkDiagnosticsView: View {
                 .help(isStoreConnected
                     ? "켜면 위 슬라이더·preset 의 명령이 100ms 마다 다리 12관절로 송출됩니다. 안전한 환경에서만 사용하세요."
                     : "로봇 연결 후 사용 가능합니다.")
-                .onChange(of: sendWalkToRobot) { _, _ in updateWalkSender() }
+                .onChange(of: sendWalkToRobot) { _, newValue in
+                    harness.record(
+                        .walklabDiagnosticsSendToggle, level: newValue ? .warn : .info, actor: .user,
+                        data: ["sending": AnyCodable(newValue)]
+                    )
+                    updateWalkSender()
+                }
                 .onChange(of: enabled) { _, _ in updateWalkSender() }
 
                 if !isStoreConnected {
@@ -806,7 +821,7 @@ public struct WalkDiagnosticsView: View {
         cmdA = cmd.a
         activePreset = preset
         // onChange 가 activePreset 을 nil 로 되돌릴 수 있어 다시 설정.
-        DispatchQueue.main.async { activePreset = preset }
+        Task { @MainActor in activePreset = preset }
         pushCommand()
     }
 
@@ -1096,7 +1111,13 @@ public struct WalkDiagnosticsView: View {
     // MARK: - Engine control
 
     private func toggleRun() {
+        let willEnable = !enabled
         if enabled { stop() } else { start() }
+        harness.record(
+            .walklabDiagnosticsRunToggle, level: .info, actor: .user,
+            data: ["enabled": AnyCodable(willEnable),
+                   "source": AnyCodable(source.rawValue)]
+        )
     }
 
     private func start() {
@@ -1134,6 +1155,7 @@ public struct WalkDiagnosticsView: View {
     }
 
     private func reset() {
+        let priorSampleCount = data.gyroX.samples.count
         stop()
         simTime = 0
         sampleId = 0
@@ -1143,6 +1165,10 @@ public struct WalkDiagnosticsView: View {
         liveStartedAt = nil
         lastLiveImuTimestamp = nil
         data.clear()
+        harness.record(
+            .walklabDiagnosticsReset, level: .info, actor: .user,
+            data: ["sample_count": AnyCodable(priorSampleCount)]
+        )
     }
 
     private func pushCommand() {
@@ -1308,6 +1334,7 @@ public struct WalkDiagnosticsView: View {
     // MARK: - CSV export
 
     private func exportCsv() {
+        let sampleCount = data.gyroX.samples.count
         let csv = data.toCsv(gyroUnit: unitGyro, accelUnit: unitAccel, angleUnit: unitAngle)
         let ts = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -1316,6 +1343,11 @@ public struct WalkDiagnosticsView: View {
             try csv.write(to: url, atomically: true, encoding: .utf8)
             lastExportPath = url.path
             withAnimation { showExportToast = true }
+            harness.record(
+                .walklabDiagnosticsExport, level: .info, actor: .user,
+                data: ["sample_count": AnyCodable(sampleCount),
+                       "success": AnyCodable(true)]
+            )
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 withAnimation { showExportToast = false }
@@ -1323,6 +1355,11 @@ public struct WalkDiagnosticsView: View {
         } catch {
             lastExportPath = "export 실패: \(error.localizedDescription)"
             withAnimation { showExportToast = true }
+            harness.record(
+                .walklabDiagnosticsExport, level: .error, actor: .user,
+                data: ["sample_count": AnyCodable(sampleCount),
+                       "success": AnyCodable(false)]
+            )
         }
     }
 

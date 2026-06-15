@@ -1,0 +1,32 @@
+# openbox-autostart — X11 FALLBACK kiosk autostart.
+#
+# Install destination: ~darwin/.config/openbox/autostart
+# Used only when cage (Wayland) is unavailable on the image; apply-appliance.sh
+# chooses cage (darwin-kiosk.service) vs openbox and installs exactly one path.
+#
+# This file is sourced by openbox-session at X11 session start. It disables the
+# screensaver / DPMS, then execs the shared kiosk entry point so the X11 and
+# Wayland paths converge on identical cockpit logic.
+#
+# ---------------------------------------------------------------------------
+# SIBLING NOTE — openbox also needs autologin + startx.
+# Openbox does not start X11 by itself; the autologged-in `darwin` shell must
+# launch it. Add this one-liner to ~darwin/.bash_profile so logging in on tty1
+# brings up X (and therefore this autostart). apply-appliance.sh writes it:
+#
+#   [ -z "${DISPLAY:-}" ] && [ "$(tty)" = "/dev/tty1" ] && exec startx
+#
+# Pair that with a getty autologin drop-in for `darwin` on tty1.
+# ---------------------------------------------------------------------------
+
+# Best-effort screen-blank / power-management off (guarded; never abort).
+# The kiosk entry point also disables blanking, so this is belt-and-suspenders.
+if command -v xset >/dev/null 2>&1; then
+  xset s off || true       # disable screensaver
+  xset -dpms || true       # disable DPMS power management
+  xset s noblank || true   # do not blank the video on screensaver timeout
+fi
+
+# Hand off to the shared kiosk entry point. exec so openbox supervises the
+# launcher directly and a kiosk exit tears down the session cleanly for restart.
+exec /usr/local/bin/darwin-kiosk.sh

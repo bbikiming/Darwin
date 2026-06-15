@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- V297-10 — Developer ID notarized 배포용 ExportOptions.plist 템플릿.
+     사용 전 {TEAM_ID} 를 실제 Apple Developer Team ID 로 치환.
+     scripts/upload-app.sh 가 인스턴스화 + notarytool 호출. -->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>developer-id</string>
+
+    <key>teamID</key>
+    <string>{TEAM_ID}</string>
+
+    <!-- Direct distribution — 사용자가 다운로드. -->
+    <key>destination</key>
+    <string>export</string>
+
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <key>signingCertificate</key>
+    <string>Developer ID Application</string>
+
+    <!-- Notarization 은 xcodebuild 가 자동 trigger (Xcode 14+). -->
+    <key>notarize</key>
+    <true/>
+
+    <!-- dSYM 은 separate symbolicate 용 — Sparkle/Crashlytics 에 별도 업로드. -->
+    <key>uploadSymbols</key>
+    <false/>
+</dict>
+</plist>

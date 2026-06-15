@@ -18,6 +18,9 @@ public struct PilotHsvTuningSheet: View {
         var id: String { "writeRobot" }
     }
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(preset: Binding<VisionHsvPreset>,
                 remoteShell: RemoteShell,
                 onClose: @escaping () -> Void) {
@@ -78,7 +81,8 @@ public struct PilotHsvTuningSheet: View {
                     .foregroundStyle(DFColor.textSecondary)
             }
             Spacer()
-            Button("닫기") { onClose() }
+            // 사이클 138 (audit #24 codex sweep)
+            Button("닫기", role: .cancel) { onClose() }
                 .keyboardShortcut(.cancelAction)
         }
     }
@@ -218,6 +222,7 @@ public struct PilotHsvTuningSheet: View {
     private var actionsBar: some View {
         HStack(spacing: DFSpace.sm) {
             DFButton(.secondary, size: .medium) {
+                harness.record(.pilotHsvResetDefault, level: .info, actor: .user)
                 preset = .macDefault
                 lastOperationMessage = "Mac default 로 초기화"
             } label: {
@@ -252,6 +257,7 @@ public struct PilotHsvTuningSheet: View {
 
     @MainActor
     private func loadFromRobot() async {
+        harness.record(.pilotHsvLoadFromRobot, level: .info, actor: .user)
         lastOperationMessage = "로봇에서 config.ini read 중…"
         let priorCount = remoteShell.history.count
         await remoteShell.send(RobotSetupCommand.readVisionConfig)
@@ -309,13 +315,16 @@ public struct PilotHsvTuningSheet: View {
                 minPercent: minPct, maxPercent: maxPct
             )
         }
-        guard parsed.count == 4 else {
-            lastOperationMessage = "로봇 ini 파싱 실패 — \(parsed.count)/4 색만 읽음"
+        guard let orange = parsed[.orange],
+              let red = parsed[.red],
+              let yellow = parsed[.yellow],
+              let blue = parsed[.blue] else {
+            lastOperationMessage = "로봇 ini 파싱 실패 — 필요 색상(orange/red/yellow/blue) 누락"
             return
         }
         preset = VisionHsvPreset(
-            orange: parsed[.orange]!, red: parsed[.red]!,
-            yellow: parsed[.yellow]!, blue: parsed[.blue]!,
+            orange: orange, red: red,
+            yellow: yellow, blue: blue,
             source: .robotSynced, lastRobotSyncAt: Date()
         )
         lastOperationMessage = "✅ 로봇에서 4 색 모두 불러옴"
@@ -323,6 +332,8 @@ public struct PilotHsvTuningSheet: View {
 
     @MainActor
     private func writeToRobot() async {
+        harness.record(.pilotHsvWriteToRobot, level: .warn, actor: .user,
+                              data: ["tag_count": AnyCodable(MultiColorVision.Tag.allCases.count)])
         lastOperationMessage = "로봇에 write 중…"
         // DF_ARGS — 4색 × 7토큰 (tag h t sat val min_pct max_pct).
         // ROBOTIS ini 가 sat/val 은 0-100 정수, min/max_pct 는 float — 그대로 전달.

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "subsystem": "com.robotis.darwinforge",
+  "interval": "walk_tick",
+  "measured_at": "2026-05-24T13:42:07Z",
+  "tool": "WalkTickBaselineHarness (DispatchTime.now, direct call)",
+  "build_config": "debug",
+  "build_config_note": "release 권장 — debug 는 ARC/Optional unwrap overhead 로 2-3x 부풀려짐. swift test -c release 시 일부 #if DEBUG 기반 unrelated test 가 빌드 실패하면 그 test 들 fix 후 재측정.",
+  "machine": {
+    "platform": "darwin-arm64",
+    "note": "absolute number 는 measurement machine 의존 — baseline 비교는 항상 동일 머신에서 trial"
+  },
+  "duration_sec": 30.0,
+  "sample_count": 300,
+  "warmup_count": 50,
+  "tick_rate_hz": 10.0,
+  "mean_ms": 0.012164,
+  "stddev_ms": 0.001970,
+  "p50_ms": 0.012291,
+  "p95_ms": 0.014000,
+  "p99_ms": 0.020500,
+  "max_ms": 0.025042,
+  "adr_gate": {
+    "spec": "docs/architecture/adr-002-wave-4-decomposition.md (line 40, 48)",
+    "metric": "walk_tick P99",
+    "target_ms": 5.0,
+    "satisfied": true,
+    "headroom_pct": 99.59
+  },
+  "notes": [
+    "V287-1 (cycle 287) — ADR-002 P99 5ms gate 실측 baseline",
+    "direct tick() 호출 — simTimer RunLoop dispatch overhead 미포함 (< 50µs estimated)",
+    "store=nil 환경 — bus polling phase early-return; hardware 연결 시 + IMU read 50ms"
+  ]
+}

@@ -47,6 +47,9 @@ pub const FC_ERR_TIMEOUT: c_int = -4;
 pub const FC_ERR_CODEC: c_int = -5;
 /// 디바이스 응답 없음.
 pub const FC_ERR_DEVICE_NOT_FOUND: c_int = -6;
+/// E-STOP 선점으로 read 가 조기 abort 됨 (S4). 오류가 아닌 의도된 중단 —
+/// 호출자(백그라운드 리더/폴러)는 무음 skip 으로 분류해야 한다.
+pub const FC_ERR_ESTOP_PREEMPTED: c_int = -7;
 /// panic 보호 — Rust 코드가 panic.
 pub const FC_ERR_PANIC: c_int = -99;
 
@@ -83,6 +86,7 @@ fn err_code(e: &forge_core::Error) -> c_int {
         Codec(_) => FC_ERR_CODEC,
         Timeout(_) => FC_ERR_TIMEOUT,
         DeviceNotFound(_) => FC_ERR_DEVICE_NOT_FOUND,
+        EstopPreempted => FC_ERR_ESTOP_PREEMPTED,
         Other(_) => FC_ERR_GENERIC,
     }
 }
@@ -180,15 +184,50 @@ pub struct FcBus {
     /// `fc_motion_play_cancel` / `is_running` 이 `Arc.clone()` 으로 접근 → backend
     /// 와 메모리 disjoint, Rust aliasing UB 없음.
     motion_state: std::sync::Arc<MotionState>,
+    /// E-STOP 선점 플래그 (S4) — backend 내부 Bus 의 estop_flag 와 동일 AtomicBool 을
+    /// 가리키는 disjoint clone. `fc_bus_request_estop_preempt` 가 직렬화 락 없이 set 해
+    /// 진행 중 read 를 조기 abort 시킨다. motion_state 와 동일한 disjoint 패턴.
+    estop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FcBus {
     /// 2026-05-17: 인스턴스화 헬퍼 — 5 곳 반복 boilerplate 통합.
-    /// motion_state 는 idle Arc 자동 init — 호출자는 backend 만 명시.
+    /// motion_state 는 idle Arc 자동 init. estop_flag 는 backend Bus 와 공유.
     fn new(backend: BusBackend) -> Self {
+        let estop_flag = backend.estop_flag_handle();
         Self {
             backend,
             motion_state: std::sync::Arc::new(MotionState::new()),
+            estop_flag,
+        }
+    }
+}
+
+impl BusBackend {
+    /// 내부 Bus 의 E-STOP 선점 플래그 공유 핸들.
+    fn estop_flag_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        match self {
+            BusBackend::Posix(b) => b.estop_flag_handle(),
+            BusBackend::Loopback(b) => b.estop_flag_handle(),
+            BusBackend::Tcp(b) => b.estop_flag_handle(),
+        }
+    }
+
+    /// 내부 Bus 의 응답 timeout 변경 (보행 중 락 보유 상한 축소용).
+    fn set_io_timeout(&mut self, timeout: Duration) {
+        match self {
+            BusBackend::Posix(b) => b.set_timeout(timeout),
+            BusBackend::Loopback(b) => b.set_timeout(timeout),
+            BusBackend::Tcp(b) => b.set_timeout(timeout),
+        }
+    }
+
+    /// 내부 Bus 의 선점 플래그 해제.
+    fn clear_estop_preempt(&self) {
+        match self {
+            BusBackend::Posix(b) => b.clear_estop_preempt(),
+            BusBackend::Loopback(b) => b.clear_estop_preempt(),
+            BusBackend::Tcp(b) => b.clear_estop_preempt(),
         }
     }
 }
@@ -501,6 +540,111 @@ pub unsafe extern "C" fn fc_bus_read_imu(handle: *mut FcBus, out: *mut FfiImuRaw
     })
 }
 
+// MARK: - v1.11.25 (2026-05-21) audit P0 robot-D — FSR (foot pressure) FFI.
+//
+// 종전: FSR_LEFT=112 / FSR_RIGHT=111 ID 상수만 forge-core 에 정의되어 있고 read 함수 부재 →
+//       Swift 가 FSR 데이터를 얻을 방법 자체가 없어 ZMP / 발 지지 phase 분석 불가.
+// 현재: forge-core::joint::fsr 모듈 신규 + 본 FFI 노출 + Swift wrapper. board 미장착 robot
+//       에서는 timeout 으로 fail — Swift 측에서 fallback 처리.
+
+/// FSR 한 발의 4 cell + center-of-pressure 측정.
+/// `fc_bus_read_fsr_left` / `fc_bus_read_fsr_right` 의 out 파라미터.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FfiFsrReading {
+    /// Dynamixel ID (111=right, 112=left).
+    pub id: u8,
+    /// 4 cell 압력 raw (0..1023). \[front-left, front-right, rear-right, rear-left\].
+    pub cell_fl: u16,
+    pub cell_fr: u16,
+    pub cell_rr: u16,
+    pub cell_rl: u16,
+    /// 중심점 X (사용자 시점 좌측=음수, -127..127). 0 = 발 중앙.
+    pub center_x: i8,
+    /// 중심점 Y (앞=음수, -127..127).
+    pub center_y: i8,
+}
+
+impl From<forge_core::joint::fsr::FsrReading> for FfiFsrReading {
+    fn from(s: forge_core::joint::fsr::FsrReading) -> Self {
+        Self {
+            id: s.id,
+            cell_fl: s.cells[0],
+            cell_fr: s.cells[1],
+            cell_rr: s.cells[2],
+            cell_rl: s.cells[3],
+            center_x: s.center_x,
+            center_y: s.center_y,
+        }
+    }
+}
+
+/// 좌측 발 FSR (ID 112) read. board 미장착 시 timeout 으로 `FC_ERR_TIMEOUT`.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_read_fsr_left(
+    handle: *mut FcBus,
+    out: *mut FfiFsrReading,
+) -> c_int {
+    if handle.is_null() || out.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            out: *mut FfiFsrReading,
+        ) -> c_int {
+            match b.read_fsr_left() {
+                Ok(s) => {
+                    unsafe {
+                        *out = s.into();
+                    }
+                    FC_OK
+                }
+                Err(e) => err_code(&e),
+            }
+        }
+        match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, out),
+            BusBackend::Loopback(b) => run(b, out),
+            BusBackend::Tcp(b) => run(b, out),
+        }
+    })
+}
+
+/// 우측 발 FSR (ID 111) read.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_read_fsr_right(
+    handle: *mut FcBus,
+    out: *mut FfiFsrReading,
+) -> c_int {
+    if handle.is_null() || out.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            out: *mut FfiFsrReading,
+        ) -> c_int {
+            match b.read_fsr_right() {
+                Ok(s) => {
+                    unsafe {
+                        *out = s.into();
+                    }
+                    FC_OK
+                }
+                Err(e) => err_code(&e),
+            }
+        }
+        match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, out),
+            BusBackend::Loopback(b) => run(b, out),
+            BusBackend::Tcp(b) => run(b, out),
+        }
+    })
+}
+
 /// CM Dynamixel 전원 게이트.
 #[no_mangle]
 pub unsafe extern "C" fn fc_bus_set_dxl_power(handle: *mut FcBus, on: c_int) -> c_int {
@@ -641,6 +785,103 @@ pub unsafe extern "C" fn fc_joint_set_position(
     })
 }
 
+/// 다중 관절 동시 goal position 설정 (SYNC_WRITE 1패킷). 안전 한계로 clamp.
+///
+/// 인자:
+/// - `ids_ptr`: 관절 rawValue (u8) 배열 (길이 = `count`).
+/// - `raws_ptr`: 목표 position (u16) 배열 (길이 = `count`). `ids_ptr[i]` 와 쌍.
+/// - `count`: 관절 수.
+///
+/// 반환: 0=OK, 음수=에러. SYNC_WRITE 는 status packet 없음 — transport 실패만 감지.
+/// ids 또는 raws 가 null 이거나 count == 0 이면 `FC_ERR_INVALID`.
+/// 매핑되지 않은 관절 ID 는 무시 (silent skip).
+#[no_mangle]
+pub unsafe extern "C" fn fc_joint_set_positions_many(
+    handle: *mut FcBus,
+    ids_ptr: *const u8,
+    raws_ptr: *const u16,
+    count: usize,
+) -> c_int {
+    if handle.is_null() || ids_ptr.is_null() || raws_ptr.is_null() || count == 0 {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let ids = std::slice::from_raw_parts(ids_ptr, count);
+        let raws = std::slice::from_raw_parts(raws_ptr, count);
+        let targets: Vec<(forge_core::joint::JointId, u16)> = ids
+            .iter()
+            .zip(raws.iter())
+            .filter_map(|(&raw_id, &pos)| {
+                forge_core::joint::JointId::from_byte(raw_id).map(|j| (j, pos))
+            })
+            .collect();
+        if targets.is_empty() {
+            return FC_OK;
+        }
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            targets: &[(forge_core::joint::JointId, u16)],
+        ) -> c_int {
+            let mut jc = JointController::new(b);
+            jc.set_positions_many(targets)
+                .map(|_| FC_OK)
+                .unwrap_or_else(|e| err_code(&e))
+        }
+        match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, &targets),
+            BusBackend::Loopback(b) => run(b, &targets),
+            BusBackend::Tcp(b) => run(b, &targets),
+        }
+    })
+}
+
+/// 다중 관절 moving_speed 동시 설정 — SYNC_WRITE 1패킷 (L5, 2026-06-11).
+///
+/// 보행 prologue 의 관절별 개별 write 20회(+status 왕복)를 1패킷으로 대체.
+/// - `ids_ptr`: 관절 rawValue (u8) 배열 (길이 = `count`).
+/// - `speed`: 전 관절 공통 moving_speed (0 = 무제한, 1-1023).
+///
+/// 반환: 0=OK, 음수=에러. SYNC_WRITE 는 status packet 없음 — transport 실패만 감지.
+/// 매핑되지 않은 관절 ID 는 무시 (silent skip).
+#[no_mangle]
+pub unsafe extern "C" fn fc_joint_set_moving_speeds_many(
+    handle: *mut FcBus,
+    ids_ptr: *const u8,
+    count: usize,
+    speed: u16,
+) -> c_int {
+    if handle.is_null() || ids_ptr.is_null() || count == 0 {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let ids = std::slice::from_raw_parts(ids_ptr, count);
+        let joints: Vec<forge_core::joint::JointId> = ids
+            .iter()
+            .filter_map(|&raw_id| forge_core::joint::JointId::from_byte(raw_id))
+            .collect();
+        if joints.is_empty() {
+            return FC_OK;
+        }
+        let bus = &mut *handle;
+        fn run<P: forge_core::serial::SerialPort>(
+            b: &mut Bus<P>,
+            joints: &[forge_core::joint::JointId],
+            speed: u16,
+        ) -> c_int {
+            let mut jc = JointController::new(b);
+            jc.set_moving_speeds_many(joints, speed)
+                .map(|_| FC_OK)
+                .unwrap_or_else(|e| err_code(&e))
+        }
+        match &mut bus.backend {
+            BusBackend::Posix(b) => run(b, &joints, speed),
+            BusBackend::Loopback(b) => run(b, &joints, speed),
+            BusBackend::Tcp(b) => run(b, &joints, speed),
+        }
+    })
+}
+
 /// 한 관절 moving_speed 설정 — Dynamixel MX-28T address 32-33 (2 byte).
 /// speed: 0 = 무제한 (default), 1-1023 = 단계별 (0.114 rpm per unit).
 /// 자세 변경 시 모터의 보간 속도 제한 → 부드러운 이동.
@@ -769,11 +1010,66 @@ pub unsafe extern "C" fn fc_emergency_stop(handle: *mut FcBus) -> c_int {
                 .map(|_| FC_OK)
                 .unwrap_or_else(|e| err_code(&e))
         }
-        match &mut bus.backend {
+        let code = match &mut bus.backend {
             BusBackend::Posix(b) => run(b),
             BusBackend::Loopback(b) => run(b),
             BusBackend::Tcp(b) => run(b),
-        }
+        };
+        // S4: 토크 OFF 송출 완료 후 선점 플래그 해제 — 다음 정상 read 재개.
+        bus.backend.clear_estop_preempt();
+        code
+    })
+}
+
+/// **S4 — E-STOP 선점 요청 (2026-06-11)**. 직렬화 락을 *획득하지 않고* 선점 플래그를
+/// set — 다른 스레드가 진행 중인 read(보행 중 status 폴 등)를 다음 슬라이스에서
+/// `EstopPreempted` 로 조기 abort 시켜 락을 즉시 풀게 한다. 긴급정지 경로는 이 호출
+/// 직후 정상 락을 획득해 `fc_emergency_stop` 으로 torque-off 한다.
+///
+/// `motion_state` 와 동일하게 backend(port)와 disjoint 한 `estop_flag` Arc 만 접근하므로
+/// in-flight `&mut *handle` 호출과 aliasing UB 없음.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_request_estop_preempt(handle: *mut FcBus) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        use std::sync::atomic::Ordering;
+        let bus = &*handle;
+        let flag = bus.estop_flag.clone();
+        flag.store(true, Ordering::SeqCst);
+        FC_OK
+    })
+}
+
+/// 선점 플래그 수동 해제 — 정상적으로는 `fc_emergency_stop` 이 자동 해제하나,
+/// 선점만 요청하고 정지를 송출하지 않는 경로(취소/복구)를 위해 노출.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_clear_estop_preempt(handle: *mut FcBus) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        use std::sync::atomic::Ordering;
+        let bus = &*handle;
+        bus.estop_flag.store(false, Ordering::SeqCst);
+        FC_OK
+    })
+}
+
+/// 응답 timeout 변경 (ms). 보행 시작 시 락 보유 상한을 낮추고(예: 50 ms) 종료 시
+/// 복원해 — E-STOP 선점 최악 대기를 timeout 1슬라이스로 제한한다. backend Bus 를
+/// 직접 mutate 하므로 직렬화 락 보유 중 호출 (다른 FFI 와 동일 진입 규약).
+#[no_mangle]
+pub unsafe extern "C" fn fc_bus_set_io_timeout(handle: *mut FcBus, timeout_ms: u32) -> c_int {
+    if handle.is_null() {
+        return FC_ERR_INVALID;
+    }
+    safe_call(|| {
+        let bus = &mut *handle;
+        bus.backend
+            .set_io_timeout(Duration::from_millis(timeout_ms as u64));
+        FC_OK
     })
 }
 
@@ -1383,6 +1679,62 @@ mod tests {
                 LoopbackBus::default(),
             ))));
             assert_eq!(fc_motion_play_is_running(h.as_mut() as *mut _), 0);
+        }
+    }
+
+    // ---- S4 E-STOP 선점 FFI tests ----
+
+    #[test]
+    fn estop_preempt_null_handle_returns_invalid() {
+        unsafe {
+            assert_eq!(
+                fc_bus_request_estop_preempt(ptr::null_mut()),
+                FC_ERR_INVALID
+            );
+            assert_eq!(fc_bus_clear_estop_preempt(ptr::null_mut()), FC_ERR_INVALID);
+            assert_eq!(fc_bus_set_io_timeout(ptr::null_mut(), 50), FC_ERR_INVALID);
+        }
+    }
+
+    #[test]
+    fn request_estop_preempt_aborts_inflight_read() {
+        unsafe {
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
+            let handle = h.as_mut() as *mut FcBus;
+            // 선점 요청 — disjoint Arc 만 건드림 (락 없이).
+            assert_eq!(fc_bus_request_estop_preempt(handle), FC_OK);
+            // 이제 어떤 read 든 EstopPreempted 로 막혀야 한다. fc_bus_ping 은 recv 를 탄다.
+            assert_eq!(fc_bus_ping(handle, 1), FC_ERR_ESTOP_PREEMPTED);
+            // emergency_stop 은 broadcast(SYNC_WRITE)라 recv 없이 통과 + 플래그 해제.
+            assert_eq!(fc_emergency_stop(handle), FC_OK);
+            // 해제 후 ping 은 더 이상 선점으로 막히지 않는다 (큐 비어 timeout 일 뿐).
+            assert_ne!(fc_bus_ping(handle, 1), FC_ERR_ESTOP_PREEMPTED);
+        }
+    }
+
+    #[test]
+    fn clear_estop_preempt_restores_reads() {
+        unsafe {
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
+            let handle = h.as_mut() as *mut FcBus;
+            assert_eq!(fc_bus_request_estop_preempt(handle), FC_OK);
+            assert_eq!(fc_bus_ping(handle, 1), FC_ERR_ESTOP_PREEMPTED);
+            assert_eq!(fc_bus_clear_estop_preempt(handle), FC_OK);
+            assert_ne!(fc_bus_ping(handle, 1), FC_ERR_ESTOP_PREEMPTED);
+        }
+    }
+
+    #[test]
+    fn set_io_timeout_ok_on_loopback() {
+        unsafe {
+            let mut h = Box::new(FcBus::new(BusBackend::Loopback(Bus::new(
+                LoopbackBus::default(),
+            ))));
+            assert_eq!(fc_bus_set_io_timeout(h.as_mut() as *mut _, 50), FC_OK);
         }
     }
 

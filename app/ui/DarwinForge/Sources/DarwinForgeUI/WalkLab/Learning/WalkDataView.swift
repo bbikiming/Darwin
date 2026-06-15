@@ -1,10 +1,15 @@
 import SwiftUI
 import Charts
+import Accessibility
 
 /// **v1.9 (2026-05-17 사용자 요청)**: 보행 데이터 메뉴 화면.
 ///
 /// 디스크에 저장된 모든 session 의 summary 를 list 로 표시 + 선택 시 IMU 시계열 +
 /// corrector delta + balance state strip 차트.
+///
+/// **V280-C (2026-05-24)**: 4-layer (detail + Critic V2 + Markdown + approval sheet)
+/// → segmented control 통합. mode 3종 mutually exclusive — Apple HIG "Tabbed
+/// Interface" + IBM Carbon "Mode-less interaction" 적용. toolbar 2 button 제거.
 ///
 /// **위치**: Expert > 보행 데이터 (ExpertTab.walkData)
 ///
@@ -14,28 +19,59 @@ import Charts
 ///
 /// **Privacy**: 사용자가 휴지통 버튼 → 해당 session 삭제 가능.
 public struct WalkDataView: View {
-    @State private var summaries: [WalkSessionSummary] = []
-    @State private var selectedId: String?
+    /// **V280-C**: 우측 detail panel 의 mode (segmented control).
+    /// 종전 `showV2Panel` + `claudeShowPanel` toggle 두 개 → 단일 enum 통합.
+    /// mutually exclusive — 세 상태가 동시 활성 불가능.
+    enum DetailMode: String, CaseIterable, Identifiable {
+        case overview
+        case claude
+        case critic
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .overview: return "개요"
+            case .claude:   return "Claude 분석"
+            case .critic:   return "Critic V2"
+            }
+        }
+
+        /// App Store 빌드(§4): Claude/Critic 탭은 `claude` CLI 를 spawn 하므로
+        /// 리뷰어 머신에서 '분석 실패' 로 깨진다 → 세그먼트 picker 에서 아예 제외.
+        /// dev/DevID 빌드는 전체 노출.
+        static var visibleCases: [DetailMode] {
+            #if APPSTORE
+            return [.overview]
+            #else
+            return allCases
+            #endif
+        }
+    }
+
+    // V280-C: extension (다른 file) 접근 위해 default internal scope 유지.
+    @State var summaries: [WalkSessionSummary] = []
+    @State var selectedId: String?
     @State private var loadedSamples: [WalkSessionSample] = []
     @State private var isLoadingSamples: Bool = false
 
     // **v1.11.9 (2026-05-19)** — Claude CLI 보행 분석.
-    @State private var claudeMarkdown: String? = nil
-    @State private var claudeError: String? = nil
+    @State var claudeMarkdown: String? = nil
+    @State var claudeError: String? = nil
     @State private var claudeInProgress: Bool = false
     @State private var claudeUserReport: String = ""
-    @State private var claudeShowPanel: Bool = false
 
     // **v1.11.12 (2026-05-19)** — Critic V2 (typed JSON 응답).
-    @EnvironmentObject private var critic: WalkSessionClaudeCritic
-    @EnvironmentObject private var experimentLoop: ExperimentLoopController
+    @EnvironmentObject var critic: WalkSessionClaudeCritic
+    @EnvironmentObject var experimentLoop: ExperimentLoopController
     // **v1.11.14 (2026-05-19)** — RootView hoisted WalkLabSession.
-    // ExperimentApprovalUI 의 onApprove 가 실제 WalkLabSession config 를 변경하기 위해
-    // 필요. 종전엔 WalkLabView 내부 @StateObject 라 접근 불가했음.
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) var session
     // **v1.11.14.7 (2026-05-19)** — 테마 인식 — flat 모드에서 elev2 도 무채색.
     @Environment(\.dfTheme) private var theme: DFTheme
-    @State private var showV2Panel: Bool = false
+
+    // **V280-C**: 4-layer → segmented control 통합.
+    @State private var detailMode: DetailMode = .overview
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
 
     public init() {}
 
@@ -43,51 +79,8 @@ public struct WalkDataView: View {
         HSplitView {
             sessionListPanel
                 .frame(minWidth: 280, idealWidth: 320, maxWidth: 400)
-            VStack(spacing: 0) {
-                if let id = selectedId, let summary = summaries.first(where: { $0.id == id }) {
-                    detailPanel(summary: summary)
-                } else {
-                    emptyDetailPanel
-                }
-                if showV2Panel {
-                    Divider()
-                    // v1.11.12: typed JSON UI.
-                    WalkDataClaudeV2Panel(
-                        showApprovalSheet: $showApprovalSheet,
-                        summaries: summaries,
-                        headersById: loadHeaders(),
-                        sampleStatsBuilder: { sessionId in
-                            self.phaseStatsForSession(sessionId)
-                        }
-                    )
-                    .frame(maxHeight: 480)
-                } else if claudeShowPanel {
-                    Divider()
-                    claudePanel
-                        .frame(maxHeight: 360)
-                }
-            }
-            .frame(minWidth: 500)
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showV2Panel.toggle()
-                    if showV2Panel { claudeShowPanel = false }
-                } label: {
-                    Label(showV2Panel ? "Critic V2 숨김" : "Critic V2 (typed)",
-                          systemImage: "sparkles.rectangle.stack.fill")
-                }
-            }
-            ToolbarItem(placement: .secondaryAction) {
-                Button {
-                    claudeShowPanel.toggle()
-                    if claudeShowPanel { showV2Panel = false }
-                } label: {
-                    Label(claudeShowPanel ? "Markdown 패널 숨김" : "Markdown 분석 (v1.11.9)",
-                          systemImage: "sparkles")
-                }
-            }
+            detailSection
+                .frame(minWidth: 500)
         }
         .sheet(isPresented: $showApprovalSheet) {
             if let resp = critic.currentResponse, let exp = resp.nextExperiment {
@@ -129,286 +122,97 @@ public struct WalkDataView: View {
         .onAppear { reload() }
     }
 
-    @State private var showApprovalSheet: Bool = false
+    // V280-C: extension 으로 분리 (WalkDataView+ExperimentApproval.swift) —
+    // 다른 file extension 접근 위해 internal default scope 유지.
+    @State var showApprovalSheet: Bool = false
 
-    /// 모든 세션의 jsonl 에서 header load.
-    private func loadHeaders() -> [String: WalkSessionHeader] {
-        var map: [String: WalkSessionHeader] = [:]
-        guard let dir = WalkSessionStore.sessionsDir else { return map }
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
-            return map
+    // MARK: - Detail section (V280-C segmented control)
+
+    /// 우측 panel: segmented control + mode 별 sub-view.
+    /// V280-C: 종전 HSplitView 우측 VStack 의 4-layer (detail + Critic V2 +
+    /// Markdown) 를 단일 sub-view 로 추출 + segmented picker 도입.
+    private var detailSection: some View {
+        VStack(spacing: 0) {
+            detailModePicker
+            Divider()
+            modeContent
         }
-        let decoder = JSONDecoder()
-        for url in files where url.pathExtension == "jsonl" {
-            guard let data = try? Data(contentsOf: url),
-                  let firstLine = data.split(separator: 0x0a).first,
-                  let header = try? decoder.decode(WalkSessionHeader.self, from: Data(firstLine))
-            else { continue }
-            map[header.sessionId] = header
-        }
-        return map
     }
 
-    private func phaseStatsForSession(_ sessionId: String) -> [WalkSessionClaudePromptV2.PhaseStatsV2] {
-        guard let dir = WalkSessionStore.sessionsDir else { return [] }
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
-        let match = files.first { $0.lastPathComponent.contains(sessionId) && $0.pathExtension == "jsonl" }
-        guard let url = match, let data = try? Data(contentsOf: url) else { return [] }
-        let decoder = JSONDecoder()
-        var samples: [WalkSessionSample] = []
-        for line in data.split(separator: 0x0a).dropFirst() {
-            if let s = try? decoder.decode(WalkSessionSample.self, from: Data(line)) {
-                samples.append(s)
+    private var detailModePicker: some View {
+        Picker("분석 모드", selection: $detailMode) {
+            ForEach(DetailMode.visibleCases) { mode in
+                Text(mode.label).tag(mode)
             }
         }
-        return WalkSessionClaudePromptV2.phaseStatsV2(from: samples)
-    }
-
-    /// **v1.11.14 (2026-05-19) — fix 진단 문서 #2**: 현재 WalkLab config 기준 + 한 axis 만 override.
-    /// `currentConfig` 는 RootView/WalkLabView 가 전달. baseline session 의 Header V2
-    /// 도 우선 사용 (있으면 더 정확). nil 이면 default — backward compat.
-    /// **v1.11.14.1**: tuning slider (stride/side/turn/period/footHeight/balanceGain) +
-    /// customGain* 4종 도 ExperimentDeltas 로 반환.
-    func buildProposedConfig(from exp: NextExperiment,
-                             currentConfig: BalanceExperimentConfig?,
-                             currentHipPitchOffsetTrimDeg: Double = 13.0,
-                             baselineHeader: WalkSessionHeader? = nil)
-        -> (config: BalanceExperimentConfig, deltas: WalkLabSession.ExperimentDeltas) {
-        // base = current config or baseline header values or default.
-        var algorithm: BalanceAlgorithmMode = currentConfig?.algorithmMode ?? .robotisPControl
-        var sign: BalanceSignConvention = currentConfig?.signConvention ?? .robotisWalkingCpp
-        var gain: BalanceGainProfile = currentConfig?.gainProfile ?? .robotisOriginal
-        var apply: Bool = currentConfig?.applyToRobot ?? true
-        var pitchInput: BalancePitchInputConvention = currentConfig?.pitchInputConvention ?? .imuRaw
-        if let h = baselineHeader {
-            if let v = h.balanceAlgorithmMode.flatMap(BalanceAlgorithmMode.init) { algorithm = v }
-            if let v = h.balanceSignConvention.flatMap(BalanceSignConvention.init) { sign = v }
-            if let v = h.balanceGainProfile.flatMap(BalanceGainProfile.init) { gain = v }
-            if let v = h.pitchInputConvention.flatMap(BalancePitchInputConvention.init) { pitchInput = v }
-        }
-
-        _ = currentHipPitchOffsetTrimDeg  // baseline header 우선이지만 logging 용 reserved.
-        _ = baselineHeader?.hipPitchOffsetTrimDegAtStart  // header 의 baseline trim 도 검사 reserved.
-        var deltas = WalkLabSession.ExperimentDeltas()
-
-        // 한 axis 만 override.
-        switch exp.axis {
-        case .algorithmMode:
-            if let v = BalanceAlgorithmMode(rawValue: exp.to) { algorithm = v }
-        case .signConvention:
-            if let v = BalanceSignConvention(rawValue: exp.to) { sign = v }
-        case .gainProfile:
-            if let v = BalanceGainProfile(rawValue: exp.to) { gain = v }
-        case .pitchInputConvention:
-            if let v = BalancePitchInputConvention(rawValue: exp.to) { pitchInput = v }
-        case .applyToRobot:
-            apply = (exp.to.lowercased() == "true")
-        case .hipPitchOffsetTrimDeg:
-            if let d = Double(exp.to) { deltas.hipPitchOffsetTrimDeg = d }
-        // **v1.11.14.5 — 사용자 평가 HIGH 2 fix**: walkingEngine + enableBalanceCorrection.
-        // 종전엔 ResponseAxis 에는 있지만 buildProposedConfig 가 처리 안 함 → critic 이
-        // "ROBOTIS onboard 로 바꿔라" 또는 "보정 켜라" 권고해도 silent no-op.
-        case .walkingEngine:
-            if let v = WalkingEngine(rawValue: exp.to) { deltas.walkingEngine = v }
-        case .enableBalanceCorrection:
-            deltas.enableBalanceCorrection = (exp.to.lowercased() == "true")
-        // v1.11.14.1: tuning slider 6종 + customGain 4종 적용.
-        case .strideMm:
-            if let d = Double(exp.to) { deltas.strideMm = d }
-        case .sideMm:
-            if let d = Double(exp.to) { deltas.sideMm = d }
-        case .turnDeg:
-            if let d = Double(exp.to) { deltas.turnDeg = d }
-        case .periodMs:
-            if let d = Double(exp.to) { deltas.customPeriodMs = d }
-        case .footHeightMm:
-            if let d = Double(exp.to) { deltas.footHeightMm = d }
-        case .balanceGain:
-            if let d = Double(exp.to) { deltas.balanceGain = d }
-        case .customGainHipRoll:
-            if let d = Double(exp.to) { deltas.customHipRollGain = d }
-        case .customGainKnee:
-            if let d = Double(exp.to) { deltas.customKneeGain = d }
-        case .customGainAnklePitch:
-            if let d = Double(exp.to) { deltas.customAnklePitchGain = d }
-        case .customGainAnkleRoll:
-            if let d = Double(exp.to) { deltas.customAnkleRollGain = d }
-        // **v1.11.14.6 — exhaustive switch**: ResponseAxis 신규 추가 시 silent skip
-        // 차단. .none / .unknown 은 명시 무시 (axis 미지정 또는 미지원).
-        case .none, .unknown:
-            break
-        }
-        let config = BalanceExperimentConfig(
-            algorithmMode: algorithm, signConvention: sign,
-            gainProfile: gain, applyToRobot: apply,
-            pitchInputConvention: pitchInput
-        )
-        return (config, deltas)
-    }
-
-    /// **v1.11.14**: 사용자 명시 승인 후 ExperimentLoop start + WalkLabSession 실 변경.
-    /// 진단 문서 #1 fix — 승인 시 실제 config 변경.
-    @MainActor
-    private func applyExperimentApproval(response: ClaudeCriticResponse,
-                                         experiment: NextExperiment,
-                                         currentConfig: BalanceExperimentConfig?,
-                                         currentTrim: Double,
-                                         session: WalkLabSession?) async {
-        let baselineId = selectedId ?? (summaries.first?.id ?? "unknown")
-        let baseHeader = loadHeader(forSessionId: baselineId)
-        let (proposedConfig, deltas) = buildProposedConfig(
-            from: experiment,
-            currentConfig: currentConfig,
-            currentHipPitchOffsetTrimDeg: currentTrim,
-            baselineHeader: baseHeader
-        )
-        // v1.11.14 진단 문서 #5 fix — 현재 config 기준 forbidden 조합 검증.
-        // self.validate() 는 응답 시점에 이미 실행됨 (analyst); 여기는 사용자 명시
-        // 승인 직전 추가 검사. 응답이 통과됐어도 사용자 현재 config 와 조합 시
-        // safetyVerdict.blocked 이면 reject.
-        let validation = response.validate(currentConfig: currentConfig ?? proposedConfig,
-                                           currentTrim: currentTrim)
-        if !validation.passed {
-            // experimentLoop 가 lastError 에 issues 첫 줄 표시.
-            experimentLoop.setLastError("승인 검증 실패: \(validation.issues.joined(separator: " | "))")
-            showApprovalSheet = false
-            return
-        }
-        let started = await experimentLoop.startExperiment(
-            from: response,
-            baselineSessionId: baselineId,
-            proposedConfig: proposedConfig
-        )
-        if started, let session = session, let current = experimentLoop.current {
-            // 실 WalkLabSession 에 한 axis 변경 적용 (사용자 명시 승인 + safety gate 통과 후).
-            // v1.11.14.1: deltas struct 로 tuning slider + customGain* 4종 모두 포함.
-            let result = session.applyExperimentChange(
-                experimentId: current.id,
-                baselineSessionId: baselineId,
-                proposedConfig: proposedConfig,
-                deltas: deltas
+        .pickerStyle(.segmented)
+        .padding(.horizontal, DFSpace.sm)
+        .padding(.vertical, DFSpace.xs)
+        .background(DFColor.adaptiveElev2(theme))
+        .onChange(of: detailMode) { _, newValue in
+            harness.record(
+                .walklabDataAnalysisPanelToggle, level: .info, actor: .user,
+                data: ["panel": AnyCodable(newValue.rawValue),
+                       "visible": AnyCodable(true)]
             )
-            switch result {
-            case .applied: break  // WalkLab 의 lastRobotEvent 가 사용자에게 표시.
-            case .failed(let reason):
-                // **v1.11.14.4 — cold 3차 CRIT 2 fix**: 종전 `_ = reason` 으로 silent.
-                // safetyVerdict 강등 등 사용자에게 명시 알림 + experimentLoop.cancel.
-                experimentLoop.setLastError("실험 적용 실패: \(reason)")
-                await experimentLoop.cancel()
-            }
         }
-        showApprovalSheet = false
     }
-
-    /// 한 sessionId 의 jsonl 첫 줄 (header) load.
-    private func loadHeader(forSessionId id: String) -> WalkSessionHeader? {
-        guard let dir = WalkSessionStore.sessionsDir else { return nil }
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
-            return nil
-        }
-        let match = files.first { $0.lastPathComponent.contains(id) && $0.pathExtension == "jsonl" }
-        guard let url = match, let data = try? Data(contentsOf: url),
-              let firstLine = data.split(separator: 0x0a).first
-        else { return nil }
-        return try? JSONDecoder().decode(WalkSessionHeader.self, from: Data(firstLine))
-    }
-
-    // MARK: - Claude AI panel (v1.11.9)
 
     @ViewBuilder
-    private var claudePanel: some View {
-        VStack(alignment: .leading, spacing: DFSpace.xs) {
-            HStack(spacing: DFSpace.xs) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(DFColor.accent)
-                Text("Claude AI 분석")
-                    .font(DFFont.bodyEmph)
-                Spacer()
-                if claudeInProgress {
-                    ProgressView().controlSize(.small)
-                }
-                Button {
-                    Task { await invokeClaudeAnalysis() }
-                } label: {
-                    Label("분석 실행", systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(claudeInProgress || summaries.isEmpty)
-
-                if claudeMarkdown != nil {
-                    Button {
-                        claudeMarkdown = nil
-                        claudeError = nil
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("결과 초기화")
-                }
-            }
-            .padding(.horizontal, DFSpace.sm)
-            .padding(.top, DFSpace.xs)
-
-            // 사용자 자연어 보고 입력.
-            HStack(alignment: .top, spacing: DFSpace.xs) {
-                Image(systemName: "text.bubble")
-                    .font(DFFont.label)
-                    .foregroundStyle(DFColor.textSecondary)
-                TextField("사용자 보고 (예: \"앞으로 넘어지려고 했어\")",
-                          text: $claudeUserReport,
-                          axis: .vertical)
-                    .lineLimit(2...3)
-                    .textFieldStyle(.roundedBorder)
-                    .font(DFFont.label)
-            }
-            .padding(.horizontal, DFSpace.sm)
-
-            Divider()
-
-            // 결과 표시.
-            ScrollView {
-                if let md = claudeMarkdown {
-                    Text(md)
-                        .font(DFFont.monoCaption)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(DFSpace.sm)
-                } else if let err = claudeError {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label("분석 실패", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(DFColor.danger)
-                            .font(DFFont.bodyEmph)
-                        Text(err)
-                            .font(DFFont.label)
-                            .foregroundStyle(DFColor.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(DFSpace.sm)
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Claude CLI 가 최근 \(min(WalkSessionClaudePrompt.maxSessions, summaries.count))개 세션 + 사용자 보고를 분석합니다.")
-                            .font(DFFont.label)
-                            .foregroundStyle(DFColor.textSecondary)
-                        Text("• 8 axis (engine/algorithm/sign/gain/pitchInput/apply/correction/trim) 기반 진단")
-                            .font(DFFont.micro)
-                            .foregroundStyle(DFColor.textSecondary)
-                        Text("• Mac sparse vs ROBOTIS onboard architecture 한계 인식")
-                            .font(DFFont.micro)
-                            .foregroundStyle(DFColor.textSecondary)
-                        Text("• axis 별 권고 + 다음 실험 가설")
-                            .font(DFFont.micro)
-                            .foregroundStyle(DFColor.textSecondary)
-                    }
-                    .padding(DFSpace.sm)
-                }
-            }
+    private var modeContent: some View {
+        switch detailMode {
+        case .overview:
+            overviewMode
+        case .claude:
+            // App Store 빌드(§4): Claude 패널은 `claude` CLI 의존 → overview 로 폴백
+            // (picker 에서도 숨겨 도달 불가하지만 방어적으로 fallback).
+            #if APPSTORE
+            overviewMode
+            #else
+            claudePanelView
+            #endif
+        case .critic:
+            #if APPSTORE
+            overviewMode
+            #else
+            criticPanelView
+            #endif
         }
-        .background(DFColor.accent.opacity(DFOpacity.o06))
     }
+
+    @ViewBuilder
+    private var overviewMode: some View {
+        if let id = selectedId, let summary = summaries.first(where: { $0.id == id }) {
+            detailPanel(summary: summary)
+        } else {
+            emptyDetailPanel
+        }
+    }
+
+    /// V280-C: WalkDataClaudePanel 로 추출. binding 4종 + summaries + onAnalyze 전달.
+    private var claudePanelView: some View {
+        WalkDataClaudePanel(
+            claudeMarkdown: $claudeMarkdown,
+            claudeError: $claudeError,
+            claudeInProgress: $claudeInProgress,
+            claudeUserReport: $claudeUserReport,
+            summaries: summaries,
+            onAnalyze: { await invokeClaudeAnalysis() }
+        )
+    }
+
+    private var criticPanelView: some View {
+        WalkDataClaudeV2Panel(
+            showApprovalSheet: $showApprovalSheet,
+            summaries: summaries,
+            headersById: loadHeaders(),
+            sampleStatsBuilder: { sessionId in
+                self.phaseStatsForSession(sessionId)
+            }
+        )
+    }
+
+    // MARK: - Claude AI invocation (v1.11.9)
 
     private func invokeClaudeAnalysis() async {
         claudeInProgress = true
@@ -420,30 +224,16 @@ public struct WalkDataView: View {
             return
         }
 
-        // sessionId → jsonl 파일에서 sample 배열 load 후 phase 통계.
-        let builder: (String) -> [WalkSessionClaudePrompt.PhaseStats] = { sessionId in
-            guard let dir = WalkSessionStore.sessionsDir else { return [] }
-            let fm = FileManager.default
-            guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
-            let match = files.first { $0.lastPathComponent.contains(sessionId) && $0.pathExtension == "jsonl" }
-            guard let url = match else { return [] }
-            guard let data = try? Data(contentsOf: url) else { return [] }
-            let decoder = JSONDecoder()
-            var samples: [WalkSessionSample] = []
-            for line in data.split(separator: 0x0a).dropFirst() {
-                if let s = try? decoder.decode(WalkSessionSample.self, from: Data(line)) {
-                    samples.append(s)
-                }
-            }
-            return WalkSessionClaudePrompt.phaseStats(from: samples)
-        }
+        harness.record(
+            .walklabDataAnalysisStarted, level: .info, actor: .user,
+            data: ["session_count": AnyCodable(summaries.count)]
+        )
 
         let prompt = WalkSessionClaudePrompt.build(
             sessions: summaries,
             userReport: claudeUserReport,
-            sampleStatsBuilder: builder
+            sampleStatsBuilder: { Self.phaseStatsClassic(forSessionId: $0) }
         )
-
         let analyst = WalkSessionClaudeAnalyst(timeoutSeconds: 90)
         do {
             let md = try await analyst.analyze(prompt: prompt)
@@ -452,6 +242,8 @@ public struct WalkDataView: View {
             claudeError = error.localizedDescription
         }
     }
+
+    // V280-C: phaseStatsClassic 은 extension (WalkDataView+ExperimentApproval) 로 이동.
 
     private var sessionListPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -466,6 +258,7 @@ public struct WalkDataView: View {
                 }
                 .help("디스크 다시 로드")
                 .buttonStyle(.borderless)
+                .accessibilityLabel("디스크 다시 로드")
                 if let dir = WalkSessionStore.sessionsDir {
                     Button {
                         NSWorkspace.shared.open(dir)
@@ -474,6 +267,7 @@ public struct WalkDataView: View {
                     }
                     .help("저장 폴더 열기")
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("저장 폴더 열기")
                 }
             }
             .padding(DFSpace.sm)
@@ -573,7 +367,11 @@ public struct WalkDataView: View {
             }
             .padding(DFSpace.md)
         }
-        .onChange(of: summary.id) { _, _ in
+        .onChange(of: summary.id) { _, newId in
+            harness.record(
+                .walklabDataSessionSelected, level: .info, actor: .user,
+                data: ["session_id_hash": AnyCodable(Harness.shortHash(newId))]
+            )
             loadSamples(for: summary.id)
         }
         .onAppear {
@@ -639,22 +437,7 @@ public struct WalkDataView: View {
             Text("IMU Roll / Pitch (°)")
                 .font(DFFont.sectionLabel)
                 .foregroundStyle(DFColor.textSecondary)
-            Chart {
-                ForEach(Array(samples.enumerated()), id: \.offset) { _, s in
-                    LineMark(x: .value("t", s.t / 1000.0), y: .value("Roll", s.imuRollDeg))
-                        .foregroundStyle(by: .value("Series", "Roll"))
-                }
-                ForEach(Array(samples.enumerated()), id: \.offset) { _, s in
-                    LineMark(x: .value("t", s.t / 1000.0), y: .value("Pitch", s.imuPitchDeg))
-                        .foregroundStyle(by: .value("Series", "Pitch"))
-                }
-                RuleMark(y: .value("zero", 0))
-                    .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.o25))
-            }
-            .chartForegroundStyleScale(["Roll": DFColor.info, "Pitch": DFColor.accent])
-            .chartXAxisLabel("시간 (s)")
-            .chartYAxisLabel("각도 (°)")
-            .frame(height: 200)
+            WalkDataIMUChart(samples: samples)
         }
         .padding(DFSpace.sm)
         .background(DFColor.adaptiveElev2(theme))
@@ -667,18 +450,7 @@ public struct WalkDataView: View {
             Text("Balance State (시간 축)")
                 .font(DFFont.sectionLabel)
                 .foregroundStyle(DFColor.textSecondary)
-            Chart {
-                ForEach(Array(samples.enumerated()), id: \.offset) { _, s in
-                    BarMark(
-                        x: .value("t", s.t / 1000.0),
-                        y: .value("state", 1)
-                    )
-                    .foregroundStyle(stateColor(s.balanceState))
-                }
-            }
-            .chartYAxis(.hidden)
-            .chartXAxisLabel("시간 (s)")
-            .frame(height: 40)
+            WalkDataBalanceStripChart(samples: samples, stateColor: stateColor)
         }
         .padding(DFSpace.sm)
         .background(DFColor.adaptiveElev2(theme))
@@ -691,28 +463,7 @@ public struct WalkDataView: View {
             Text("Corrector Delta — R/L hip_roll (°)")
                 .font(DFFont.sectionLabel)
                 .foregroundStyle(DFColor.textSecondary)
-            Chart {
-                ForEach(Array(samples.enumerated()), id: \.offset) { _, s in
-                    LineMark(
-                        x: .value("t", s.t / 1000.0),
-                        y: .value("R hipRoll", s.correctorDeltas.first ?? 0)
-                    )
-                    .foregroundStyle(by: .value("Series", "R hipRoll"))
-                }
-                ForEach(Array(samples.enumerated()), id: \.offset) { _, s in
-                    LineMark(
-                        x: .value("t", s.t / 1000.0),
-                        y: .value("L hipRoll", s.correctorDeltas.dropFirst().first ?? 0)
-                    )
-                    .foregroundStyle(by: .value("Series", "L hipRoll"))
-                }
-                RuleMark(y: .value("zero", 0))
-                    .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.o25))
-            }
-            .chartForegroundStyleScale(["R hipRoll": DFColor.forge, "L hipRoll": DFColor.success])
-            .chartXAxisLabel("시간 (s)")
-            .chartYAxisLabel("delta (°)")
-            .frame(height: 150)
+            WalkDataCorrectorDeltaChart(samples: samples)
         }
         .padding(DFSpace.sm)
         .background(DFColor.adaptiveElev2(theme))
@@ -762,9 +513,11 @@ public struct WalkDataView: View {
     private func loadSamples(for sessionId: String) {
         isLoadingSamples = true
         loadedSamples = []
-        DispatchQueue.global(qos: .userInitiated).async {
+        // Task.detached: parseSamples 는 nonisolated static 함수 — UI thread 점유
+        // 없이 background 에서 파싱. await MainActor.run 으로 @State 안전 갱신.
+        Task.detached(priority: .userInitiated) {
             let result = Self.parseSamples(sessionId: sessionId)
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.loadedSamples = result
                 self.isLoadingSamples = false
             }
@@ -820,6 +573,10 @@ public struct WalkDataView: View {
     }
 
     private func deleteSession(id: String) {
+        harness.record(
+            .walklabDataSessionDeleted, level: .warn, actor: .user,
+            data: ["session_id_hash": AnyCodable(Harness.shortHash(id))]
+        )
         guard let url = sessionFileURL(for: id) else { return }
         let summaryURL = url.deletingPathExtension().appendingPathExtension("summary.json")
         try? FileManager.default.removeItem(at: url)

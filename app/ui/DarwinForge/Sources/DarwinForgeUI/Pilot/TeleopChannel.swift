@@ -133,6 +133,7 @@ public final class TeleopChannel: ObservableObject {
         // [1] CM dxl_power ON.
         do {
             try bus.setDxlPower(true)
+            store?._setDxlPowerState(true)  // V283-4: gate 상태 동기화
         } catch {
             lastError = "Dynamixel 전원 ON 실패: \(error.localizedDescription)"
             return
@@ -437,7 +438,7 @@ public final class TeleopChannel: ObservableObject {
         playingSlot = nil
         progress = 0
         armStage = .idle
-        gate?.disarm()
+        gate?.disarm(source: .system)
         lastToast = "긴급 정지 — 토크 OFF. ARM 다시 해주세요."
     }
 }

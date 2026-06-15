@@ -53,8 +53,8 @@ public actor WalkLabExperimentLoop {
         baselineSessionId: String,
         proposedConfig: BalanceExperimentConfig
     ) -> StartResult {
-        guard current == nil else {
-            return .failure("이미 진행 중인 실험 있음 (\(current!.id)) — 종료 후 재시도")
+        if let current {
+            return .failure("이미 진행 중인 실험 있음 (\(current.id)) — 종료 후 재시도")
         }
         guard let next = response.nextExperiment else {
             return .failure("Critic 응답에 nextExperiment 없음")

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ===== 사이클 69 — production entitlements (LOW-3 ground truth) ===== -->
+    <!-- docs/walk-lab/PILOT_PRODUCTION_ENTITLEMENTS.md 의 deployment guide 대응 source. -->
+    <!-- SwiftPM 개발 환경에서는 sandbox 비활성 → 본 파일 무관. -->
+    <!-- Xcode app project 또는 notarization wrapper 가 codesign 시 attach. -->
+
+    <!-- App Sandbox 활성 (notarization 강력 권장) -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Tello UDP receive (8890) + send (8889) — TelloStateListener + TelloLink -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Voice — SFSpeechRecognizer + audio input -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- USB serial (ROBOTIS DARwIn-OP2) — active 필수 (deferred 아님) -->
+    <!-- robot bus 연결의 핵심 — 미설정 시 sandbox 환경에서 USB serial 접근 차단. -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
+
+    <!-- USB-Serial 디바이스 노드 (/dev/cu.usbserial-*) — POSIX serial open(TTYPort)에
+         device.usb 와 별도로 필요. 이게 없으면 sandbox 빌드에서 robot 연결 EPERM. -->
+    <key>com.apple.security.device.serial</key>
+    <true/>
+
+    <!-- 카메라 — 미래 vision-based 보행 보정 (현재 미사용, 활성화 시점에 enable) -->
+    <!--
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    -->
+
+    <!-- 사용자 선택 파일 접근 (motion 페이지 import / export) -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- ===== Hardened Runtime =====
+         hardened runtime 은 codesign 의 runtime option (`options=runtime`) 으로 활성화. 예외
+         entitlement (cs.allow-jit 등) 는 부재 = 모든 예외 차단 (most secure).
+         App Store Review 2.4.5(i) 자동 검사가 false 값을 거부하므로 (QA1773)
+         명시 false 키 제거. DarwinForge 는 표준 Swift/AppKit/Speech/Network 만
+         사용하며 JIT / unsigned memory 예외가 필요 없다.
+         2026-06-11 App Store 반려 정정과 동일 정책. -->
+</dict>
+</plist>

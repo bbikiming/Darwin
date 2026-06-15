@@ -65,6 +65,7 @@ public struct WalkDataClaudeV2Panel: View {
                 }
                 .buttonStyle(.borderless)
                 .help("결과 초기화")
+                .accessibilityLabel("Claude V2 분석 결과 초기화")
             }
             Button {
                 Task { await invokeAnalysis() }
@@ -221,7 +222,7 @@ public struct WalkDataClaudeV2Panel: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Image(systemName: "circle.fill")
-                    .font(.system(size: 8))
+                    .font(DFIcon.micro)
                     .foregroundStyle(severityColor)
                 Text("`\(d.axis.rawValue)`")
                     .font(DFFont.monoLabel)

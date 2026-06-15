@@ -1,3 +1,5 @@
+// V288-5: `#if DEBUG` wrap — _testForceImuAndTick/_testInspect* 는 DEBUG-only.
+#if DEBUG
 import ForgeCore
 import SwiftUI
 import XCTest
@@ -1248,3 +1250,4 @@ final class WalkLabFallPreventionTests: XCTestCase {
             "사용자 facing: 위험 명시")
     }
 }
+#endif

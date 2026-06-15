@@ -194,8 +194,12 @@ public enum MultiColorVision {
                 let b = Double(pixels[i+2]) / 255.0
                 let (h, s, v) = rgbToHsv(r: r, g: g, b: b)
                 for t in tags {
-                    if ranges[t]!.matches(h: h, s: s, v: v) {
-                        masks[t]![pi] = 1
+                    // ranges/masks 는 tags 로부터 init 되었으므로 정상 흐름에선 항상 존재.
+                    // 그러나 향후 refactor 시 silent crash 방지 — guard 로 안전 패턴.
+                    guard let range = ranges[t], var mask = masks[t] else { continue }
+                    if range.matches(h: h, s: s, v: v) {
+                        mask[pi] = 1
+                        masks[t] = mask  // [UInt8] 은 value type — 재할당 필요.
                     }
                 }
             }
@@ -219,7 +223,9 @@ public enum MultiColorVision {
             }
             guard count > 0 else { return nil }
             let percent = Double(count) / totalPixels * 100.0
-            let r = ranges[tag]!
+            // ranges 는 외부 ctor 에서 모든 tag 를 init 하므로 정상 흐름에선 존재.
+            // refactor 안전성을 위해 guard 로 처리.
+            guard let r = ranges[tag] else { return nil }
             guard percent >= r.minPercent && percent <= r.maxPercent else {
                 return nil   // ROBOTIS GetPosition 의 sentinel `-1.0` 와 등가.
             }

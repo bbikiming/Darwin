@@ -13,6 +13,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        // **v1.12.0 (2026-05-20) — Telemetry Harness 시동.**
+        // 실 로봇 빌드/조작 세션 중 모든 이벤트를 디스크에 기록 (off-by-default 토글로
+        // 사용자가 끌 수 있음). 자세한 설계: docs/harness/telemetry-harness.md
+        //
+        // **Wave 3 Phase 3.4 (사이클 115, 2026-05-23)** — `Harness.shared` 가
+        // deprecated. `LiveHarness.shared` (HarnessFacade) 으로 lifecycle 호출.
+        // RootView 의 `.environment(\.harness, LiveHarness.shared)` 와 동일 인스턴스.
+        LiveHarness.shared.start()
+        // **v1.14.8 (2026-05-21) perf #5**: heartbeat 는 ConnectionStore.status
+        // didSet 에서 connected 전환 시 start, disconnect/error 전환 시 stop.
+        // 종전 always-on → 미연결 idle 상태에서도 매 1s Timer 발화 + record() 호출
+        // (v1.14.4 guard 가 막아도 timer wake-up 자체는 발생) → 불필요한 main actor wake.
+
+        // **v1.11.25 (2026-05-21) audit log-Q** — app launch 시 WalkLab session retention.
+        // 종전: cleanup 이 autoTuner.record 안에 cleanupEvery 카운터 기반만 → autoTuner
+        // disabled 시 영원히 미실행 → 디스크 무한 누적 (32 jsonl > 30 cap 실측 발생).
+        // 본 호출은 app 시작 시 1회 — 직전 session 의 retention 보장.
+        WalkSessionStore.cleanupOldSessions()
+
         // 앱 아이콘 — SwiftPM 번들 PNG (사용자 지정 자산) 우선, 누락 시 코드 생성 fallback.
         // `.app` bundle 의 AppIcon.icns 가 있으면 macOS 가 우선 사용.
         // 2026-05-16 (재복구): 사용자 명시 — option/ChatGPT Image 10_57_32 (1).png 영구 적용.
@@ -157,6 +176,15 @@ struct DarwinForgeApp: App {
     // .preferredColorScheme 와 \.dfTheme env 가 자식 view 에 전파.
     @StateObject private var themeManager = DFThemeManager()
 
+    // **V285 (2026-05-24)** — 사용자 요청 trial 90일 retention.
+    // 종전: `WalkTrialStore.shared` 가 lazy singleton → 워크랩 탭 진입 시까지 init 안 됨
+    // → background cleanup task 가 안 돔 → index.json 부재 + 72K trial 그대로 잔존.
+    // 신규: App init 시점에 강제 touch → init 안의 detached background task 가
+    // index rebuild + 90일 prune 즉시 실행. 사용자 UI 진입과 무관 자동 cleanup.
+    init() {
+        _ = WalkTrialStore.shared
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -213,6 +241,9 @@ struct DarwinForgeApp: App {
                 }
                 .keyboardShortcut("4", modifiers: .command)
 
+                // App Store 빌드(§4): Conversation(Claude CLI 의존)·원격 명령(SSH)
+                // 메뉴 항목과 단축키(⌘5/⌘6)를 컴파일 제거 — 사이드바 숨김과 일관.
+                #if !APPSTORE
                 Button("대화") {
                     NotificationCenter.default.post(name: .dfSwitchSection, object: "conversation")
                 }
@@ -222,6 +253,7 @@ struct DarwinForgeApp: App {
                     NotificationCenter.default.post(name: .dfSwitchSection, object: "remote")
                 }
                 .keyboardShortcut("6", modifiers: .command)
+                #endif
 
                 Button("전문가") {
                     NotificationCenter.default.post(name: .dfSwitchSection, object: "expert")

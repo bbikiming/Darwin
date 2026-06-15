@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ===== 비샌드박스 (로컬 로봇 제어 전용, 2026-06-01) =====
+         app-sandbox 제거 — DarwinForge 는 `/usr/bin/ssh` 자식 프로세스를 spawn 하고
+         `~/.ssh/id_rsa_darwin` 키를 읽어 로봇에 SSH 접속한다. 샌드박스에선 둘 다 차단되어
+         SSH 즉시 실패 → LAN/온보드 연결 불가. 이 앱은 App Store 배포가 아니라 로컬 실행
+         전용이므로 비샌드박스가 맞다(메모: "앱은 비샌드박스로 재패키징").
+         mic(audio-input)·네트워크는 유지. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.usb</key>
+    <true/>
+</dict>
+</plist>

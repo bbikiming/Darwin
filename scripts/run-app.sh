@@ -9,6 +9,12 @@ PKG="$ROOT/app/ui/DarwinForge"
 APP_NAME="DarwinForge"
 APP_PATH="$PKG/.build/$APP_NAME.app"
 
+# 앱 버전은 권위 있는 소스 Info.plist 에서 읽어 드리프트 방지 (하드코딩 금지).
+SRC_INFO_PLIST="$PKG/Sources/DarwinForgeApp/Info.plist"
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SRC_INFO_PLIST" 2>/dev/null \
+    || grep -A1 'CFBundleShortVersionString' "$SRC_INFO_PLIST" | grep -m1 -oE '<string>[^<]+</string>' | sed -E 's#</?string>##g')"
+APP_VERSION="${APP_VERSION:-0.0.0}"
+
 # 1) Rust 코어 + Vendor + Swift 빌드 (이미 되어 있으면 빠름)
 echo "▶ Rust + Swift 빌드…"
 bash "$ROOT/scripts/build-mac.sh" --swift >/dev/null
@@ -29,6 +35,40 @@ mkdir -p "$APP_PATH/Contents/Resources"
 cp "$BIN" "$APP_PATH/Contents/MacOS/${APP_NAME}"
 chmod +x "$APP_PATH/Contents/MacOS/${APP_NAME}"
 
+# 3a) SwiftPM 리소스 번들 복사 — **로봇 메시 / 앱 아이콘 / 워드마크가 보이려면 필수**.
+#     STLLoader·AppIcon 은 SafeResourceBundle 을 쓰는데, 이건 .app/Contents/Resources/
+#     의 <module>.bundle 만 찾고 절대 .build 경로 폴백이 없다. 종전 run-app.sh 는
+#     바이너리만 복사 → 메시·아이콘 미발견 → 로봇 안 보이고 아이콘이 코드생성 폴백으로
+#     떨어지는 회귀(2026-06-04 확인). 번들을 표준 위치(Contents/Resources)와 .app 루트
+#     (Bundle.module 의 SwiftPM dev 후보) 양쪽에 복사해 두 해석 경로 모두 충족.
+BUILD_DIR="$(dirname "$BIN")"
+shopt -s nullglob
+RES_BUNDLES=("$BUILD_DIR"/*.bundle)
+shopt -u nullglob
+if (( ${#RES_BUNDLES[@]} == 0 )); then
+    echo "⚠︎ 리소스 번들 없음: $BUILD_DIR/*.bundle — 메시/아이콘이 누락될 수 있음"
+else
+    for b in "${RES_BUNDLES[@]}"; do
+        cp -R "$b" "$APP_PATH/Contents/Resources/"
+        cp -R "$b" "$APP_PATH/"
+    done
+    echo "▶ 리소스 번들 ${#RES_BUNDLES[@]}개 복사 (메시/아이콘/워드마크)"
+fi
+
+# 3a-2) Switch 에이전트 패키지 임베드 (R2 — 앱 내 자동배포 카드용).
+#       package.sh 산출 tarball 을 Contents/Resources 에 두면 "에이전트 자동 배포" 가
+#       Bundle.main 에서 찾아 scp 한다. 실패해도 실행은 계속.
+SWITCH_PKG_SCRIPT="$ROOT/tools/switch-pilot/package.sh"
+if [[ -f "$SWITCH_PKG_SCRIPT" ]]; then
+    rm -f "$APP_PATH/Contents/Resources/"darwin-switch-agent-*.tar.gz
+    if SWITCH_TARBALL="$(bash "$SWITCH_PKG_SCRIPT" | tail -n1)" && [[ -f "$SWITCH_TARBALL" ]]; then
+        cp "$SWITCH_TARBALL" "$APP_PATH/Contents/Resources/"
+        echo "▶ Switch 에이전트 패키지 임베드: $(basename "$SWITCH_TARBALL")"
+    else
+        echo "⚠︎ package.sh 실패 — 에이전트 자동배포 카드가 '패키지 없음' 표시"
+    fi
+fi
+
 cat > "$APP_PATH/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -46,7 +86,7 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.11.2</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleVersion</key>
     <string>$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "dev")</string>
     <key>LSMinimumSystemVersion</key>
@@ -59,6 +99,10 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
     <string>NSApplication</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>원격 조종 화면에서 로봇의 제어 브리지와 8080 카메라 미리보기에 연결합니다.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>마이크 체크 / 음성 명령을 위해 마이크 접근이 필요합니다.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>캡처한 음성을 텍스트로 인식하기 위해 음성 인식 사용을 허용합니다.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
@@ -67,6 +111,21 @@ cat > "$APP_PATH/Contents/Info.plist" <<EOF
 </dict>
 </plist>
 EOF
+
+# 3b) ad-hoc 코드사인 + entitlements (audio-input 포함).
+#     마이크/음성 인식은 TCC 가 usage description + 서명을 요구 — 미서명 시 권한
+#     요청 순간 SIGABRT(TCC privacy violation)로 즉시 종료된다(2026-05-31 회귀).
+#     **실기 F9 (2026-06-12)**: 종전엔 공증용 DarwinForge.entitlements(app-sandbox=true)를
+#     부착 → 샌드박스가 ssh 키 접근·Application Support 를 차단해 연결 마법사(SSH 경로)가
+#     전면 불능 + harness 기록 침묵. 로컬 실행은 sandbox 없는 dev entitlements 사용.
+ENTITLEMENTS="$PKG/Sources/DarwinForgeApp/DarwinForge.dev.entitlements"
+if [[ -f "$ENTITLEMENTS" ]]; then
+    codesign --force --deep --sign - --entitlements "$ENTITLEMENTS" --no-strict "$APP_PATH" \
+        && echo "▶ ad-hoc 사인 + entitlements 첨부 완료"
+else
+    codesign --force --deep --sign - --no-strict "$APP_PATH" || true
+    echo "⚠︎ entitlements 파일 없음 — 기본 서명만"
+fi
 
 # 4) 정리: 이전 인스턴스 종료 후 open
 echo "▶ 이전 인스턴스 종료"

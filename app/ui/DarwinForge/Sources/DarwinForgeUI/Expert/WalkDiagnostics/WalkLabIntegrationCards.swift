@@ -24,7 +24,7 @@ import ForgeCore
 /// - LIVE: BalanceState, lastCorrections, rampProgress, fallPrediction, displayImu*
 /// - EST (모델 추정): CoM offset, ankle residual — HUDMetrics 사용, EST badge 표시
 public struct WalkLabIntegrationCards: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
 
     public init() {}
 
@@ -33,6 +33,11 @@ public struct WalkLabIntegrationCards: View {
             operationStateCard
             attitudeAndComCard
             fallPredictorCard
+            // 사이클 183 (P1 #3.5 fix, cycle 177 audit): Trial Library 통합 — 과거
+            // trial vs 현재 metric 비교 view. 이전엔 WalkDiagnostics 가 live session
+            // 만 본 → 학습 / 진척 분석 불가능. 본 card 가 user-driven dropdown 으로
+            // 두 trial 의 4 metric diff 표시.
+            TrialComparisonCard()
         }
     }
 
@@ -146,7 +151,9 @@ public struct WalkLabIntegrationCards: View {
                                 value: ankleResidualText(residual: ankleResidualRight),
                                 color: ankleColor(absResidual: abs(ankleResidualRight)))
                 Divider().padding(.vertical, 2)
-                Text("산출 (v1.11.22 정정): CoM ≈ h × sin(angle), h=220mm "
+                // V279-1 (2026-05-24) cognitive load P0 — UI label internal version
+                // strip. "(v1.11.22 정정)" 사용자 의미 없음 제거.
+                Text("산출: CoM ≈ h × sin(angle), h=220mm "
                      + "(ROBOTIS-OP2 height 454.5mm × 0.5 humanoid CoM ratio). "
                      + "발 지지 폴리곤 반경=30mm (발 width 60mm / 2, single-foot lateral). "
                      + "Ankle = sign(body) × max(0, |body|-|corrector Δ|) (magnitude 기반, "
@@ -353,7 +360,7 @@ public struct WalkLabIntegrationCards: View {
 #Preview("Idle (no walking)") {
     let session = WalkLabSession()
     return WalkLabIntegrationCards()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .frame(width: 360)
         .padding()
         .background(DFColor.canvas)
@@ -368,7 +375,7 @@ public struct WalkLabIntegrationCards: View {
     session.imuPitchDeg = -8
     session.enableBalanceCorrection = true
     return WalkLabIntegrationCards()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .frame(width: 360)
         .padding()
         .background(DFColor.canvas)
@@ -382,7 +389,7 @@ public struct WalkLabIntegrationCards: View {
     session.imuRollDeg = 47
     session.imuPitchDeg = 15
     return WalkLabIntegrationCards()
-        .environmentObject(session)
+        .environment(session)  // @Observable 마이그레이션 v1.14.9
         .frame(width: 360)
         .padding()
         .background(DFColor.canvas)

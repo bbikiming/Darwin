@@ -155,7 +155,10 @@ public struct StatusBar: View {
         switch store.status {
         case .disconnected:    return "오프라인"
         case .connecting(let p): return "연결 중 — \(URL(fileURLWithPath: p).lastPathComponent)"
-        case .connected(let s): return shortenedControllerLabel(s.controllerLabel)
+        case .connected(let s):
+            // 정직성: 온보드 지연 시 라벨에 명시(상태 색 강등과 함께).
+            let base = shortenedControllerLabel(s.controllerLabel)
+            return store.telemetryMode == .onboardStale ? "\(base) (지연)" : base
         case .error:           return "연결 오류"
         }
     }
@@ -173,7 +176,11 @@ public struct StatusBar: View {
 
     private var connectionColor: Color {
         switch store.status {
-        case .connected:    return DFColor.success
+        case .connected:
+            // **정직성 fix (codex MEDIUM, 2026-06-02)**: transport(SSH/bus)는 연결돼 있어도
+            // 텔레메트리가 stale(온보드 지연)/끊김이면 solid green 은 "실시간"을 오해시킨다.
+            // 대시보드의 telemetryMode 강등과 일치하게 호박색으로 강등.
+            return store.telemetryMode.shouldDesaturate ? DFColor.warning : DFColor.success
         case .connecting:   return DFColor.warning
         case .error:        return DFColor.danger
         case .disconnected: return DFColor.textSecondary.opacity(DFOpacity.dim)

@@ -49,6 +49,86 @@ public enum WizardPath: String, CaseIterable, Identifiable {
     }
 }
 
+/// 연결 방식 — 제어 경로 선택. 마법사 진입 시 사용자가 고르고, `@AppStorage` 로 영속.
+///
+/// 두 경로는 서로 다른 트레이드를 가진다:
+///   - `.sshOnboard` (기본): 로봇 자신의 `demo-pilot` 이 모터를 소유 → 보행이 안정적.
+///     Mac 은 SSH 로 명령/텔레메트리를 주고받는다 (온보드 브로커리지).
+///   - `.lan`: Mac 의 `Bus` 가 5530 TCP bridge 로 모터를 직접 구동 → 풀 텔레메트리·헤드·
+///     긴급정지가 즉시 동작하지만, 왕복 지연 때문에 보행이 흔들릴 수 있다.
+public enum ConnectionMethod: String, CaseIterable, Identifiable {
+    case sshOnboard
+    case lan
+
+    public var id: String { rawValue }
+
+    /// 기본값 — 안정 보행 우선.
+    public static let `default`: ConnectionMethod = .sshOnboard
+
+    public var title: String {
+        switch self {
+        case .sshOnboard: return "SSH 온보드"
+        case .lan:        return "LAN (5530·유선)"
+        }
+    }
+
+    public var badge: String {
+        switch self {
+        case .sshOnboard: return "기본"
+        case .lan:        return "고급"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .sshOnboard: return "cpu"
+        case .lan:        return "cable.connector.horizontal"
+        }
+    }
+
+    public var tint: Color {
+        switch self {
+        case .sshOnboard: return DFColor.success
+        case .lan:        return DFColor.forge
+        }
+    }
+
+    /// 한 줄 핵심 트레이드.
+    public var summary: String {
+        switch self {
+        case .sshOnboard: return "로봇이 직접 걷기 — 보행 안정적"
+        case .lan:        return "Mac이 직접 구동 — 풀 텔레메트리·헤드·긴급정지 (유선 전용)"
+        }
+    }
+
+    /// 장점/주의 상세 설명 (선택 후 카드에 표기).
+    public var detail: String {
+        switch self {
+        case .sshOnboard:
+            return "로봇의 demo-pilot 이 모터를 소유해 보행이 안정적입니다. Mac은 SSH로 텔레메트리·헤드·긴급정지를 중계합니다."
+        case .lan:
+            return "유선 직결 전용(192.168.123.1). Mac의 Bus가 5530 bridge로 모터를 직접 구동합니다. 텔레메트리·헤드·긴급정지가 즉시 동작하지만, 왕복 지연으로 보행이 흔들릴 수 있어요. 랜선 필요."
+        }
+    }
+}
+
+/// **유무선 링크 선택 (2026-06-02)** — SSH 온보드 안에서 로봇에 닿는 물리 경로.
+/// 둘 다 SSH 온보드(로봇이 보행) 동일하고, 차이는 Mac↔로봇 네트워크뿐:
+///   - `.wired`: USB 직결 이더넷 (192.168.123.1). 지연 ~1ms, 항상 안정.
+///   - `.wireless`: WiFi (로봇 wlan0, DHCP). 케이블 없이 조종. 지연 ~80-200ms.
+public enum ConnectionLink: String, CaseIterable, Identifiable {
+    case wired
+    case wireless
+    public var id: String { rawValue }
+    public var title: String { self == .wired ? "유선" : "무선" }
+    public var icon: String { self == .wired ? "cable.connector.horizontal" : "wifi" }
+    public var hint: String {
+        self == .wired
+            ? "USB 직결 이더넷 (192.168.123.1) — 지연 최소, 항상 안정"
+            : "WiFi (로봇 wlan0) — 케이블 없이 무선 조종"
+    }
+}
+
 public enum StepStatus: Equatable {
     case pending
     case inProgress
@@ -83,6 +163,8 @@ public struct WizardStep: Identifiable, Equatable {
 
 public struct ConnectionWizardView: View {
     @EnvironmentObject var store: ConnectionStore
+    /// SSH 명령 채널 (앱 전역 주입). LAN 포트 자동 오픈 + SSH 온보드 연결에 사용.
+    @EnvironmentObject var remoteShell: RemoteShell
     @StateObject private var bonjour = BonjourBrowser()
     @StateObject private var oneClick = OneClickConnect()
     @Binding public var isPresented: Bool
@@ -95,6 +177,63 @@ public struct ConnectionWizardView: View {
     @State private var isAdvanced: Bool = false
     /// 셋업 블록 복사 토스트 트리거.
     @State private var copyConfirm: String? = nil
+    /// 연결 방식 — SSH 온보드(기본) / LAN(5530). 영속되어 다음 실행 때 자동 복원.
+    @AppStorage("df.connection.preferredMethod") private var connectionMethodRaw: String =
+        ConnectionMethod.default.rawValue
+
+    /// 현재 선택된 연결 방식 — 잘못된 raw 값은 기본값으로 폴백.
+    private var connectionMethod: ConnectionMethod {
+        ConnectionMethod(rawValue: connectionMethodRaw) ?? .default
+    }
+
+    /// **유무선 링크 (2026-06-02)** — SSH 온보드의 물리 경로. 영속.
+    @AppStorage("df.connection.link") private var connectionLinkRaw: String =
+        ConnectionLink.wired.rawValue
+    /// 무선 WiFi 호스트 (로봇 wlan0 IP, DHCP). 사용자 입력 또는 자동 탐지. 영속.
+    @AppStorage("df.connection.wifiHost") private var wifiHost: String = "192.168.0.33"
+    /// WiFi IP 자동 탐지 진행 상태(스피너).
+    @State private var detectingWifi: Bool = false
+
+    private var connectionLink: ConnectionLink {
+        ConnectionLink(rawValue: connectionLinkRaw) ?? .wired
+    }
+
+    /// SSH 온보드가 실제로 접속할 호스트 — 링크 선택에 따라 유선 IP 또는 WiFi IP.
+    /// 무선인데 wifiHost 가 비어도 **유선으로 silent fallback 하지 않는다**(사용자가 무선을
+    /// 골랐는데 유선으로 붙는 거짓 동작 방지). connectSSHOnboard 가 사전 검증한다.
+    private func resolvedSSHHost() -> String {
+        switch connectionLink {
+        case .wired:
+            return DFConnectionConstants.robotEthernetIP
+        case .wireless:
+            return wifiHost.trimmingCharacters(in: .whitespaces)
+        }
+    }
+
+    /// 호스트 형식 검증 — IPv4(4옥텟 0-255) 또는 점/`.local` 포함 호스트명.
+    static func isLikelyValidHost(_ raw: String) -> Bool {
+        let h = raw.trimmingCharacters(in: .whitespaces)
+        guard !h.isEmpty else { return false }
+        // 빈 옥텟/라벨(192..168 / .192 / 192.) 도 잡도록 빈 항목 유지하고 분리.
+        let octets = h.split(separator: ".", omittingEmptySubsequences: false)
+        let allNumeric = octets.allSatisfy { Int($0) != nil }   // 빈 문자열 → Int nil → false
+        if allNumeric {
+            // 숫자만 = IPv4 시도 → 정확히 4옥텟 모두 0-255 여야 유효 (300.1.1.1 은 reject).
+            return octets.count == 4
+                && octets.allSatisfy { let v = Int($0) ?? -1; return v >= 0 && v <= 255 }
+        }
+        // 비숫자 포함 = 호스트명 → 점 포함 + 각 라벨이 [A-Za-z0-9-], 빈 라벨/양끝 하이픈 없음.
+        guard h.contains(".") else { return false }
+        let labels = h.split(separator: ".", omittingEmptySubsequences: false)
+        return labels.allSatisfy { label in
+            !label.isEmpty
+                && label.first != "-" && label.last != "-"
+                && label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
+        }
+    }
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
 
     public init(isPresented: Binding<Bool>) {
         self._isPresented = isPresented
@@ -123,10 +262,23 @@ public struct ConnectionWizardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onAppear {
                 oneClick.bind(store: store, bonjour: bonjour)
+                harness.record(
+                    .setupConnWizardStarted, level: .info, actor: .user,
+                    data: ["has_last_endpoint": AnyCodable(store.lastSuccessfulEndpoint != nil),
+                           "is_advanced": AnyCodable(isAdvanced)]
+                )
                 if !isAdvanced && selectedPath == nil {
-                    // 마지막 성공 endpoint 가 있으면 마법사 진입 즉시 자동 연결 시도.
-                    if store.lastSuccessfulEndpoint != nil, store.bus == nil {
-                        oneClick.runOneClick()
+                    // SSH 온보드(기본)일 때만 진입 즉시 자동 연결 시도. LAN 은 사용자가
+                    // 명시적으로 [LAN(5530)으로 연결] 을 누르도록 진단만 표시 (오작동 방지).
+                    if connectionMethod == .sshOnboard,
+                       store.lastSuccessfulEndpoint != nil, store.bus == nil {
+                        harness.record(
+                            .setupConnOneClickFired, level: .info, actor: .system,
+                            data: ["trigger": AnyCodable("auto"),
+                                   "connection_method": AnyCodable(connectionMethod.rawValue)]
+                        )
+                        // 검토 fix: SSH 온보드는 :5530(runOneClick) 가 아니라 실제 SSH 경로.
+                        connectSSHOnboard()
                     } else {
                         oneClick.runDiagnosticsOnly()
                     }
@@ -135,11 +287,20 @@ public struct ConnectionWizardView: View {
             .onChange(of: store.status) { _, new in
                 if case .connected = new {
                     markCurrentStep(.success)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
                         isPresented = false
                     }
                 } else if case .error(let m) = new {
                     markCurrentStep(.failed(m))
+                }
+            }
+            .onChange(of: oneClick.phase) { _, newPhase in
+                if case .allFailed = newPhase {
+                    harness.record(
+                        .setupConnOneClickAllFailed, level: .notice, actor: .system,
+                        data: ["candidate_count": AnyCodable(oneClick.candidates.count)]
+                    )
                 }
             }
             .onDisappear { bonjour.stop(); oneClick.cancel() }
@@ -199,6 +360,7 @@ public struct ConnectionWizardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DFSpace.md) {
                 heroBadge
+                connectionMethodSelector
                 heroPrimaryAction
                 liveDiagnosticsSection
                 manualProbeSection
@@ -329,11 +491,206 @@ public struct ConnectionWizardView: View {
 
     /// Mac이 보이는 인접 .1 후보 + OP2 표준을 빠른 버튼으로.
     private func quickPresets() -> [String] {
-        var set: [String] = ["192.168.123.1"]
+        var set: [String] = [DFConnectionConstants.robotEthernetIP]
         for h in NetworkProbe.likelyRobotCandidates() where !set.contains(h) {
             set.append(h)
         }
         return Array(set.prefix(4))
+    }
+
+    // MARK: - Connection method selector
+
+    /// 제어 경로 선택 — SSH 온보드(기본) vs LAN(5530). 두 칩 + 선택된 방식의 트레이드 설명.
+    private var connectionMethodSelector: some View {
+        VStack(alignment: .leading, spacing: DFSpace.sm) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "arrow.triangle.branch")
+                    .foregroundStyle(DFColor.accent)
+                Text("연결 방식")
+                    .font(DFFont.bodyEmph)
+                Text("(제어 경로를 고르세요)")
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+
+            HStack(spacing: DFSpace.sm) {
+                ForEach(ConnectionMethod.allCases) { method in
+                    connectionMethodChip(method)
+                }
+            }
+
+            // 선택된 방식의 상세 트레이드.
+            HStack(alignment: .top, spacing: DFSpace.xs2) {
+                Image(systemName: connectionMethod.icon)
+                    .font(.system(size: DFFontSize.s11))
+                    .foregroundStyle(connectionMethod.tint)
+                    .padding(.top, 1)
+                Text(connectionMethod.detail)
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // **유무선 링크 (2026-06-02)** — SSH 온보드일 때만 노출. 그룹 내 하위 선택.
+            if connectionMethod == .sshOnboard {
+                Divider().background(DFColor.textSecondary.opacity(DFOpacity.subtle))
+                linkSelector
+            }
+        }
+        .padding(DFSpace.sm)
+        .background(DFColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.sm)
+                .stroke(DFColor.textSecondary.opacity(DFOpacity.subtle), lineWidth: DFSize.borderHairline)
+        )
+    }
+
+    /// 유무선 링크 하위 선택 — 유선/무선 세그먼트 + (무선 시) WiFi IP 입력·자동탐지.
+    private var linkSelector: some View {
+        VStack(alignment: .leading, spacing: DFSpace.xs2) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: DFFontSize.s11))
+                    .foregroundStyle(DFColor.accent)
+                Text("연결 매체")
+                    .font(DFFont.caption.weight(.semibold))
+                Text("(유선/무선)")
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.textSecondary)
+            }
+            // 유선/무선 세그먼트.
+            HStack(spacing: DFSpace.xs2) {
+                ForEach(ConnectionLink.allCases, id: \.self) { link in
+                    let on = link == connectionLink
+                    Button {
+                        connectionLinkRaw = link.rawValue
+                    } label: {
+                        HStack(spacing: DFSpace.xs) {
+                            Image(systemName: link.icon)
+                                .font(.system(size: DFFontSize.s11, weight: .semibold))
+                            Text(link.title).font(DFFont.caption.weight(.semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, DFSpace.xs)
+                        .background(on ? DFColor.accent.opacity(DFOpacity.o18) : DFColor.card)
+                        .overlay(RoundedRectangle(cornerRadius: DFRadius.xs)
+                            .stroke(on ? DFColor.accent : DFColor.textSecondary.opacity(DFOpacity.subtle),
+                                    lineWidth: on ? DFSize.borderStrong : DFSize.borderHairline))
+                        .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("link.\(link.rawValue)")
+                }
+            }
+            Text(connectionLink.hint)
+                .font(DFFont.caption)
+                .foregroundStyle(DFColor.textSecondary)
+            // 무선: WiFi IP 입력 + 자동 탐지.
+            if connectionLink == .wireless {
+                HStack(spacing: DFSpace.xs) {
+                    Image(systemName: "wifi").font(.system(size: DFFontSize.s11))
+                        .foregroundStyle(DFColor.textSecondary)
+                    TextField("로봇 WiFi IP (예: 192.168.0.33)", text: $wifiHost)
+                        .textFieldStyle(.roundedBorder)
+                        .font(DFFont.caption)
+                        .frame(maxWidth: 200)
+                    Button {
+                        autoDetectWifiIP()
+                    } label: {
+                        HStack(spacing: DFSpace.xs2) {
+                            if detectingWifi { ProgressView().controlSize(.small) }
+                            else { Image(systemName: "antenna.radiowaves.left.and.right") }
+                            Text("자동 탐지").font(DFFont.caption)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(detectingWifi)
+                    .help("유선 연결을 통해 로봇 wlan0 IP 를 읽어 채웁니다")
+                }
+            }
+        }
+    }
+
+    /// 로봇 wlan0 IP 자동 탐지 — 유선(192.168.123.1) 경유 SSH 로 `ip addr` 읽어 wifiHost 채움.
+    private func autoDetectWifiIP() {
+        detectingWifi = true
+        let wiredHost = DFConnectionConstants.robotEthernetIP
+        Task { @MainActor in
+            defer { detectingWifi = false }
+            // 리뷰(codex H2) fix: 공유 remoteShell.host 를 임시 변경하면 그 await 동안 스트리밍/
+            // e-stop/telemetry 가 엉뚱한 호스트로 가거나 동시 connect 의 host 를 덮어쓰는 레이스.
+            // → 공유 인스턴스 건드리지 않고 SSHShell.run 으로 유선 호스트 일회성 조회.
+            let result = try? await SSHShell.run(
+                command: RobotSetupCommand.readWifiIP, host: wiredHost, timeoutSeconds: 8)
+            if let ip = ConnectionWizardView.parseWifiIP(result?.combined ?? "") { wifiHost = ip }
+        }
+    }
+
+    /// SSH combined 출력에서 "WIFI_IP=x.x.x.x" 라인의 IPv4 추출 (순수 함수, 테스트 가능).
+    /// 빈 값/없음/형식오류면 nil. exit suffix·stderr 가 섞여도 견고.
+    static func parseWifiIP(_ output: String) -> String? {
+        for raw in output.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("WIFI_IP=") else { continue }
+            let ip = String(line.dropFirst("WIFI_IP=".count)).trimmingCharacters(in: .whitespaces)
+            // 간단한 IPv4 형태 검증 (4옥텟).
+            let parts = ip.split(separator: ".")
+            guard parts.count == 4, parts.allSatisfy({ Int($0).map { $0 >= 0 && $0 <= 255 } ?? false })
+            else { return nil }
+            return ip
+        }
+        return nil
+    }
+
+    private func connectionMethodChip(_ method: ConnectionMethod) -> some View {
+        let selected = method == connectionMethod
+        return Button {
+            selectConnectionMethod(method)
+        } label: {
+            VStack(alignment: .leading, spacing: DFSpace.micro2) {
+                HStack(spacing: DFSpace.xs) {
+                    Image(systemName: method.icon)
+                        .font(.system(size: DFFontSize.s12, weight: .semibold))
+                    Text(method.title)
+                        .font(DFFont.bodyEmph)
+                    Text(method.badge)
+                        .font(.system(size: DFFontSize.s9, weight: .bold))
+                        .padding(.horizontal, DFSpace.xs2 - 1)
+                        .padding(.vertical, DFSpace.micro)
+                        .background(method.tint.opacity(DFOpacity.o18))
+                        .foregroundStyle(method.tint)
+                        .clipShape(Capsule())
+                }
+                Text(method.summary)
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(DFSpace.sm)
+            .background(selected ? method.tint.opacity(DFOpacity.o15) : DFColor.elev2)
+            .foregroundStyle(selected ? method.tint : DFColor.textPrimary)
+            .clipShape(RoundedRectangle(cornerRadius: DFRadius.xs))
+            .overlay(
+                RoundedRectangle(cornerRadius: DFRadius.xs)
+                    .stroke(selected ? method.tint.opacity(DFOpacity.o45)
+                                     : DFColor.textSecondary.opacity(DFOpacity.o15),
+                            lineWidth: selected ? DFSize.borderHairline + 1 : DFSize.borderHairline)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(method.detail)
+    }
+
+    private func selectConnectionMethod(_ method: ConnectionMethod) {
+        guard method != connectionMethod else { return }
+        connectionMethodRaw = method.rawValue
+        harness.record(
+            .setupConnAdvancedToggle, level: .info, actor: .user,
+            data: ["connection_method": AnyCodable(method.rawValue)]
+        )
     }
 
     private var heroBadge: some View {
@@ -371,13 +728,22 @@ public struct ConnectionWizardView: View {
 
     @ViewBuilder
     private var heroPrimaryAction: some View {
+        // SSH 온보드 경로는 store.status 로 단계를 진행(oneClick.phase 와 분리). 둘 중 하나라도
+        // connecting 이면 버튼을 스피너+비활성 — 종전엔 oneClick.phase 만 봐 SSH 온보드 연결 중에도
+        // 버튼이 활성/평상 라벨이라 중복 클릭이 가능했다(불일치 fix).
         let isConnecting: Bool = {
             if case .connecting = oneClick.phase { return true }
+            if case .connecting = store.status { return true }
             return false
         }()
         let isScanning: Bool = oneClick.phase == .scanning
         Button {
-            oneClick.runOneClick()
+            harness.record(
+                .setupConnOneClickFired, level: .info, actor: .user,
+                data: ["trigger": AnyCodable("manual"),
+                       "connection_method": AnyCodable(connectionMethod.rawValue)]
+            )
+            runPreferredConnect()
         } label: {
             HStack(spacing: DFSpace.sm) {
                 if isConnecting || isScanning {
@@ -404,11 +770,111 @@ public struct ConnectionWizardView: View {
     }
 
     private var heroButtonTitle: String {
+        // SSH 온보드/LAN 경로는 store.status 로 단계 진행을 표시(oneClick.phase 와 분리).
+        // connecting 단계 라벨(①②③ / 5530 포트…)을 그대로 노출해 "무엇을 하는 중"인지 정직하게.
+        if case .connecting(let label) = store.status { return "연결 중 — \(label)" }
+        if case .connected = store.status { return "✅ 연결됨" }
         switch oneClick.phase {
-        case .idle, .allFailed, .failed: return "🚀  자동 연결 시작"
+        case .idle, .allFailed, .failed:
+            switch connectionMethod {
+            case .sshOnboard: return "🚀  자동 연결 시작 (SSH 온보드)"
+            case .lan:        return "🔌  LAN(5530)으로 연결"
+            }
         case .scanning:                  return "주변 검색 중…"
         case .connecting(let label):     return "연결 중 — \(label)"
         case .connected:                 return "✅ 연결됨"
+        }
+    }
+
+    /// 선택된 연결 방식에 따라 연결 시작.
+    ///   - `.sshOnboard`: 기존 자동 연결(원클릭) — 온보드 제어 경로.
+    ///   - `.lan`: 5530 TCP bridge 직결 — `store.connectNetwork()` 사용.
+    private func runPreferredConnect() {
+        switch connectionMethod {
+        case .sshOnboard:
+            connectSSHOnboard()
+        case .lan:
+            connectLAN()
+        }
+    }
+
+    /// 클래식 LAN(5530 bridge) 연결 — **"알아서 포트 열어서 연결"**.
+    /// 시퀀스(데모 종료 + socat 기동 → BRIDGE_OK → bus 연결)는 `store.connectLANBridge` 가 소유한다
+    /// (모드전환 `switchToJointEdit` 와 공유 — divergence 제거). 여기선 진행/에러를 `status` 로 표시.
+    /// ⚠️ demo 종료 시 로봇 토크가 풀리므로 거치/파지 상태에서 사용.
+    private func connectLAN() {
+        store.status = .connecting("5530 포트 여는 중… (유선 직결)")
+        Task { @MainActor in
+            let result = await store.connectLANBridge(remoteShell: remoteShell) { _ in
+                // 마법사는 단일 "5530 포트 여는 중…" 표시 유지 — 중간 단계 별도 표시 없음.
+            }
+            switch result {
+            case .connected, .superseded:
+                // .connected: connect(endpoint:) 가 status 를 갱신. .superseded: 새 시도가 소유.
+                break
+            case .failed(let reason):
+                store.status = .error(reason)
+            }
+        }
+    }
+
+    /// SSH 온보드 연결 — 검토 지적 fix: 종전엔 `oneClick.runOneClick()`(=:5530 TCP) 라
+    /// "SSH 온보드" 라벨과 실제 동작이 불일치했다. 이제 SSH 경로로:
+    ///   1) walklab 모드 검증 — 미실행이면 demo 를 walklab 으로 기동(`walkLabRobotisStart`)
+    ///   2) Mac telemetry poller 시작(`startOnboardTelemetry`) → telemetryMode `.onboard`
+    ///      → HUD + L0/L3 안전게이트 + 콕핏 게이트가 onboard 를 live 로 인식.
+    private func connectSSHOnboard() {
+        // === View 전용 검증 (마법사 전용, 보존) — 무선 IP 유효성·유선IP-무선혼동 ===
+        // 무선 선택인데 IP 가 비었거나 형식 오류면 — 유선으로 silent fallback 하지 않고 명확히 막는다.
+        if connectionLink == .wireless && !ConnectionWizardView.isLikelyValidHost(wifiHost) {
+            store.status = .error("무선 WiFi IP 가 비었거나 형식 오류 — IP 입력 또는 [자동 탐지] (유선 연결 필요)")
+            return
+        }
+        // **무선/유선 명확성 (2026-06-02)**: 무선인데 유선 직결 IP(192.168.123.x)를 넣으면 케이블에
+        // 묶인 "가짜 무선"이 된다(랜선 뽑으면 끊김). 명확히 막아 사용자가 로봇 WiFi IP 를 넣게 한다.
+        if connectionLink == .wireless && ConnectionLinkKind.classify(host: wifiHost) == .wired {
+            store.status = .error("무선인데 유선 직결 IP(192.168.123.x)입니다 — 로봇 WiFi IP(예: 192.168.0.33)를 입력하세요")
+            return
+        }
+        // 유무선 링크 선택에 따라 호스트 확정 (유선 192.168.123.1 / 무선 wlan0 IP).
+        let host = resolvedSSHHost()
+        store.status = .connecting("① 데모 모드 확인 중…")
+        Task { @MainActor in
+            // 시퀀스(verify → 기동 → ✅ 마커 → 온보드 텔레메트리)는 store.connectOnboard 가 소유
+            // (모드전환 switchToWalk 와 공유 — divergence 제거). 여기선 진행/에러를 status 로 표시.
+            let result = await store.connectOnboard(host: host, remoteShell: remoteShell) { step in
+                switch step {
+                case .verifyingMode:
+                    store.status = .connecting("① 데모 모드 확인 중…")
+                case .startingWalklab:
+                    // **정직성 UX**: 이 단계에서 로봇 demo 가 재기동되며 init 자세로 움직인다.
+                    store.status = .connecting("② walklab 전환 중 — 로봇이 init 자세로 움직입니다(잡아주세요)")
+                case .waitingTelemetry:
+                    store.status = .connecting("③ 텔레메트리 대기 중…")
+                default:
+                    break
+                }
+            }
+            switch result {
+            case .connected:
+                // === 12s 연결 타임아웃 (마법사 전용 UX, 보존) ===
+                // 텔레메트리(연결됨)가 안 흐르면 "연결 중" 고착 대신 명확한 에러.
+                // result 가 .connected 면 시퀀스 도중 세대 전진이 없었으므로 현재 세대가 곧 그 시도.
+                let attemptGen = store.connectAttemptGeneration
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 12_000_000_000)
+                    // 세대가 바뀌었으면(=새 연결 시도/해제) 이 타임아웃은 무효.
+                    guard attemptGen == store.connectAttemptGeneration else { return }
+                    if case .connecting = store.status {
+                        store.stopOnboardTelemetry()
+                        store.status = .error("온보드 텔레메트리 없음 — demo 가 walklab 으로 기동 안 됨(카메라/포트 충돌 가능). 다시 연결 시도")
+                    }
+                }
+            case .failed(let reason):
+                store.status = .error(reason)
+            case .superseded:
+                break   // 새 시도가 status 를 소유 — 건드리지 않음.
+            }
         }
     }
 
@@ -650,7 +1116,8 @@ public struct ConnectionWizardView: View {
                     pb.clearContents()
                     pb.setString(RobotSetupCommand.unifiedSetup, forType: .string)
                     copyConfirm = "✓ 클립보드에 복사됐어요"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
                         copyConfirm = nil
                     }
                 } label: {
@@ -715,6 +1182,10 @@ public struct ConnectionWizardView: View {
         HStack {
             Spacer()
             Button {
+                harness.record(
+                    .setupConnAdvancedToggle, level: .info, actor: .user,
+                    data: ["to_advanced": AnyCodable(true)]
+                )
                 isAdvanced = true
                 oneClick.cancel()
             } label: {
@@ -740,6 +1211,10 @@ public struct ConnectionWizardView: View {
         VStack(alignment: .leading, spacing: DFSpace.md) {
             HStack {
                 Button {
+                    harness.record(
+                        .setupConnAdvancedToggle, level: .info, actor: .user,
+                        data: ["to_advanced": AnyCodable(false)]
+                    )
                     isAdvanced = false
                     oneClick.runDiagnosticsOnly()
                 } label: {
@@ -963,7 +1438,7 @@ public struct ConnectionWizardView: View {
                 ForEach(store.availablePorts, id: \.self) { p in
                     HStack {
                         Image(systemName: "circle.fill")
-                            .font(.system(size: 6))
+                            .font(DFIcon.micro)
                             .foregroundStyle(DFColor.success)
                         Text(URL(fileURLWithPath: p).lastPathComponent)
                             .font(DFFont.body.monospaced())
@@ -1004,7 +1479,7 @@ public struct ConnectionWizardView: View {
                     .foregroundStyle(DFColor.textSecondary)
                 HStack(spacing: DFSpace.sm) {
                     Button {
-                        manualHost = "192.168.123.1"
+                        manualHost = DFConnectionConstants.robotEthernetIP
                         manualPort = "5530"
                     } label: {
                         Label("OP2 표준 (192.168.123.1)", systemImage: "wand.and.stars")
@@ -1357,7 +1832,8 @@ public struct ConnectionWizardView: View {
         HStack {
             footerStatus
             Spacer()
-            Button("닫기") { isPresented = false }
+            // 사이클 138 (audit #24 codex sweep)
+            Button("닫기", role: .cancel) { isPresented = false }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(DFSpace.md)
@@ -1457,6 +1933,10 @@ public struct ConnectionWizardView: View {
     // MARK: - Path actions
 
     private func selectPath(_ path: WizardPath) {
+        harness.record(
+            .setupConnPathSelected, level: .info, actor: .user,
+            data: ["path": AnyCodable(path.rawValue)]
+        )
         selectedPath = path
         switch path {
         case .usb:     setupUSBSteps()
@@ -1503,6 +1983,10 @@ public struct ConnectionWizardView: View {
     }
 
     private func runUSBPath() {
+        harness.record(
+            .setupConnPathConnect, level: .info, actor: .user,
+            data: ["path": AnyCodable("usb")]
+        )
         markStep("u4", .inProgress)
         store.autoConnect()
         // store.status onChange가 success/failed 갱신.
@@ -1532,6 +2016,12 @@ public struct ConnectionWizardView: View {
             markStep("n2", .failed("포트가 1~65535 사이의 숫자여야 해요"))
             return
         }
+        harness.record(
+            .setupConnPathConnect, level: .info, actor: .user,
+            data: ["path": AnyCodable("network"),
+                   "host_hash": AnyCodable(Harness.shortHash(host)),
+                   "port": AnyCodable(Int(port))]
+        )
         // 1, 2번은 사용자 액션. 3, 4번은 자동.
         markStep("n1", .success)
         markStep("n2", .success)
@@ -1563,6 +2053,11 @@ public struct ConnectionWizardView: View {
     }
 
     private func runBonjourPath(_ svc: BonjourBrowser.Discovered) {
+        harness.record(
+            .setupConnPathConnect, level: .info, actor: .user,
+            data: ["path": AnyCodable("bonjour"),
+                   "service_hash": AnyCodable(Harness.shortHash(svc.serviceName))]
+        )
         markStep("b1", .success)
         markStep("b2", .success)
         markStep("b3", .success)

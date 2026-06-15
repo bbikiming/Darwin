@@ -14,7 +14,7 @@ import SwiftUI
 // MARK: - CorrectorIntensityCard
 
 public struct CorrectorIntensityCard: View {
-    @ObservedObject var session: WalkLabSession
+    var session: WalkLabSession
 
     public init(session: WalkLabSession) {
         self.session = session
@@ -29,6 +29,13 @@ public struct CorrectorIntensityCard: View {
                 Text("자이로 보정 강도")
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
+                // **v1.15.5 (2026-05-21) Phase 1.5**: Onboard 모드에선 Mac corrector 전용 안내.
+                WalkLabApplyScopeBadge(
+                    scope: WalkLabApplyScopeResolver.scope(
+                        for: .correctorIntensityLevel, engine: session.walkingEngine
+                    ),
+                    style: .compact
+                )
                 Spacer()
                 Text(WalkLabSession.intensityLabel(level: session.correctorIntensityLevel))
                     .font(DFFont.monoLabel)
@@ -108,7 +115,7 @@ public struct CorrectorIntensityCard: View {
 /// `@ObservedObject var tuner` 로 직접 구독 — toggle 변경이 즉시 view update.
 public struct AutoTunerCard: View {
     @ObservedObject var tuner: WalkSessionAutoTuner
-    @ObservedObject var session: WalkLabSession
+    var session: WalkLabSession
 
     public init(tuner: WalkSessionAutoTuner, session: WalkLabSession) {
         self.tuner = tuner
@@ -125,10 +132,19 @@ public struct AutoTunerCard: View {
                     .font(DFFont.sectionLabel)
                     .foregroundStyle(DFColor.textSecondary)
                 Spacer()
+                // V279-2 (P1 discoverability fix): help/accessibilityLabel — 토글 의미가
+                // 단지 "자동 적용" 만으로는 모호 (어떤 적용? 무엇이 자동?). 사용자에게
+                // 동작 + 안전 조건 명시.
                 Toggle("자동 적용", isOn: $tuner.autoApplyEnabled)
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .labelsHidden()
+                    .help("AI 권고 강도를 다음 보행 cycle 에 자동 적용합니다. " +
+                          "실 robot 적용 모드에선 데이터 검증 후 수동 적용 권장 — 자동 변경 차단. " +
+                          "수동 강도 변경 시 일시 중단됩니다.")
+                    .accessibilityLabel(tuner.autoApplyEnabled
+                        ? "AI 권고 강도 자동 적용 켜짐 — 끄려면 클릭"
+                        : "AI 권고 강도 자동 적용 꺼짐 — 켜려면 클릭")
                 Text(tuner.autoApplyEnabled ? "ON" : "OFF")
                     .font(DFFont.label)
                     .foregroundStyle(tuner.autoApplyEnabled ? DFColor.success : DFColor.textSecondary)
@@ -138,21 +154,13 @@ public struct AutoTunerCard: View {
             // **v1.11.1 (2026-05-18 사용자 review HIGH-2) — 실 robot 자동 적용 차단 안내**.
             // 데이터 품질 검증 (duplicate ratio / stale ratio / 독립 sample count) 이
             // v2 quality analyzer 수준 미달이므로 실 robot 적용 모드에선 자동 변경 차단.
+            // **V280-E (2026-05-24)**: hardcoded HStack/background → DFBanner (.warning).
             if tuner.autoApplyEnabled && session.correctionApplyMode == "robotApplied" {
-                HStack(alignment: .top, spacing: DFSpace.xs2) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(DFColor.warning)
-                    Text("실 robot 적용 모드 — 자동 변경 차단됨 (수동 강도 유지). 데이터 검증 후 수동 적용 권장.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(DFColor.warning)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 4)
-                .padding(.vertical, 3)
-                .background(DFColor.warning.opacity(DFOpacity.o10))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                DFBanner(
+                    title: "실 robot 적용 모드 — 자동 변경 차단됨",
+                    message: "수동 강도 유지. 데이터 검증 후 수동 적용 권장.",
+                    severity: .warning
+                )
             }
             if let rec = tuner.pendingRecommendation {
                 Text(rec.reason)
@@ -182,6 +190,36 @@ public struct AutoTunerCard: View {
                 Text("최근 \(tuner.recentSummaries.count)회 session — 현재 강도 적정 (변경 권고 없음)")
                     .font(DFFont.label)
                     .foregroundStyle(DFColor.success)
+            }
+            // **데이터 기반 자동 튜닝 (2026-05-30)**: 균형 안정성 권고 (tau/D항 — 넘어짐 방지 직결).
+            if let srec = tuner.pendingStabilityRecommendation {
+                Divider().padding(.vertical, 1)
+                HStack(spacing: DFSpace.xs2) {
+                    Image(systemName: "scope")
+                        .font(DFFont.label)
+                        .foregroundStyle(DFColor.info)
+                    Text("안정성 권고 (넘어짐 방지)")
+                        .font(DFFont.sectionLabel)
+                        .foregroundStyle(DFColor.textSecondary)
+                }
+                Text(srec.reason)
+                    .font(DFFont.label)
+                    .foregroundStyle(DFColor.info)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(String(format: "→ D항 %.2fs · baseline %.1fs", srec.derivativeTimeSec, srec.baselineTauSec))
+                    .font(DFFont.monoLabel)
+                    .foregroundStyle(DFColor.textPrimary)
+                if session.correctionApplyMode == "robotApplied" {
+                    Text("실 robot 적용은 승인 게이트(데이터 분석 패널) 경유 — 자동 변경 차단.")
+                        .font(DFFont.label)
+                        .foregroundStyle(DFColor.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("SIM 모드 — 다음 보행 cycle 에 자동 적용됨.")
+                        .font(DFFont.label)
+                        .foregroundStyle(DFColor.success)
+                }
             }
             if let latest = tuner.recentSummaries.first {
                 HStack(spacing: DFSpace.sm) {

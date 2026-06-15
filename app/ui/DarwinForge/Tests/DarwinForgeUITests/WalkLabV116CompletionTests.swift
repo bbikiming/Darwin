@@ -11,6 +11,26 @@ import XCTest
 @MainActor
 final class WalkLabV116CompletionTests: XCTestCase {
 
+    /// 테스트 격리용 고유 UserDefaults suite — `--parallel` 시 다른 클래스와의
+    /// `df.walklab.*` 키 공유 오염 방지. WalkLabSession 이 이 suite 로 영속화.
+    private var suiteName: String!
+    private var testDefaults: UserDefaults!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        suiteName = "test.walklab.v116.\(UUID().uuidString)"
+        testDefaults = UserDefaults(suiteName: suiteName)
+        await MainActor.run { WalkLabSession.testDefaultsOverride = testDefaults }
+    }
+
+    override func tearDown() async throws {
+        await MainActor.run { WalkLabSession.testDefaultsOverride = nil }
+        testDefaults.removePersistentDomain(forName: suiteName)
+        testDefaults = nil
+        suiteName = nil
+        try await super.tearDown()
+    }
+
     // MARK: - 1. Custom gain didSet → corrector 재생성
 
     /// **회귀 가드**: gainProfile=.custom 일 때 customHipRollGain 변경 → corrector 재생성.
@@ -77,21 +97,19 @@ final class WalkLabV116CompletionTests: XCTestCase {
     /// (단일 process 안에서 UserDefaults 변경 — 격리 보장 위해 unique key 사용)
     func testMonitoringExpandedDefaultsTrueWhenUnset() {
         let key = "df.walklab.monitoringExpanded"
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }
+        testDefaults.removeObject(forKey: key)
         let s = WalkLabSession()
         XCTAssertTrue(s.monitoringExpanded,
             "UserDefaults 미설정 시 monitoringExpanded default = true (v1.11.6 UX fix)")
         // 부작용: init 이 UserDefaults 에 true 를 write — 검증.
-        XCTAssertTrue(UserDefaults.standard.bool(forKey: key),
+        XCTAssertTrue(testDefaults.bool(forKey: key),
             "init 이 UserDefaults 에 true 저장 — persistence 보장")
     }
 
     /// **회귀 가드 — UserDefaults 명시 false 면 false 유지** (사용자 선택 보존).
     func testMonitoringExpandedRespectsExplicitFalse() {
         let key = "df.walklab.monitoringExpanded"
-        UserDefaults.standard.set(false, forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }
+        testDefaults.set(false, forKey: key)
         let s = WalkLabSession()
         XCTAssertFalse(s.monitoringExpanded,
             "사용자가 false 설정한 경우 보존")

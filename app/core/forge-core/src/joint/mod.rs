@@ -3,6 +3,7 @@
 //! ID 매핑은 ROBOTIS 공식 ROBOTIS-OP2 `op2_manager/config/OP2.robot` (Apache 2.0)
 //! 와 일치한다. DARwIn-OP 1세대(CM-730)와 OP2(CM-740) 모두 같은 매핑.
 
+pub mod fsr;
 mod map;
 mod state;
 

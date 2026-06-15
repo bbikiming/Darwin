@@ -308,6 +308,7 @@ public struct SafetyBands: Sendable, Equatable {
     }
 
     /// 역방향 편의 — value ≥ safeLower 는 safe (예: 주기는 클수록 안전).
+    /// v1.11.25 audit dead-code #2 정정: `AdvancedSlidersPanel.swift:85` (periodMs slider) 가 사용.
     public static func inverted(safeLower: Double, cautionLower: Double,
                                 range: ClosedRange<Double>) -> SafetyBands {
         SafetyBands(

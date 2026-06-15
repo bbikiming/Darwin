@@ -68,6 +68,53 @@ public enum JointID: UInt8, CaseIterable, Codable, Sendable, Hashable {
 }
 
 /// 한 관절의 실시간 상태.
+/// **v1.11.25 (2026-05-21) audit P0 robot-D** — ROBOTIS-OP2 FSR (Force Sensitive Resistor) board.
+///
+/// 두 개의 FSR board (left foot ID 112, right foot ID 111) 가 발 sole 의 4 cell 압력 +
+/// center-of-pressure (X, Y) 를 측정. ZMP-기반 보행 안정성 분석의 객관 지표.
+public struct FsrReading: Sendable, Equatable {
+    /// Dynamixel ID (111=right, 112=left).
+    public let id: UInt8
+    /// 4 cell 압력 raw (0..1023). [front-left, front-right, rear-right, rear-left].
+    public let cellFrontLeft: UInt16
+    public let cellFrontRight: UInt16
+    public let cellRearRight: UInt16
+    public let cellRearLeft: UInt16
+    /// 중심점 X (사용자 시점 좌측=음수, -127..127). 0 = 발 중앙.
+    public let centerX: Int8
+    /// 중심점 Y (앞=음수, -127..127).
+    public let centerY: Int8
+
+    /// 4 cell 합 — 발 total 압력 (raw). 큰 값 = 그 발에 weight 더 실림.
+    public var totalPressureRaw: UInt32 {
+        UInt32(cellFrontLeft) + UInt32(cellFrontRight) + UInt32(cellRearRight) + UInt32(cellRearLeft)
+    }
+
+    init(_ ffi: FfiFsrReading) {
+        self.id = ffi.id
+        self.cellFrontLeft = ffi.cell_fl
+        self.cellFrontRight = ffi.cell_fr
+        self.cellRearRight = ffi.cell_rr
+        self.cellRearLeft = ffi.cell_rl
+        self.centerX = ffi.center_x
+        self.centerY = ffi.center_y
+    }
+
+    /// 테스트 / 시뮬레이션용 public init.
+    public init(id: UInt8,
+                cellFrontLeft: UInt16, cellFrontRight: UInt16,
+                cellRearRight: UInt16, cellRearLeft: UInt16,
+                centerX: Int8, centerY: Int8) {
+        self.id = id
+        self.cellFrontLeft = cellFrontLeft
+        self.cellFrontRight = cellFrontRight
+        self.cellRearRight = cellRearRight
+        self.cellRearLeft = cellRearLeft
+        self.centerX = centerX
+        self.centerY = centerY
+    }
+}
+
 public struct JointState: Sendable, Equatable {
     public let id: JointID
     public let torqueEnabled: Bool
@@ -89,6 +136,26 @@ public struct JointState: Sendable, Equatable {
         self.presentLoad = ffi.present_load
         self.presentVoltageRaw = ffi.present_voltage
         self.presentTemperature = ffi.present_temperature
+    }
+
+    /// 사이클 255 — 테스트 / 시뮬레이션용 public init.
+    /// MockBus 가 in-memory 위치/torque 로부터 JointState 합성할 때 사용.
+    public init(id: JointID,
+                torqueEnabled: Bool,
+                goalPosition: UInt16,
+                presentPosition: UInt16,
+                presentSpeed: UInt16,
+                presentLoad: UInt16,
+                presentVoltageRaw: UInt8,
+                presentTemperature: UInt8) {
+        self.id = id
+        self.torqueEnabled = torqueEnabled
+        self.goalPosition = goalPosition
+        self.presentPosition = presentPosition
+        self.presentSpeed = presentSpeed
+        self.presentLoad = presentLoad
+        self.presentVoltageRaw = presentVoltageRaw
+        self.presentTemperature = presentTemperature
     }
 }
 
@@ -187,6 +254,18 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.version = ffi.version
         self.voltageRaw = ffi.voltage_raw
         self.button = ffi.button
+    }
+
+    /// 사이클 255 — 테스트 / 시뮬레이션용 public init.
+    /// MockBus + recovery/preflight test 가 BoardSnapshot 직접 생성.
+    public init(modelNumber: UInt16,
+                version: UInt8,
+                voltageRaw: UInt8,
+                button: UInt8) {
+        self.modelNumber = modelNumber
+        self.version = version
+        self.voltageRaw = voltageRaw
+        self.button = button
     }
 }
 
@@ -310,6 +389,27 @@ public final class Bus: @unchecked Sendable {
         }
     }
 
+    /// **v1.11.25 (2026-05-21) audit P0 robot-D** — 좌측 발 FSR (ID 112) read.
+    ///
+    /// board 미장착 robot (개발용 일부) 에서는 timeout 으로 throw. 호출자가 try? 로
+    /// fallback 처리 → 한 번 실패한 후 polling 주기 늘려서 spam 차단 권장.
+    public func readFsrLeft() throws -> FsrReading {
+        try locked {
+            var ffi = FfiFsrReading(id: 0, cell_fl: 0, cell_fr: 0, cell_rr: 0, cell_rl: 0, center_x: 0, center_y: 0)
+            try checkForgeReturn(fc_bus_read_fsr_left(raw(), &ffi))
+            return FsrReading(ffi)
+        }
+    }
+
+    /// 우측 발 FSR (ID 111) read.
+    public func readFsrRight() throws -> FsrReading {
+        try locked {
+            var ffi = FfiFsrReading(id: 0, cell_fl: 0, cell_fr: 0, cell_rr: 0, cell_rl: 0, center_x: 0, center_y: 0)
+            try checkForgeReturn(fc_bus_read_fsr_right(raw(), &ffi))
+            return FsrReading(ffi)
+        }
+    }
+
     public func setDxlPower(_ on: Bool) throws {
         try locked { try checkForgeReturn(fc_bus_set_dxl_power(raw(), on ? 1 : 0)) }
     }
@@ -327,8 +427,55 @@ public final class Bus: @unchecked Sendable {
         }
     }
 
+    /// 다중 관절 동시 goal position 설정 (SYNC_WRITE 1패킷). 안전 한계는 Rust 측에서 clamp.
+    ///
+    /// SYNC_WRITE 는 status packet 을 반환하지 않으므로 per-joint 응답 확인 불가.
+    /// transport 실패(USB I/O error 등) 만 throw 로 노출. per-servo liveness 는
+    /// Phase 2 BULK_READ 에서 추가 예정.
+    ///
+    /// - Parameter targets: `(JointID, rawPosition)` 쌍 배열. 빈 배열이면 no-op.
+    public func setPositions(_ targets: [(JointID, UInt16)]) throws {
+        guard !targets.isEmpty else { return }
+        try locked {
+            let ids: [UInt8] = targets.map { $0.0.rawValue }
+            let raws: [UInt16] = targets.map { $0.1 }
+            try ids.withUnsafeBufferPointer { idsBuf in
+                try raws.withUnsafeBufferPointer { rawsBuf in
+                    try checkForgeReturn(
+                        fc_joint_set_positions_many(
+                            self.raw(),
+                            idsBuf.baseAddress,
+                            rawsBuf.baseAddress,
+                            UInt(targets.count)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
     public func setMovingSpeed(_ joint: JointID, speed: UInt16) throws {
         try locked { try checkForgeReturn(fc_joint_set_moving_speed(self.raw(), joint.rawValue, speed)) }
+    }
+
+    /// 다중 관절 moving speed 동시 설정 (SYNC_WRITE 1패킷, L5 2026-06-11).
+    /// 보행 prologue 의 관절별 개별 write 20회(+status 왕복)를 1패킷으로.
+    /// SYNC_WRITE 는 status packet 없음 — transport 실패만 throw.
+    public func setMovingSpeeds(_ joints: [JointID], speed: UInt16) throws {
+        guard !joints.isEmpty else { return }
+        try locked {
+            let ids: [UInt8] = joints.map { $0.rawValue }
+            try ids.withUnsafeBufferPointer { idsBuf in
+                try checkForgeReturn(
+                    fc_joint_set_moving_speeds_many(
+                        self.raw(),
+                        idsBuf.baseAddress,
+                        UInt(joints.count),
+                        speed
+                    )
+                )
+            }
+        }
     }
 
     public func setPGain(_ joint: JointID, value: UInt8) throws {
@@ -344,18 +491,41 @@ public final class Bus: @unchecked Sendable {
     }
 
     public func emergencyStop() throws {
+        // S4: 락 획득 *전에* 선점 플래그를 set — 보행 status 폴 등 진행 중 read 가
+        // 락을 물고 있어도 다음 read 슬라이스에서 조기 abort 돼 락이 즉시 풀린다.
+        // fc_emergency_stop 은 송출 완료 후 선점 플래그를 자동 해제한다.
+        fc_bus_request_estop_preempt(raw())
         try locked { try checkForgeReturn(fc_emergency_stop(raw())) }
     }
+
+    /// **S4 — E-STOP 선점 요청**. 직렬화 락 *없이* in-flight read 를 abort 시킨다.
+    public func requestEstopPreempt() {
+        fc_bus_request_estop_preempt(raw())
+    }
+
+    /// 선점 플래그 해제 (정지 송출 없이 선점만 거둘 때).
+    public func clearEstopPreempt() {
+        fc_bus_clear_estop_preempt(raw())
+    }
+
+    /// 응답 timeout(ms) 변경 — 보행 중 락 보유 상한 축소용. 락 안에서 backend mutate.
+    public func setIoTimeout(ms: UInt32) {
+        locked { _ = fc_bus_set_io_timeout(raw(), ms) }
+    }
+
+    /// open 시 구성된 read timeout(ms). 보행 종료 시 `setIoTimeout` 으로 이 값에 원복한다.
+    /// (USB 200 / TCP 250 — backend 의 런타임 변경이 아닌 *구성값*.)
+    public var configuredIoTimeoutMs: UInt32 { timeoutMs }
 
     // MARK: - Motion play (Sprint 15 라이브러리 노출 — 2026-05-16 v1.1 통합)
 
     /// `motion_4096.bin` 의 `slot` 페이지를 실 robot 에 동기 송출.
     ///
     /// - Parameters:
-    ///   - slot: 페이지 번호 (예: 24/27 단발, 9 walkready, 12/13 HighRisk get-up)
+    ///   - slot: 페이지 번호 (예: 24/27 단발, 9 walkready, 10/11 = get-up (f up/b up); 12/13 = kick (rk/lk))
     ///   - binPath: nil 이면 `FORGE_MOTION_BIN` env 또는 소스 트리 기본 경로 사용
     ///   - dryRun: true 면 stdout 로그만 (실 송출 없음)
-    ///   - confirmRisk: HighRisk 모션 (page 12/13 등) 실행 허용
+    ///   - confirmRisk: HighRisk 모션 실행 허용 (get-up page 10/11 포함)
     ///   - singleFootOk: 단일 발 지지 페이지 허용 (PRD §7.1 — confirmRisk 와 등가)
     ///   - followChain: `page.next_page` chain 을 따라감. 기본 false (단일 page only)
     ///   - maxChainDepth: chain 최대 깊이. 0 이면 내부 기본값 10

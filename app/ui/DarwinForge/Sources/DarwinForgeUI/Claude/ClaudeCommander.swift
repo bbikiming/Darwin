@@ -49,11 +49,16 @@ public actor ClaudeCommander {
     public let claudePath: String
     public let modelAlias: String
     public let maxBudgetUSD: Double
+    /// **사이클 125 (audit #18, P1)**: 종전 60초 timeout 하드코딩 → 설정 가능 노출.
+    /// 호출자가 long-running plan (e.g. complex motion sequence) 시 늘리거나 short
+    /// preview 에 더 빠른 fail 원할 때 줄임. 기본 60초 유지 (regression 0).
+    public let timeoutSeconds: Double
 
     public init(
         claudePath: String? = nil,
         modelAlias: String = "haiku",
-        maxBudgetUSD: Double = 0.10
+        maxBudgetUSD: Double = 0.10,
+        timeoutSeconds: Double = 60.0
     ) {
         if let p = claudePath {
             self.claudePath = p
@@ -62,6 +67,7 @@ public actor ClaudeCommander {
         }
         self.modelAlias = modelAlias
         self.maxBudgetUSD = maxBudgetUSD
+        self.timeoutSeconds = timeoutSeconds
     }
 
     /// 사용자 발화를 받아 CommandPlan 생성.
@@ -133,9 +139,10 @@ public actor ClaudeCommander {
         }
         try stdinPipe.fileHandleForWriting.close()
 
-        // 60초 timeout.
+        // **사이클 125 (audit #18, P1)**: 종전 60초 하드코딩 → init param 사용.
+        let timeoutNs = UInt64(max(1.0, timeoutSeconds) * 1_000_000_000)
         let timeoutTask = Task { [weak p] in
-            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            try? await Task.sleep(nanoseconds: timeoutNs)
             if p?.isRunning == true { p?.terminate() }
         }
 

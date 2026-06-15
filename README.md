@@ -11,6 +11,9 @@
 > 핵심 스택: **Rust 코어 (`app/core/`) + SwiftUI UI (`app/ui/`)**. ADR-009~013 참조.
 >
 > 비공식(unofficial) 도구 — ROBOTIS와 직접 제휴 관계 없음. 자세한 브랜드 자산은 [`docs/assets/README.md`](docs/assets/README.md).
+>
+> *상표 고지*: "ROBOTIS", "DARwIn-OP", "DARWIN-OP" 는 ROBOTIS Co., Ltd. 의 상표이며,
+> 본 앱은 해당 로봇과 함께 쓰는 **비공식 서드파티 도구**입니다. © 2026 YUSEOK KIM.
 
 ## 빠른 시작
 
@@ -23,7 +26,7 @@ bash scripts/bootstrap-tools.sh
 bash scripts/check-mac-drivers.sh
 ```
 
-필요 도구: Xcode 15.4+, Swift 5.10+, Rust 1.94+, Python 3.11+, Node 22+, Homebrew.
+필요 도구: Xcode 15.4+, Swift 5.10+, Rust 1.78+ (MSRV; 권장 toolchain 1.94+), Python 3.11+, Node 22+, Homebrew.
 
 ### 빌드 + 실행
 
@@ -74,13 +77,20 @@ cargo run -p forge-cli -- motion play --slot 100 --bin path/to/motion_4096.bin
 
 `.claude/commands/synth.md` + `.claude/agents/motion-composer.md` + `.claude/settings.json` 로 Claude Code 에서 `/synth <자연어>` 슬래시로 호출. MCP 서버 `forge-mcp-synth` (11 tools) 자동 spawn.
 
+### 최근 (2026-06)
+
+- **FPV 조종 탭**: 전문가 탭에서 ROG Ally FPV 데모를 런칭(`app/ally/`, Tauri 2). 설계 `app/ally/docs/`.
+- **iOS 컴패니언 릴레이**: `app/mobile/DarwinForgeMobile/` 가 WebSocket 릴레이로 콕핏 텔레메트리/조종을 Mac 앱에 중계 (walk 10Hz throttle·conflation).
+
+자세한 한 달치 진행은 [`PROGRESS.md`](PROGRESS.md) 2026-06 항목 참조.
+
 ## 디렉토리 구조
 
 ```
-claude-forge/
+Darwin/  (리포 루트 — README가 'claude-forge/'로 잘못 표기)
 ├── README.md                    이 파일
 ├── PROGRESS.md                  살아있는 진행 상태 (단계별 체크박스)
-├── ROADMAP.md                   전체 로드맵 (Phase 0..5 + Sprint 1..6)
+├── ROADMAP.md                   전체 로드맵 (Phase 0..5 + Sprint 1..13 + 2026-06 확장 Wave 트랙)
 ├── BLOCKERS.md                  현재 막힘 항목
 ├── CONTRIBUTING.md              브랜치·커밋·하드웨어 안전
 ├── LICENSE                      Apache 2.0
@@ -90,7 +100,7 @@ claude-forge/
 │   ├── protocols/               Dynamixel 1.0/2.0, CM-730/740
 │   ├── motion-format/           .mtn / Page / Step 분석
 │   ├── harness/                 하네스 이론 (engineering-foundations, data-model)
-│   ├── decisions/               ADR-001..013
+│   ├── decisions/               ADR-001..014
 │   └── reports/                 PHASE_N_REPORT.md, SPRINT_N_REPORT.md
 │
 ├── research/                    오픈소스 자료 아카이브 (Phase 1)
@@ -112,10 +122,17 @@ claude-forge/
 │
 ├── app/                         앱 본체
 │   ├── core/                    Rust 코어 (forge-core/) — Phase 4
-│   ├── ui/DarwinForge/          SwiftPM 11-target 패키지
+│   ├── ui/DarwinForge/          SwiftPM 패키지 (3 products: App/ForgeCore/UI · 6 targets)
 │   ├── motion-engine/           Sprint 3·4
 │   ├── walk-engine/             Sprint 5
-│   └── tests/                   통합·시나리오 + fixtures
+│   ├── tests/                   통합·시나리오 + fixtures
+│   ├── ally/                    ROG Ally FPV 앱 (독립 Cargo workspace, Tauri 2)
+│   ├── mobile/DarwinForgeMobile/ iOS 컴패니언 (WebSocket 릴레이)
+│   ├── icon/                    앱 아이콘 자산
+│   └── 스토어 스크린샷/          App Store 제출용 스크린샷
+│
+├── tools/                       switch-pilot(앱)·switch-appliance(봉인 어플라이언스)
+├── firmware-patches/            walklab-brokerage(온보드 C++)·tools(실기 벤치 py)
 │
 ├── motions/                     캡처·생성된 모션 라이브러리
 │

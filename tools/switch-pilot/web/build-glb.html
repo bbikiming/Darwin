@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+</head><body><pre id="o" style="color:#9f9;font:18px monospace;padding:16px"></pre>
+<script type="module">
+  import * as THREE from "/vendor/three.module.min.js";
+  import { STLLoader } from "/vendor/STLLoader.js";
+  import { GLTFExporter } from "/vendor/GLTFExporter.js";
+  import { mergeVertices } from "/vendor/BufferGeometryUtils.js";
+  import { buildRig } from "/robot3d-rig.js";
+  const o = document.getElementById("o");
+  const log = (m) => { o.textContent += m + "\n"; };
+  try {
+    const { root, ready } = buildRig(new STLLoader());
+    await ready;
+    log("assembled robot");
+    // Weld coincident vertices (STL is non-indexed with faceted normals, which
+    // triples vertex count). Drop normals, weld by position, recompute smooth
+    // normals -> indexed geometry, far smaller GLB + cheaper GPU draw.
+    let before = 0, after = 0;
+    root.traverse((n) => {
+      if (!n.isMesh || !n.geometry) return;
+      const g = n.geometry;
+      before += g.attributes.position.count;
+      g.deleteAttribute("normal");
+      g.deleteAttribute("uv");
+      const merged = mergeVertices(g, 1e-4);
+      merged.computeVertexNormals();
+      n.geometry = merged;
+      after += merged.attributes.position.count;
+    });
+    log("welded verts " + before + " -> " + after);
+    new GLTFExporter().parse(root, async (glb) => {
+      log("exported GLB " + glb.byteLength + " bytes");
+      const r = await fetch("/save-glb", { method: "POST", body: glb });
+      log("save: " + (await r.text()));
+      window.__done = true;
+    }, (e) => log("export error: " + e), { binary: true, onlyVisible: true });
+  } catch (e) { log("ERR: " + (e && e.stack || e)); }
+</script></body></html>

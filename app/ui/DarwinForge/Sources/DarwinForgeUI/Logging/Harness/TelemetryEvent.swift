@@ -1,0 +1,729 @@
+import Foundation
+
+// MARK: - Telemetry Harness Event Schema (v1, 2026-05-20)
+//
+// Disk format: JSON Lines. 각 이벤트가 한 줄 (개행으로 구분).
+// 짧은 키 — 100K event/session 도 디스크 부담 적게.
+// 자세한 설계: docs/harness/telemetry-harness.md
+
+/// Telemetry event level.
+///
+/// **v1.12.2 (Codex P2 fix)** — forward-compat: 미지원 level 값 (미래 schema 가 새
+/// 케이스 추가) 디코드 시 `.info` 폴백. 종전 strict raw 디코드는 enum 추가만으로도
+/// 과거 reader 가 이벤트 전체를 drop 했음.
+public enum TelemetryLevel: String, Codable, Sendable, CaseIterable {
+    case trace
+    case info
+    case notice
+    case warn
+    case error
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = TelemetryLevel(rawValue: raw) ?? .info
+    }
+}
+
+/// 이벤트 발생 actor — 누가 일으켰나.
+///
+/// **v1.12.2 (Codex P2 fix)** — forward-compat: 미지원 actor 값 디코드 시 `.system`.
+public enum TelemetryActor: String, Codable, Sendable, CaseIterable {
+    case user      // 사용자 입력 (클릭/단축키/명령)
+    case system    // 앱 내부 (타이머, watchdog)
+    case robot     // 로봇으로부터 (IMU, motor 응답)
+    case claude    // LLM
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = TelemetryActor(rawValue: raw) ?? .system
+    }
+}
+
+/// 이벤트 type — namespace.event 형식. unknown 은 forward-compat.
+public struct TelemetryKind: RawRepresentable, Hashable, Codable, Sendable, ExpressibleByStringLiteral {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(stringLiteral value: String) { self.rawValue = value }
+
+    public var namespace: String {
+        if let dot = rawValue.firstIndex(of: ".") {
+            return String(rawValue[..<dot])
+        }
+        return rawValue
+    }
+
+    // App lifecycle
+    public static let appLaunch: TelemetryKind = "app.launch"
+    public static let appTerminate: TelemetryKind = "app.terminate"
+    public static let appForeground: TelemetryKind = "app.foreground"
+    public static let appBackground: TelemetryKind = "app.background"
+    public static let appVersionInfo: TelemetryKind = "app.version_info"
+
+    // Connection
+    public static let connectAttempt: TelemetryKind = "connection.attempt"
+    public static let connectSuccess: TelemetryKind = "connection.success"
+    public static let connectFailure: TelemetryKind = "connection.failure"
+    public static let connectDisconnect: TelemetryKind = "connection.disconnect"
+    public static let connectReconnectStart: TelemetryKind = "connection.reconnect_start"
+    public static let connectReconnectAttempt: TelemetryKind = "connection.reconnect_attempt"
+    public static let connectEndpointSwitch: TelemetryKind = "connection.endpoint_switch"
+
+    // Bus & robot
+    public static let busReadFail: TelemetryKind = "bus.read_fail"
+    public static let busWriteFail: TelemetryKind = "bus.write_fail"
+    public static let busRecovered: TelemetryKind = "bus.recovered"
+    public static let busEStop: TelemetryKind = "bus.e_stop"
+    public static let busEStopRecover: TelemetryKind = "bus.e_stop_recover"
+
+    // IMU
+    public static let imuStale: TelemetryKind = "imu.stale"
+    public static let imuUnavailable: TelemetryKind = "imu.unavailable"
+    public static let imuRecovered: TelemetryKind = "imu.recovered"
+    public static let imuScaleChanged: TelemetryKind = "imu.scale_changed"
+    /// 사이클 159 (P0-1 fix): walk 활성 시 IMU polling 5Hz ↔ 20Hz 전환.
+    public static let imuPollRateChanged: TelemetryKind = "imu.poll_rate_changed"
+
+    // UI
+    /// 사이클 197 (cycle 190 audit P2 #6): 탭/뷰 전환 시 onAppear 진입 기록.
+    /// data: view_name. navigation 패턴 분석 + cross-menu stale state 감시용.
+    ///
+    /// **cycle 202 (cycle 199 critic MINOR-3 응답)**: navigation 시 본 kind 가
+    /// `uiSectionChanged` 와 의도적으로 double-fire — section 변경 (intent) vs view
+    /// lifecycle (실 onAppear) 의 두 의미 분리. 분석 시 본 kind 는 onAppear,
+    /// uiSectionChanged 는 menu 클릭 으로 구분.
+    public static let uiViewAppeared: TelemetryKind = "ui.view_appeared"
+    public static let uiSectionChanged: TelemetryKind = "ui.section_changed"
+    public static let uiTabChanged: TelemetryKind = "ui.tab_changed"
+    public static let uiPaletteOpened: TelemetryKind = "ui.palette_opened"
+    public static let uiPaletteCommand: TelemetryKind = "ui.palette_command"
+    public static let uiWizardOpened: TelemetryKind = "ui.wizard_opened"
+    public static let uiDashboardOpened: TelemetryKind = "ui.dashboard_opened"
+    public static let uiButtonTapped: TelemetryKind = "ui.button_tapped"
+    public static let uiBookmark: TelemetryKind = "user.bookmark"
+
+    // Motion
+    public static let motionLoad: TelemetryKind = "motion.load"
+    public static let motionPlayStart: TelemetryKind = "motion.play_start"
+    public static let motionPlayComplete: TelemetryKind = "motion.play_complete"
+    public static let motionPlayAbort: TelemetryKind = "motion.play_abort"
+    public static let motionPageCreated: TelemetryKind = "motion.page_created"
+    public static let motionPageRenamed: TelemetryKind = "motion.page_renamed"
+    public static let motionPageDeleted: TelemetryKind = "motion.page_deleted"
+    public static let motionPageSaved: TelemetryKind = "motion.page_saved"
+    public static let motionStepAdded: TelemetryKind = "motion.step_added"
+    public static let motionStepRemoved: TelemetryKind = "motion.step_removed"
+
+    // Teach mode
+    public static let teachCaptureStart: TelemetryKind = "teach.capture_start"
+    public static let teachCaptureStop: TelemetryKind = "teach.capture_stop"
+    public static let teachSnapshotCaptured: TelemetryKind = "teach.snapshot_captured"
+    public static let teachSnapshotApplied: TelemetryKind = "teach.snapshot_applied"
+    public static let teachSnapshotDeleted: TelemetryKind = "teach.snapshot_deleted"
+    public static let teachSnapshotsCleared: TelemetryKind = "teach.snapshots_cleared"
+    public static let teachTorqueChanged: TelemetryKind = "teach.torque_changed"
+    /// 사이클 206 (Teach P1): 앱 재시작 시 UserDefaults 에서 메타데이터 복원.
+    /// data: count (복원된 스냅샷 메타 수).
+    public static let teachSnapshotMetaRestored: TelemetryKind = "teach.snapshot_meta_restored"
+
+    // User Pose Library
+    public static let poseLibrarySaved: TelemetryKind = "pose.library_saved"
+    public static let poseLibraryDeleted: TelemetryKind = "pose.library_deleted"
+
+    // WalkLab
+    public static let walkLabStart: TelemetryKind = "walklab.start"
+    public static let walkLabStop: TelemetryKind = "walklab.stop"
+    public static let walkLabEmergencyStop: TelemetryKind = "walklab.emergency_stop"
+    public static let walkLabPresetApplied: TelemetryKind = "walklab.preset_applied"
+    public static let walkLabConfigChange: TelemetryKind = "walklab.config_change"
+    /// v1.11.24 audit P0-1 — start(_:) 가 preflight 단계에서 거부한 시도.
+    /// data: requested_preset, reason (diagnosticCode), active_preset.
+    public static let walkLabStartBlocked: TelemetryKind = "walklab.start_blocked"
+    /// v1.11.24 audit P1-3 — ROBOTIS Onboard ACK 결과 (성공/실패).
+    /// data: status, latency_ms, cmd_id.
+    public static let walkLabOnboardAck: TelemetryKind = "walklab.onboard_ack"
+    /// 사이클 200: balanceCorrectionFreshness state 전환 (cycle 160 enum 의 transition).
+    /// data: from, to. WalkLab IMU freshness gate (.normal/.degraded/.blocked) 의
+    /// 분포 분석 — 보정 차단 빈도 / IMU 지연 패턴 / sim vs real 비교.
+    public static let walkLabFreshnessChanged: TelemetryKind = "walklab.freshness_changed"
+
+    // Trial Library
+    /// Trial Library 에서 trial 선택 — 사용자가 어떤 trial 을 열람하는지 빈도 분석.
+    /// data: trial_id_hash (PII-safe), preset, overall_score.
+    public static let walklabTrialSelected: TelemetryKind = "walklab.trial_selected"
+    /// Trial Library 필터/정렬 변경 — 사용자 탐색 패턴 분석.
+    /// data: sort, no_falls_only, real_robot_only, preset, min_rating.
+    public static let walklabTrialFilterChanged: TelemetryKind = "walklab.trial_filter_changed"
+    /// Trial AutoGenerator sheet 열기 — Recommender 학습용 자동 생성 진입 빈도.
+    public static let walklabTrialAutogenOpened: TelemetryKind = "walklab.trial_autogen_opened"
+
+    /// HITL 실험 승인 — 사용자가 ExperimentApprovalUI 에서 "실험 시작" 클릭.
+    /// data: axis, confidence_pct, safety_verdict, baseline_session_id.
+    public static let walklabExperimentApproved: TelemetryKind = "walklab.experiment_approved"
+    /// HITL 실험 거부 — 사용자가 ExperimentApprovalUI 에서 "취소" 클릭.
+    /// data: axis, baseline_session_id.
+    public static let walklabExperimentRejected: TelemetryKind = "walklab.experiment_rejected"
+    /// Trial 라벨 저장 — 사용자가 별점/태그/메모를 입력하고 "저장" 클릭.
+    /// data: rating (Int), tag_count (Int), has_free_text (Bool). 라벨 품질 분석용.
+    /// **PII**: free-text 원문은 절대 포함 금지 — has_free_text Bool 만 기록.
+    public static let walklabTrialLabeled: TelemetryKind = "walklab.trial_labeled"
+    /// Trial 라벨 건너뛰기 — 사용자가 "건너뛰기" 또는 X 버튼으로 라벨 없이 종료.
+    /// data: 없음. skip 빈도 대비 label 빈도 분석.
+    public static let walklabTrialLabelSkipped: TelemetryKind = "walklab.trial_label_skipped"
+    /// Trial 자동 생성 시작 (사용자 confirm).
+    /// data: preset_count, trials_per_combo, intensity_range, expected_trials.
+    public static let walklabTrialAutogenStarted: TelemetryKind = "walklab.trial_autogen_started"
+    /// Trial 자동 생성 취소 또는 시트 닫기.
+    /// data: was_generating (Bool).
+    public static let walklabTrialAutogenCancelled: TelemetryKind = "walklab.trial_autogen_cancelled"
+
+    // Balance experiment controls
+    /// 사용자가 balance profile preset 버튼 클릭 (ROBOTIS/v1.10 관찰/v1.10 적용/OFF).
+    /// data: profile (rawValue summary).
+    public static let walklabBalanceProfileChanged: TelemetryKind = "walklab.balance_profile_changed"
+    /// 위험 조합 실 적용 확인 sheet — 사용자가 "진행" 클릭.
+    /// data: algorithm, sign, gain, apply_to_robot.
+    public static let walklabBalanceRiskyConfirmed: TelemetryKind = "walklab.balance_risky_confirmed"
+    /// 위험 조합 실 적용 확인 sheet — 사용자가 "취소" 클릭.
+    /// data: algorithm, sign, gain.
+    public static let walklabBalanceRiskyCancelled: TelemetryKind = "walklab.balance_risky_cancelled"
+
+    // Static tilt calibration
+    /// 정적 IMU 캘리브레이션 캡처 시작 — 사용자가 축별 "캡처" 버튼 클릭.
+    /// data: axis.
+    public static let walklabCalibrationCaptureStart: TelemetryKind = "walklab.calibration_capture_start"
+    /// 정적 IMU 캘리브레이션 캡처 완료 — 5초 캡처 종료.
+    /// data: axis, sample_count.
+    public static let walklabCalibrationCaptureDone: TelemetryKind = "walklab.calibration_capture_done"
+    /// 정적 IMU 캘리브레이션 전체 초기화.
+    /// data: cleared_count.
+    public static let walklabCalibrationReset: TelemetryKind = "walklab.calibration_reset"
+
+    // Recommender card
+    /// Recommender 카드 "이 config 적용" 클릭 (직접 적용 또는 sim confirm 후).
+    /// data: strategy, data_maturity, preset, intensity_level.
+    public static let walklabRecommenderApplied: TelemetryKind = "walklab.recommender_applied"
+    /// Recommender 카드 sim-only confirmation dialog — 사용자가 "그래도 적용" 클릭.
+    /// data: strategy, sim_count.
+    public static let walklabRecommenderSimConfirmed: TelemetryKind = "walklab.recommender_sim_confirmed"
+
+    // Pose
+    public static let poseApplyStart: TelemetryKind = "pose.apply_start"
+    public static let poseApplyComplete: TelemetryKind = "pose.apply_complete"
+    public static let poseApplyFailed: TelemetryKind = "pose.apply_failed"
+    public static let poseApplyCancel: TelemetryKind = "pose.apply_cancel"
+
+    // Pilot
+    /// 사이클 186: preset 변경 success (cycle 9 auto-start 포함).
+    /// data: preset, source. cycle 177 audit follow-up — 종전 dead code.
+    public static let pilotModeChanged: TelemetryKind = "pilot.mode_changed"
+    /// 사이클 186: emergency stop fired — 5 source 중 어느 곳 에서 발생 했는지.
+    /// data: source, was_already_active. 종전 dead code.
+    public static let pilotEStop: TelemetryKind = "pilot.e_stop"
+    /// 사이클 186 신규: emergency 상태에서 사용자 명시 recovery.
+    /// data: source.
+    public static let pilotRecoveryRequested: TelemetryKind = "pilot.recovery_requested"
+    /// 사이클 186 신규: emergencyStopActive 동안 intent 차단.
+    /// data: source, intent_kind ("move" / "stop" / "motion" / "preset").
+    public static let pilotIntentBlocked: TelemetryKind = "pilot.intent_blocked"
+    /// 사이클 186 신규: bridge.enabled=false 동안 intent 차단.
+    /// data: source, intent_kind.
+    public static let pilotBridgeDisabled: TelemetryKind = "pilot.bridge_disabled"
+
+    // Pilot adapter lifecycle (사이클 213)
+    /// 입력 어댑터 시작 — 어떤 소스가 active 상태인지 추적.
+    /// data: source ("gamepad"/"dji"/"voice"), controller_name.
+    public static let pilotAdapterStarted: TelemetryKind = "pilot.adapter_started"
+    /// 입력 어댑터 정지 — 세션 중 사용 기간 분석용.
+    /// data: source.
+    public static let pilotAdapterStopped: TelemetryKind = "pilot.adapter_stopped"
+    /// 컨트롤러 연결/해제 — 하드웨어 가용성 추적.
+    /// data: source, controller_name, connected (Bool).
+    public static let pilotControllerChanged: TelemetryKind = "pilot.controller_changed"
+    /// 음성 인식 에러 — 권한 거부, 엔진 실패 등.
+    /// data: source, error_type (PII redacted).
+    public static let pilotVoiceError: TelemetryKind = "pilot.voice_error"
+    /// 음성 키워드 매칭 결과 — match/miss 비율 분석용.
+    /// data: matched (Bool), keyword (matched 시).
+    public static let pilotVoiceKeyword: TelemetryKind = "pilot.voice_keyword"
+
+    // Safety gate (ARM / DISARM / gate block)
+    /// PilotSafetyGate.arm() — drag-to-arm 완료.
+    public static let pilotSafetyArmed: TelemetryKind = "pilot.safety_armed"
+    /// PilotSafetyGate.disarm() — ESC / 명시 / 연결 끊김.
+    public static let pilotSafetyDisarmed: TelemetryKind = "pilot.safety_disarmed"
+    /// PilotSafetyGate.allowMotion(_:confirmRisk:) 거부 — blockUnarmed / requireHighRiskConfirm.
+    /// data: reason, motion_name.
+    public static let pilotSafetyGateBlocked: TelemetryKind = "pilot.safety_gate_blocked"
+
+    /// 사이클 214: TelloPilotHud UI 버튼/토글 사용자 액션.
+    /// data: action ("activate" / "retry" / "bridge_toggle"), enabled (Bool, 토글 시).
+    public static let pilotHudAction: TelemetryKind = "pilot.hud_action"
+
+    // VoicePilotPanel UI telemetry
+    /// 음성 인식 토글 — 사용자 명시 start/stop.
+    /// data: listening (Bool — 전환 후 상태).
+    public static let pilotVoiceToggle: TelemetryKind = "pilot.voice_toggle"
+    /// 음성 키워드 인식 + dispatch — adapter 가 bridge 에 명령 전달 직전.
+    /// data: keyword (String), text_hash (PII-safe — 원문 해시).
+    public static let pilotVoiceDispatched: TelemetryKind = "pilot.voice_dispatched"
+
+    // PilotCameraView (Harness telemetry hooks)
+    /// 카메라 연결 버튼 클릭 — 사용자 명시 시작.
+    /// data: endpoint_hash (PII-safe).
+    public static let pilotCameraConnect: TelemetryKind = "pilot.camera_connect"
+    /// head tracking 토글 — 사용자 ON/OFF 전환.
+    /// data: enabled (Bool).
+    public static let pilotCameraHeadTrackingToggle: TelemetryKind = "pilot.camera_head_tracking_toggle"
+    /// Expert menu sheet 열기 — 어느 시트를 열었는지.
+    /// data: sheet ("head_tracker" / "imu" / "hsv").
+    public static let pilotCameraSheetOpened: TelemetryKind = "pilot.camera_sheet_opened"
+
+    // PilotHeadTrackerSettingsSheet (Harness telemetry hooks)
+    /// gain 슬라이더 변경 — 어떤 파라미터가 바뀌었는지.
+    /// data: param, value (Double).
+    public static let pilotHeadTrackerGainChanged: TelemetryKind = "pilot.head_tracker_gain_changed"
+    /// 모두 기본값으로 초기화 버튼 클릭.
+    public static let pilotHeadTrackerResetDefaults: TelemetryKind = "pilot.head_tracker_reset_defaults"
+
+    // PilotHsvTuningSheet (Harness telemetry hooks)
+    /// 로봇에서 config.ini 불러오기 시작. data: (none).
+    public static let pilotHsvLoadFromRobot: TelemetryKind = "pilot.hsv_load_from_robot"
+    /// 로봇에 config.ini 저장 (destructive). data: tag_count.
+    public static let pilotHsvWriteToRobot: TelemetryKind = "pilot.hsv_write_to_robot"
+    /// Mac default 로 초기화. data: (none).
+    public static let pilotHsvResetDefault: TelemetryKind = "pilot.hsv_reset_default"
+
+    // PilotActionBar (Harness telemetry hooks)
+    /// Action Bar 버튼 클릭 — 모션 송출 진입점.
+    /// data: slot, safety_class, is_sim.
+    public static let pilotActionBarPressed: TelemetryKind = "pilot.action_bar_pressed"
+    /// HighRisk 확인 대화상자 — 사용자 승인 (safety override).
+    /// data: slot, safety_class, display_name_hash.
+    public static let pilotActionBarRiskConfirmed: TelemetryKind = "pilot.action_bar_risk_confirmed"
+    /// HighRisk 확인 대화상자 — 사용자 취소.
+    /// data: slot, safety_class, display_name_hash.
+    public static let pilotActionBarRiskCancelled: TelemetryKind = "pilot.action_bar_risk_cancelled"
+
+    // Keyboard pilot panel UI telemetry
+    /// 키보드 패널에서 방향/emergency/recovery/motion/preset 키 입력.
+    /// data: key, phase ("down"/"up"). level=.trace (direction), .info (emergency/recovery).
+    public static let pilotKeyboardAction: TelemetryKind = "pilot.keyboard_action"
+    /// 키보드 패널 sensitivity slider 변경.
+    /// data: value (Double), label (String).
+    public static let pilotSensitivityChanged: TelemetryKind = "pilot.sensitivity_changed"
+
+    // PilotSettingsPanel (Harness telemetry hooks)
+    /// Pilot 감도 설정 "저장" 버튼 클릭.
+    /// data: scale_lr, scale_fb, scale_yaw, smoothing.
+    public static let pilotSettingsSaved: TelemetryKind = "pilot.settings_saved"
+    /// Pilot 감도 설정 "기본값" 버튼 클릭.
+    public static let pilotSettingsReset: TelemetryKind = "pilot.settings_reset"
+
+    // Remote pilot (사이클 216)
+    /// Feature level picker 변경 (v1.0 / v1.5 등).
+    /// data: from, to.
+    public static let pilotFeatureLevelChanged: TelemetryKind = "pilot.feature_level_changed"
+    /// 데모 모드 전환 요청 (manual ↔ ballFollow). handleModeChange 진입.
+    /// data: from_mode, to_mode, patched_demo.
+    public static let pilotDemoModeRequested: TelemetryKind = "pilot.demo_mode_requested"
+    /// 데모 모드 전환 완료 (성공/실패). data: mode, success, error_hash (PII-safe).
+    public static let pilotDemoModeResult: TelemetryKind = "pilot.demo_mode_result"
+    /// Transition overlay 사용자 "다음" 진행. data: step_index, step_id.
+    public static let pilotTransitionAdvance: TelemetryKind = "pilot.transition_advance"
+    /// Transition overlay 사용자 취소. data: step_index, step_count.
+    public static let pilotTransitionCancel: TelemetryKind = "pilot.transition_cancel"
+    /// 에러 배너 재연결 버튼. data: endpoint_hash (PII-safe).
+    public static let pilotReconnectTapped: TelemetryKind = "pilot.reconnect_tapped"
+
+    // Claude
+    public static let claudePromptSent: TelemetryKind = "claude.prompt_sent"
+    public static let claudeResponseReceived: TelemetryKind = "claude.response_received"
+    public static let claudeError: TelemetryKind = "claude.error"
+    /// 사이클 181 (P1 #3.4 fix, cycle 177 audit): HITL plan 사용자 승인.
+    /// data: tool, turn.
+    public static let claudePlanApproved: TelemetryKind = "claude.plan_approved"
+    /// 사이클 181: HITL plan 사용자 거부.
+    /// data: tool, turn.
+    public static let claudePlanRejected: TelemetryKind = "claude.plan_rejected"
+    /// 사이클 181: Plan 실행 단계 (dispatcher) 실패 — Claude 응답 자체는 정상 이지만
+    /// 실 액션 실패. data: tool, error_case.
+    public static let claudePlanExecutionFailed: TelemetryKind = "claude.plan_execution_failed"
+    /// 사이클 181: Plan 실행 성공 — dispatcher 가 정상 결과 반환.
+    /// data: tool, was_clipped, turn.
+    public static let claudePlanExecuted: TelemetryKind = "claude.plan_executed"
+    /// 사이클 181: 대화 세션 clear — 사용자가 history 비움.
+    /// data: messages_cleared.
+    public static let claudeSessionCleared: TelemetryKind = "claude.session_cleared"
+    /// IntentDispatcher 가 tool 을 dispatch 할 때 — 도구별 호출 빈도, sim/hw 비율 분석.
+    /// data: tool, mode.
+    public static let claudeIntentDispatched: TelemetryKind = "claude.intent_dispatched"
+    /// IntentDispatcher 에서 dispatch 실패 시 — 에러 유형별 빈도 분석.
+    /// data: tool, error_case.
+    public static let claudeIntentError: TelemetryKind = "claude.intent_error"
+
+    // Joint control (사이클 196, cycle 190 audit P1 #3)
+    /// JointControlView 의 버튼 (Torque ON/OFF, action buttons) 클릭 시 발화.
+    /// data: action, joint_id, joint_name.
+    public static let jointActionRequested: TelemetryKind = "joint.action_requested"
+    /// JointControlView 버튼 핸들러 에서 에러 catch 시 발화 (level=.error).
+    /// data: action, joint_id, error_case.
+    public static let jointActionFailed: TelemetryKind = "joint.action_failed"
+
+    // Setup wizard (사이클 194, cycle 190 audit P0 #2)
+    /// InitialSetupWizard 의 step status 변경 (vnc/robotSetup/macSSHKey/connect ×
+    /// pending/inProgress/verifying/completed). data: step, from_status, to_status.
+    /// 사용자 onboarding funnel 분석 — 어느 단계 에서 막히나, 자동 검증 vs 수동 비율.
+    public static let setupWizardStepChanged: TelemetryKind = "setup.wizard_step_changed"
+    /// 모든 step completed 첫 전환 — 사용자 onboarding 성공 funnel 끝.
+    /// data: elapsed_ms (Wizard 첫 진입 부터).
+    public static let setupWizardCompleted: TelemetryKind = "setup.wizard_completed"
+
+    // Connection wizard (ConnectionWizardView — 런타임 연결 마법사)
+    /// ConnectionWizard onAppear — 세션 당 마법사 진입 횟수 추적.
+    /// data: has_last_endpoint, is_advanced.
+    public static let setupConnWizardStarted: TelemetryKind = "setup.conn_wizard_started"
+    /// 사용자가 수동 경로 (USB/Network/Bonjour) 선택.
+    /// data: path (rawValue).
+    public static let setupConnPathSelected: TelemetryKind = "setup.conn_path_selected"
+    /// OneClick 자동 연결 버튼 클릭 또는 자동 실행.
+    /// data: trigger ("auto"/"manual").
+    public static let setupConnOneClickFired: TelemetryKind = "setup.conn_oneclick_fired"
+    /// OneClick 전체 실패 — 모든 후보 unreachable.
+    /// data: candidate_count.
+    public static let setupConnOneClickAllFailed: TelemetryKind = "setup.conn_oneclick_all_failed"
+    /// 수동 경로 connect 시도 (runUSBPath / runNetworkPath / runBonjourPath).
+    /// data: path.
+    public static let setupConnPathConnect: TelemetryKind = "setup.conn_path_connect"
+    /// 수동 → 고급 토글 전환.
+    /// data: to_advanced (Bool).
+    public static let setupConnAdvancedToggle: TelemetryKind = "setup.conn_advanced_toggle"
+    /// OneClickConnect.runOneClick() 내부 시작 — Fired(버튼 클릭) 와 분리.
+    /// data: has_last_endpoint, candidate_count.
+    public static let setupConnOneClickStarted: TelemetryKind = "setup.conn_oneclick_started"
+    /// OneClickConnect.runOneClick() 결과 — 성공 또는 전체 실패.
+    /// data: success (Bool), winning_kind (성공 시 후보 kind).
+    ///
+    /// **Note**: 전체 실패 시 `setupConnOneClickAllFailed` 와 의도적 double-fire —
+    /// 본 kind 는 결과 요약 (success Bool), AllFailed 는 ConnectionWizard UI 반응 맥락.
+    public static let setupConnOneClickResult: TelemetryKind = "setup.conn_oneclick_result"
+    /// OneClickConnect.runDiagnosticsOnly() 진입.
+    /// data: candidate_count.
+    public static let setupConnDiagnosticsStarted: TelemetryKind = "setup.conn_diagnostics_started"
+    /// OneClickConnect.manualProbe() — 사용자가 입력한 호스트 1개 probe.
+    /// data: host_hash (PII-safe Harness.shortHash).
+    public static let setupConnManualProbe: TelemetryKind = "setup.conn_manual_probe"
+    /// 개별 후보 probe 결과 (trace 레벨).
+    /// data: candidate_id, candidate_kind, stage ("ready"/"failed").
+    public static let setupConnCandidateProbed: TelemetryKind = "setup.conn_candidate_probed"
+
+    // Remote shell (사이클 182, P1 #3.6 fix, cycle 177 audit)
+    /// 사용자가 RemoteShell 명령 송신. data: channel, cmd_len, cmd_hash.
+    public static let remoteCommandSent: TelemetryKind = "remote.command_sent"
+    /// SSH/SMB 응답 수신. data: channel, elapsed_ms, result_len.
+    public static let remoteCommandResponded: TelemetryKind = "remote.command_responded"
+    /// 명령 실행 실패. data: channel, error_case, elapsed_ms.
+    public static let remoteCommandError: TelemetryKind = "remote.command_error"
+    /// probeChannel 가 channel 자동 선택. data: from_channel, to_channel.
+    public static let remoteChannelChanged: TelemetryKind = "remote.channel_changed"
+    /// Quick action 버튼 탭. data: action_id, category. level=.warn for danger.
+    public static let remoteQuickAction: TelemetryKind = "remote.quick_action"
+    /// 프리셋 칩 탭 — 명령 프리필. data: label_hash.
+    public static let remotePresetChip: TelemetryKind = "remote.preset_chip"
+    /// Wizard ↔ shell 모드 수동 전환. data: to_mode.
+    public static let remoteModeToggled: TelemetryKind = "remote.mode_toggled"
+
+    // WalkDiagnosticsView telemetry
+    /// 보행 진단 데이터 소스 전환 (preview ↔ live).
+    /// data: source ("preview" / "live").
+    public static let walklabDiagnosticsSourceChanged: TelemetryKind = "walklab.diagnostics_source_changed"
+    /// 보행 진단 실행/일시정지 토글.
+    /// data: enabled (Bool — 전환 후 상태), source.
+    public static let walklabDiagnosticsRunToggle: TelemetryKind = "walklab.diagnostics_run_toggle"
+    /// 보행 진단 데이터 리셋 — 버퍼 초기화.
+    /// data: sample_count (초기화 전 샘플 수).
+    public static let walklabDiagnosticsReset: TelemetryKind = "walklab.diagnostics_reset"
+    /// 보행 진단 CSV 익스포트.
+    /// data: sample_count, success (Bool).
+    public static let walklabDiagnosticsExport: TelemetryKind = "walklab.diagnostics_export"
+    /// 보행 진단 실 로봇 송출 토글 (sendWalkToRobot).
+    /// data: sending (Bool — 전환 후 상태).
+    public static let walklabDiagnosticsSendToggle: TelemetryKind = "walklab.diagnostics_send_toggle"
+
+    // WalkDataView telemetry
+    /// 보행 데이터 세션 선택 — 사용자가 목록에서 세션 클릭.
+    /// data: session_id_hash (PII-safe).
+    public static let walklabDataSessionSelected: TelemetryKind = "walklab.data_session_selected"
+    /// 보행 데이터 세션 삭제 (destructive).
+    /// data: session_id_hash (PII-safe).
+    public static let walklabDataSessionDeleted: TelemetryKind = "walklab.data_session_deleted"
+    /// 보행 데이터 Claude 분석 패널 토글.
+    /// data: panel ("critic_v2" / "markdown"), visible (Bool).
+    public static let walklabDataAnalysisPanelToggle: TelemetryKind = "walklab.data_analysis_panel_toggle"
+    /// 보행 데이터 Claude 분석 실행 시작.
+    /// data: session_count.
+    public static let walklabDataAnalysisStarted: TelemetryKind = "walklab.data_analysis_started"
+
+    // Mobile Pilot Relay — Connection Lifecycle (V295-2)
+    /// WebSocket TCP 수락 — handshake 시작 직전 첫 이벤트.
+    /// 비유: 손님이 문을 열고 들어온 순간. 아직 신원 확인 전.
+    /// data: { channelId }
+    public static let mobilePilotSocketOpened: TelemetryKind = "mobile_pilot.socket_opened"
+    /// hello payload 파싱 성공 — acceptHello 진입. 코드 검증 직전.
+    /// 비유: 손님이 이름을 말하고 신분증을 꺼낸 순간.
+    /// data: { deviceName, codePrefixHint }
+    public static let mobilePilotHelloReceived: TelemetryKind = "mobile_pilot.hello_received"
+    /// welcome 송신 완료 — 페어링 확정. iPhone 이 세션 ID 를 수신한 직후.
+    /// 비유: 출입 스탬프 찍어줌 → 공식 입장 완료.
+    /// data: { sessionId, deviceName }
+    public static let mobilePilotWelcomeSent: TelemetryKind = "mobile_pilot.welcome_sent"
+
+    // Mobile Pilot Relay (V291-5)
+    /// iPhone 페어링 성공 — hello 수락 + welcome 전송 완료.
+    /// data: { deviceName, sessionId }
+    public static let mobilePilotPairingSuccess: TelemetryKind = "mobile_pilot.pairing_success"
+    /// iPhone 페어링 거부 — 코드 불일치 또는 잠금 상태.
+    /// data: { attemptsRemaining, reason }
+    public static let mobilePilotPairingRejected: TelemetryKind = "mobile_pilot.pairing_rejected"
+    /// 페어링 잠금 트리거 — 3회 실패 후 5분 잠금 활성.
+    /// data: { lockedUntil, reason }
+    public static let mobilePilotLockoutTriggered: TelemetryKind = "mobile_pilot.lockout_triggered"
+    /// 페어링 코드 회전 — 명시적 사용자 요청 또는 잠금 자동 회전.
+    /// data: { source: "manual"|"lockout" }
+    public static let mobilePilotCodeRotated: TelemetryKind = "mobile_pilot.code_rotated"
+    /// iPhone 명령 수락 — arm/disarm/motion/walk/stop ACK 완료.
+    /// data: { commandType, commandId, latencyMs }
+    public static let mobilePilotCommandAccepted: TelemetryKind = "mobile_pilot.command_accepted"
+    /// iPhone 명령 거부 — notArmed/latencyGate/riskNotConfirmed 등.
+    /// data: { commandType, commandId, reason }
+    public static let mobilePilotCommandRejected: TelemetryKind = "mobile_pilot.command_rejected"
+    /// iPhone 연결 해제 — transport close (정상 goodbye 또는 비정상).
+    /// data: { reason, sessionDurationSec }
+    public static let mobilePilotDisconnected: TelemetryKind = "mobile_pilot.disconnected"
+    /// Watchdog 강제 정지 — heartbeat timeout → stop 전송.
+    /// data: { lastHeartbeatAgeMs, activeCommandId }
+    public static let mobilePilotWatchdogStop: TelemetryKind = "mobile_pilot.watchdog_stop"
+    /// WebSocket send 실패 — deliver() throw 시 발화. V296-1 silent-swallow fix.
+    /// 연속 3회 실패 시 세션 강제 종료 (deliveryFailed).
+    /// data: { errorKind, consecutive }
+    public static let mobilePilotSendFailed: TelemetryKind = "mobile_pilot.send_failed"
+
+    /// V297-5 LOW-1 — highLatency informational warning (reject 아님).
+    /// 종전엔 mobilePilotCommandRejected 로 잘못 기록되어 dashboards 의 rejected 카운터가
+    /// 오염. 별도 kind 로 분리 — 정보성 신호 vs 실 reject 구분.
+    /// data: { latencyMs }
+    public static let mobilePilotHighLatency: TelemetryKind = "mobile_pilot.high_latency"
+
+    // Auto Fall-Recovery (Phase 1)
+    /// Fall detection triggered auto-recovery — robot detected as fallen.
+    /// data: pitch_deg, direction ("forward"/"backward"), get_up_page.
+    public static let recoveryDetected: TelemetryKind = "recovery.detected"
+    /// Recovery entered settling phase — waiting for gyro to stabilize.
+    /// data: direction.
+    public static let recoverySettle: TelemetryKind = "recovery.settle"
+    /// Recovery entered get-up motion phase.
+    /// data: page, attempt, settle_ms.
+    public static let recoveryGetUp: TelemetryKind = "recovery.get_up"
+    /// Recovery succeeded — robot is upright.
+    /// data: pitch_deg, attempts, settle_ms, recovery_total_ms.
+    public static let recoveryDone: TelemetryKind = "recovery.done"
+    /// Recovery failed — max attempts exceeded or torque restore failed.
+    /// data: reason, attempts.
+    public static let recoveryFailed: TelemetryKind = "recovery.failed"
+    /// **E (진단, 2026-05-31)**: 낙하 감지됐으나 게이트가 자동 일어나기를 차단 —
+    /// "왜 getup 대신 비상/정지로 갔는지" 진단용. 동작 변경 없음 (로깅 전용).
+    /// data: { gate, fall_direction, dxl_power, cradle, motor_temp, voltage, phase, recovering }
+    public static let getupGateBlocked: TelemetryKind = "recovery.getup_gate_blocked"
+    /// **E (진단, 2026-05-31)**: L3 비상정지 발동 시 진단 컨텍스트 — raw tilt(영점 미보정) +
+    /// 영점 기준 + getup 적격 여부. 만성 pitch 오프셋이 50° 마진을 잠식했는지 분석.
+    /// data: { trigger, raw_roll_deg, raw_pitch_deg, imu_zero_pitch_deg, imu_zero_roll_deg, getup_block_reason }
+    public static let l3EmergencyDiagnostic: TelemetryKind = "safety.l3_emergency_diagnostic"
+
+    // Calibration / Pilot mapping (2026-05-31 — A·E 진단 계측, 동작 무변경)
+    /// **A (캘리브레이션)**: 정지 상태 IMU 영점 캡처 — walkReady 정지 시 pitch/roll 기준값.
+    /// 모터/안전 동작에는 아직 미적용 (분석용 기록만). data: { pitch_zero_deg, roll_zero_deg, sample_count, source }
+    public static let imuZeroCaptured: TelemetryKind = "calibration.imu_zero_captured"
+    /// 조종기 매핑 스냅샷 — 버튼→동작 + 감도. 로드/연결 시 1회 기록(영속·명확 저장 확인).
+    /// data: { buttons, scaleLR, scaleFB, scaleYaw, smoothing, source }
+    public static let pilotMappingSnapshot: TelemetryKind = "pilot.mapping_snapshot"
+
+    // Safety E-Stop verification (V291-12)
+    /// E-Stop 후 모든 관절 속도 = 0 확인 — torque 실제 OFF 검증 성공.
+    /// data: { delay_ms, joint_count }
+    public static let safetyEStopVerified: TelemetryKind = "safety.estop_verified"
+    /// E-Stop 후 일부 관절이 여전히 움직임 또는 bus read 불가 — 검증 실패.
+    /// data: { reason ("failed"|"unreachable"), unstopped_joints (배열 또는 오류 설명) }
+    public static let safetyEStopVerificationFailed: TelemetryKind = "safety.estop_verification_failed"
+
+    // System
+    public static let heartbeat: TelemetryKind = "heartbeat.tick"
+    public static let harnessDropped: TelemetryKind = "harness.dropped"
+    public static let errorException: TelemetryKind = "error.exception"
+    /// v1.11.25 audit P0 robot-D — telemetry sub-loop auto-skipped (예: FSR 미장착).
+    /// data: reason ("fsr_board_missing"), consecutive_failures.
+    public static let telemetrySkip: TelemetryKind = "telemetry.skip"
+}
+
+/// Compact context snapshot — 모든 event 에 (선택적으로) 첨부.
+public struct TelemetryContext: Codable, Sendable, Equatable {
+    public enum ConnectionState: String, Codable, Sendable {
+        case disconnected, connecting, connected, error
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = ConnectionState(rawValue: raw) ?? .disconnected
+        }
+    }
+    public let cn: ConnectionState?       // connection state
+    public let ep: String?                // endpoint (redacted)
+    public let sc: String?                // section
+    public let bv: Double?                // battery V
+    public let rt: Double?                // RTT ms
+    public let im: Bool?                  // imu_stale (im = imu, `is` is reserved)
+
+    public init(connection: ConnectionState? = nil,
+                endpoint: String? = nil,
+                section: String? = nil,
+                batteryV: Double? = nil,
+                rttMs: Double? = nil,
+                imuStale: Bool? = nil) {
+        self.cn = connection
+        self.ep = endpoint
+        self.sc = section
+        self.bv = batteryV
+        self.rt = rttMs
+        self.im = imuStale
+    }
+}
+
+/// Type-erased Codable payload — Decoder 가 모르는 schema 도 통과.
+public struct TelemetryPayload: Codable, Sendable, Equatable {
+    public let raw: [String: AnyCodable]
+    public init(_ raw: [String: AnyCodable] = [:]) { self.raw = raw }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.raw = (try? container.decode([String: AnyCodable].self)) ?? [:]
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(raw)
+    }
+}
+
+/// Convenience builders so call sites stay readable.
+public extension TelemetryPayload {
+    static func empty() -> TelemetryPayload { TelemetryPayload([:]) }
+
+    static func dict(_ pairs: [String: AnyCodable]) -> TelemetryPayload {
+        TelemetryPayload(pairs)
+    }
+}
+
+/// **The** telemetry event. Encode/Decode 만 신경 쓰면 됨.
+public struct TelemetryEvent: Codable, Sendable, Equatable, Identifiable {
+    /// `Identifiable` — Table/List 표시용. session+seq 가 globally unique.
+    public var id: String { "\(s)#\(i)" }
+    public let v: Int                     // schema version
+    public let s: String                  // session UUID
+    public let i: UInt64                  // monotonic seq
+    public let tw: String                 // ISO-8601 wall clock
+    public let tm: UInt64                 // monotonic clock ns
+    public let k: TelemetryKind           // kind
+    public let lv: TelemetryLevel         // level
+    public let a: TelemetryActor          // actor
+    public let d: TelemetryPayload        // payload
+    public let c: TelemetryContext?       // context snapshot
+
+    public init(schema: Int = 1,
+                session: String,
+                seq: UInt64,
+                wall: String,
+                mono: UInt64,
+                kind: TelemetryKind,
+                level: TelemetryLevel,
+                actor: TelemetryActor,
+                data: TelemetryPayload = .empty(),
+                context: TelemetryContext? = nil) {
+        self.v = schema
+        self.s = session
+        self.i = seq
+        self.tw = wall
+        self.tm = mono
+        self.k = kind
+        self.lv = level
+        self.a = actor
+        self.d = data
+        self.c = context
+    }
+}
+
+// MARK: - AnyCodable
+//
+// JSON 안에 무엇이 들어올지 모르는 payload 를 Codable 답게 다루기 위한 wrapper.
+// 외부 의존성 (Foundation 만 사용) — Swift Package 의존성 늘리지 않음.
+
+public struct AnyCodable: Codable, @unchecked Sendable, Equatable, ExpressibleByStringLiteral,
+                          ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral,
+                          ExpressibleByBooleanLiteral, ExpressibleByNilLiteral,
+                          ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral {
+    public let value: Any?
+
+    public init(_ value: Any?) { self.value = value }
+
+    // Literals
+    public init(stringLiteral value: String) { self.value = value }
+    public init(integerLiteral value: Int) { self.value = value }
+    public init(floatLiteral value: Double) { self.value = value }
+    public init(booleanLiteral value: Bool) { self.value = value }
+    public init(nilLiteral: ()) { self.value = nil }
+    public init(arrayLiteral elements: AnyCodable...) { self.value = elements }
+    public init(dictionaryLiteral elements: (String, AnyCodable)...) {
+        var d: [String: AnyCodable] = [:]
+        for (k, v) in elements { d[k] = v }
+        self.value = d
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self.value = nil }
+        else if let b = try? c.decode(Bool.self) { self.value = b }
+        else if let i = try? c.decode(Int.self) { self.value = i }
+        else if let d = try? c.decode(Double.self) { self.value = d }
+        else if let s = try? c.decode(String.self) { self.value = s }
+        else if let a = try? c.decode([AnyCodable].self) { self.value = a }
+        else if let m = try? c.decode([String: AnyCodable].self) { self.value = m }
+        else { self.value = nil }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch value {
+        case nil: try c.encodeNil()
+        case let b as Bool: try c.encode(b)
+        case let i as Int: try c.encode(i)
+        case let i as Int64: try c.encode(i)
+        case let u as UInt64: try c.encode(u)
+        case let d as Double: try c.encode(d)
+        case let s as String: try c.encode(s)
+        case let a as [AnyCodable]: try c.encode(a)
+        case let m as [String: AnyCodable]: try c.encode(m)
+        case let arr as [Any?]: try c.encode(arr.map { AnyCodable($0) })
+        case let dict as [String: Any?]:
+            var out: [String: AnyCodable] = [:]
+            for (k, v) in dict { out[k] = AnyCodable(v) }
+            try c.encode(out)
+        default: try c.encodeNil()
+        }
+    }
+
+    public static func == (lhs: AnyCodable, rhs: AnyCodable) -> Bool {
+        // 디스크 round-trip 결과의 동치성 검증용 — JSON 인코딩 후 비교.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let l = try? encoder.encode(lhs), let r = try? encoder.encode(rhs) else {
+            return false
+        }
+        return l == r
+    }
+}

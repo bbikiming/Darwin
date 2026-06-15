@@ -23,32 +23,38 @@ public enum STLLoader {
         }
     }
 
-    /// Bundle.module의 Resources/Meshes/<name>.stl 로드.
+    /// Resources/Meshes/<name>.stl 로드.
+    ///
+    /// V297-11 CRASH FIX: Bundle.module 직접 호출 폐기. SafeResourceBundle 가
+    /// 배포 .app + dev 환경 모두 안전하게 찾음.
+    ///
+    /// **W1 (2026-06-11)**: 머티리얼 생성 제거 — geometry 만 반환하고 호출자가
+    /// `RigMaterials` 로 PBR 머티리얼을 주입한다. normal 은 crease-angle 스무딩 적용.
     public static func loadGeometry(named name: String,
                                      scale: Float = 1.0,
-                                     diffuse: NSColor) throws -> SCNGeometry {
-        guard let url = Bundle.module.url(forResource: name,
-                                           withExtension: "stl",
-                                           subdirectory: "Meshes") else {
+                                     creaseAngleDeg: Float = 35) throws -> SCNGeometry {
+        guard let url = SafeResourceBundle.url(forResource: name,
+                                                withExtension: "stl",
+                                                subdirectory: "Meshes") else {
             throw Error.fileNotFound(name)
         }
         let data = try Data(contentsOf: url)
-        return try parseBinarySTL(data: data, scale: scale, diffuse: diffuse)
+        return try parseBinarySTL(data: data, scale: scale, creaseAngleDeg: creaseAngleDeg)
     }
 
     /// 임의 path STL 로드 (테스트용).
     public static func loadGeometry(url: URL,
                                      scale: Float = 1.0,
-                                     diffuse: NSColor) throws -> SCNGeometry {
+                                     creaseAngleDeg: Float = 35) throws -> SCNGeometry {
         let data = try Data(contentsOf: url)
-        return try parseBinarySTL(data: data, scale: scale, diffuse: diffuse)
+        return try parseBinarySTL(data: data, scale: scale, creaseAngleDeg: creaseAngleDeg)
     }
 
     // MARK: - Binary parser
 
     private static func parseBinarySTL(data: Data,
                                         scale: Float,
-                                        diffuse: NSColor) throws -> SCNGeometry {
+                                        creaseAngleDeg: Float) throws -> SCNGeometry {
         // ASCII STL이면 거부 (header 시작이 "solid "로 시작).
         if data.count >= 5 {
             let head = String(data: data.prefix(5), encoding: .ascii) ?? ""
@@ -69,17 +75,17 @@ public enum STLLoader {
         let expectedSize = 84 + triCount * 50
         guard data.count >= expectedSize else { throw Error.truncated }
 
-        // Vertex / normal 배열 (각 triangle마다 3 vertex).
-        var vertexBytes = Data()
-        vertexBytes.reserveCapacity(triCount * 3 * 12)   // 3 verts × 3 floats × 4 bytes
-        var normalBytes = Data()
-        normalBytes.reserveCapacity(triCount * 3 * 12)
+        // Vertex / normal 배열 (각 triangle마다 3 vertex, per-face-vertex 레이아웃).
+        var positions = [Float]()
+        positions.reserveCapacity(triCount * 3 * 3)
+        var normals = [Float]()
+        normals.reserveCapacity(triCount * 3 * 3)
         var indices = [UInt32]()
         indices.reserveCapacity(triCount * 3)
 
         var offset = 84
         for tri in 0..<triCount {
-            // normal 12B (3 floats)
+            // normal 12B (3 floats) — face normal, 3 vertex 에 복제.
             let nx = readFloat(data, offset: offset)
             let ny = readFloat(data, offset: offset + 4)
             let nz = readFloat(data, offset: offset + 8)
@@ -91,16 +97,20 @@ public enum STLLoader {
                 let vy = readFloat(data, offset: offset + 4) * scale
                 let vz = readFloat(data, offset: offset + 8) * scale
                 offset += 12
-                appendFloat(&vertexBytes, vx)
-                appendFloat(&vertexBytes, vy)
-                appendFloat(&vertexBytes, vz)
-                appendFloat(&normalBytes, nx)
-                appendFloat(&normalBytes, ny)
-                appendFloat(&normalBytes, nz)
+                positions.append(vx); positions.append(vy); positions.append(vz)
+                normals.append(nx);   normals.append(ny);   normals.append(nz)
                 indices.append(UInt32(tri * 3 + v))
             }
             offset += 2  // attribute byte count
         }
+
+        // **W1**: crease-angle normal smoothing — 곡면 매끈, 직각 모서리 hard 유지.
+        let smoothed = STLNormalSmoother.smooth(positions: positions,
+                                                 normals: normals,
+                                                 creaseAngleDeg: creaseAngleDeg)
+
+        let vertexBytes = positions.withUnsafeBufferPointer { Data(buffer: $0) }
+        let normalBytes = smoothed.withUnsafeBufferPointer { Data(buffer: $0) }
 
         let vertexSource = SCNGeometrySource(
             data: vertexBytes,
@@ -132,15 +142,8 @@ public enum STLLoader {
             bytesPerIndex: MemoryLayout<UInt32>.size
         )
 
-        let geom = SCNGeometry(sources: [vertexSource, normalSource], elements: [element])
-        let mat = SCNMaterial()
-        mat.diffuse.contents = diffuse
-        mat.specular.contents = NSColor.white.withAlphaComponent(0.30)
-        mat.shininess = 18
-        mat.lightingModel = .blinn
-        mat.isDoubleSided = true   // STL normal이 가끔 뒤집혀 있어 양면 활성화.
-        geom.firstMaterial = mat
-        return geom
+        // **W1**: 머티리얼은 호출자가 RigMaterials 로 주입. geometry 만 반환.
+        return SCNGeometry(sources: [vertexSource, normalSource], elements: [element])
     }
 
     @inline(__always)
@@ -149,11 +152,5 @@ public enum STLLoader {
             let raw = ptr.loadUnaligned(fromByteOffset: offset, as: UInt32.self)
             return Float(bitPattern: UInt32(littleEndian: raw))
         }
-    }
-
-    @inline(__always)
-    private static func appendFloat(_ data: inout Data, _ value: Float) {
-        var v = value
-        withUnsafeBytes(of: &v) { data.append(contentsOf: $0) }
     }
 }

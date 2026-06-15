@@ -1,6 +1,6 @@
 # ROADMAP
 
-> 전체 일정 — Phase 0..5 + Sprint 1..6.
+> 전체 일정 — Phase 0..5 + Sprint 1..13, 그리고 2026-06 확장 Wave 트랙(FPV/relay/walklab/레이턴시/3D/App Store/실기).
 > 각 항목은 **자율 실행** (사용자가 한 번 승인했음).
 > BLOCKER 발생 시에만 사용자 개입 요청.
 
@@ -143,12 +143,42 @@ PRD-001 기반:
 - Sprint 1~13 완성 (Sprint 11 SwiftUI 통합 제외).
 - `forge synth` 로 자연어 / CLI 합성 + validate + MCP 노출.
 - `forge motion play --engage` 로 실 robot 송출 (사용자 supervised).
-- **306 Rust tests / 70 Swift tests / 14 ADR / 16 신규 문서**.
+- **(2026-05-12 시점) 306 Rust tests / 70 Swift tests / 14 ADR / 16 신규 문서**. → 2026-06-14 실측: Rust **382 통과**(0 failed), Swift 통과 수 unverified(선언 3577 UI/151 iOS), ADR 14. 최신 통계는 [PROGRESS.md](PROGRESS.md) '통계 (2026-06-14 실측 갱신)' 참조.
+
+## 2026-06 확장 트랙 (Sprint 외 Wave 단위)
+
+> Sprint(누적 기능)와 달리 이 트랙들은 Wave(W0~/O0~/D0~/H0~) 단위로 진행한다. 대부분 실기 게이트가 잔여.
+
+### DARwIn FPV / ROG Ally
+- **W0** df-wire 와이어 패리티(Python↔Rust 골든 벡터) 완료 (`7acca35`~`4c89353`).
+- **W1** ally-link 연결 계층(ssh/udp/metrics/session) 완료, macOS selftest GREEN (`d00b8ca`). Mac 'FPV 조종' 탭 런처(`40434a0`).
+- **다음**: Ally 기기 유선 실기 게이트 → W2 Tauri 콕핏 → W3(ally-pose↔forge-core path 의존) → W4 내구. 스택 Tauri 2(Windows 전용), G01 동결. 설계 [03_ARCHITECTURE.md](app/ally/docs/03_ARCHITECTURE.md).
+
+### iOS Mobile Relay
+- walk 30→10Hz latest-wins throttle(`b1fb37b`), 디스패치 직렬화(`ddfc498`), Mac 릴레이 conflation + 레이턴시 JSON sink(`7a4ffb1`). 텔레메트리 게이트·유선 재프로브(`f1af504`).
+
+### WalkLab 텔레옵·킥
+- Anbernic 보행 고도화 P0~P6(`ea5bbb9`), 게임패드 킥 LB/RB F12(`f2e9fae`·`cb0a964`), 킥 안정성(`58efaa8`). 온보드 O0~O2·O4(`74fca94`·`ad287e4`·`39a613b`·`daa2550`·`998297a`), 직결 D0~D2(`5ff5873`·`e940e63`), 핸드헬드 H0~H3(`8430f0a`·`ae23e5c`). 잔여: P7·K3·O3·D3·필드 게이트.
+
+### 레이턴시 / E-STOP 하드닝
+- 콕핏 레이턴시 Wave 0~2·부분 W3 코드 완료. UDP 명령/E-STOP 패스트레인 완비됐으나 Mac 핸드셰이크 미사용으로 100% 미배선 + 무선 고착(166x)·계측 0샘플. 설계 [cockpit-latency-hardening.md](docs/design/cockpit-latency-hardening.md).
+
+### 3D 뷰포트
+- W0~W5(PBR·IBL·환경·오버레이·카메라·성능) 완료. 3D 오버레이 기본 OFF·HUD 아코디언(`9ad2563`). 잔여 = Instruments/.app 실측. 설계 [3d-viewport-enhancement.md](docs/design/3d-viewport-enhancement.md).
+
+### App Store 심사
+- 코드: hardened runtime 예외 제거(PR #43), device.serial + CFBundleVersion bump(`be8ab20`), Claude/Synth 숨김(`48365e4`), bundle ID·저작권 com.yuseokkim 시나리오 B(`8cee624`). 잔여 = 개발자 포털 작업·아카이브 검증·데모 영상. 플랜 [2026-06-13-pass-master-plan.md](docs/app-review/2026-06-13-pass-master-plan.md).
+
+### 실기 브링업
+- RG G01 입회 완료(2026-06-13): F6/F7·F9·F10b·F11 + 벤치 도구. 보고서 [2026-06-13-rgg01-bringup.md](docs/reports/2026-06-13-rgg01-bringup.md). 잔여 = 단절 매트릭스 4종·10분 분포·침묵 임계.
+- Switch 어플라이언스: 4레이어 설계 + 코드 준비(`5406b55`), **하드웨어 미검증**(RCM jig 미보유) — 코드 레벨(bash -n·compileall)만 검증.
 
 ## 후속 (Sprint 14+, 미확정)
 
-- realtime monitoring + interactive abort + Ctrl+C emergency_stop (signal-hook)
-- MCP server 에 `motion_play` tool 추가
-- SwiftUI Synth Palette RootView 통합 (`Section.synth`)
-- 실 robot 측정 기반 V1 JointLimit calibration (PRD §17.4)
-- ROS2 bridge 와 e-Manual web 통합
+> 2026-06 확장 트랙은 위 섹션 참조. 아래는 원 Sprint 라인의 잔여 후속.
+
+- realtime monitoring + interactive abort + Ctrl+C emergency_stop (signal-hook) (부분: 콕핏 레이턴시 Wave 0~2 코드 완료, E-STOP UDP 패스트레인 미배선)
+- MCP server 에 `motion_play` tool 추가 (미착수)
+- SwiftUI Synth Palette RootView 통합 (`Section.synth`) (Pending, 변동 없음)
+- 실 robot 측정 기반 V1 JointLimit calibration (PRD §17.4) (실기 데이터 대기)
+- ROS2 bridge 와 e-Manual web 통합 (미착수)

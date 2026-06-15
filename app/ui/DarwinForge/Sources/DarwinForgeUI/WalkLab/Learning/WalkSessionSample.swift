@@ -1,5 +1,59 @@
 import Foundation
 
+/// **v1.11.25 (2026-05-21) — FSR (foot pressure) sample 형식**.
+///
+/// `ForgeCore.FsrReading` 의 compact JSON 형태. JSON key 약어 (fl/fr/rr/rl/x/y) — 60 bytes/foot.
+public struct FsrSampleSnapshot: Codable, Sendable, Equatable {
+    /// front-left cell pressure (0..1023).
+    public let fl: UInt16
+    public let fr: UInt16
+    public let rr: UInt16
+    public let rl: UInt16
+    /// 중심점 X (-127..127). 0 = 발 중앙.
+    public let x: Int8
+    /// 중심점 Y (-127..127).
+    public let y: Int8
+
+    public init(fl: UInt16, fr: UInt16, rr: UInt16, rl: UInt16, x: Int8, y: Int8) {
+        self.fl = fl; self.fr = fr; self.rr = rr; self.rl = rl; self.x = x; self.y = y
+    }
+
+    /// 4 cell 합 — 발 total 압력 (raw).
+    public var totalPressure: UInt32 {
+        UInt32(fl) + UInt32(fr) + UInt32(rr) + UInt32(rl)
+    }
+}
+
+/// **v1.11.25 (2026-05-20) — 개별 관절 측정값 스냅샷**.
+///
+/// `ConnectionStore.lastTelemetry.joints` 의 `JointState` 를 sample 에 dump 하기 위한
+/// compact 표현. JSON key 약어 (g/a/sp/l/t/v/te) — 18 관절 × 7 필드 = ~9 KB/tick 인데
+/// 약어로 ~6 KB 까지 줄어듦. 매 tick 전체 저장은 size 폭증이므로 telemetry tick 도착 시
+/// (≈5 Hz USB / 2 Hz network) 만 채움 — 그 외 tick 은 `WalkSessionSample.jointStates = nil`.
+public struct JointStateSnapshot: Codable, Sendable, Equatable {
+    /// goal position (Dynamixel raw 0..4095).
+    public let g: UInt16
+    /// actual present position (Dynamixel raw).
+    public let a: UInt16
+    /// present speed raw.
+    public let sp: UInt16
+    /// present load raw (UInt16).
+    public let l: UInt16
+    /// present temperature (°C).
+    public let t: UInt8
+    /// present voltage raw (0.1V units — voltageVolts = v * 0.1).
+    public let v: UInt8
+    /// torque enabled.
+    public let te: Bool
+
+    public init(g: UInt16, a: UInt16, sp: UInt16, l: UInt16, t: UInt8, v: UInt8, te: Bool) {
+        self.g = g; self.a = a; self.sp = sp; self.l = l; self.t = t; self.v = v; self.te = te
+    }
+
+    /// tracking error 직접 계산 helper (deg = (a - g) * 360/4096).
+    public var trackingErrorRawSteps: Int { Int(a) - Int(g) }
+}
+
 /// **v1.9 (2026-05-17)**: 한 tick (50ms) 의 보행 데이터 스냅샷.
 ///
 /// JSONL 라인 하나 = WalkSessionSample 하나. 사람이 읽기 쉽고 Python/pandas 분석 가능.
@@ -88,6 +142,67 @@ public struct WalkSessionSample: Codable, Sendable {
     /// EMA chronic roll drift (deg). Hybrid 일 때만.
     public let emaRollDeg: Double?
 
+    // MARK: - v1.11.25 (2026-05-20) — 로봇 측 실측 데이터
+    //
+    // 종전 한계: `appendSessionSampleIfLogging` 가 `ConnectionStore.lastTelemetry.board`
+    // 와 `avgTemperature` 만 dump → 개별 18 관절 / IMU raw 6축 / per-joint failure /
+    // RTT / button state 모두 메모리에는 있지만 disk 휘발. 사후 tracking error / 부하
+    // 비대칭 / IMU plausibility / failure-precursor 분석 불가.
+    //
+    // fix (audit P0 robot-A/B/C/E/F): 메모리 보유 데이터를 sparse 하게 dump.
+    // - jointStates: telemetry tick 새 도착 시에만 (≈5Hz/2Hz) — main IMU tick (20Hz) 보다 적음
+    // - rawGyro/Accel: 매 tick 채움 (sample-level 20Hz)
+    // - jointFailuresDelta: 이전 tick 대비 변화한 joint 만 sparse
+    // - busRttMs / boardButton: 매 tick 채움 (값이 같으면 reader 가 dedup 가능)
+
+    /// 18 관절 개별 측정 — key=`JointID.rawValue` (예: `"rHipRoll"`). `nil` = telemetry
+    /// tick 이 이 sample 이전엔 같은 dataset 이라 새 데이터 없음 (size 절약).
+    public let jointStates: [String: JointStateSnapshot]?
+
+    /// IMU raw — 20Hz cadence 로 모두 채움. nil = sim 또는 IMU read 실패.
+    public let rawGyroXDps: Double?
+    public let rawGyroYDps: Double?
+    public let rawGyroZDps: Double?
+    public let rawAccelXG: Double?
+    public let rawAccelYG: Double?
+    public let rawAccelZG: Double?
+
+    /// 이전 sample 대비 새로 누적된 per-joint timeout count — sparse. 변화 없으면 nil.
+    public let jointFailuresDelta: [String: Int]?
+
+    /// board read round-trip latency (ms). board 는 ≈1Hz 라 4 tick stale 가능.
+    public let busRttMs: Double?
+
+    /// CM-740 board button raw byte (register 30). 0 외 값 = 사용자 버튼 입력.
+    /// nil = telemetry 미수신.
+    public let boardButton: UInt8?
+
+    // v1.11.25 audit P0 robot-D — FSR (foot pressure) snapshot.
+    /// 좌측 발 FSR — board ID 112. nil = board 미장착 또는 read 실패 / sparse cadence.
+    public let fsrLeft: FsrSampleSnapshot?
+    /// 우측 발 FSR — board ID 111.
+    public let fsrRight: FsrSampleSnapshot?
+
+    // v1.11.25 audit P1 log-H — fall predictor score 시계열.
+    /// FallPredictor.Prediction.score (0..1, 1 = 임박). nil = predictor 미사용 / disabled.
+    public let fallScore: Double?
+    /// fall predictor 가 recommend emergency 인가.
+    public let fallRecommendEmergency: Bool?
+
+    // MARK: - Phase 1 fall-recovery telemetry fields (backward-compat optional)
+
+    /// 현재 auto-recovery 진행 단계 rawValue 문자열.
+    /// nil = 기록 없음 (legacy 또는 session 시작 전). 분석: 낙하 발생 전후 timeline.
+    public let autoRecoveryPhase: String?
+    /// 낙하 방향 rawValue (`"forward"` / `"backward"`). nil = 낙하 감지 안 됨.
+    public let fallDirection: String?
+    /// 이 tick 에 "최근 5s 내 pilot 명령" latch 가 활성 상태였는가 (M4 gate).
+    /// nil = 기록 없음 (legacy).
+    public let recentlyPiloting: Bool?
+    /// 이 tick 의 다리 관절 presentLoad 최대값 (JointStateSnapshot.l 기준).
+    /// 낙하 직전 하체 부하 특성 분석. nil = joint telemetry 미수신 또는 기록 없음.
+    public let peakLegLoad: Double?
+
     public init(
         t: Double,
         preset: String,
@@ -119,7 +234,29 @@ public struct WalkSessionSample: Codable, Sendable {
         busReadFailureCount: Int? = nil,
         effectiveRollErrDeg: Double? = nil,
         expectedRollDeg: Double? = nil,
-        emaRollDeg: Double? = nil
+        emaRollDeg: Double? = nil,
+        // v1.11.25 audit robot-A/B/C/E/F
+        jointStates: [String: JointStateSnapshot]? = nil,
+        rawGyroXDps: Double? = nil,
+        rawGyroYDps: Double? = nil,
+        rawGyroZDps: Double? = nil,
+        rawAccelXG: Double? = nil,
+        rawAccelYG: Double? = nil,
+        rawAccelZG: Double? = nil,
+        jointFailuresDelta: [String: Int]? = nil,
+        busRttMs: Double? = nil,
+        boardButton: UInt8? = nil,
+        // v1.11.25 audit P0 robot-D
+        fsrLeft: FsrSampleSnapshot? = nil,
+        fsrRight: FsrSampleSnapshot? = nil,
+        // v1.11.25 audit P1 log-H
+        fallScore: Double? = nil,
+        fallRecommendEmergency: Bool? = nil,
+        // Phase 1 fall-recovery telemetry
+        autoRecoveryPhase: String? = nil,
+        fallDirection: String? = nil,
+        recentlyPiloting: Bool? = nil,
+        peakLegLoad: Double? = nil
     ) {
         self.t = t
         self.preset = preset
@@ -152,6 +289,28 @@ public struct WalkSessionSample: Codable, Sendable {
         self.effectiveRollErrDeg = effectiveRollErrDeg
         self.expectedRollDeg = expectedRollDeg
         self.emaRollDeg = emaRollDeg
+        // v1.11.25 audit robot-A/B/C/E/F
+        self.jointStates = jointStates
+        self.rawGyroXDps = rawGyroXDps
+        self.rawGyroYDps = rawGyroYDps
+        self.rawGyroZDps = rawGyroZDps
+        self.rawAccelXG = rawAccelXG
+        self.rawAccelYG = rawAccelYG
+        self.rawAccelZG = rawAccelZG
+        self.jointFailuresDelta = jointFailuresDelta
+        self.busRttMs = busRttMs
+        self.boardButton = boardButton
+        // v1.11.25 audit P0 robot-D
+        self.fsrLeft = fsrLeft
+        self.fsrRight = fsrRight
+        // v1.11.25 audit P1 log-H
+        self.fallScore = fallScore
+        self.fallRecommendEmergency = fallRecommendEmergency
+        // Phase 1 fall-recovery telemetry
+        self.autoRecoveryPhase = autoRecoveryPhase
+        self.fallDirection = fallDirection
+        self.recentlyPiloting = recentlyPiloting
+        self.peakLegLoad = peakLegLoad
     }
 }
 
@@ -222,6 +381,37 @@ public struct WalkSessionHeader: Codable, Sendable {
     public let experimentId: String?
     public let baselineSessionId: String?
 
+    // MARK: - v1.11.24 (2026-05-20) audit P1-2 — start-state diagnostic fields
+    //
+    // 종전 한계: header 만 보고 "왜 이 세션이 짧게 끝났는지", "사용자가 클릭한 preset 이
+    // 무엇인지" 알 수 없었음. audit §1 mixed-preset 버그를 사후 분석할 수 있도록
+    // start-time snapshot 을 명시.
+
+    /// 마지막 `start(_:)` 호출에서 사용자가 요청한 preset rawValue.
+    /// `preset` 과 다르면 (예: 사용자가 fastWalk 요청했지만 preflight 차단되어 march 가 active
+    /// 유지) UI 와 로그 사이의 mismatch 흔적 — 사용자/엔지니어 진단에 결정적.
+    public let requestedPreset: String?
+
+    /// preflight 차단 사유 (`WalkPreflightFailure.diagnosticCode`). nil = preflight 통과.
+    public let startBlockedReason: String?
+
+    /// session 시작 시점에 다른 walkCycleTask 가 active 였는지. true 면 audit §1 race 케이스.
+    public let walkCycleTaskActiveAtStart: Bool?
+
+    /// 첫 motor write 가 성공했는지 (적어도 한 번 setPosition 가 nominal 성공).
+    /// true 이지만 sampleCount 가 적으면 cycle 중간에 끊김 — bus disconnect 의심.
+    public let motorWriteStarted: Bool?
+
+    /// 누적 motor write step 수. footer 직전에 logger 가 close 직전에 갱신.
+    public let motorWriteStepCount: Int?
+
+    /// ROBOTIS Onboard ACK 상태 (`ok` / `no_ack` / `timeout` / `error: ...`).
+    /// macSparseKeyframe 모드에서는 nil.
+    public let onboardAckStatus: String?
+
+    /// session 시작 시점의 마지막 robot event 텍스트 (UI 토스트). 디버깅 용.
+    public let lastRobotEventAtStart: String?
+
     public init(
         sessionId: String,
         startTimeIso: String,
@@ -257,7 +447,15 @@ public struct WalkSessionHeader: Codable, Sendable {
         firmwareVersion: String? = nil,
         onboardPatchVersion: String? = nil,
         experimentId: String? = nil,
-        baselineSessionId: String? = nil
+        baselineSessionId: String? = nil,
+        // v1.11.24 audit P1-2
+        requestedPreset: String? = nil,
+        startBlockedReason: String? = nil,
+        walkCycleTaskActiveAtStart: Bool? = nil,
+        motorWriteStarted: Bool? = nil,
+        motorWriteStepCount: Int? = nil,
+        onboardAckStatus: String? = nil,
+        lastRobotEventAtStart: String? = nil
     ) {
         self.sessionId = sessionId
         self.startTimeIso = startTimeIso
@@ -293,6 +491,14 @@ public struct WalkSessionHeader: Codable, Sendable {
         self.onboardPatchVersion = onboardPatchVersion
         self.experimentId = experimentId
         self.baselineSessionId = baselineSessionId
+        // v1.11.24 audit P1-2
+        self.requestedPreset = requestedPreset
+        self.startBlockedReason = startBlockedReason
+        self.walkCycleTaskActiveAtStart = walkCycleTaskActiveAtStart
+        self.motorWriteStarted = motorWriteStarted
+        self.motorWriteStepCount = motorWriteStepCount
+        self.onboardAckStatus = onboardAckStatus
+        self.lastRobotEventAtStart = lastRobotEventAtStart
     }
 
     // MARK: - Backward-compat decode (v1.11.9 이전 jsonl 호환)
@@ -307,6 +513,9 @@ public struct WalkSessionHeader: Codable, Sendable {
         case customGainHipRoll, customGainKnee, customGainAnklePitch, customGainAnkleRoll
         case robotModel, firmwareVersion, onboardPatchVersion
         case experimentId, baselineSessionId
+        // v1.11.24 audit P1-2
+        case requestedPreset, startBlockedReason, walkCycleTaskActiveAtStart
+        case motorWriteStarted, motorWriteStepCount, onboardAckStatus, lastRobotEventAtStart
     }
 
     public init(from decoder: Decoder) throws {
@@ -345,6 +554,50 @@ public struct WalkSessionHeader: Codable, Sendable {
         self.onboardPatchVersion = try c.decodeIfPresent(String.self, forKey: .onboardPatchVersion)
         self.experimentId = try c.decodeIfPresent(String.self, forKey: .experimentId)
         self.baselineSessionId = try c.decodeIfPresent(String.self, forKey: .baselineSessionId)
+        // v1.11.24 audit P1-2 — 모두 Optional + decodeIfPresent (이전 jsonl backward-compat).
+        self.requestedPreset = try c.decodeIfPresent(String.self, forKey: .requestedPreset)
+        self.startBlockedReason = try c.decodeIfPresent(String.self, forKey: .startBlockedReason)
+        self.walkCycleTaskActiveAtStart = try c.decodeIfPresent(Bool.self, forKey: .walkCycleTaskActiveAtStart)
+        self.motorWriteStarted = try c.decodeIfPresent(Bool.self, forKey: .motorWriteStarted)
+        self.motorWriteStepCount = try c.decodeIfPresent(Int.self, forKey: .motorWriteStepCount)
+        self.onboardAckStatus = try c.decodeIfPresent(String.self, forKey: .onboardAckStatus)
+        self.lastRobotEventAtStart = try c.decodeIfPresent(String.self, forKey: .lastRobotEventAtStart)
+    }
+}
+
+/// **v1.11.24 (2026-05-20) audit iter2-H** — JSONL 마지막 줄 footer.
+///
+/// 종전 한계: `WalkSessionHeader` 는 session 시작 시점에 한 번만 write → motorWriteStarted /
+/// motorWriteStepCount / onboardAckStatus 같은 종료-시점 진단 필드를 기록할 수 없었음
+/// (header 가 immutable). audit P1-2 가 요구한 이 세 필드가 실 disk 에 항상 nil 로 남는 버그.
+///
+/// fix: `WalkSessionLogger.close(...)` 가 footer 객체를 마지막 sample 뒤에 한 줄 append.
+/// Decoder 는 마지막 줄에 `type: "footer"` 가 있으면 footer 로 처리 — 기존 v1.11.x jsonl
+/// 은 footer 없이도 decode 됨 (모든 필드 Optional).
+public struct WalkSessionFooter: Codable, Sendable {
+    /// JSONL 줄 구분자 — `"footer"`. WalkSessionSample 과 같은 line 에 들어가지 않도록 marker.
+    public let type: String
+    public let closedAtIso: String
+    public let totalSampleCount: Int
+    public let motorWriteStarted: Bool?
+    public let motorWriteStepCount: Int?
+    public let onboardAckStatus: String?
+    /// 종료 사유 — `userStop` / `emergencyStop` / `presetMaxDuration` / `cycleEnded` / `unknown`.
+    public let endReason: String?
+
+    public init(closedAtIso: String,
+                totalSampleCount: Int,
+                motorWriteStarted: Bool?,
+                motorWriteStepCount: Int?,
+                onboardAckStatus: String?,
+                endReason: String?) {
+        self.type = "footer"
+        self.closedAtIso = closedAtIso
+        self.totalSampleCount = totalSampleCount
+        self.motorWriteStarted = motorWriteStarted
+        self.motorWriteStepCount = motorWriteStepCount
+        self.onboardAckStatus = onboardAckStatus
+        self.endReason = endReason
     }
 }
 
@@ -392,6 +645,23 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
     /// Candidate vs applied delta 분리 통계. nil = legacy summary.
     public let candidateApplied: CandidateAppliedSplit?
 
+    // MARK: - 데이터 기반 자동 튜닝 (2026-05-30) — 균형 안정성 파라미터 권고 (tau/D항)
+
+    /// 본 세션에서 사용된 자이로 D항(s). 권고 방향 산출 기준. nil = legacy.
+    public let derivativeTimeSecUsed: Double?
+    /// 권고 D항(s). used 와 다르면 변경 권고. nil = legacy/미산출.
+    public let recommendedDerivativeTimeSec: Double?
+    /// 본 세션에서 사용된 baseline tau(s). nil = legacy.
+    public let baselineTauSecUsed: Double?
+    /// 권고 baseline tau(s). nil = legacy/미산출.
+    public let recommendedBaselineTauSec: Double?
+    /// 안정성 권고 이유 (D항 + tau 결합 메시지). nil = legacy.
+    public let stabilityRecommendationReason: String?
+    /// 안정성 권고 신뢰도 (0..1). nil = legacy.
+    public let stabilityConfidence: Double?
+    /// caution 이상 상태 비율 (0..1) — 불안정 corroboration. nil = legacy.
+    public let cautionRatio: Double?
+
     public init(
         id: String, preset: String, startTimeIso: String,
         durationSec: Double, sampleCount: Int, intensityLevelUsed: Int,
@@ -403,7 +673,14 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
         confidence: Double,
         dataQuality: DataQualityReport? = nil,
         sagittal: SagittalMetric? = nil,
-        candidateApplied: CandidateAppliedSplit? = nil
+        candidateApplied: CandidateAppliedSplit? = nil,
+        derivativeTimeSecUsed: Double? = nil,
+        recommendedDerivativeTimeSec: Double? = nil,
+        baselineTauSecUsed: Double? = nil,
+        recommendedBaselineTauSec: Double? = nil,
+        stabilityRecommendationReason: String? = nil,
+        stabilityConfidence: Double? = nil,
+        cautionRatio: Double? = nil
     ) {
         self.id = id
         self.preset = preset
@@ -425,6 +702,13 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
         self.dataQuality = dataQuality
         self.sagittal = sagittal
         self.candidateApplied = candidateApplied
+        self.derivativeTimeSecUsed = derivativeTimeSecUsed
+        self.recommendedDerivativeTimeSec = recommendedDerivativeTimeSec
+        self.baselineTauSecUsed = baselineTauSecUsed
+        self.recommendedBaselineTauSec = recommendedBaselineTauSec
+        self.stabilityRecommendationReason = stabilityRecommendationReason
+        self.stabilityConfidence = stabilityConfidence
+        self.cautionRatio = cautionRatio
     }
 
     // MARK: - Backward-compat decode (v1.11.9 이전 .summary.json 호환)
@@ -434,6 +718,9 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
         case oscillationScore, correctorEffectivenessScore
         case recommendedIntensityLevel, recommendationReason, confidence
         case dataQuality, sagittal, candidateApplied
+        case derivativeTimeSecUsed, recommendedDerivativeTimeSec
+        case baselineTauSecUsed, recommendedBaselineTauSec
+        case stabilityRecommendationReason, stabilityConfidence, cautionRatio
     }
 
     public init(from decoder: Decoder) throws {
@@ -458,5 +745,12 @@ public struct WalkSessionSummary: Codable, Sendable, Identifiable {
         self.dataQuality = try c.decodeIfPresent(DataQualityReport.self, forKey: .dataQuality)
         self.sagittal = try c.decodeIfPresent(SagittalMetric.self, forKey: .sagittal)
         self.candidateApplied = try c.decodeIfPresent(CandidateAppliedSplit.self, forKey: .candidateApplied)
+        self.derivativeTimeSecUsed = try c.decodeIfPresent(Double.self, forKey: .derivativeTimeSecUsed)
+        self.recommendedDerivativeTimeSec = try c.decodeIfPresent(Double.self, forKey: .recommendedDerivativeTimeSec)
+        self.baselineTauSecUsed = try c.decodeIfPresent(Double.self, forKey: .baselineTauSecUsed)
+        self.recommendedBaselineTauSec = try c.decodeIfPresent(Double.self, forKey: .recommendedBaselineTauSec)
+        self.stabilityRecommendationReason = try c.decodeIfPresent(String.self, forKey: .stabilityRecommendationReason)
+        self.stabilityConfidence = try c.decodeIfPresent(Double.self, forKey: .stabilityConfidence)
+        self.cautionRatio = try c.decodeIfPresent(Double.self, forKey: .cautionRatio)
     }
 }

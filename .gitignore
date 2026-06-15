@@ -34,6 +34,10 @@ Package.resolved
 Packages/
 *.xcodeproj
 
+# Distribution artifacts — scripts/archive-app.sh / upload-app.sh 산출물.
+# .xcarchive(120M+)·.pkg·.dmg 는 per-build 산출물이라 commit 안 함.
+dist/
+
 # CocoaPods
 Pods/
 *.pcm
@@ -104,3 +108,20 @@ DARwIn-OP_ROBOTIS_v1.6.0/
 
 # v1.11.2 (2026-05-18): Claude Code local auto-run harness — runtime logs only.
 .harness/
+
+# V280-G (2026-05-24): Swift code coverage 측정 시 생성되는 raw profile.
+# `swift test --enable-code-coverage` 또는 Xcode coverage run 시 working dir 에 생성.
+*.profraw
+default.profraw
+
+# 로컬 백업 모음 (앱 번들/로봇 바이너리 — repo 에 넣지 않음)
+_backups/
+.gstack/
+
+# 로컬 전용 작업물 (repo 에 넣지 않음)
+tmp/
+.codex-pet-runs/
+app/스토어 스크린샷/
+firmware-patches/walklab-brokerage/tests/test_transport
+firmware-patches/walklab-brokerage/tests/test_gamepad
+firmware-patches/walklab-brokerage/tests/*.dSYM/

@@ -1,0 +1,164 @@
+; =============================================================================
+;  Darwin Switch Appliance — Hekate bootloader autoboot config (EXAMPLE)
+;  File: hekate_ipl.ini  (copy to SD: /bootloader/hekate_ipl.ini)
+; =============================================================================
+;
+;  WHAT THIS DOES
+;  --------------
+;  This makes the Switch boot STRAIGHT into the Switchroot L4T Ubuntu (Darwin)
+;  robot-control cockpit with NO bootloader menu shown. It is the L1 "BOOT"
+;  sealing layer of the Darwin Switch Appliance: the device powers on and lands
+;  directly in the dedicated terminal, no taps required.
+;
+;  This is NOT a Nintendo firmware replacement. Read the safety notes below.
+;
+;  ---------------------------------------------------------------------------
+;  (a) RECOVERY ESCAPE HATCH — HOW TO GET BACK TO THE MENU
+;  ---------------------------------------------------------------------------
+;    HOLD VOLUME-DOWN (Vol-) while the console powers on / during the bootwait
+;    window. Hekate will then SHOW the Nyx menu instead of autobooting, so you
+;    can pick Nintendo OS, another entry, or enter recovery/tools.
+;    The 'bootwait' value below (>= 3 seconds) is what keeps that escape window
+;    open. This is your guaranteed un-brick path — never remove it.
+;    (Confirmed by hekate README: "Time to wait for VOL- to enter menu".)
+;
+;    DO NOT CONFUSE the two volume keys:
+;      * VOL- (Volume DOWN) on boot  = cancel autoboot, open the Hekate menu.
+;      * VOL+ (Volume UP) + POWER, with the RCM jig = enter RCM to INJECT the
+;        hekate payload from a PC. That is a different, earlier step and is only
+;        needed when first installing hekate, not for day-to-day recovery.
+;
+;  ---------------------------------------------------------------------------
+;  (b) SYSNAND IS PRESERVED AND UNTOUCHED
+;  ---------------------------------------------------------------------------
+;    This appliance only seals the SD-card Linux experience. The internal eMMC
+;    (SysNAND) — your stock Nintendo install — is not modified, not migrated,
+;    and not deleted. Autoboot simply chooses the Linux SD entry by default.
+;
+;  ---------------------------------------------------------------------------
+;  (c) THE NINTENDO OS ENTRY IS INTENTIONALLY KEPT
+;  ---------------------------------------------------------------------------
+;    We do NOT delete the Nintendo OS / stock-firmware boot option. It is only
+;    BYPASSED by autoboot. Hold Vol- (see above) to reach the menu and launch
+;    Nintendo OS or SysNAND normally any time. Leaving it in place is part of
+;    the "sealed but reversible, never bricked" design.
+;
+;  ---------------------------------------------------------------------------
+;  (d) HOW TO REVERT (UNSEAL)
+;  ---------------------------------------------------------------------------
+;    Set 'autoboot=0' in the [config] section below (or hold Vol- on boot once
+;    and toggle Auto Boot off inside Nyx -> Options). With autoboot=0, Hekate
+;    shows the normal menu on every boot. To remove autoboot entirely, you may
+;    also restore a stock hekate_ipl.ini. Nothing here is permanent.
+;
+;  ---------------------------------------------------------------------------
+;  IMPORTANT — THIS IS AN .example FILE
+;  ---------------------------------------------------------------------------
+;    Copy it to the SD card as  /bootloader/hekate_ipl.ini  (drop the .example
+;    suffix). It is copy-ready, but you MUST verify two things on YOUR device:
+;      1. The 'autoboot' index points at the correct entry (see [config]).
+;      2. The real [L4T Ubuntu] entry exists. Switchroot's "Flash Linux" step
+;         generates it for you (see the [L4T Ubuntu] section below).
+; =============================================================================
+
+[config]
+; --- Autoboot selection -------------------------------------------------------
+; autoboot      Which boot entry to launch automatically.
+;               0 = DISABLED, always show the Nyx menu (this is the "revert"
+;                   / safe default — see note (d) above).
+;               1 = autoboot the FIRST entry (index 1) listed in this file.
+;                   Counting starts at the first '[Entry Name]' below; if you
+;                   instead boot entries from /bootloader/ini/*.ini (where the
+;                   Switchroot "Flash Linux" step writes the real Ubuntu entry),
+;                   set 'autoboot_list=1' AND confirm this index matches the
+;                   position of "L4T Ubuntu" in the COMBINED, alphabetically
+;                   merged list. Mismatched indexes are the #1 cause of booting
+;                   the wrong OS — verify against the Nyx menu order once.
+autoboot=1
+
+; autoboot_list 0 = index counts entries from THIS hekate_ipl.ini only.
+;               1 = also include the /bootloader/ini/*.ini entries (where the
+;                   Switchroot installer typically drops the L4T Ubuntu entry)
+;                   in the autoboot index numbering.
+;               Default 0 here assumes the [L4T Ubuntu] entry lives in THIS
+;               file at index 1. If you rely on the installer-generated entry
+;               under /bootloader/ini/, switch this to 1 and re-check the index.
+autoboot_list=0
+
+; --- Escape / safety window (DO NOT SET TO 0) ---------------------------------
+; bootwait      Seconds Hekate waits before autobooting, during which holding
+;               Vol- cancels autoboot and opens the menu.
+;
+;               *** NEVER set bootwait=0. ***
+;               bootwait=0 removes the Vol- escape window entirely. If the
+;               autoboot target is then misconfigured or fails, the console can
+;               loop straight back into a broken autoboot with NO interactive
+;               way in — effectively bricking the appliance into an
+;               unrecoverable boot loop (recovery would then require re-flashing
+;               the SD on another machine). Keeping bootwait >= 3 guarantees a
+;               human always has time to hold Vol- and recover. This is the
+;               single most important safety line in this file.
+bootwait=3
+
+; --- Display / cosmetics ------------------------------------------------------
+; backlight     Boot-menu backlight brightness, 0-255 (Hekate scales it).
+;               100 is a sane, readable default for the appliance.
+backlight=100
+
+; noticker      1 = hide the boot progress ticker for a clean, kiosk-like boot
+;               (matches the sealed cockpit look). Purely cosmetic; safe.
+noticker=1
+
+; autohosoff    0 = do NOT auto power-off if booted from a low-battery/charger
+;               edge case. Leave at the safe default so the appliance boots.
+autohosoff=0
+
+; autonogc      1 = auto game-card protection on older firmware. Harmless to
+;               keep enabled; does not affect Linux autoboot.
+autonogc=1
+
+; updater2p     0 = do not auto-run the payload updater. Keep the appliance
+;               bootloader stable and predictable.
+updater2p=0
+
+; =============================================================================
+;  BOOT ENTRY — Switchroot L4T Ubuntu (Darwin appliance target)
+; =============================================================================
+;  PLACEHOLDER ENTRY. Switchroot's "Flash Linux" / L4T installer normally
+;  GENERATES the real working entry for you, most commonly as a separate file
+;  under  /bootloader/ini/  (e.g. /bootloader/ini/00-L4T-Ubuntu.ini) rather
+;  than inline here. That generated entry already contains the correct
+;  'l4t=1', partition UUID/PARTUUID, and 'boot_prefixes'/kernel paths for YOUR
+;  SD card — do not hand-edit those values blindly.
+;
+;  USE THIS SECTION ONE OF TWO WAYS:
+;    1. PREFERRED: leave the real entry where the installer put it under
+;       /bootloader/ini/, set autoboot_list=1 above, and confirm the autoboot
+;       index matches "L4T Ubuntu"'s position in the Nyx menu.
+;    2. INLINE: if you keep the entry in THIS file, paste the installer-
+;       generated [L4T Ubuntu] block over the placeholder below, keep
+;       autoboot_list=0, and make sure this is the FIRST entry (index 1).
+;
+;  Either way: BOOT ONCE WITH Vol- HELD, open Nyx, and read the actual entry
+;  order before trusting autoboot. Confirm the index matches what you set.
+; -----------------------------------------------------------------------------
+[L4T Ubuntu]
+; l4t=1 tells Hekate this is a Switchroot Linux4Tegra entry. REQUIRED for L4T.
+l4t=1
+; id is a stable identifier Switchroot/L4T uses to locate the install.
+; The installer sets the correct value; SWITCHROOT_UBUNTU is the common default.
+id=SWITCHROOT_UBUNTU
+; ---------------------------------------------------------------------------
+; The lines below are device-specific and are normally filled in by the
+; Switchroot installer (kernel path, initrd, root partition UUID/PARTUUID,
+; boot prefixes, etc.). They are intentionally left as commented placeholders
+; so this example never points at a wrong/missing partition. Replace with the
+; values from your installer-generated entry, or delete this inline block and
+; use the /bootloader/ini/ entry instead (see PREFERRED option above).
+; ---------------------------------------------------------------------------
+;boot_prefixes=/switchroot/ubuntu/
+;
+; NOTE: Do not invent partition UUIDs. Booting an L4T entry with a wrong root
+; target can drop you to an initramfs prompt — annoying but RECOVERABLE: just
+; hold Vol- next boot (your bootwait>=3 window) and fix the entry. Nothing here
+; can damage SysNAND.

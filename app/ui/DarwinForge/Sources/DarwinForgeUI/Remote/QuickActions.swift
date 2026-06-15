@@ -2,23 +2,29 @@ import SwiftUI
 
 /// 원격 셸에서 자주 쓰는 명령 — 카테고리별 그룹.
 ///
-/// 카테고리 선정 근거 (지금까지 디버그/셋업에서 반복 사용된 명령):
-///   - system:    환경 진단 (uptime / 메모리 / 디스크 / 온도)
-///   - service:   부팅 데몬 제어 (sshd / forge-bridge / df-inbox / samba)
-///   - robotis:   ROBOTIS framework (vision_demo / walk_tuner / framework 재시작)
-///   - bus:       Dynamixel / USB serial 진단
-///   - danger:    재부팅 / 셧다운 / 강제 종료 (confirm 필수)
+/// UX 리디자인 (2026-06-13, 실기 브링업 후속 — docs/design 기획서 v1):
+///   - 라이팅 규약: label = 동사형(진단 "~확인" / 동작 "~시작·중지·재시작·켜기·끄기"),
+///     detail = 결과 중심(명령 원문 금지 — 전문은 툴팁·"명령 보기" 담당),
+///     confirmSummary = "~합니다/됩니다" 사실 전달 + 행동 지시만 "~하세요".
+///   - 확인 마찰 3티어(`confirmTier`): T1 즉시(읽기·가역) / T2 시트(상태 변경) /
+///     T3 홀드(danger — 비가역·연결 상실). **정지 계열은 항상 T1** — "멈추는 일은
+///     쉽게, 움직이게 하는 일은 어렵게"(E-STOP 즉시발화 불변식과 동일 축).
+///   - 색 불변식: 빨강=danger 전용. bus(읽기 전용 진단)는 warning 금지 → infoText.
+///
+/// 용어 사전(이 화면 전역): 로봇(실기) · 데모(demo/demo-pilot 프로세스) ·
+/// 브리지(forge-bridge/5530) · 채널(Mac↔로봇 SSH) · 셋업 가이드(최초 구성) ·
+/// 패드(RG G01) · 셸(명령 실행 모드 — "콘솔"은 출력 영역 전용).
 public enum QuickActionCategory: String, CaseIterable, Identifiable {
     case system, service, robotis, bus, danger
     public var id: String { rawValue }
 
     public var label: String {
         switch self {
-        case .system:  return "시스템"
+        case .system:  return "시스템 진단"
         case .service: return "서비스"
-        case .robotis: return "ROBOTIS"
-        case .bus:     return "버스/USB"
-        case .danger:  return "위험"
+        case .robotis: return "로봇 데모"
+        case .bus:     return "버스/USB 진단"
+        case .danger:  return "위험 명령"
         }
     }
 
@@ -37,10 +43,21 @@ public enum QuickActionCategory: String, CaseIterable, Identifiable {
         case .system:  return DFColor.accent
         case .service: return DFColor.success
         case .robotis: return DFColor.forge
-        case .bus:     return DFColor.warning
+        // 색 불변식(기획 2.3): 노랑=주의 전용. 읽기 전용 진단이 warning 이던 종전은 위반.
+        case .bus:     return DFColor.infoText
         case .danger:  return DFColor.danger
         }
     }
+}
+
+/// 확인 마찰 티어 — 위험도에 비례하는 마찰(기획 5.1).
+public enum QuickActionConfirmTier {
+    /// 읽기 전용·가역 — 클릭 즉시 실행.
+    case none
+    /// 상태 변경 — 확인 시트(요약 + 명시 동사 버튼).
+    case sheet
+    /// 비가역·연결 상실(danger) — 시트 + 1.5초 홀드 버튼.
+    case hold
 }
 
 public struct QuickAction: Identifiable, Hashable {
@@ -51,10 +68,28 @@ public struct QuickAction: Identifiable, Hashable {
     public let icon: String
     public let command: String
     public let requiresConfirm: Bool
+    /// 확인 다이얼로그의 **영향 요약** (실기 UI fix, 2026-06-12).
+    /// 다이얼로그 본문엔 스크립트 전문 대신 이 요약만 표시 — nil 이면 카테고리 기본 문구
+    /// (`QuickActionConfirmModel.summaryText`). `requiresConfirm` 액션은 지정 권장.
+    public let confirmSummary: String?
+    /// 확인 다이얼로그 제목 — "~할까요?" 질문형. nil 이면 "{label} — 실행할까요?".
+    public let confirmTitle: String?
+    /// 확인 버튼 동사 — "재부팅"·"데모 시작" 등 1~2어절. nil 이면 "실행".
+    /// danger 액션은 전용 동사 필수("확인"/"실행" 단독 금지 — QuickActionSafetyTests).
+    public let confirmVerb: String?
+
+    /// 확인 마찰 티어 — 저장 필드가 아닌 파생값: danger=홀드, confirm=시트, 그 외 즉시.
+    public var confirmTier: QuickActionConfirmTier {
+        if category == .danger { return .hold }
+        return requiresConfirm ? .sheet : .none
+    }
 
     public init(id: String, category: QuickActionCategory, label: String,
                 detail: String, icon: String, command: String,
-                requiresConfirm: Bool = false) {
+                requiresConfirm: Bool = false,
+                confirmSummary: String? = nil,
+                confirmTitle: String? = nil,
+                confirmVerb: String? = nil) {
         self.id = id
         self.category = category
         self.label = label
@@ -62,140 +97,190 @@ public struct QuickAction: Identifiable, Hashable {
         self.icon = icon
         self.command = command
         self.requiresConfirm = requiresConfirm
+        self.confirmSummary = confirmSummary
+        self.confirmTitle = confirmTitle
+        self.confirmVerb = confirmVerb
     }
 }
 
 public enum QuickActionCatalog {
 
-    /// 자주 사용하는 명령 30+ — 지금까지 디버그/셋업에서 반복 사용된 것들 + 일반 진단.
+    /// 패널 섹션 순서 — 빈도 내림차순, danger 는 항상 최하단 격리(기획 1.2).
+    public static let sectionOrder: [QuickActionCategory] = [.robotis, .system, .bus, .service, .danger]
+
+    /// 자주 사용하는 명령 33개 — id 는 외부 계약(PilotTests)·텔레메트리 키라 불변.
     public static let all: [QuickAction] = [
-        // ── system ──────────────────────────────────────────────────────
-        QuickAction(id: "uptime", category: .system, label: "Uptime",
-                    detail: "가동 시간 + load", icon: "clock.fill",
-                    command: "uptime"),
-        QuickAction(id: "memory", category: .system, label: "메모리",
-                    detail: "free -m head", icon: "memorychip",
-                    command: "free -m | head -2"),
-        QuickAction(id: "disk", category: .system, label: "디스크",
-                    detail: "home 사용량", icon: "internaldrive",
-                    command: "df -h ~ | tail -1; df -h / | tail -1"),
-        QuickAction(id: "cpu-temp", category: .system, label: "CPU 온도",
-                    detail: "thermal_zone0", icon: "thermometer.medium",
-                    command: "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf \"%.1f°C\\n\", $1/1000}'"),
-        QuickAction(id: "os-version", category: .system, label: "OS 버전",
-                    detail: "lsb_release", icon: "info.circle",
-                    command: "lsb_release -a 2>/dev/null; uname -a"),
-        QuickAction(id: "network", category: .system, label: "네트워크",
-                    detail: "ifconfig 핵심", icon: "network",
-                    command: "ifconfig | grep -E 'inet |^[a-z]+:' | head -10"),
-        QuickAction(id: "processes", category: .system, label: "프로세스 top",
-                    detail: "CPU 점유 상위", icon: "list.bullet.rectangle",
-                    command: "ps aux --sort=-%cpu | head -8"),
-
-        // ── service ─────────────────────────────────────────────────────
-        QuickAction(id: "df-inbox-status", category: .service, label: "df-inbox 상태",
-                    detail: "원격 명령 채널", icon: "tray.fill",
-                    command: "sudo /etc/init.d/df-inbox status 2>/dev/null"),
-        QuickAction(id: "forge-bridge-status", category: .service, label: "forge-bridge 상태",
-                    detail: "USB-TCP 5530", icon: "antenna.radiowaves.left.and.right",
-                    command: "sudo /etc/init.d/forge-bridge status 2>/dev/null; ss -lnt 2>/dev/null | grep :5530"),
-        QuickAction(id: "ssh-start", category: .service, label: "SSH 시작",
-                    detail: "한 번 service start", icon: "key.fill",
-                    command: "sudo service ssh start"),
-        QuickAction(id: "ssh-permanent", category: .service, label: "SSH 영구 활성",
-                    detail: "설치 + 부팅 자동", icon: "key.horizontal.fill",
-                    command: "sudo apt-get install -y --force-yes openssh-server && sudo service ssh start && sudo update-rc.d ssh defaults",
-                    requiresConfirm: true),
-        QuickAction(id: "smb-restart", category: .service, label: "Samba 재시작",
-                    detail: "SMB share 갱신", icon: "externaldrive.connected.to.line.below",
-                    command: "sudo service smbd restart && sudo service nmbd restart"),
-        QuickAction(id: "forge-bridge-restart", category: .service, label: "forge-bridge 재시작",
-                    detail: "5530 socat 재시작", icon: "arrow.clockwise",
-                    command: "sudo killall socat 2>/dev/null; sudo /etc/init.d/forge-bridge restart"),
-
-        // ── robotis ────────────────────────────────────────────────────
-        // 카메라 (8080 process — 다른 모드와 동시 실행 OK)
+        // ── robotis (로봇 데모) — 핵심 업무, 조종기 데모가 첫 행(발견성) ──────
+        QuickAction(id: "gamepad-pilot-start", category: .robotis,
+                    label: "조종기 데모 시작",
+                    detail: "RG G01 패드로 보행 조종 (A=ARM·B=E-STOP·LB/RB=킥)",
+                    icon: "gamecontroller.fill",
+                    command: RobotSetupCommand.walkLabRobotisStart,
+                    requiresConfirm: true,
+                    confirmSummary: "데모를 재시작해 WalkLab 조종 모드로 들어갑니다 — "
+                        + "기립과 자이로 캘리브레이션에 약 20초 걸립니다. 로봇을 크래들에 "
+                        + "거치하거나 평지에 세운 뒤, 패드 A(ARM)로 조종을 시작하세요. "
+                        + "LB=왼발 킥 / RB=오른발 킥 — ARM 후 STANDUP 상태에서만 발화합니다.",
+                    confirmTitle: "조종기 데모를 시작할까요?",
+                    confirmVerb: "데모 시작"),
         QuickAction(id: "camera-start", category: .robotis, label: "카메라 데모 시작",
-                    detail: "공식 8080 snapshot", icon: "camera.viewfinder",
+                    detail: "8080 포트로 카메라 영상 송출", icon: "camera.viewfinder",
                     command: RobotSetupCommand.cameraTutorialStart),
-        QuickAction(id: "camera-status", category: .robotis, label: "카메라 상태",
-                    detail: "프로세스/8080/video", icon: "video.badge.checkmark",
+        QuickAction(id: "camera-status", category: .robotis, label: "카메라 상태 확인",
+                    detail: "프로세스·8080 포트·video 장치", icon: "video.badge.checkmark",
                     command: RobotSetupCommand.cameraTutorialStatus),
         QuickAction(id: "camera-stop", category: .robotis, label: "카메라 데모 중지",
-                    detail: "8080 종료", icon: "camera.fill.badge.ellipsis",
+                    detail: "camera_tutorial 프로세스만 종료 (walklab 데모 8080 스트림은 유지)",
+                    icon: "camera.fill.badge.ellipsis",
                     command: RobotSetupCommand.cameraTutorialStop),
-
-        // 볼 트래킹 / 걷기 / 액션 데모 — USB bus 점유, forge-bridge 와 양립 불가.
-        QuickAction(id: "ball-tracker-start", category: .robotis, label: "공 추적 데모 시작",
-                    detail: "ROBOTIS demo (vision/soccer)", icon: "target",
-                    command: RobotSetupCommand.ballTrackerStart),
-        QuickAction(id: "demo-status", category: .robotis, label: "데모 상태",
-                    detail: "demo / 5530 / USB 점유자", icon: "list.bullet.indent",
+        // 공 추적은 조종기 데모(walklab)의 패드 X 버튼으로 진입한다 — 별도 SOCCER 데모는
+        // 이 빌드에 없다(데모 감사 2026-06-13). 중복 실행 대신 상태 확인 + 안내만 한다.
+        QuickAction(id: "ball-tracker-start", category: .robotis, label: "공 추적 (패드 X 안내)",
+                    detail: "조종기 데모 중 패드 X 버튼으로 공 추적 — 머리 두리번/잠금", icon: "target",
+                    command: "if pgrep -x demo >/dev/null 2>&1 && grep -qx walklab /tmp/df-pilot-mode 2>/dev/null; then echo '✅ 조종기 데모 실행 중 — 패드 X 버튼으로 공 추적 시작/중지 (머리가 두리번거리다 공을 잠금)'; else echo 'ℹ️ 먼저 [조종기 데모 시작] 을 실행한 뒤, 패드 X 버튼으로 공 추적을 토글하세요'; fi"),
+        QuickAction(id: "demo-status", category: .robotis, label: "데모 상태 확인",
+                    detail: "데모 프로세스·브리지·USB 점유자", icon: "list.bullet.indent",
                     command: RobotSetupCommand.ballTrackerStatus),
-        QuickAction(id: "walk-demo-start", category: .robotis, label: "걷기 데모 시작",
-                    detail: "walk_tuner", icon: "figure.walk.motion",
-                    command: RobotSetupCommand.walkDemoStart),
+        // "걷기 데모"(walk_tuner) 제거(2026-06-13): walk_tuner 는 빌드된 바이너리가 없는
+        // 소스 전용 + 콘솔/VNC 튜닝 도구라 원격 데모로 부적합. 보행은 "조종기 데모 시작"이 담당.
         QuickAction(id: "action-demo-start", category: .robotis, label: "액션 데모 시작",
-                    detail: "action_editor (motion_4096)", icon: "play.rectangle.fill",
+                    detail: "action_editor 모션 재생 진입", icon: "play.rectangle.fill",
                     command: RobotSetupCommand.actionDemoStart),
-        QuickAction(id: "demo-stop", category: .robotis, label: "수동 모드 (데모 종료)",
-                    detail: "demo kill + forge-bridge 복구", icon: "gamecontroller",
+        // 정지·복구 동작 — 의도적 T1(멈추는 일은 쉽게).
+        QuickAction(id: "demo-stop", category: .robotis, label: "데모 종료 (브리지 복구)",
+                    detail: "데모를 멈추고 forge-bridge 재기동", icon: "gamecontroller",
                     command: RobotSetupCommand.demoStop),
 
-        // Phase B (Sprint 18) — patched demo binary 자동 빌드 + 관리.
-        QuickAction(id: "demo-patch-build", category: .robotis,
-                    label: "패치 demo 빌드 (1회)",
-                    detail: "demo 시작 시 SOCCER 자동 진입 (demo-pilot)",
-                    icon: "hammer.fill",
-                    command: RobotSetupCommand.demoBuildPatched,
-                    requiresConfirm: true),
-        QuickAction(id: "demo-patch-status", category: .robotis,
-                    label: "패치 demo 상태",
-                    detail: "demo-pilot 설치 여부",
-                    icon: "checkmark.seal",
-                    command: RobotSetupCommand.demoPatchedStatus),
-        QuickAction(id: "demo-patch-remove", category: .robotis,
-                    label: "패치 demo 제거",
-                    detail: "demo-pilot binary + 흔적 정리",
-                    icon: "trash",
-                    command: RobotSetupCommand.demoRemovePatched,
-                    requiresConfirm: true),
+        // Phase B (Sprint 18) demo-pilot 패치 트리오(빌드/상태/제거)는 메뉴에서 숨김
+        // (2026-06-13): demo-pilot 방식은 install-onboard.sh/deploy-kick.sh 의 in-place
+        // demo 빌드로 대체돼 사장됨(이 로봇에 demo-pilot 미존재). 명령 정의는 RemotePilotView
+        // 가 demoPatchedStatus 를 참조하므로 RobotSetupCommand 에 보존(빌드 안전), 사용자
+        // 메뉴 노출만 제거. 완전 제거는 RemotePilotView 리팩터 후 별도 진행.
+        QuickAction(id: "fuser-ttyusb", category: .robotis, label: "ttyUSB 점유자 확인",
+                    detail: "USB 시리얼을 잡은 프로세스", icon: "questionmark.circle",
+                    command: "sudo -n fuser -v /dev/ttyUSB0 2>&1 || fuser -v /dev/ttyUSB0 2>&1"),
 
-        // 진단
-        QuickAction(id: "fuser-ttyusb", category: .robotis, label: "ttyUSB 점유자",
-                    detail: "USB serial 잡은 PID", icon: "questionmark.circle",
-                    command: "sudo fuser -v /dev/ttyUSB0 2>&1"),
+        // ── system (시스템 진단) — 읽기 전용 고빈도 ─────────────────────
+        QuickAction(id: "uptime", category: .system, label: "가동 시간 확인",
+                    detail: "부팅 후 경과 시간·부하", icon: "clock.fill",
+                    command: "uptime"),
+        QuickAction(id: "memory", category: .system, label: "메모리 확인",
+                    detail: "사용 중·여유 메모리", icon: "memorychip",
+                    command: "free -m | head -2"),
+        QuickAction(id: "disk", category: .system, label: "디스크 확인",
+                    detail: "홈·루트 파티션 사용량", icon: "internaldrive",
+                    command: "df -h ~ | tail -1; df -h / | tail -1"),
+        QuickAction(id: "cpu-temp", category: .system, label: "CPU 온도 확인",
+                    detail: "현재 보드 온도", icon: "thermometer.medium",
+                    command: "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf \"%.1f°C\\n\", $1/1000}' || echo '온도 센서 없음'"),
+        QuickAction(id: "os-version", category: .system, label: "OS 버전 확인",
+                    detail: "리눅스 배포판·커널", icon: "info.circle",
+                    command: "lsb_release -a 2>/dev/null; uname -a"),
+        QuickAction(id: "network", category: .system, label: "네트워크 확인",
+                    detail: "인터페이스별 IP 주소", icon: "network",
+                    command: "ifconfig | grep -E 'inet |^[a-z]+:' | head -10"),
+        QuickAction(id: "processes", category: .system, label: "상위 프로세스 확인",
+                    detail: "CPU 점유 상위 8개", icon: "list.bullet.rectangle",
+                    command: "ps aux --sort=-%cpu | head -8"),
 
-        // ── bus ────────────────────────────────────────────────────────
-        QuickAction(id: "tty-list", category: .bus, label: "USB serial 목록",
-                    detail: "/dev/ttyUSB*", icon: "list.bullet",
+        // ── bus (버스/USB 진단) — 읽기 전용, 데모 트러블슈팅 보조 ─────────
+        QuickAction(id: "tty-list", category: .bus, label: "USB 시리얼 목록 확인",
+                    detail: "연결된 USB 시리얼 장치 노드", icon: "list.bullet",
                     command: "ls -la /dev/ttyUSB* /dev/ttyACM* 2>/dev/null"),
         QuickAction(id: "stty-status", category: .bus, label: "Baud rate 확인",
-                    detail: "ttyUSB0 settings", icon: "speedometer",
+                    detail: "ttyUSB0 통신 설정", icon: "speedometer",
                     command: "sudo stty -F /dev/ttyUSB0 -a 2>&1 | head -3"),
-        QuickAction(id: "dmesg-usb", category: .bus, label: "USB 이벤트",
-                    detail: "dmesg 최근 USB", icon: "doc.text",
+        QuickAction(id: "dmesg-usb", category: .bus, label: "USB 이벤트 확인",
+                    detail: "최근 USB 연결·해제 커널 로그", icon: "doc.text",
                     command: "dmesg 2>/dev/null | grep -i 'usb\\|ftdi' | tail -10"),
-        QuickAction(id: "port-listen", category: .bus, label: "Listen 포트",
-                    detail: "5530 / 22 / 445", icon: "network.badge.shield.half.filled",
+        QuickAction(id: "port-listen", category: .bus, label: "열린 포트 확인",
+                    detail: "SSH·브리지·VNC 수신 포트", icon: "network.badge.shield.half.filled",
                     command: "ss -lnt 2>/dev/null | grep -E ':(22|139|445|5530|5900|8080)\\s' || netstat -lnt | grep -E ':(22|139|445|5530|5900|8080)'"),
 
-        // ── danger ─────────────────────────────────────────────────────
+        // ── service (서비스) — 셋업기 외 저빈도 ─────────────────────────
+        QuickAction(id: "df-inbox-status", category: .service, label: "df-inbox 상태 확인",
+                    detail: "SMB 수신 채널 (미설치면 SSH 직결 사용 중 — 정상)", icon: "tray.fill",
+                    command: "[ -x /etc/init.d/df-inbox ] && sudo -n /etc/init.d/df-inbox status 2>&1 || echo 'df-inbox 미설치 — 원격 명령은 SSH 직결 경로 사용 중 (정상)'"),
+        QuickAction(id: "forge-bridge-status", category: .service, label: "forge-bridge 상태 확인",
+                    detail: "USB-TCP 브리지(5530) 동작 여부", icon: "antenna.radiowaves.left.and.right",
+                    command: "sudo /etc/init.d/forge-bridge status 2>/dev/null; ss -lnt 2>/dev/null | grep :5530"),
+        QuickAction(id: "ssh-start", category: .service, label: "SSH 켜기 (이번만)",
+                    detail: "이번 부팅 동안만 SSH 활성", icon: "key.fill",
+                    command: "sudo service ssh start"),
+        QuickAction(id: "ssh-permanent", category: .service, label: "SSH 영구 켜기",
+                    detail: "설치 후 부팅마다 자동 시작", icon: "key.horizontal.fill",
+                    command: "sudo apt-get install -y --force-yes openssh-server && sudo service ssh start && sudo update-rc.d ssh defaults",
+                    requiresConfirm: true,
+                    confirmSummary: "openssh 를 설치하고 부팅 자동 시작에 등록합니다 — "
+                        + "약 1분 걸리고, 로봇 네트워크 구성이 바뀝니다.",
+                    confirmTitle: "SSH 를 영구 활성화할까요?",
+                    confirmVerb: "영구 켜기"),
+        QuickAction(id: "smb-restart", category: .service, label: "Samba 재시작",
+                    detail: "SMB 공유 목록 갱신", icon: "externaldrive.connected.to.line.below",
+                    command: "sudo service smbd restart && sudo service nmbd restart"),
+        QuickAction(id: "forge-bridge-restart", category: .service, label: "forge-bridge 재시작",
+                    detail: "브리지(5530) 점유 해제 후 재기동", icon: "arrow.clockwise",
+                    command: "sudo killall socat 2>/dev/null; sudo /etc/init.d/forge-bridge restart"),
+
+        // ── danger (위험 명령) — 패널 최하단 GroupBox 격리 + T3 홀드 ──────
         QuickAction(id: "reboot", category: .danger, label: "재부팅",
-                    detail: "sudo reboot", icon: "arrow.triangle.2.circlepath",
+                    detail: "약 1~2분 오프라인", icon: "arrow.triangle.2.circlepath",
                     command: "sudo reboot",
-                    requiresConfirm: true),
-        QuickAction(id: "shutdown", category: .danger, label: "셧다운",
-                    detail: "sudo poweroff", icon: "power",
+                    requiresConfirm: true,
+                    confirmSummary: "로봇이 즉시 재부팅됩니다 — 약 1~2분 오프라인이고, "
+                        + "보행 중이면 그 자리에서 멈춥니다. 로봇이 서 있다면 먼저 크래들에 거치하세요.",
+                    confirmTitle: "로봇을 재부팅할까요?",
+                    confirmVerb: "재부팅"),
+        QuickAction(id: "shutdown", category: .danger, label: "전원 끄기",
+                    detail: "물리 버튼으로만 재시작", icon: "power",
                     command: "sudo poweroff",
-                    requiresConfirm: true),
-        QuickAction(id: "killall-socat", category: .danger, label: "모든 socat 종료",
-                    detail: "5530 강제 해제", icon: "xmark.octagon",
+                    requiresConfirm: true,
+                    confirmSummary: "로봇 전원이 꺼집니다 — 물리 전원 버튼으로만 다시 켤 수 "
+                        + "있습니다. 로봇이 서 있다면 먼저 크래들에 거치하세요.",
+                    confirmTitle: "로봇 전원을 끌까요?",
+                    confirmVerb: "전원 끄기"),
+        QuickAction(id: "killall-socat", category: .danger, label: "브리지 강제 끊기",
+                    detail: "socat 전부 종료 — LAN 연결 끊김", icon: "xmark.octagon",
                     command: "sudo killall -9 socat 2>/dev/null && echo killed all",
-                    requiresConfirm: true),
+                    requiresConfirm: true,
+                    confirmSummary: "5530 브리지가 끊겨 이 앱의 LAN 연결이 즉시 끊어집니다 — "
+                        + "forge-bridge 재시작 전까지 원격 제어가 멈춥니다.",
+                    confirmTitle: "브리지를 강제로 끊을까요?",
+                    confirmVerb: "브리지 끊기"),
     ]
 
     public static func actions(in category: QuickActionCategory) -> [QuickAction] {
         all.filter { $0.category == category }
+    }
+
+    /// id → 액션 (최근 섹션·재실행 매칭용).
+    public static func action(id: String) -> QuickAction? {
+        all.first { $0.id == id }
+    }
+
+    /// 명령 원문 → 카탈로그 액션 (콘솔 "다시 실행"이 confirm 위계를 재경유하기 위함).
+    public static func action(command: String) -> QuickAction? {
+        all.first { $0.command == command }
+    }
+}
+
+/// 직접 입력 명령의 위험 감지 (기획 3.5) — 차단이 아니라 1단계 확인 마찰.
+/// 보수적 패턴만(오탐 회피): 전원·연결·파일시스템 파괴 계열.
+public enum DangerCommandDetector {
+    private static let patterns: [String] = [
+        // 명령 위치(행 시작/구분자 뒤) + 명령 끝(공백/끝/구분자) — "reboot-needed"
+        // 같은 파일명·인자 오탐 차단(\b 는 하이픈 앞에서도 성립해 부적합).
+        #"(^|\s|;|&&|\|\|)\s*(sudo\s+)?reboot(\s|$|;)"#,
+        #"(^|\s|;|&&|\|\|)\s*(sudo\s+)?poweroff(\s|$|;)"#,
+        #"(^|\s|;|&&|\|\|)\s*(sudo\s+)?shutdown(\s|$|;)"#,
+        #"(^|\s|;|&&|\|\|)\s*(sudo\s+)?halt(\s|$|;)"#,
+        #"killall\s+(-9\s+)?socat(\s|$|;)"#,
+        #"rm\s+-[a-z]*r[a-z]*f?\s+/(\s|$)"#,
+        #"(^|\s|;|&&)\s*(sudo\s+)?mkfs(\.|\s)"#,
+        #"(^|\s|;|&&)\s*(sudo\s+)?dd\s+if="#,
+    ]
+
+    public static func isDangerous(_ command: String) -> Bool {
+        patterns.contains { command.range(of: $0, options: .regularExpression) != nil }
     }
 }

@@ -196,7 +196,8 @@ final class PilotTests: XCTestCase {
     func testQuickActionCatalogIncludesDemoModeActions() {
         let ids = QuickActionCatalog.all.map { $0.id }
         XCTAssertTrue(ids.contains("ball-tracker-start"))
-        XCTAssertTrue(ids.contains("walk-demo-start"))
+        // walk-demo-start 는 메뉴 정리(13→9, 2026-06-13)에서 제거됨 — 보행 데모는
+        // gamepad-pilot-start(조종기 데모)가 담당. 기대 목록에서 제외.
         XCTAssertTrue(ids.contains("action-demo-start"))
         XCTAssertTrue(ids.contains("demo-stop"))
         XCTAssertTrue(ids.contains("demo-status"))
@@ -301,6 +302,52 @@ final class PilotTests: XCTestCase {
                       "START 버튼 시뮬레이션 — m_is_started=1 자동")
         XCTAssertTrue(cmd.contains("ResetGyroCalibration"),
                       "SOCCER 모드의 gyro calibration 재현")
+        XCTAssertTrue(cmd.contains("ROBOTIS onboard brokerage, switch fix"),
+                      "WalkLab 성공 버전 marker 를 binary 에 포함")
+    }
+
+    /// **P7 (2026-06-12)** — demoBuildPatched 가 brokerage 6파일 전부를 배치하고
+    /// OBJECTS 에 3개 .o 를 등록하는지. WalkLabTransport 는 O1 이후 누락돼 있던
+    /// 잠복 버그(링크 실패) 정정 — 회귀 방지.
+    func testDemoBuildPatchedDeploysGamepadPilot() {
+        let cmd = RobotSetupCommand.demoBuildPatched
+        for f in ["WalkLabBrokerage.cpp", "WalkLabTransport.cpp", "GamepadPilot.cpp",
+                  "WalkLabBrokerage.h", "WalkLabTransport.h", "GamepadPilot.h"] {
+            XCTAssertTrue(cmd.contains(f), "brokerage 소스 \(f) 배치")
+        }
+        for o in ["WalkLabBrokerage.o", "WalkLabTransport.o", "GamepadPilot.o"] {
+            XCTAssertTrue(cmd.contains(o), "Makefile OBJECTS \(o) 등록")
+        }
+        XCTAssertTrue(cmd.contains("구버전"),
+                      "구버전 ~/walklab-brokerage(6파일 미만)를 명확한 메시지로 거부")
+    }
+
+    func testWalkLabStartRequiresSwitchFixBinary() {
+        let cmd = RobotSetupCommand.walkLabRobotisStart
+        XCTAssertTrue(cmd.contains("ROBOTIS onboard brokerage, switch fix"),
+                      "df-walklab-cmd 만 있는 구버전 demo-pilot 을 성공으로 보면 안 됨")
+        XCTAssertTrue(cmd.contains("DF_READY_START=old_walklab_patch"),
+                      "구버전 WalkLab patch 를 명확히 구분")
+        XCTAssertTrue(cmd.contains("DF_READY_START=missing_walklab_patch"),
+                      "성공 버전이 없으면 시작 거부")
+        XCTAssertTrue(cmd.contains("DF_READY_START=brokerage_ready"),
+                      "프로세스 생존이 아니라 최신 명령/ACK 검증 완료를 성공 마커로 사용")
+        XCTAssertTrue(cmd.contains("14-token 명령/ACK 검증 완료"),
+                      "성공 로그가 현재 검증된 brokerage 경로를 설명")
+        XCTAssertTrue(cmd.contains("DF_READY_START=ack_timeout"),
+                      "최신 브로커리지 ACK 실패를 명확히 구분")
+        XCTAssertTrue(cmd.contains("DF_READY_CAMERA_STOP=begin"),
+                      "WalkLab 초기화 전 잔여 camera_tutorial 을 내려 VIDIOC_S_FMT busy 를 방지")
+        // C1 (2026-06-12): walklab demo 가 8080 을 직접 스트리밍 — camera_tutorial 재기동
+        // 대신 스냅샷 실검증으로 카메라 상태를 보고한다.
+        XCTAssertTrue(cmd.contains("DF_READY_CAMERA=running"),
+                      "C1: demo 자체 8080 스트림을 스냅샷으로 실검증한 성공 마커")
+        XCTAssertTrue(cmd.contains("DF_READY_CAMERA=no_frames"),
+                      "C1: 포트 열림·프레임 없음(패치 이전 demo)을 구분 — 포트 LISTEN 만으로 성공 보고 금지")
+        XCTAssertTrue(cmd.contains("camera stream pump"),
+                      "C1 marker 보유 binary 를 우선 선택 — 구버전 demo-pilot 이 카메라를 조용히 끄는 것 방지")
+        XCTAssertFalse(cmd.contains("nohup sudo -n ./camera_tutorial"),
+                      "C1: walklab 중 camera_tutorial 기동 시도 금지 — demo 가 /dev/video0 점유 중")
     }
 
     /// patched 상태 명령이 DF_PATCH=installed / DF_PATCH=missing marker 를 첫 줄로 출력.
@@ -320,13 +367,13 @@ final class PilotTests: XCTestCase {
                       "백업 파일 정리")
     }
 
-    /// QuickActionCatalog 에 patch 관련 명령 3개가 모두 등록됨.
-    /// 사용자가 ⌘6 에서 'patched 빌드 / 상태 / 제거' 를 직접 호출할 수 있어야 한다.
-    func testQuickActionCatalogIncludesPatchActions() {
+    /// patch trio 는 메뉴 정리(13→9, 2026-06-13)에서 카탈로그에서 숨겨졌다 —
+    /// 일반 사용자 노출용이 아닌 개발 빌드 명령이라 ⌘6 에서 제외. 부재를 가드한다.
+    func testQuickActionCatalogExcludesPatchActions() {
         let ids = QuickActionCatalog.all.map { $0.id }
-        XCTAssertTrue(ids.contains("demo-patch-build"))
-        XCTAssertTrue(ids.contains("demo-patch-status"))
-        XCTAssertTrue(ids.contains("demo-patch-remove"))
+        XCTAssertFalse(ids.contains("demo-patch-build"))
+        XCTAssertFalse(ids.contains("demo-patch-status"))
+        XCTAssertFalse(ids.contains("demo-patch-remove"))
     }
 
     // MARK: - Phase C: Transition flow + 후면 버튼 단계

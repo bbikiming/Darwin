@@ -27,6 +27,8 @@ public struct StudioView: View {
 
     /// 3D 뷰포트 카메라 컨트롤러 — ViewCube/Home 버튼이 transitionTo 호출.
     @StateObject private var camera = CameraController()
+    /// **W3**: 로봇공학 오버레이 토글 store(Studio 기본값).
+    @StateObject private var overlayStore = OverlayToggleStore(preset: .studio)
 
     /// 우측 자세 편집기 열림 여부.
     @State private var inspectorOpen: Bool = true
@@ -37,6 +39,9 @@ public struct StudioView: View {
 
     private let inspectorMinWidth: CGFloat = 260
     private let inspectorMaxWidth: CGFloat = 520
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
 
     public init() {}
 
@@ -69,9 +74,15 @@ public struct StudioView: View {
         .alert(
             "로봇에 보내는 중 문제가 생겼어요",
             isPresented: Binding(get: { lastError != nil }, set: { if !$0 { lastError = nil } }),
-            actions: { Button("닫기") { lastError = nil } },
+            // **사이클 133 (audit #24, P2)**: role: .cancel — Esc + VoiceOver 접근성.
+            actions: { Button("닫기", role: .cancel) { lastError = nil } },
             message: { Text(lastError ?? "") }
         )
+        // 사이클 197 (cycle 190 audit P2 #6): cross-menu 재진입 시 navigation telemetry.
+        .onAppear {
+            harness.record(.uiViewAppeared, level: .trace, actor: .user,
+                                  data: ["view": AnyCodable("studio")])
+        }
         // 티칭 모드 → Studio 자세 전달 받음.
         .onReceive(NotificationCenter.default.publisher(for: .dfTransferPoseToStudio)) { note in
             if let p = note.object as? RobotPose {
@@ -309,13 +320,26 @@ public struct StudioView: View {
     private var leftPanel: some View {
         VStack(alignment: .leading, spacing: DFSpace.none) {
             if store.bus == nil {
-                onboardingPanel
+                // 보행 모드(로봇 연결됨)면 관절편집 전환 배너, 오프라인이면 USB 3단계 안내.
+                if store.currentMode == .walk {
+                    modeSwitchBanner
+                } else {
+                    onboardingPanel
+                }
             } else {
                 bodyMapPanel
             }
         }
         .frame(width: 220)
         .background(DFColor.elev2)
+    }
+
+    /// 보행 모드 → 관절편집 전환 유도 배너 (스튜디오는 bus 필요).
+    private var modeSwitchBanner: some View {
+        ConnectionModeBanner(
+            offlineTitle: "로봇 연결 필요",
+            offlineMessage: "스튜디오는 관절 직접 제어가 필요합니다. 우측 상단 [⚡ 자동 연결] 을 먼저 클릭하세요."
+        )
     }
 
     @ViewBuilder
@@ -326,7 +350,8 @@ public struct StudioView: View {
                          highlight: selectedJoint,
                          showAxes: true,
                          onMeshFallback: { fallback in meshFallback = fallback },
-                         cameraController: camera)
+                         cameraController: camera,
+                         overlays: overlayStore.overlays)
                 .background(LinearGradient(
                     colors: [DFColor.canvas.opacity(DFOpacity.dim), DFColor.canvas],
                     startPoint: .top, endPoint: .bottom))
@@ -335,7 +360,8 @@ public struct StudioView: View {
                 .padding(DFSpace.md)
 
             // 공통 ViewportControls — Studio/TeachMode/WalkLab/MotionStudio 모두 동일 UI.
-            ViewportControls(camera: camera)
+            // **W4**: Studio 는 시네마틱(DOF) 토글 + **W3**: 오버레이 팝오버.
+            ViewportControls(camera: camera, showCinematic: true, overlayStore: overlayStore)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topTrailing)
 
@@ -632,12 +658,18 @@ public struct StudioView: View {
 
     // MARK: - Viewport badges
 
+    /// 사이클 179 (P0 #3.1 fix, cycle 177 audit): connection state badge 통합.
+    /// "관절 20개" + DFStatusBadge (bus 미연결 시 `.simulationOnly`, liveApply 시 `.appliedToRobot`).
+    /// 이전엔 bus 미연결 + 슬라이더 움직임이 silent fallback (화면 only) — 사용자가 "로봇이 왜
+    /// 안 움직이지" 혼란. 본 cycle 부터 DFStatusBadge 로 명시.
     private var viewportBadges: some View {
         HStack(spacing: DFSpace.sm) {
             badge("관절 20개", icon: "cube.transparent")
-            if liveApply {
-                badge("로봇 실시간 반영 중", icon: "dot.radiowaves.left.and.right",
-                      tint: DFColor.warning)
+            if let connectionBadge = StudioConnectionStateBadge.resolve(
+                hasBus: store.bus != nil,
+                liveApply: liveApply
+            ) {
+                DFStatusBadgeView(connectionBadge, style: .compact)
             }
         }
     }
@@ -951,8 +983,10 @@ struct ConnectionInlineControls: View {
 
     @ViewBuilder
     private var networkControls: some View {
-        TextField("호스트", text: $store.networkHost,
-                  prompt: Text("10.0.0.42 또는 op2.local"))
+        TextField("호스트", text: Binding(
+            get: { store.networkHost },
+            set: { store.networkHost = $0 }
+        ), prompt: Text("10.0.0.42 또는 op2.local"))
             .textFieldStyle(.roundedBorder)
             .frame(width: 160)
             .controlSize(.small)
@@ -961,7 +995,10 @@ struct ConnectionInlineControls: View {
         Text(":")
             .foregroundStyle(DFColor.textSecondary)
 
-        TextField("", value: $store.networkPort, format: .number.grouping(.never))
+        TextField("", value: Binding<UInt16>(
+            get: { store.networkPort },
+            set: { store.networkPort = $0 }
+        ), format: .number.grouping(.never))
             .textFieldStyle(.roundedBorder)
             .frame(width: 56)
             .controlSize(.small)

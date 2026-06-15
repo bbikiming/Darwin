@@ -51,6 +51,12 @@
 #define FC_ERR_DEVICE_NOT_FOUND -6
 
 /*
+ E-STOP 선점으로 read 가 조기 abort 됨 (S4). 오류가 아닌 의도된 중단 —
+ 호출자(백그라운드 리더/폴러)는 무음 skip 으로 분류해야 한다.
+ */
+#define FC_ERR_ESTOP_PREEMPTED -7
+
+/*
  panic 보호 — Rust 코드가 panic.
  */
 #define FC_ERR_PANIC -99
@@ -88,21 +94,52 @@ typedef struct fc_board_snapshot {
 } fc_board_snapshot;
 
 /*
- CM-730/740 IMU raw — Phase D3 (Sprint 18).
+ CM-730/740 IMU raw — Phase D3 (Sprint 18) → v1.7 정정 (2026-05-17).
 
- 한 번 호출에 gyro (X/Y/Z) + accel (X/Y/Z) 의 raw 16-bit signed 6개 + accel 기반
- roll/pitch 도(°) 가 계산되어 노출. Mac 측 PilotHudStrip 이 직접 사용.
+ **ABI break**: gyro/accel raw 가 `i16` 에서 `u16` 으로 변경. ROBOTIS-OP2 v1.6.0
+ `CM730::MakeWord` 가 unsigned u16 zero-extend 라 의미적으로 일치. 10-bit ADC 결과
+ (0..1023) 는 bit-15=0 이라 비트 패턴은 동일하지만 타입 안전성과 axis 매핑 정정을 위해
+ 명시적으로 변경. 자세히는 `ImuRaw` doc 참고.
+
+ 한 번 호출에 gyro (X/Y/Z) + accel (X/Y/Z) raw u16 6개 + accel 기반 roll/pitch 도(°)
+ 가 계산되어 노출. Mac 측 PilotHudStrip 이 직접 사용.
  */
 typedef struct fc_imu_raw {
-  int16_t gyro_x;
-  int16_t gyro_y;
-  int16_t gyro_z;
-  int16_t accel_x;
-  int16_t accel_y;
-  int16_t accel_z;
+  uint16_t gyro_x;
+  uint16_t gyro_y;
+  uint16_t gyro_z;
+  uint16_t accel_x;
+  uint16_t accel_y;
+  uint16_t accel_z;
   float roll_deg;
   float pitch_deg;
 } fc_imu_raw;
+
+/*
+ FSR 한 발의 4 cell + center-of-pressure 측정.
+ `fc_bus_read_fsr_left` / `fc_bus_read_fsr_right` 의 out 파라미터.
+ */
+typedef struct FfiFsrReading {
+  /*
+   Dynamixel ID (111=right, 112=left).
+   */
+  uint8_t id;
+  /*
+   4 cell 압력 raw (0..1023). \[front-left, front-right, rear-right, rear-left\].
+   */
+  uint16_t cell_fl;
+  uint16_t cell_fr;
+  uint16_t cell_rr;
+  uint16_t cell_rl;
+  /*
+   중심점 X (사용자 시점 좌측=음수, -127..127). 0 = 발 중앙.
+   */
+  int8_t center_x;
+  /*
+   중심점 Y (앞=음수, -127..127).
+   */
+  int8_t center_y;
+} FfiFsrReading;
 
 /*
  한 관절의 실시간 상태 (FFI struct).
@@ -239,6 +276,16 @@ int fc_bus_board_snapshot(struct fc_bus *handle, struct fc_board_snapshot *out);
 int fc_bus_read_imu(struct fc_bus *handle, struct fc_imu_raw *out);
 
 /*
+ 좌측 발 FSR (ID 112) read. board 미장착 시 timeout 으로 `FC_ERR_TIMEOUT`.
+ */
+int fc_bus_read_fsr_left(struct fc_bus *handle, struct FfiFsrReading *out);
+
+/*
+ 우측 발 FSR (ID 111) read.
+ */
+int fc_bus_read_fsr_right(struct fc_bus *handle, struct FfiFsrReading *out);
+
+/*
  CM Dynamixel 전원 게이트.
  */
 int fc_bus_set_dxl_power(struct fc_bus *handle, int on);
@@ -257,11 +304,54 @@ int fc_joint_set_position(struct fc_bus *handle,
                           uint16_t *out_clamped);
 
 /*
+ 다중 관절 동시 goal position 설정 (SYNC_WRITE 1패킷). 안전 한계로 clamp.
+
+ 인자:
+ - `ids_ptr`: 관절 rawValue (u8) 배열 (길이 = `count`).
+ - `raws_ptr`: 목표 position (u16) 배열 (길이 = `count`). `ids_ptr[i]` 와 쌍.
+ - `count`: 관절 수.
+
+ 반환: 0=OK, 음수=에러. SYNC_WRITE 는 status packet 없음 — transport 실패만 감지.
+ ids 또는 raws 가 null 이거나 count == 0 이면 `FC_ERR_INVALID`.
+ 매핑되지 않은 관절 ID 는 무시 (silent skip).
+ */
+int fc_joint_set_positions_many(struct fc_bus *handle,
+                                const uint8_t *ids_ptr,
+                                const uint16_t *raws_ptr,
+                                uintptr_t count);
+
+/*
+ 다중 관절 moving_speed 동시 설정 — SYNC_WRITE 1패킷 (L5, 2026-06-11).
+
+ 보행 prologue 의 관절별 개별 write 20회(+status 왕복)를 1패킷으로 대체.
+ - `ids_ptr`: 관절 rawValue (u8) 배열 (길이 = `count`).
+ - `speed`: 전 관절 공통 moving_speed (0 = 무제한, 1-1023).
+
+ 반환: 0=OK, 음수=에러. SYNC_WRITE 는 status packet 없음 — transport 실패만 감지.
+ 매핑되지 않은 관절 ID 는 무시 (silent skip).
+ */
+int fc_joint_set_moving_speeds_many(struct fc_bus *handle,
+                                    const uint8_t *ids_ptr,
+                                    uintptr_t count,
+                                    uint16_t speed);
+
+/*
  한 관절 moving_speed 설정 — Dynamixel MX-28T address 32-33 (2 byte).
  speed: 0 = 무제한 (default), 1-1023 = 단계별 (0.114 rpm per unit).
  자세 변경 시 모터의 보간 속도 제한 → 부드러운 이동.
  */
 int fc_joint_set_moving_speed(struct fc_bus *handle, uint8_t raw_id, uint16_t speed);
+
+/*
+ 2026-05-17 critical fix: 한 관절 P_GAIN 설정 — MX-28T address 28 (1 byte, 0-254).
+ `emergencyStop` 가 P_GAIN=0 으로 만든 후 recovery 가 복원하지 않아 모터가 위치
+ 명령에 응답 못 함 — "약한 토크" 증상. recovery 가 호출해서 default (32) 로 복원.
+
+ Dynamixel MX-28T factory default P_GAIN = 32.
+ */
+int fc_joint_set_p_gain(struct fc_bus *handle,
+                        uint8_t raw_id,
+                        uint8_t p_gain);
 
 /*
  한 관절 상태 read.
@@ -272,6 +362,30 @@ int fc_joint_read_state(struct fc_bus *handle, uint8_t raw_id, struct fc_joint_s
  모든 관절 토크 OFF (소프트 e-stop).
  */
 int fc_emergency_stop(struct fc_bus *handle);
+
+/*
+ **S4 — E-STOP 선점 요청 (2026-06-11)**. 직렬화 락을 *획득하지 않고* 선점 플래그를
+ set — 다른 스레드가 진행 중인 read(보행 중 status 폴 등)를 다음 슬라이스에서
+ `EstopPreempted` 로 조기 abort 시켜 락을 즉시 풀게 한다. 긴급정지 경로는 이 호출
+ 직후 정상 락을 획득해 `fc_emergency_stop` 으로 torque-off 한다.
+
+ `motion_state` 와 동일하게 backend(port)와 disjoint 한 `estop_flag` Arc 만 접근하므로
+ in-flight `&mut *handle` 호출과 aliasing UB 없음.
+ */
+int fc_bus_request_estop_preempt(struct fc_bus *handle);
+
+/*
+ 선점 플래그 수동 해제 — 정상적으로는 `fc_emergency_stop` 이 자동 해제하나,
+ 선점만 요청하고 정지를 송출하지 않는 경로(취소/복구)를 위해 노출.
+ */
+int fc_bus_clear_estop_preempt(struct fc_bus *handle);
+
+/*
+ 응답 timeout 변경 (ms). 보행 시작 시 락 보유 상한을 낮추고(예: 50 ms) 종료 시
+ 복원해 — E-STOP 선점 최악 대기를 timeout 1슬라이스로 제한한다. backend Bus 를
+ 직접 mutate 하므로 직렬화 락 보유 중 호출 (다른 FFI 와 동일 진입 규약).
+ */
+int fc_bus_set_io_timeout(struct fc_bus *handle, uint32_t timeout_ms);
 
 /*
  `.mtn` 텍스트 → JSON 문자열. 호출자가 fc_string_free.
@@ -295,16 +409,25 @@ void fc_walk_free(struct fc_walk *h);
 
 /*
  명령 설정.
+
+ 2026-05-17 FFI audit HIGH fix: safe_call 래핑 — `WalkCommand` 구조체 init 에서
+ 향후 invariant assert 시 panic 가능. C ABI 경계 unwind 시 UB.
  */
 int fc_walk_set_command(struct fc_walk *h, double x, double y, double a, int enable);
 
 /*
  보행 주기 (ms) 갱신. 200..=1500 범위로 clamp.
+
+ 2026-05-17 FFI audit HIGH fix: safe_call 래핑 — `set_period_ms(NaN)` 같은
+ 비정상 입력에서 향후 assert/expect 시 panic 가능.
  */
 int fc_walk_set_period_ms(struct fc_walk *h, double period_ms);
 
 /*
  dt_ms 만큼 진행 후 발 궤적 sample.
+
+ 2026-05-17 FFI audit HIGH fix: safe_call 래핑 — `WalkEngine::tick` 내부
+ trapezoid / sin 계산에서 향후 invariant 위반 시 panic 가능. C 경계 unwind = UB.
  */
 int fc_walk_tick(struct fc_walk *h, uint32_t dt_ms, struct fc_foot_targets *out);
 

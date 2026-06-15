@@ -263,7 +263,7 @@ public struct ExpertDashboard: View {
                 }
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                        AxisValueLabel().font(.system(size: 7))
+                        AxisValueLabel().font(.system(size: DFFontSize.s8))
                     }
                 }
                 .frame(maxHeight: .infinity)

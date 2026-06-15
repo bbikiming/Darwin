@@ -69,6 +69,11 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
     @Published public private(set) var image: NSImage?
     @Published public private(set) var phase: Phase = .idle
     @Published public private(set) var framesReceived: Int = 0
+    /// **J9 (2026-06-11)** — 디코드/표시가 밀려 스킵된 frame 수(stale-view 방지 관측).
+    /// 추출 seq 와 표시 seq 의 간격으로 집계. 0 이면 코얼레싱 드롭 없음.
+    @Published public private(set) var droppedFrameCount: Int = 0
+    /// J9 — 마지막으로 표시한 frame 의 추출 seq. 간격 = 코얼레싱으로 버린 frame.
+    private var lastDeliveredSeq: UInt64?
     @Published public private(set) var lastFrameAt: Date?
     /// 마지막 frame 의 ball detection (snapshot client API 와 동일).
     @Published public private(set) var lastDetection: BallVision.Detection?
@@ -198,6 +203,8 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
         endpoint = nil
         phase = .idle
         framesReceived = 0
+        droppedFrameCount = 0
+        lastDeliveredSeq = nil
         lastFrameAt = nil
         lastDetection = nil
         multiColorDetections = []
@@ -313,17 +320,31 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
         let crlf2 = Data([0x0D, 0x0A, 0x0D, 0x0A])
         let maxBufferSize = 8 * 1024 * 1024  // 8 MB hard cap
 
+        // **J9 (2026-06-11) 프레임 코얼레싱**: 추출(빠름)과 디코드/표시(느림)를 분리.
+        // 추출된 frame 을 bufferingNewest(1) 스트림에 yield → 디코드가 밀리면 중간
+        // frame 이 자동 drop 되고 최신 1장만 디코드된다("낮은 fps 의 현재 영상 > 높은
+        // fps 의 과거 영상" — 텔레옵 stale-view 제거). seq 태그로 표시측에서 드롭 수 집계.
+        let (frames, framesCont) =
+            AsyncStream<(seq: UInt64, data: Data)>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let deliverTask = Task { [weak self] in
+            for await frame in frames {
+                if Task.isCancelled { break }
+                await self?.deliverFrame(seq: frame.seq, data: frame.data)
+            }
+        }
+        var frameSeq: UInt64 = 0
+
         var state: ParseState = .seekingBoundary
         var buffer = Data()
         var jpegRemaining: Int = 0
 
-        for await chunk in chunks {
-            if Task.isCancelled { return }
+        parseLoop: for await chunk in chunks {
+            if Task.isCancelled { break parseLoop }
             buffer.append(chunk)
 
             // 한 chunk 안에 여러 frame 완성 가능 → 종료 조건까지 inner loop.
             innerLoop: while !buffer.isEmpty {
-                if Task.isCancelled { return }
+                if Task.isCancelled { break parseLoop }
 
                 switch state {
                 case .seekingBoundary:
@@ -371,8 +392,10 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
                         let frameData = buffer.subdata(in: buffer.startIndex..<buffer.index(buffer.startIndex, offsetBy: jpegRemaining))
                         buffer.removeSubrange(buffer.startIndex..<buffer.index(buffer.startIndex, offsetBy: jpegRemaining))
                         jpegRemaining = 0
-                        // 한 frame 완성 — main 으로 deliver.
-                        await deliverFrame(data: frameData)
+                        // J9: 한 frame 완성 — 코얼레싱 스트림에 yield(밀리면 자동 drop).
+                        // await deliverFrame 직접 호출이 아니므로 디코드가 파싱을 막지 않음.
+                        frameSeq += 1
+                        framesCont.yield((seq: frameSeq, data: frameData))
                         state = .seekingBoundary
                     } else {
                         // buffer 가 jpegRemaining 보다 작음 — 다음 chunk 대기.
@@ -381,7 +404,28 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
                 }
             }
         }
+
+        // J9: 스트림 종료(또는 취소) — frame 스트림을 닫고 deliver 를 마무리한다.
+        // 정상 종료면 버퍼에 남은 최신 frame 까지 표시되도록 deliverTask 를 await(배수).
+        // 취소면 즉시 cancel — late publish 방지.
+        framesCont.finish()
+        if Task.isCancelled {
+            deliverTask.cancel()
+        } else {
+            await deliverTask.value
+        }
     }
+
+    #if DEBUG
+    /// **테스트용 hook (J9)** — multipart body 1개를 단일 chunk 로 parseFramesChunked 에
+    /// 주입. frame 추출→deliver→publish 배선과 droppedFrameCount 회계를 검증.
+    nonisolated func _testFeedMultipart(_ body: Data, boundary: String) async {
+        let (chunks, cont) = AsyncStream<Data>.makeStream()
+        cont.yield(body)
+        cont.finish()
+        await parseFramesChunked(chunks: chunks, boundary: boundary)
+    }
+    #endif
 
     // MARK: - Frame delivery (background decode + detection, MainActor publish)
 
@@ -392,7 +436,7 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
     /// 버전 API 는 `@MainActor` 격리됨 (Apple Cocoa Drawing thread-safety 보장 위해).
     /// CGImage / CFData / CGImageSource 는 nonisolated thread-safe — background 사용 가능.
     /// background 에서 CGImage 디코딩 + detection → main 에서 NSImage 래핑 후 binding.
-    nonisolated private func deliverFrame(data: Data) async {
+    nonisolated private func deliverFrame(seq: UInt64, data: Data) async {
         // 2026-05-17 H1 fix: CGImage decode 를 helper 로 분리.
         // 종전엔 `CGImageSource` (line 320) 가 await 2 번 사이 stack 에 보관 됨 →
         // 30fps × 2 client 시 ImageIO 내부 buffer 충돌 / ARC pressure 가능. helper
@@ -419,7 +463,7 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
             multiDets = []
         }
 
-        await publishFrame(cgImage: cgImage, detection: lastDet, multi: multiDets)
+        await publishFrame(seq: seq, cgImage: cgImage, detection: lastDet, multi: multiDets)
     }
 
     /// MainActor hop — `detectionEnabled` / `hsvPreset` snapshot 읽기.
@@ -433,10 +477,16 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
     /// 2026-05-17 Major#1: `@MainActor` 명시.
     @MainActor
     private func publishFrame(
+        seq: UInt64,
         cgImage: CGImage,
         detection: BallVision.Detection?,
         multi: [MultiColorVision.Detection]
     ) {
+        // J9: 추출 seq 간격 = 코얼레싱으로 버린(stale) frame 수.
+        if let last = lastDeliveredSeq, seq > last + 1 {
+            droppedFrameCount += Int(seq - last - 1)
+        }
+        lastDeliveredSeq = seq
         let size = NSSize(width: cgImage.width, height: cgImage.height)
         self.image = NSImage(cgImage: cgImage, size: size)
         framesReceived += 1
@@ -467,7 +517,12 @@ public final class MjpegStreamingClient: NSObject, ObservableObject, URLSessionD
 
     /// 헤더 블록에서 `Content-Length` 값 추출.
     nonisolated static func contentLength(fromHeaders headers: String) -> Int? {
-        for line in headers.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+        // **버그 수정 (2026-06-11)**: 종전 `split(whereSeparator: { $0=="\n"||$0=="\r" })`
+        // 은 Swift 가 CRLF("\r\n")를 단일 grapheme Character 로 취급해 "\r" 도 "\n" 도
+        // 아니므로 표준 CRLF 헤더를 한 줄로 보고 Content-Length 를 못 찾았다(→ 모든
+        // frame skip → 텔레옵 영상 미표시). scalar 단위로 분리하는 CharacterSet.newlines
+        // 로 교체해 CRLF/LF 모두 정상 파싱.
+        for line in headers.components(separatedBy: .newlines) {
             let lower = line.lowercased()
             guard lower.hasPrefix("content-length:") else { continue }
             let parts = line.split(separator: ":", maxSplits: 1)

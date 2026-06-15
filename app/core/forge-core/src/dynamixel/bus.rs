@@ -3,6 +3,8 @@
 //! `SerialPort` (loopback 또는 posix)를 감싸 `ping`/`read`/`write` 같은
 //! 의미 있는 동작을 노출한다.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::dynamixel::v1::{Codec, Instruction, InstructionPacket, StatusPacket};
@@ -14,6 +16,11 @@ pub struct Bus<P: SerialPort> {
     port: P,
     /// 응답 timeout (기본 200 ms).
     pub timeout: Duration,
+    /// E-STOP 선점 플래그 (S4, 2026-06-11). `recv()` 가 각 read 슬라이스 직전에
+    /// 확인 — set 되면 진행 중 read 를 `EstopPreempted` 로 조기 abort 해 직렬화 락을
+    /// 즉시 해제한다. 다른 스레드(긴급정지 경로)가 락을 기다리지 않고 set 할 수 있도록
+    /// `Arc<AtomicBool>` 로 공유 — backend(port)와 메모리 disjoint.
+    estop_flag: Arc<AtomicBool>,
 }
 
 impl<P: SerialPort> Bus<P> {
@@ -24,6 +31,7 @@ impl<P: SerialPort> Bus<P> {
         Self {
             port,
             timeout: Duration::from_millis(1000),
+            estop_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -31,6 +39,30 @@ impl<P: SerialPort> Bus<P> {
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// 런타임 timeout 변경 (보행 중 락 보유 상한 축소용 — 종료 시 복원).
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
+
+    /// E-STOP 선점 플래그의 공유 핸들 — FFI 가 disjoint clone 을 보관해 락 없이 set.
+    pub fn estop_flag_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.estop_flag)
+    }
+
+    /// 선점 플래그 해제 — 긴급정지 송출 완료 후 정상 read 재개를 위해 호출.
+    pub fn clear_estop_preempt(&self) {
+        self.estop_flag.store(false, Ordering::SeqCst);
+    }
+
+    /// 다음 read 슬라이스가 abort 돼야 하는지 — set 됐으면 `EstopPreempted`.
+    #[inline]
+    fn estop_check(&self) -> Result<()> {
+        if self.estop_flag.load(Ordering::SeqCst) {
+            return Err(Error::EstopPreempted);
+        }
+        Ok(())
     }
 
     /// 패킷 전송. 새 명령 직전 input buffer drain (stale byte misalignment 방지).
@@ -55,6 +87,7 @@ impl<P: SerialPort> Bus<P> {
         let mut prev: u8 = 0x00;
         let mut sync_done = false;
         for _ in 0..32 {
+            self.estop_check()?;
             let mut b = [0u8; 1];
             self.port.read_exact(&mut b, self.timeout)?;
             if prev == 0xFF && b[0] == 0xFF {
@@ -70,11 +103,13 @@ impl<P: SerialPort> Bus<P> {
         }
 
         // 2) id, length 두 byte.
+        self.estop_check()?;
         let mut head = [0xFFu8, 0xFF, 0, 0];
         self.port.read_exact(&mut head[2..4], self.timeout)?;
         let length = head[3] as usize;
 
         // 3) error + parameters + checksum (length 바이트).
+        self.estop_check()?;
         let mut rest = vec![0u8; length];
         self.port.read_exact(&mut rest, self.timeout)?;
 
@@ -209,6 +244,44 @@ mod tests {
         let garbage: Vec<u8> = (0..40).map(|i| (i as u8).wrapping_add(0xAA)).collect();
         bus.port.queue_read(&garbage);
         assert!(bus.recv().is_err());
+    }
+
+    #[test]
+    fn estop_preempt_aborts_recv_before_read() {
+        // S4 — 선점 플래그가 set 되면 recv 가 첫 read 전에 EstopPreempted 로 abort.
+        let mut bus = Bus::new(LoopbackBus::default());
+        // 정상 패킷을 큐에 넣어둬도 — 플래그가 우선해 read 자체를 막아야 한다.
+        bus.port.queue_read(&status_bytes(1, 0, &[]));
+        let flag = bus.estop_flag_handle();
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        let err = bus.recv().unwrap_err();
+        assert!(matches!(err, Error::EstopPreempted), "got {:?}", err);
+    }
+
+    #[test]
+    fn estop_preempt_clear_restores_normal_recv() {
+        // 플래그 해제 후엔 정상 recv 가 재개돼야 한다.
+        let mut bus = Bus::new(LoopbackBus::default());
+        bus.port.queue_read(&status_bytes(9, 0, &[0x11]));
+        let flag = bus.estop_flag_handle();
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(bus.recv(), Err(Error::EstopPreempted)));
+        bus.clear_estop_preempt();
+        let pkt = bus.recv().unwrap();
+        assert_eq!(pkt.id, 9);
+        assert_eq!(pkt.parameters, vec![0x11]);
+    }
+
+    #[test]
+    fn estop_flag_handle_shares_state() {
+        // estop_flag_handle 은 같은 AtomicBool 을 가리키는 disjoint clone 이어야 한다.
+        let bus = Bus::new(LoopbackBus::default());
+        let h1 = bus.estop_flag_handle();
+        let h2 = bus.estop_flag_handle();
+        h1.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(h2.load(std::sync::atomic::Ordering::SeqCst));
+        bus.clear_estop_preempt();
+        assert!(!h2.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

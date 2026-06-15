@@ -27,8 +27,11 @@ public struct PilotCameraView: View {
     /// store 환경 객체 — IMU sheet 에 store 전달용.
     @EnvironmentObject private var store: ConnectionStore
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(flags: PilotFeatureFlags,
-                endpoint: PilotCameraEndpoint = PilotCameraEndpoint(host: "192.168.123.1"),
+                endpoint: PilotCameraEndpoint = PilotCameraEndpoint(host: DFConnectionConstants.robotEthernetIP),
                 demoStatus: PilotDemoStatus = .idle,
                 headTracker: PilotHeadTracker,
                 hsvPreset: Binding<VisionHsvPreset>,
@@ -127,6 +130,8 @@ public struct PilotCameraView: View {
             Menu {
                 if flags.headTracking {
                     Button {
+                        harness.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
+                                       data: ["sheet": "head_tracker"])
                         showHeadTrackerSheet = true
                     } label: {
                         Label("head 추적 PD 조정", systemImage: "slider.horizontal.below.rectangle")
@@ -134,6 +139,8 @@ public struct PilotCameraView: View {
                 }
                 if flags.imuTelemetry {
                     Button {
+                        harness.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
+                                       data: ["sheet": "imu"])
                         showImuSheet = true
                     } label: {
                         Label("IMU 진단 + scale 검증", systemImage: "gyroscope")
@@ -141,6 +148,8 @@ public struct PilotCameraView: View {
                 }
                 if flags.hsvTuning {
                     Button {
+                        harness.record(.pilotCameraSheetOpened, level: .trace, actor: .user,
+                                       data: ["sheet": "hsv"])
                         showHsvSheet = true
                     } label: {
                         Label("HSV 튜닝 + 로봇 동기", systemImage: "eyedropper.halffull")
@@ -152,6 +161,7 @@ public struct PilotCameraView: View {
             }
             .menuStyle(.borderlessButton)
             .help("Expert 도구 — head PD / IMU 검증 / HSV 튜닝")
+            .accessibilityLabel("Expert 도구 메뉴")
         }
     }
 
@@ -248,6 +258,8 @@ public struct PilotCameraView: View {
 
         let on = headTracker.enabled
         let view = Button {
+            harness.record(.pilotCameraHeadTrackingToggle, level: .trace, actor: .user,
+                           data: ["enabled": AnyCodable(!on)])
             headTracker.setEnabled(!on, demoActive: false)
         } label: {
             HStack(spacing: DFSpace.xs) {
@@ -434,6 +446,8 @@ public struct PilotCameraView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, DFSpace.md)
                 Button {
+                    harness.record(.pilotCameraConnect, level: .info, actor: .user,
+                                   data: ["endpoint_hash": AnyCodable(Harness.shortHash(endpoint.displayName))])
                     configureClient()
                 } label: {
                     Label("카메라 연결", systemImage: "play.circle.fill")
@@ -632,7 +646,8 @@ public struct PilotCameraView: View {
                 Image(systemName: "doc.text.fill").foregroundStyle(DFColor.accent)
                 Text("로봇 측 카메라 셋업").font(DFFont.title)
                 Spacer()
-                Button("닫기") { showSetupSheet = false }
+                // 사이클 138 (audit #24 codex sweep)
+                Button("닫기", role: .cancel) { showSetupSheet = false }
                     .keyboardShortcut(.cancelAction)
             }
             Divider()

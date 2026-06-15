@@ -12,7 +12,7 @@ import XCTest
 final class StarterMotionLibraryTests: XCTestCase {
 
     func testStarterPagesAreNotEmpty() {
-        let pages = MotionStudioView.starterPages()
+        let pages = StarterMotionLibrary.starterPages()
         XCTAssertGreaterThanOrEqual(pages.count, 5,
             "P0-H: 첫 실행 motion library에 최소 5 페이지 필요 (idle, T-pose, bow, wave, sit)")
     }
@@ -20,7 +20,7 @@ final class StarterMotionLibraryTests: XCTestCase {
     /// ReferenceMotionLibrary 의 4 카테고리 페이지가 starterPages 에 포함되어야 함.
     /// (walk progression test 6 + ergonomic 케어 + 인사 + 소셜)
     func testReferenceMotionLibraryIsIncluded() {
-        let names = MotionStudioView.starterPages().map(\.name)
+        let names = StarterMotionLibrary.starterPages().map(\.name)
         // 보행 테스트 6 페이지 — 위험도 오름차순 (1~6)
         for n in 1...6 {
             XCTAssertTrue(
@@ -50,7 +50,7 @@ final class StarterMotionLibraryTests: XCTestCase {
     }
 
     func testEveryPageHasAtLeastOneStep() {
-        for page in MotionStudioView.starterPages() {
+        for page in StarterMotionLibrary.starterPages() {
             XCTAssertFalse(page.steps.isEmpty,
                 "page \(page.id) (\(page.name)) 에 step이 없음")
         }
@@ -59,7 +59,7 @@ final class StarterMotionLibraryTests: XCTestCase {
     /// 첫 step과 마지막 step이 walk_ready 또는 idle (안전 자세) — 연속 재생 시 호환.
     func testStarterPagesStartAndEndAtSafePose() {
         let safePoses: [RobotPose] = [.walkReady, .idle]
-        for page in MotionStudioView.starterPages() {
+        for page in StarterMotionLibrary.starterPages() {
             guard let firstStep = page.steps.first, let lastStep = page.steps.last else {
                 XCTFail("page \(page.id) empty"); return
             }
@@ -72,17 +72,42 @@ final class StarterMotionLibraryTests: XCTestCase {
 
     /// 페이지 ID는 unique. RoboPlus 호환성 위해 중요.
     func testPageIdsAreUnique() {
-        let pages = MotionStudioView.starterPages()
+        let pages = StarterMotionLibrary.starterPages()
         let ids = Set(pages.map(\.id))
         XCTAssertEqual(ids.count, pages.count, "starter page ID 중복")
     }
 
     /// 첫 페이지는 idle 자세를 시각적으로 보여주는 안내 page.
     func testFirstPageIsIdle() {
-        guard let first = MotionStudioView.starterPages().first else {
+        guard let first = StarterMotionLibrary.starterPages().first else {
             XCTFail("no first page"); return
         }
         XCTAssertTrue(first.name.contains("기본") || first.name.lowercased().contains("idle"),
             "첫 페이지는 '기본 자세' 명명 (사용자가 처음 봤을 때 안전 자세를 인지)")
+    }
+
+    // MARK: - 사이클 246 (Wave 4.3.1) — starterDoc() 분리 regression guard
+
+    /// `MotionStudioView` 가 첫 로딩 시 호출하는 `starterDoc()` 자체의 회귀 가드.
+    /// 분리 전 (사이클 246 이전) 에는 `MotionStudioView.starterDoc()` 형태로 존재.
+    func testStarterDocHasMinimumPages() {
+        let doc = StarterMotionLibrary.starterDoc()
+        XCTAssertGreaterThanOrEqual(doc.pages.count, 5,
+                                    "starter 는 최소 5개 페이지 가져야 함")
+    }
+
+    /// `starterDoc()` 도 `starterPages()` 와 동일하게 모든 id 가 unique.
+    func testStarterDocIDsAreUnique() {
+        let doc = StarterMotionLibrary.starterDoc()
+        let ids = doc.pages.map(\.id)
+        XCTAssertEqual(ids.count, Set(ids).count, "page id 중복 없음")
+    }
+
+    /// 모든 페이지가 비어있지 않은 사용자-가독 이름을 가져야 함 (UI 표시 안전성).
+    func testStarterDocAllPagesHaveNonEmptyName() {
+        let doc = StarterMotionLibrary.starterDoc()
+        for page in doc.pages {
+            XCTAssertFalse(page.name.isEmpty, "id=\(page.id) name 비어있음")
+        }
     }
 }

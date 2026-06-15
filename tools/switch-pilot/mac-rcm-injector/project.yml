@@ -1,0 +1,54 @@
+name: DarwinSwitchRCMInjector
+options:
+  bundleIdPrefix: com.darwin.switch
+  deploymentTarget:
+    macOS: "12.0"
+  xcodeVersion: "26.3"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "12.0"
+    DEVELOPMENT_TEAM: JM4LJMU49Q
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    PRODUCT_NAME: Darwin Switch RCM Injector
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "5"
+targets:
+  DarwinSwitchRCMInjector:
+    type: application
+    platform: macOS
+    deploymentTarget: "12.0"
+    sources:
+      - path: DarwinSwitchRCMInjector.swift
+      - path: Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.darwin.switch.rcminjector
+        EXECUTABLE_NAME: DarwinSwitchRCMInjector
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: DarwinSwitchRCMInjector.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+        DEAD_CODE_STRIPPING: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+    postBuildScripts:
+      - name: Bundle App Resources
+        inputFiles:
+          - $(SRCROOT)/darwin-switch-rcm-inject.sh
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/darwin-switch-rcm-inject.sh
+        script: |
+          RESOURCE_DIR="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          mkdir -p "$RESOURCE_DIR"
+          cp "$SRCROOT/darwin-switch-rcm-inject.sh" "$RESOURCE_DIR/darwin-switch-rcm-inject.sh"
+          chmod 0755 "$RESOURCE_DIR/darwin-switch-rcm-inject.sh"
+schemes:
+  DarwinSwitchRCMInjector:
+    build:
+      targets:
+        DarwinSwitchRCMInjector: all
+    run:
+      config: Debug
+    archive:
+      config: Release

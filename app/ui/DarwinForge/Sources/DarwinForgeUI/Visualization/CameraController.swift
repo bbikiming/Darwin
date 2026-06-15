@@ -13,7 +13,22 @@ import SwiftUI
 @MainActor
 public final class CameraController: ObservableObject {
     /// `RobotScene3D.makeNSView`가 생성한 view를 여기에 등록.
-    public weak var view: InteractiveSceneView?
+    public weak var view: InteractiveSceneView? {
+        didSet { syncToView() }   // 새 view 등록 시 토글 상태 재주입(SwiftUID 라이프사이클 안전).
+    }
+
+    /// **W4 (2026-06-12)** — 턴테이블 자동 회전 토글. 기본 off (idle CPU 계약 보존).
+    @Published public var turntableEnabled = false {
+        didSet { view?.turntableRadPerSec = turntableEnabled ? Self.turntableRate : 0 }
+    }
+
+    /// **W4 (2026-06-12)** — DOF 시네마틱 토글. Studio/Motion 옵트인, 기본 off.
+    @Published public var cinematicEnabled = false {
+        didSet { view?.depthOfFieldEnabled = cinematicEnabled }
+    }
+
+    /// 턴테이블 회전 속도 (rad/s). ~0.45 rad/s ≈ 26°/s → 한 바퀴 ≈ 14초.
+    private static let turntableRate: CGFloat = 0.45
 
     public init() {}
 
@@ -23,6 +38,12 @@ public final class CameraController: ObservableObject {
 
     public func reset() {
         view?.resetCamera()
+    }
+
+    /// view 가 (재)등록될 때 현재 토글 상태를 새 view 에 반영.
+    private func syncToView() {
+        view?.turntableRadPerSec = turntableEnabled ? Self.turntableRate : 0
+        view?.depthOfFieldEnabled = cinematicEnabled
     }
 }
 

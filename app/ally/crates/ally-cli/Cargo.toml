@@ -1,0 +1,19 @@
+[package]
+name = "ally-cli"
+description = "헤드리스 수용시험 도구 — W1 유선 실기 게이트의 UI 없는 통과 수단"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+df-wire = { path = "../df-wire" }
+ally-link = { path = "../ally-link" }
+# 게임패드 경로(axisdump 등)는 feature `device` 로만 — 기본 빌드/CI 는 gilrs 미포함.
+ally-input = { path = "../ally-input", optional = true }
+
+[features]
+device = ["dep:ally-input", "ally-input/device"]
+
+[[bin]]
+name = "ally-cli"
+path = "src/main.rs"

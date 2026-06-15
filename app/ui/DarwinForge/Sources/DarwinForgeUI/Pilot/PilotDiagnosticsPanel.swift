@@ -43,6 +43,51 @@ public struct PilotDiagnosticsPanel: View {
                 if let recovery = store.lastRecoveryResult, !recovery.isEmpty {
                     recoveryRow(recovery)
                 }
+                busLatencyRow
+            }
+        }
+        .onDisappear { persistLatencySessionIfEnabled() }
+    }
+
+    /// **A1 (cockpit-latency-hardening §6)** — 진단 패널이 사라질 때(세션 종료) tracer
+    /// 활성 시에만 6채널 요약을 Application Support 에 JSON 으로 1회 떨군다.
+    ///
+    /// 활성/비활성 게이트 결정은 `PilotLatencyJSONSink.persistIfEnabled` 단일 지점으로
+    /// 일원화(테스트 가능) — 비활성이면 sink 가 파일을 쓰지 않고 nil 반환. report 스냅샷도
+    /// detached Task 안에서 떠 read-only 호출(`*Stats()`)이 UI teardown 을 막지 않는다.
+    private func persistLatencySessionIfEnabled() {
+        let tracer = PilotLatencyTracer.shared
+        guard let dir = PilotLatencyJSONSink.defaultDirectory() else { return }
+        let sink = PilotLatencyJSONSink()
+        Task.detached(priority: .utility) {
+            try? sink.persistIfEnabled(tracer: tracer, into: dir)
+        }
+    }
+
+    /// **bus D0 계측 HUD (1Hz)** — `df.latency.busTracer` 활성 시에만 노출.
+    /// TimelineView 라 패널이 보일 때만 틱(자체 타이머 누수 없음).
+    @ViewBuilder
+    private var busLatencyRow: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            if let summary = PilotLatencyTracer.shared.hudSummary() {
+                Divider().background(DFColor.textSecondary.opacity(DFOpacity.o15))
+                HStack(alignment: .top, spacing: DFSpace.sm) {
+                    Image(systemName: "timer")
+                        .font(.system(size: DFFontSize.s14, weight: .semibold))
+                        .foregroundStyle(DFColor.accent)
+                        .frame(width: 18)
+                    VStack(alignment: .leading, spacing: DFSpace.none) {
+                        Text("직결 케이던스")
+                            .font(DFFont.caption)
+                            .foregroundStyle(DFColor.textSecondary)
+                        Text(summary)
+                            .font(DFFont.bodyEmph.monospaced())
+                            .foregroundStyle(DFColor.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
@@ -219,26 +264,11 @@ public struct PilotDiagnosticsPanel: View {
 
     // MARK: - Safety / recovery
 
+    /// **V280-E (2026-05-24)**: hardcoded HStack/overlay → DFBanner (.warning).
+    /// 종전 shield 아이콘 → DFNotification 표준 triangle (Carbon consistency).
     private func safetyEventRow(_ msg: String) -> some View {
-        HStack(alignment: .top, spacing: DFSpace.sm) {
-            Image(systemName: "shield.lefthalf.filled")
-                .font(.system(size: DFFontSize.s14, weight: .semibold))
-                .foregroundStyle(DFColor.warning)
-                .frame(width: 18)
-            Text(msg)
-                .font(DFFont.caption)
-                .foregroundStyle(DFColor.warning)
-                .lineLimit(3)
-        }
-        .padding(.horizontal, DFSpace.sm)
-        .padding(.vertical, DFSpace.xs2)
-        .background(DFColor.warning.opacity(DFOpacity.o10))
-        .clipShape(RoundedRectangle(cornerRadius: DFRadius.sm))
-        .overlay(
-            RoundedRectangle(cornerRadius: DFRadius.sm)
-                .stroke(DFColor.warning.opacity(DFOpacity.o25), lineWidth: DFSize.borderHairline)
-        )
-        .accessibilityIdentifier("pilot.safety")
+        DFBanner(title: msg, severity: .warning)
+            .accessibilityIdentifier("pilot.safety")
     }
 
     private func recoveryRow(_ msg: String) -> some View {

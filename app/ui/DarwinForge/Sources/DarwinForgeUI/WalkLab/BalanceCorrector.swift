@@ -55,6 +55,15 @@ public struct BalanceCorrector {
     public let ankleRollGain: Double
     /// ROBOTIS `internal_gain = -0.3` (Walking.cpp line 892).
     public let internalGain: Double
+    /// **각속도 D-term lookahead 시간(초)** — PD 제어 (각도 P + 각속도 D).
+    /// `effErr = angleErr + derivativeTimeSec × rateDps`. rate(dps)에 이 값을 곱하면
+    /// "해당 시간 후 예상 각도"가 되어, 각도가 커지기 전 빠른 기울임에 선제 대응한다
+    /// (넘어짐 선행 방지 — ROBOTIS sensoryFeedback / 최신 ankle-strategy 표준).
+    /// **0 = P-only**(rate 미반영, 기존 동작과 정확히 동일). `init` 기본값은 0.05s 지만
+    /// 실 적용 프로파일 `robotisOriginal` 은 0.12s(넘어짐 선행 방지 강화) — 세션의
+    /// `derivativeTimeSec` 로 데이터 기반 튜닝 가능(범위 0~0.25, 모델 상한 0.5).
+    /// gyro 노이즈 증폭은 `bcNormalizedGyroRates` 의 rate 클램프(±300°/s)로 완화.
+    public let derivativeTimeSec: Double
 
     // MARK: - v1.10 (Hybrid B+A, 2026-05-17)
     /// Hybrid mode ON/OFF — true 시 slow EMA + phase-locked residual 결합.
@@ -85,6 +94,7 @@ public struct BalanceCorrector {
         anklePitchGain: 0.9,       // ROBOTIS Walking.cpp:41
         ankleRollGain: 1.0,        // Walking.cpp:43
         internalGain: -0.3,
+        derivativeTimeSec: 0.12,   // strengthened D-term: 0.05 → 0.12 (baseline-aware balance)
         enableHybrid: false,       // 실 검증 전 P-control fallback
         slowDriftTauSec: 10.0,
         slowGain: 1.0,
@@ -130,6 +140,7 @@ public struct BalanceCorrector {
                 anklePitchGain: Double,
                 ankleRollGain: Double,
                 internalGain: Double = -0.3,
+                derivativeTimeSec: Double = 0.05,
                 enableHybrid: Bool = true,
                 slowDriftTauSec: Double = 10.0,
                 slowGain: Double = 1.0,
@@ -143,6 +154,9 @@ public struct BalanceCorrector {
         self.anklePitchGain = anklePitchGain
         self.ankleRollGain = ankleRollGain
         self.internalGain = internalGain
+        // 상·하한 클램프 (2026-05-30 MEDIUM-1 리뷰): 모델 계층에서 극단 D항 구조적 차단.
+        // 안전 범위 0~0.25, 0.5 는 관대한 구조적 상한(어떤 caller 도 폭주 불가).
+        self.derivativeTimeSec = min(0.5, max(0, derivativeTimeSec))
         self.enableHybrid = enableHybrid
         self.slowDriftTauSec = max(0.1, slowDriftTauSec)
         self.slowGain = max(0, slowGain)
@@ -190,6 +204,8 @@ public struct BalanceCorrector {
     public func corrections(
         rollErrDeg: Double,
         pitchErrDeg: Double,
+        rollRateDps: Double = 0,
+        pitchRateDps: Double = 0,
         signConvention: BalanceSignConvention = .robotisWalkingCpp
     ) -> Corrections {
         // ROBOTIS 원본 `balance = dir × internal_gain × (goal - measured) × gain`.
@@ -204,6 +220,12 @@ public struct BalanceCorrector {
         //   ank_pitch(sagittal): +dir × 0.3 × imuPitch × gain
         //
         // dir 대입한 결과를 명시적으로 코딩:
+
+        // **PD 제어 — 각도(P) + 각속도(D)**. rate=0 이면 effErr=angle → 기존 P 와
+        // 비트 단위로 동일(회귀 0). 각속도가 기울임 방향과 같은 부호면 effErr 가 커져
+        // 각도가 위험 수준에 닿기 전에 발목/엉덩이를 선제 보정 → 넘어짐 방지.
+        let effRollErr = rollErrDeg + derivativeTimeSec * rollRateDps
+        let effPitchErr = pitchErrDeg + derivativeTimeSec * pitchRateDps
 
         let m = 0.3 * intensity  // common multiplier (= |internal_gain| × intensity)
 
@@ -245,12 +267,12 @@ public struct BalanceCorrector {
         // dir[9]=−1            → l_knee:   -= dir×fb×gain → −(−1)×fb×gain → 양수(imuPitch>0)
         // dir[4]=−1, dir[10]=+1→ ank_pitch:-= dir×fb×gain → (+dir)×fb→ R=양수, L=음수
         // dir[5]=+1, dir[11]=+1→ ank_roll: -= dir×rl×gain → −(+1)×rl×gain → 음수(imuRoll>0)
-        let hipRollBoth     = -m * rollErrDeg * hipRollGain        // = -0.15 × imuRoll (lateral 회복)
-        var kneeR           = -m * pitchErrDeg * kneeGain          // ROBOTIS: -= dir[3]×fb = -(+1)×fb → 음수(imuPitch>0)
-        var kneeL           = +m * pitchErrDeg * kneeGain          // ROBOTIS: -= dir[9]×fb = -(-1)×fb → 양수(imuPitch>0)
-        var anklePitchR     = +m * pitchErrDeg * anklePitchGain    // = +0.27 × imuPitch (R dorsiflex)
-        var anklePitchL     = -m * pitchErrDeg * anklePitchGain    // = -0.27 × imuPitch (L dorsiflex mirror)
-        let ankleRollBoth   = -m * rollErrDeg * ankleRollGain      // ROBOTIS: -= dir[5]×rl = -(+1)×rl → 음수(imuRoll>0)
+        let hipRollBoth     = -m * effRollErr * hipRollGain        // = -0.15 × eff (lateral 회복, P+D)
+        var kneeR           = -m * effPitchErr * kneeGain          // ROBOTIS: -= dir[3]×fb = -(+1)×fb → 음수(imuPitch>0)
+        var kneeL           = +m * effPitchErr * kneeGain          // ROBOTIS: -= dir[9]×fb = -(-1)×fb → 양수(imuPitch>0)
+        var anklePitchR     = +m * effPitchErr * anklePitchGain    // = +0.27 × eff (R dorsiflex, P+D)
+        var anklePitchL     = -m * effPitchErr * anklePitchGain    // = -0.27 × eff (L dorsiflex mirror, P+D)
+        let ankleRollBoth   = -m * effRollErr * ankleRollGain      // ROBOTIS: -= dir[5]×rl = -(+1)×rl → 음수(imuRoll>0)
 
         // v1.11: signConvention = .alternateDiagnostic → sagittal 4 관절만 부호 반전.
         // 진단 실험 — 실 robot 적용 시 fall 가속 위험. observe-only 강제 권장.
@@ -389,6 +411,8 @@ public struct BalanceCorrector {
     public func hybridCorrections(
         imuRollDeg: Double,
         imuPitchDeg: Double,
+        rollRateDps: Double = 0,
+        pitchRateDps: Double = 0,
         elapsedMs: Double = 0,
         periodMs: Double = 0,
         state: inout HybridBalanceState,
@@ -406,6 +430,8 @@ public struct BalanceCorrector {
             let corrs = corrections(
                 rollErrDeg: imuRollDeg,
                 pitchErrDeg: imuPitchDeg,
+                rollRateDps: rollRateDps,
+                pitchRateDps: pitchRateDps,
                 signConvention: signConvention
             )
             state.lastUpdateAt = now
@@ -456,6 +482,8 @@ public struct BalanceCorrector {
         let corrs = corrections(
             rollErrDeg: effectiveRoll,
             pitchErrDeg: effectivePitch,
+            rollRateDps: rollRateDps,
+            pitchRateDps: pitchRateDps,
             signConvention: signConvention
         )
 

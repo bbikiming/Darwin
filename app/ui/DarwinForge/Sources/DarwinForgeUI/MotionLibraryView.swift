@@ -24,27 +24,50 @@ public struct MotionLibraryView: View {
     private static let starterPages: [StarterEntry] = {
         // Sprint 8 prebundled (5) + Sprint 11 ReferenceMotionLibrary (19) +
         // Sprint 16 OfficialCatalogReference (16) — 한 곳에서 모으기.
-        let all = MotionStudioView.starterPages()
+        let all = StarterMotionLibrary.starterPages()
         return all.map { StarterEntry(page: $0) }
     }()
 
     public var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                // ROBOTIS 공식 카탈로그 (16)
-                Section("ROBOTIS 공식 데모 (16)") {
-                    ForEach(officialEntries) { e in
-                        sidebarRow(entry: e).tag(Selection.starter(e.id))
+                // 사이클 154 + 155 (사용자 권고 #4 + codex MINOR fix): ROBOTIS 공식 카탈로그 status 별 그룹.
+                // 종전: 16개 모두 한 section → 사용자가 placeholder / 고위험 / safe 구분 어려움.
+                // 신규: 3 subsection (canonical IDs in OfficialCatalogReference):
+                // - 공식 raw (safe) — 실 합성 + 안전 (11 entries)
+                // - Placeholder (caution) — walkReady hold, 낙상 복구 의도 (2 entries: 10/11)
+                // - 고위험 / 실험용 — Right/Left Kick (실 합성) + Hand Standing (placeholder + highRisk) (3 entries: 12/13/17)
+                // 사이클 155: ID 17 은 placeholder 이면서 highRisk → highRisk 우선 (안전 우선 표시).
+                // [placeholder] prefix 가 이름에 있어 placeholder 정보도 동시 노출.
+                if !officialSafeEntries.isEmpty {
+                    Section("ROBOTIS 공식 — 공식 raw (\(officialSafeEntries.count))") {
+                        ForEach(officialSafeEntries) { e in
+                            sidebarRow(entry: e).tag(Selection.starter(e.id))
+                        }
+                    }
+                }
+                if !officialPlaceholderEntries.isEmpty {
+                    Section("ROBOTIS 공식 — Placeholder (\(officialPlaceholderEntries.count))") {
+                        ForEach(officialPlaceholderEntries) { e in
+                            sidebarRow(entry: e).tag(Selection.starter(e.id))
+                        }
+                    }
+                }
+                if !officialHighRiskEntries.isEmpty {
+                    Section("ROBOTIS 공식 — 고위험 / 실험용 (\(officialHighRiskEntries.count))") {
+                        ForEach(officialHighRiskEntries) { e in
+                            sidebarRow(entry: e).tag(Selection.starter(e.id))
+                        }
                     }
                 }
                 // Sprint 11 reference (19)
-                Section("커뮤니티 reference (19)") {
+                Section("커뮤니티 reference (\(referenceEntries.count))") {
                     ForEach(referenceEntries) { e in
                         sidebarRow(entry: e).tag(Selection.starter(e.id))
                     }
                 }
                 // Sprint 8 prebundled (5)
-                Section("기본 시작 (5)") {
+                Section("앱 합성 — 기본 시작 (\(prebundledEntries.count))") {
                     ForEach(prebundledEntries) { e in
                         sidebarRow(entry: e).tag(Selection.starter(e.id))
                     }
@@ -127,10 +150,28 @@ public struct MotionLibraryView: View {
         }
     }
 
-    /// ROBOTIS 공식 카탈로그 항목 (ID 1..=54 — OfficialCatalogReference 등록 ID).
+    /// ROBOTIS 공식 카탈로그 항목 — OfficialCatalogReference 등록 ID 사용.
+    /// 사이클 155 (codex MINOR #2 fix): 하드코딩 set 제거, single source of truth 참조.
     private var officialEntries: [StarterEntry] {
-        let officialIDs: Set<Int> = [1, 2, 3, 4, 9, 10, 11, 12, 13, 15, 17, 23, 24, 27, 38, 54]
-        return Self.starterPages.filter { officialIDs.contains(Int($0.page.id)) }
+        Self.starterPages.filter { OfficialCatalogReference.allOfficialIDs.contains(Int($0.page.id)) }
+    }
+
+    /// 사이클 154 + 155: 공식 카탈로그 의 safety class 별 분리 (canonical IDs).
+    /// safe — 실 합성 + 안전 분류 (11 entries: 1, 2, 3, 4, 9, 15, 23, 24, 27, 38, 54).
+    private var officialSafeEntries: [StarterEntry] {
+        officialEntries.filter { OfficialCatalogReference.safeIDs.contains(Int($0.page.id)) }
+    }
+
+    /// 사이클 154 + 155: placeholder caution — walkReady hold, 낙상 복구 의도 (2 entries: 10, 11).
+    /// ID 17 (Hand Standing) 은 placeholder 이지만 highRisk → highRisk section 으로.
+    private var officialPlaceholderEntries: [StarterEntry] {
+        officialEntries.filter { OfficialCatalogReference.placeholderCautionIDs.contains(Int($0.page.id)) }
+    }
+
+    /// 사이클 154 + 155: 고위험 / 실험용 — 실 합성 Kicks + placeholder Hand Standing (3 entries: 12, 13, 17).
+    /// 안전 우선 표시 — placeholder 라도 highRisk 면 사용자가 더 주의해야 하므로 highRisk section.
+    private var officialHighRiskEntries: [StarterEntry] {
+        officialEntries.filter { OfficialCatalogReference.allHighRiskIDs.contains(Int($0.page.id)) }
     }
 
     /// Sprint 11 ReferenceMotionLibrary 항목 (50..=83).
@@ -139,11 +180,12 @@ public struct MotionLibraryView: View {
     }
 
     /// Sprint 8 prebundled (위 두 범위 외 — 일반적으로 id < 50, 공식 ID 제외).
+    /// 사이클 157 (codex cumulative review MINOR fix): 종전 하드코딩 set [1,2,3,4,...,54]
+    /// 가 cycle 155 centralize 시 누락 → canonical reference 로 마이그레이션.
     private var prebundledEntries: [StarterEntry] {
-        let officialIDs: Set<Int> = [1, 2, 3, 4, 9, 10, 11, 12, 13, 15, 17, 23, 24, 27, 38, 54]
-        return Self.starterPages.filter { entry in
+        Self.starterPages.filter { entry in
             let id = Int(entry.page.id)
-            return id < 50 && !officialIDs.contains(id)
+            return id < 50 && !OfficialCatalogReference.allOfficialIDs.contains(id)
         }
     }
 
@@ -174,13 +216,17 @@ struct StarterEntry: Identifiable {
 
     /// 페이지 ID 범위 + 이름 기반 안전 분류 (시각적 색 indicator).
     /// DFMotionSafetyColor 의미 팔레트 사용.
+    /// 사이클 155 (codex MINOR #2 fix): OfficialCatalogReference 의 canonical ID set 참조 —
+    /// 종전 하드코딩 [12,13,17] / [10,11] 제거 → drift 위험 차단.
     var safetyColor: Color {
         let pid = Int(page.id)
         // ROBOTIS 공식 16 카탈로그 — gui_motion.yaml 기준 safety class.
-        let highRisk: Set<Int> = [12, 13, 17]      // Right/Left Kick, Hand Standing
-        let caution: Set<Int> = [10, 11]           // Get Up Front / Back
-        if highRisk.contains(pid) { return DFMotionSafetyColor.dangerous }
-        if caution.contains(pid) { return DFMotionSafetyColor.unverified }
+        if OfficialCatalogReference.allHighRiskIDs.contains(pid) {
+            return DFMotionSafetyColor.dangerous
+        }
+        if OfficialCatalogReference.placeholderCautionIDs.contains(pid) {
+            return DFMotionSafetyColor.unverified
+        }
         // 50-55 walk progression — Verified (모두 walkReady anchor 검증됨)
         // 60+ ergonomic / greeting / social — Verified
         return DFMotionSafetyColor.verified

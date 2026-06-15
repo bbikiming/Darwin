@@ -27,7 +27,7 @@ import SwiftUI
 /// - 에러 시 명확한 한글 안내 (`CameraFailureReason.shortLabel`).
 public struct RobotCameraWindow: View {
     @StateObject private var client = MjpegStreamingClient()
-    @AppStorage("df.pilot.camera.window.host") private var host: String = "192.168.123.1"
+    @AppStorage("df.pilot.camera.window.host") private var host: String = DFConnectionConstants.robotEthernetIP
     @AppStorage("df.pilot.camera.window.port") private var port: Int = 8080
     /// 부드러운 fps 평균 — 0.5초 sliding.
     @State private var fps: Double = 0

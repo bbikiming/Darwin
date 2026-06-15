@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+URL="${DARWIN_SWITCH_COCKPIT_URL:-http://127.0.0.1:8765/}"
+PROFILE_ROOT="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/darwin-switch-cockpit"
+CHROMIUM_PROFILE="${DARWIN_SWITCH_CHROMIUM_PROFILE:-${PROFILE_ROOT}/chromium}"
+LOG_DIR="${PROFILE_ROOT}/logs"
+LOG="${DARWIN_SWITCH_COCKPIT_LOG:-${LOG_DIR}/launcher.log}"
+
+mkdir -p "${CHROMIUM_PROFILE}" "${LOG_DIR}"
+if [[ -f "${LOG}" ]] && [[ "$(wc -c < "${LOG}" | tr -d ' ')" =~ ^[0-9]+$ ]] \
+  && [[ "$(wc -c < "${LOG}" | tr -d ' ')" -gt 1048576 ]]; then
+  mv "${LOG}" "${LOG}.1" 2>/dev/null || true
+fi
+exec >> "${LOG}" 2>&1
+
+log() {
+  printf '%s %s\n' "$(date -Iseconds 2>/dev/null || date)" "$*"
+}
+
+log "Darwin Switch cockpit launcher starting"
+log "url=${URL}"
+log "profile_root=${PROFILE_ROOT}"
+log "log=${LOG}"
+
+chromium_flags=(
+  --kiosk
+  --no-first-run
+  --disable-session-crashed-bubble
+  --disable-infobars
+  --disable-translate
+  --disable-background-networking
+  --disable-background-timer-throttling
+  --disable-renderer-backgrounding
+  --disable-features=CalculateNativeWinOcclusion,BackForwardCache
+  --hide-scrollbars
+  --ignore-gpu-blocklist
+  --overscroll-history-navigation=0
+  --password-store=basic
+  "--user-data-dir=${CHROMIUM_PROFILE}"
+)
+
+if command -v xset >/dev/null 2>&1; then
+  log "disabling X11 screen blanking with xset"
+  xset s off || true
+  xset -dpms || true
+  xset s noblank || true
+fi
+
+if command -v gsettings >/dev/null 2>&1; then
+  log "disabling desktop idle/lock with gsettings"
+  gsettings set org.gnome.desktop.session idle-delay 0 >/dev/null 2>&1 || true
+  gsettings set org.gnome.desktop.screensaver lock-enabled false >/dev/null 2>&1 || true
+  gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing' >/dev/null 2>&1 || true
+  gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing' >/dev/null 2>&1 || true
+  gsettings set org.gnome.settings-daemon.plugins.power idle-dim false >/dev/null 2>&1 || true
+fi
+
+agent_ready=0
+for _ in $(seq 1 60); do
+  if python3 - <<PY
+import urllib.request
+try:
+    urllib.request.urlopen("${URL}", timeout=1).read(64)
+except Exception:
+    raise SystemExit(1)
+PY
+  then
+    agent_ready=1
+    log "cockpit URL responded"
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${agent_ready}" -eq 0 ]]; then
+  log "WARN: cockpit URL did not respond within 60s; launching browser anyway"
+fi
+
+if command -v firefox >/dev/null 2>&1; then
+  log "launching firefox kiosk"
+  exec firefox --kiosk "${URL}"
+elif command -v firefox-esr >/dev/null 2>&1; then
+  log "launching firefox-esr kiosk"
+  exec firefox-esr --kiosk "${URL}"
+elif command -v chromium-browser >/dev/null 2>&1; then
+  log "launching chromium-browser kiosk"
+  exec chromium-browser "${chromium_flags[@]}" "${URL}"
+elif command -v chromium >/dev/null 2>&1; then
+  log "launching chromium kiosk"
+  exec chromium "${chromium_flags[@]}" "${URL}"
+elif command -v google-chrome >/dev/null 2>&1; then
+  log "launching google-chrome kiosk"
+  exec google-chrome "${chromium_flags[@]}" "${URL}"
+elif command -v xdg-open >/dev/null 2>&1; then
+  log "launching xdg-open fallback"
+  exec xdg-open "${URL}"
+else
+  log "ERROR: no browser found. Open ${URL} manually."
+  sleep infinity
+fi

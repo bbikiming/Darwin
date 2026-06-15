@@ -11,7 +11,7 @@ import SwiftUI
 /// 종전: 자동 rollback (failRollback verdict) 만 구현. 사용자 명시 rollback 불가.
 /// inconclusive verdict 후 사용자가 "그냥 원래대로 돌리고 싶다" 의도 지원.
 public struct ActiveExperimentBanner: View {
-    @EnvironmentObject private var session: WalkLabSession
+    @Environment(WalkLabSession.self) private var session
     @EnvironmentObject private var experimentLoop: ExperimentLoopController
     @Environment(\.dfTheme) private var theme: DFTheme
 

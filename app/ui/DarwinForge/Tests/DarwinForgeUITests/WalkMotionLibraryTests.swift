@@ -590,10 +590,11 @@ final class WalkMotionLibraryTests: XCTestCase {
     /// **Phase G10 핵심**: phase 0 (시작) 과 phase 5 (끝) 사이 거리가 매끄러운 wrap 범위.
     /// period=600 ms × 11% (0.92→0.03 사이) ≈ 66 ms 시간 폭 안에서 보간 가능해야.
     /// 너무 큰 차이는 jerk 유발.
-    func testContinuousWalkPlanCycleWrapDistanceWithinModerateRange() {
-        let plan = WalkMotionLibrary.continuousWalkPlan(for: .normalWalk)!
+    func testContinuousWalkPlanCycleWrapDistanceWithinModerateRange() throws {
+        let plan = try XCTUnwrap(WalkMotionLibrary.continuousWalkPlan(for: .normalWalk))
         let firstPose = plan.cycle[0].toPose()
-        let lastPose = plan.cycle.last!.toPose()
+        let lastEntry = try XCTUnwrap(plan.cycle.last)
+        let lastPose = lastEntry.toPose()
         // 주요 관절 (hip/knee/ankle) 의 raw 차이 — wrap 시 모터가 한 step 안에 보간해야 함.
         let criticalJoints: [JointID] = [
             .rHipPitch, .lHipPitch, .rKnee, .lKnee, .rAnklePitch, .lAnklePitch

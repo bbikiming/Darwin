@@ -35,7 +35,22 @@ public final class MotionPlayer: ObservableObject {
     private var timer: Timer?
     private var lastTickTime: Date?
 
-    public init() {}
+    // MARK: - Harness DI (Wave 3 Phase 3.2, 사이클 242)
+    //
+    // 종전: `Harness.shared.record(...)` 직접 호출 → 테스트에서 RecordingHarness 주입 불가.
+    // 신규: init 시점에 HarnessFacade 주입 (default = LiveHarness.shared — 기존 호출 site
+    //       무손상). 테스트는 RecordingHarness 주입으로 record 호출 검증.
+    //
+    // **default arg = nil pattern**: LiveHarness.shared 는 @MainActor 격리. default arg
+    // expression 은 caller context 에서 evaluate — Swift 6 strict concurrency 에서
+    // 직접 default 값으로 사용 시 nonisolated context warning. nil sentinel + init body
+    // 안에서 LiveHarness.shared fallback 으로 우회 (class 가 @MainActor 라 init body 는
+    // 자동 격리됨).
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
+    }
 
     // MARK: - Control
 
@@ -46,16 +61,40 @@ public final class MotionPlayer: ObservableObject {
         self.pose = start
         self.elapsedMs = 0
         self.currentStepIndex = 0
+        // **v1.14.2 (2026-05-21)** — motion 페이지 로드 telemetry.
+        // 사용자가 어떤 motion 을 선택했는지 추적 — play 시작 전 의도 분리.
+        harness.record(
+            .motionLoad, level: .info, actor: .user,
+            data: ["page_id": AnyCodable(page.id),
+                   "page_name_hash": AnyCodable(Harness.shortHash(page.name)),
+                   "step_count": AnyCodable(page.steps.count),
+                   "duration_ms": AnyCodable(page.totalDurationMs)]
+        )
     }
 
     public func play() {
-        guard page != nil else { return }
+        guard let p = page else { return }
         if mode == .playing { return }
         mode = .playing
         lastTickTime = .now
         timer?.invalidate()
+        // v1.12.2 telemetry — 모션 재생 시작 (page name redacted).
+        harness.record(
+            .motionPlayStart, level: .info, actor: .user,
+            data: ["page_name_hash": AnyCodable(Harness.shortHash(p.name)),
+                   "page_id": AnyCodable(p.id),
+                   "step_count": AnyCodable(p.steps.count),
+                   "duration_ms": AnyCodable(p.totalDurationMs)]
+        )
         // v1.11.2 (2026-05-18): CI Swift 5.9 호환 — inner Task closure 에 weak self 재캡쳐.
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { _ in
+        // 2026-05-24 (V270-flaky fix): outer Timer closure 도 [weak self] —
+        // 종전 inner 만 weak → RunLoop strong holds outer → outer strong holds self →
+        // play() 후 player 해제 안 하면 timer 영원 fire + player 누수. WalkLabSession 과
+        // 동일 패턴. 1962-test coverage 풀런 SIGSEGV 회귀 방지.
+        // CI fix (PR #42, 2026-05-25): inner Task 가 outer closure 의 `weak self`
+        // 를 다시 reference 하면 Swift 5.10 sendable check 가 "captured var" 로
+        // 거절한다. inner closure 에 `[weak self]` 를 명시 재캡쳐.
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tick() }
         }
     }
@@ -69,6 +108,9 @@ public final class MotionPlayer: ObservableObject {
     }
 
     public func stop() {
+        let wasPlaying = (mode == .playing)
+        let elapsedForHarness = elapsedMs
+        let pageNameForHarness = page?.name
         timer?.invalidate()
         timer = nil
         mode = .stop
@@ -77,6 +119,13 @@ public final class MotionPlayer: ObservableObject {
         if let p = page {
             pose = startPose
             _ = p
+        }
+        if wasPlaying, let name = pageNameForHarness {
+            harness.record(
+                .motionPlayAbort, level: .info, actor: .user,
+                data: ["page_name_hash": AnyCodable(Harness.shortHash(name)),
+                       "elapsed_ms": AnyCodable(elapsedForHarness)]
+            )
         }
     }
 
@@ -176,6 +225,17 @@ public final class MotionPlayer: ObservableObject {
             elapsedMs = 0
             // 다음 tick 에서 다시 시작 step 부터 계산.
         } else {
+            // **v1.12.2 (Codex re-review fix)** — 자연 종료 telemetry.
+            // mode == .playing 일 때만 발행. 사용자가 seek(toEnd) 등으로 elapsedMs 를
+            // 끝으로 옮긴 뒤 recompute 호출 시 misfire 안 됨 (mode == .stop / .paused).
+            if mode == .playing {
+                harness.record(
+                    .motionPlayComplete, level: .info, actor: .system,
+                    data: ["page_name_hash": AnyCodable(Harness.shortHash(page.name)),
+                           "page_id": AnyCodable(page.id),
+                           "elapsed_ms": AnyCodable(elapsedMs)]
+                )
+            }
             mode = .stop
             timer?.invalidate(); timer = nil
         }

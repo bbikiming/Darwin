@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ===== V297-10 — Mac App Store 제출용 entitlements =====
+         sandbox 활성 강제. Mac App Store 는 hardened runtime + sandbox 가 필수.
+         (Developer ID notarized 와는 별도 — DarwinForge-DevID.entitlements 사용.)
+
+         포함 entitlement 마다 App Store Review §2.4.5 / §5.4 / §2.5.4 검토 사유:
+           - com.apple.security.app-sandbox: 필수 (모든 App Store 앱)
+           - com.apple.security.network.client/server: Mobile Pilot Relay WebSocket
+             + Tello UDP. App Store 표준 — 자동 승인.
+           - com.apple.security.device.audio-input: 음성 명령 (NSMicrophone 권한 + 사용자 prompt).
+           - com.apple.security.device.usb: **App Store §2.4.5 review 사유 발생**. ROBOTIS-OP2
+             외부 하드웨어 의존성. App Review 가 device 없이 검토 불가능 → review note 에
+             하드웨어 무관 시뮬레이션 모드 (Mock/Review) 명시 필수.
+           - com.apple.security.files.user-selected.read-write: 모션 페이지 import/export.
+             App Store 표준 — 자동 승인.
+         -->
+
+    <!-- V297-10 TestFlight fix (warning 90886) — provisioning profile 의 application-identifier
+         와 일치하는 키가 codesign entitlements 에도 반드시 있어야 TestFlight 분배 가능.
+         Team ID + Bundle ID 조합으로 명시 (JM4LJMU49Q.com.yuseokkim.darwinforge). -->
+    <key>com.apple.application-identifier</key>
+    <string>JM4LJMU49Q.com.yuseokkim.darwinforge</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>JM4LJMU49Q</string>
+
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Mobile Pilot Relay (Bonjour _darwinforge._tcp WebSocket :17370) + Tello UDP. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- Voice command (SFSpeechRecognizer + audio input). -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- USB serial (ROBOTIS-OP2). App Store review 시 외부 하드웨어 justification 필요. -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
+
+    <!-- USB-Serial 디바이스 노드 (/dev/cu.usbserial-*) — ROBOTIS CM-730/740 통신.
+         device.usb 는 IOUSBHost/IOKit 용이며 POSIX serial open(serialport crate
+         TTYPort::open)은 본 키가 별도 필요. 미설정 시 sandbox 빌드에서 robot 연결이
+         EPERM 으로 전면 차단됨(개발 환경은 sandbox 비활성이라 드러난 적 없음). -->
+    <key>com.apple.security.device.serial</key>
+    <true/>
+
+    <!-- Motion page / robot pose import/export. -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- ===== Hardened Runtime =====
+         App Store Review Guideline 2.4.5(i): hardened runtime exception
+         entitlement (cs.allow-jit / cs.allow-unsigned-executable-memory /
+         cs.disable-library-validation / cs.disable-executable-page-protection /
+         cs.allow-dyld-environment-variables) 는 값이 `false` 이면 자동 반려된다
+         (App Store Connect 자동 검사 "value must not be false").
+
+         DarwinForge 는 표준 Swift/AppKit 만 사용하므로 이 예외들이 전혀 필요 없다.
+         "예외 없음 (most secure)" 은 키를 **명시 false 가 아니라 아예 제거** 함으로써
+         표현한다 (Apple QA1773). Hardened runtime 자체는 codesign 의 runtime option (`options=runtime`)
+         (archive-app.sh Step 2) 로 활성화되며, 예외 entitlement 부재 = 모든 예외 차단.
+
+         2026-06-11 반려 (submission 66cb634a, v1.23.0/579) 정정 — 5개 false 키 제거. -->
+</dict>
+</plist>

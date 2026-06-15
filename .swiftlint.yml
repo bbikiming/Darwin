@@ -84,5 +84,54 @@ custom_rules:
     excluded:
       - ".*Tests.*"
 
+  # Wave 3 Phase 3.4 (사이클 115, 2026-05-23) — Harness DI migration gate.
+  # `Harness.shared` 는 deprecated. 새 코드는 반드시 `@Environment(\.harness)` (View)
+  # 또는 `any HarnessFacade` init 주입 (class) 사용. 5 인프라 예외:
+  # 1. Harness.swift             — 본 싱글톤 정의
+  # 2. HarnessProtocols.swift    — comment only
+  # 3. LiveHarness.swift         — production wrapper (의도적 forward)
+  # 4. HarnessInspectorView.swift — Inspector introspection (internal 우회)
+  # 5. DarwinForgeApp.swift      — lifecycle entry (LiveHarness 로 migration 완료)
+  df_no_harness_shared_direct_access:
+    name: "Harness.shared 직접 접근 금지"
+    # `(?<!\w)Harness\.shared\.` — `LiveHarness.shared.` / `MockHarness.shared.` 같이
+    # 식별자 suffix 매치 차단. Harness 가 단어 boundary 시작인 경우만.
+    regex: '(?<!\w)Harness\.shared\.'
+    # 사이클 252 (deployment readiness audit) — match_kinds 추가:
+    # SwiftLint default 가 comment 도 매치 — `// 종전 Harness.shared.record(...)` 같은
+    # historical doc comment 4건 (MotionPlayer/PilotSafetyGate/PilotActionBar/ConversationViewModel)
+    # 이 CI 차단 유발. identifier/typeidentifier 로 한정 → code 만 매치.
+    match_kinds:
+      - identifier
+      - typeidentifier
+    message: "@Environment(\\.harness) (View) 또는 init injection (any HarnessFacade, class) 사용. ADR-001 참조."
+    severity: warning
+    excluded:
+      - ".*Tests.*"
+      - ".*/Harness/Harness\\.swift"
+      - ".*/Harness/HarnessProtocols\\.swift"
+      - ".*/Harness/LiveHarness\\.swift"
+      - ".*/Harness/HarnessInspectorView\\.swift"
+      - ".*/DarwinForgeApp\\.swift"
+
+  # 사이클 252 (security review) — Harness.shared (no-dot, 변수 할당 형태) bypass 차단.
+  # 위 `_direct_access` regex 는 `.` 가 필수 → `let h = Harness.shared` 우회 가능.
+  # 본 rule 은 변수 할당 형태도 차단.
+  df_no_harness_shared_assignment:
+    name: "Harness.shared 변수 할당 금지"
+    regex: '(?<!\w)Harness\.shared(?!\.)'
+    match_kinds:
+      - identifier
+      - typeidentifier
+    message: "let h = Harness.shared 우회 패턴 금지. @Environment(\\.harness) 또는 init injection 사용."
+    severity: warning
+    excluded:
+      - ".*Tests.*"
+      - ".*/Harness/Harness\\.swift"
+      - ".*/Harness/HarnessProtocols\\.swift"
+      - ".*/Harness/LiveHarness\\.swift"
+      - ".*/Harness/HarnessInspectorView\\.swift"
+      - ".*/DarwinForgeApp\\.swift"
+
 # MARK: - Reporter
 reporter: "xcode"   # Xcode 빌드 시 inline 경고

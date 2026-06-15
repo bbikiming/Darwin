@@ -1,0 +1,23 @@
+[Unit]
+Description=Darwin Switch Controller Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Type=notify: the unit stays 'activating' until the agent calls sd_notify
+# READY=1 (right after the cockpit + mode client come up). NotifyAccess=main
+# restricts notifications to the main process. WatchdogSec=15 restarts the
+# agent if it stops petting the watchdog (the control loop pets every ~5s).
+Type=notify
+NotifyAccess=main
+WatchdogSec=15
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/darwin-switch-agent/src
+ExecStart=/usr/bin/python3 -m darwin_switch_agent.main --config /etc/darwin-switch-agent/config.json
+Restart=always
+RestartSec=1
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

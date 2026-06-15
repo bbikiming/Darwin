@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ===== 사이클 69 — production Info.plist (LOW-3 ground truth) ===== -->
+    <!-- 본 파일은 deployment 가이드 (docs/walk-lab/PILOT_PRODUCTION_ENTITLEMENTS.md) -->
+    <!-- 의 source-of-truth. SwiftPM executable 은 본 파일을 직접 link 안 함 — Xcode -->
+    <!-- 또는 notarization wrapper 가 빌드 시 .app/Contents/Info.plist 로 복사. -->
+
+    <!-- TN3179 — Mobile Pilot Relay Bonjour 광고 + iPhone OP Pilot 의 NWBrowser discovery 양쪽에서 필수. -->
+    <!-- NWListener.service = "_darwinforge._tcp" 광고 시 macOS Sonoma+ 에서 NSBonjourServices 미선언이면 silent block. -->
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_darwinforge._tcp</string>
+    </array>
+
+    <!-- Tello UDP state (port 8890) — TelloStateListener + Mobile Pilot Relay (Bonjour _darwinforge._tcp) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>iPhone 의 OP Pilot 앱과 페어링해 ROBOTIS-OP2 휴머노이드 로봇을 안전하게 조종하고, Tello 드론 (비행 명령 + 상태) 과도 통신합니다. (Bonjour _darwinforge._tcp)</string>
+
+    <!-- Voice keyword spotting — VoicePilotAdapter -->
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>음성으로 로봇에게 "걸어", "정지", "비상" 등을 명령할 수 있도록 음성 인식 사용을 허용합니다.</string>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>음성 명령을 수신하기 위해 마이크 접근이 필요합니다.</string>
+
+    <!-- 표준 app 메타데이터 -->
+    <key>CFBundleIdentifier</key>
+    <string>com.yuseokkim.darwinforge</string>
+    <key>CFBundleName</key>
+    <string>DarwinForge</string>
+    <key>CFBundleDisplayName</key>
+    <string>DarwinForge</string>
+    <!-- ===== 사이클 76 코덱스 MEDIUM-1 fix ===== -->
+    <!-- CFBundleVersion (build number): release 마다 bump 필요. CI 자동화 -->
+    <!-- (build phase): `agvtool next-version -all` 또는 git commit count: -->
+    <!--   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" Info.plist -->
+    <key>CFBundleVersion</key>
+    <string>2</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.24.0</string>
+    <key>CFBundleExecutable</key>
+    <string>DarwinForgeApp</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 YUSEOK KIM. All rights reserved.</string>
+
+    <!-- App Store 카테고리 (notarization 외에 launchctl-based 자동 실행 시 경고 회피) -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+
+    <!-- NSApplication principal class — main entry point 명시 -->
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+
+    <!-- macOS UI 환경 — Sonoma+ 다크 모드 native -->
+    <key>NSRequiresAquaSystemAppearance</key>
+    <false/>
+
+    <!-- ===== App Store Connect 제출 필수 키 (V297-10) ===== -->
+
+    <!-- 암호화 export compliance — 표준 macOS/iOS SSL 외 자체 암호화 사용 안 함.
+         false 명시로 App Store Connect 의 export compliance 자동 통과. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+
+    <!-- VoiceOver / Siri 가 앱 이름 발음하는 방식 - "Darwin Forge" 분리. -->
+    <key>CFBundleSpokenName</key>
+    <string>Darwin Forge</string>
+
+    <!-- ===== USB 외부 하드웨어 사용 명시 (App Store Review §2.4.5) =====
+         ROBOTIS DARwIn-OP2 휴머노이드 로봇과 USB Serial (FTDI) 통신.
+         entitlement: com.apple.security.device.usb (App Store 용 별도 review note 필수). -->
+
+    <!-- 카메라 미사용 — Tello 드론은 RTP/UDP 만, 본 앱은 카메라 권한 요청 안 함.
+         Apple 자동 stripping 위해 NSCameraUsageDescription 누락 유지. -->
+</dict>
+</plist>

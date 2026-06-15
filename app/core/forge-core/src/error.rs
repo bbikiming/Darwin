@@ -21,6 +21,11 @@ pub enum Error {
     #[error("device id {0} not found on bus")]
     DeviceNotFound(u8),
 
+    /// E-STOP 선점 — 진행 중 read 가 긴급정지 요청으로 조기 abort 됨 (S4).
+    /// 이는 오류가 아니라 의도된 중단 — 호출자(백그라운드 리더/폴러)는 무음 skip.
+    #[error("read aborted by e-stop preempt")]
+    EstopPreempted,
+
     /// 일반 에러.
     #[error("{0}")]
     Other(String),

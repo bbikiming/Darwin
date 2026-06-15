@@ -80,6 +80,12 @@ public enum WalkingEngine: String, CaseIterable, Codable, Sendable, Identifiable
 /// **v1.11.5.2 (2026-05-18) chain break fix**: 종전 6 필드는 `hipPitchOffsetDeg` 누락 →
 /// 사용자가 trim slider 변경해도 `.robotisOnboard` 모드에서 robot 에 전달 안 되는 버그.
 /// 7 번째 필드 추가로 Mac sparse / ROBOTIS onboard 양쪽에서 trim 일관 적용.
+///
+/// **사이클 162 (P0-2, gyro closed-loop review fix)**: balance 3 필드 추가.
+/// 종전: balanceGain / enableBalanceCorrection / correctorIntensityLevel 가 Mac UI 만
+/// 영향, robot 측 미전달 → Onboard mode 사용자가 자이로 slider 조정해도 robot 동작 동일.
+/// 신규 8-10 번째 필드 — 옛 robot daemon (sscanf 7 필드) 는 그대로 무시 (backward compat).
+/// 새 daemon (v2 patch) 는 추가 필드 read → robot-side Walking::GetInstance() balance 인자 set.
 public struct WalkingEngineCommand: Equatable, Sendable {
     public let enabled: Bool
     public let xMm: Double
@@ -91,8 +97,39 @@ public struct WalkingEngineCommand: Equatable, Sendable {
     /// default 13.0 (ROBOTIS Walking.cpp 원본). UI trim slider 와 일관.
     public let hipPitchOffsetDeg: Double
 
+    /// **사이클 162**: balance gain (0..5). robot-side `Walking::GetInstance()->BALANCE_*` 인자.
+    /// default 1.0 (ROBOTIS Walking.cpp 원본).
+    public let balanceGain: Double
+    /// **사이클 162**: 자이로 보정 enable (0/1). robot-side
+    /// `Walking::GetInstance()->BALANCE_ENABLE` set. default false (안전).
+    public let balanceEnable: Bool
+    /// **사이클 162**: 보정 강도 5단계 (0..4) — Mac UI 의 correctorIntensityLevel.
+    /// robot-side 가 0=off, 1=절반, 2=표준, 3=1.5배, 4=2배 매핑. default 2 (표준).
+    public let correctorIntensityLevel: Int
+
+    /// **SSH parity (W4)**: 머리 pan (°). robot-side `Robot::Head::GetInstance()->MoveByAngle(pan, tilt)`.
+    /// + = 로봇 기준 오른쪽. [-90, 90] clamp. default 0 (정면, backward compat — 옛 daemon 은
+    /// trailing 무시). LAN 경로의 head control 과 동등 parity 위해 추가.
+    public let headPanDeg: Double
+    /// **SSH parity (W4)**: 머리 tilt (°). + = 위. [-45, 45] clamp. default 0 (정면).
+    public let headTiltDeg: Double
+
+    /// **볼 트래킹 (2026-06-02)**: 로봇 온보드 자동 헤드 추적 on/off (0/1).
+    /// true 면 robot-side 브로커리지가 `LinuxCamera`+`ColorFinder`+`BallTracker`로
+    /// 자체 헤드를 움직인다(기본 데모와 동일). 이때 Mac 의 headPan/headTilt 는 무시되어야
+    /// 하므로 직렬화 시 head 를 0 으로 고정한다. default false (backward compat — 옛
+    /// daemon 은 trailing 필드 무시). [[robot-no-mic-input]] 와 같은 온보드 처리 계열.
+    public let ballTrackingEnabled: Bool
+
     public init(enabled: Bool, xMm: Double, yMm: Double, aDeg: Double,
-                periodMs: Double, footHeightMm: Double, hipPitchOffsetDeg: Double = 13.0) {
+                periodMs: Double, footHeightMm: Double,
+                hipPitchOffsetDeg: Double = 13.0,
+                balanceGain: Double = 1.0,
+                balanceEnable: Bool = false,
+                correctorIntensityLevel: Int = 2,
+                headPanDeg: Double = 0,
+                headTiltDeg: Double = 0,
+                ballTrackingEnabled: Bool = false) {
         self.enabled = enabled
         self.xMm = xMm
         self.yMm = yMm
@@ -100,18 +137,85 @@ public struct WalkingEngineCommand: Equatable, Sendable {
         self.periodMs = periodMs
         self.footHeightMm = footHeightMm
         self.hipPitchOffsetDeg = hipPitchOffsetDeg
+        self.balanceGain = balanceGain
+        self.balanceEnable = balanceEnable
+        self.correctorIntensityLevel = max(0, min(4, correctorIntensityLevel))
+        // 볼 트래킹 ON 이면 로봇이 헤드를 제어하므로 Mac head 명령을 0 으로 무력화.
+        self.ballTrackingEnabled = ballTrackingEnabled
+        self.headPanDeg = ballTrackingEnabled ? 0 : max(-90, min(90, headPanDeg))
+        self.headTiltDeg = ballTrackingEnabled ? 0 : max(-45, min(45, headTiltDeg))
     }
 
     /// file 로 write 할 직렬화 — 한 줄, robot-side parser 가 sscanf 로 read.
+    /// **SSH parity (W4)**: 12 필드 — 사이클 162 의 10 필드 뒤에 head pan/tilt 2 필드 APPEND.
+    /// 옛 daemon (7 또는 10 필드 sscanf) 는 trailing head 필드 무시 (backward compat).
     public var serializedLine: String {
-        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg` — space-separated.
-        // robot-side patch sscanf: `sscanf(line, "%d %f %f %f %f %f %f", &en,&x,&y,&a,&p,&f,&h)`.
-        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f",
-               enabled ? 1 : 0, xMm, yMm, aDeg, periodMs, footHeightMm, hipPitchOffsetDeg)
+        // `enabled x_mm y_mm a_deg period_ms foot_mm hip_pitch_deg balance_gain balance_enable corrector_level head_pan head_tilt ball_track`.
+        // 옛 daemon sscanf: `sscanf(line, "%d %f %f %f %f %f %f", ...)` → 7 필드 read, trailing 무시.
+        // 사이클 162 daemon: `sscanf(line, "%d %f %f %f %f %f %f %f %d %d", ...)` → 10 필드.
+        // SSH parity daemon: 12 필드 (head pan/tilt 까지).
+        // 볼 트래킹 daemon (2026-06-02): 13 필드 read (cmd_id 포함 14) → ball_track 적용.
+        // 모든 옛 daemon 은 13번째 필드를 trailing 으로 무시 (backward compat).
+        String(format: "%d %.2f %.2f %.2f %.0f %.0f %.2f %.2f %d %d %.2f %.2f %d",
+               enabled ? 1 : 0, xMm, yMm, aDeg, periodMs, footHeightMm, hipPitchOffsetDeg,
+               balanceGain, balanceEnable ? 1 : 0, correctorIntensityLevel,
+               headPanDeg, headTiltDeg, ballTrackingEnabled ? 1 : 0)
     }
 
-    /// 정지 명령 — enabled=0, 나머지 0, hipPitchOffsetDeg=13 (기본 유지).
+    // ===== O2 프로토콜 v2 (twist SI, 2026-06-12 walklab-onboard-teleop-upgrade) =====
+
+    /// V2 flags 비트 — `WalkLabTransport.h` 의 `FLAG_*` 와 **단일 정의 공유**(ssh-parity §G.8).
+    public enum V2Flag {
+        public static let enabled: Int        = 0x01  // 보행 활성.
+        public static let balanceEnable: Int  = 0x02  // 자이로 보정 on.
+        public static let ballTrack: Int      = 0x04  // 온보드 볼 트래킹.
+        public static let gateSchedOff: Int   = 0x08  // 속도 비례 게이트 스케줄 OFF(기본 ON).
+    }
+
+    /// **프로토콜 v2 직렬화 (twist SI 밀리단위 정수)** — REP-103. 로봇이 변환을 소유하므로
+    /// (X≈k_x·vx·T/2) Mac 은 진폭→속도 **역변환**을 보낸다: vx = 2·X/T (k_x=1 기준).
+    /// 형식: `V2 {seq} {t_tx_ms} {flags} {vx_mms} {vy_mms} {wz_mrad_s} {period_ms} {foot_mm}
+    ///        {hip_cdeg} {blevel} {pan_cdeg} {tilt_cdeg}` — 전 필드 정수(부동소수 파싱 배제).
+    ///
+    /// **공존/게이팅**: v1 14토큰 경로는 영구 유지(로봇이 양 방언 수용). 로봇이 O2 패치
+    /// 보장 + 벤치(k_x 확정) 전까지 **송출 경로는 v1 유지** — 본 직렬화는 그 전환을 위한
+    /// 준비물(단위 테스트로 변환식 고정). 미패치 로봇에 "V2 …" 송출 금지(오파싱).
+    public func serializedLineV2(seq: UInt64, tTxMs: Int64) -> String {
+        var flags = 0
+        if enabled { flags |= V2Flag.enabled }
+        if balanceEnable { flags |= V2Flag.balanceEnable }
+        if ballTrackingEnabled { flags |= V2Flag.ballTrack }
+
+        // 진폭→twist 역변환. period 0(정지) 시 분모 0 → 속도 0 으로 안전 처리.
+        let T = periodMs / 1000.0                       // s
+        let vxMms: Int = T > 0 ? Int((2.0 * xMm / T).rounded()) : 0
+        let vyMms: Int = T > 0 ? Int((2.0 * yMm / T).rounded()) : 0
+        // A_deg = wz_rad·T/2·(180/π) → wz_mrad_s = 1000·2·(aDeg·π/180)/T.
+        let wzMradS: Int = T > 0
+            ? Int((2.0 * (aDeg * Double.pi / 180.0) / T * 1000.0).rounded()) : 0
+        let hipCdeg = Int((hipPitchOffsetDeg * 100.0).rounded())
+        let panCdeg = Int((headPanDeg * 100.0).rounded())
+        let tiltCdeg = Int((headTiltDeg * 100.0).rounded())
+
+        return "V2 \(seq) \(tTxMs) \(flags) \(vxMms) \(vyMms) \(wzMradS) " +
+               "\(Int(periodMs.rounded())) \(Int(footHeightMm.rounded())) " +
+               "\(hipCdeg) \(correctorIntensityLevel) \(panCdeg) \(tiltCdeg)"
+    }
+
+    /// 정지 명령 — enabled=0, 나머지 0, hipPitchOffsetDeg=13 (기본 유지),
+    /// balance default (1.0 / false / 2), head 0,0 (정면 — SSH parity W4),
+    /// ballTracking off (정지 시 추적 해제).
     public static let stop = WalkingEngineCommand(
-        enabled: false, xMm: 0, yMm: 0, aDeg: 0, periodMs: 0, footHeightMm: 0
+        enabled: false, xMm: 0, yMm: 0, aDeg: 0, periodMs: 0, footHeightMm: 0,
+        headPanDeg: 0, headTiltDeg: 0, ballTrackingEnabled: false
     )
+
+    /// 사이클 164 (codex MAJOR fix, cycle 162 review): 옛 daemon backward compat 경고.
+    /// daemon version 확인 전까지 balance 필드는 robot 측 silent ignore 가능 (sscanf 7 필드).
+    /// Mac UI 가 "balance ON" 으로 표시했지만 robot 측 무동작 — 사용자 silent failure 위험.
+    /// **Mac 측 권고**: Onboard mode HUD 에 본 메시지 영구 표시.
+    public static let onboardSchemaWarning: String =
+        "⚠ 옛 펌웨어 (v1 patch) 는 balance 필드 (gain/enable/intensity) 무시. " +
+        "Robot 측 v2 patch (sscanf 10 필드) 필수. " +
+        "현재 ACK 검증 없음 — 사용자가 robot 측 버전 확인 후 보정 활성 권장."
 }

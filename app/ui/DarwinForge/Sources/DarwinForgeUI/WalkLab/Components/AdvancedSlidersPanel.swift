@@ -11,7 +11,7 @@ import SwiftUI
 ///      "이 보폭에서는 주기를 더 줄이면 위험" 식 cross-slider 보호.
 ///   5. "안전 한도 해제" 토글로 cap 무시 가능 (단, 점수가 critical 이면 여전히 시작 차단).
 public struct AdvancedSlidersPanel: View {
-    @ObservedObject var session: WalkLabSession
+    @Bindable var session: WalkLabSession  // $session.foo binding 사용 → @Bindable
 
     public init(session: WalkLabSession) {
         self.session = session
@@ -100,16 +100,36 @@ public struct AdvancedSlidersPanel: View {
                 unitLabel: { String(format: "%.0f mm", $0) }
             )
 
-            SafetyBandedSlider(
-                value: $session.balanceGain,
-                range: 0...5,
-                // sweet-spot: 0.5..2.0 = safe, 0.3..3.5 = caution, 그 외 danger.
-                bands: .sweetSpot(safeMin: 0.5, safeMax: 2.0, cautionMin: 0.3, cautionMax: 3.5),
-                cap: nil,
-                ticks: [0.3, 0.5, 1.0, 2.0, 3.0],
-                label: "균형 게인 (NimbRo lean_fb)",
-                unitLabel: { String(format: "%.2f", $0) }
+            // **v1.15.5 (2026-05-21) Phase 1.5 — balanceGain HIGH-risk gap**:
+            // verification 문서 §4.1 — balanceGain 이 .robotisOnboard 모드에서 펌웨어
+            // 미송신 (WalkingEngineCommand 필드 부재). Critic 권고 hybrid 옵션:
+            // Onboard 모드 = slider disable + danger badge, Mac sparse = 정상 활성.
+            let balanceGainScope = WalkLabApplyScopeResolver.scope(
+                for: .balanceGain, engine: session.walkingEngine
             )
+            VStack(alignment: .leading, spacing: DFSpace.xs2) {
+                HStack(spacing: DFSpace.xs) {
+                    Spacer()
+                    WalkLabApplyScopeBadge(scope: balanceGainScope, style: .compact)
+                }
+                SafetyBandedSlider(
+                    value: $session.balanceGain,
+                    range: 0...5,
+                    bands: .sweetSpot(safeMin: 0.5, safeMax: 2.0, cautionMin: 0.3, cautionMax: 3.5),
+                    cap: nil,
+                    ticks: [0.3, 0.5, 1.0, 2.0, 3.0],
+                    label: "균형 게인 (NimbRo lean_fb)",
+                    unitLabel: { String(format: "%.2f", $0) }
+                )
+                .disabled(balanceGainScope == .disabledOnboard)
+                .opacity(balanceGainScope == .disabledOnboard ? 0.5 : 1.0)
+                if balanceGainScope == .disabledOnboard {
+                    Text("⚠️ Onboard 모드: 펌웨어 미송신 — Mac sparse 엔진으로 전환 시 활성화")
+                        .font(.system(size: DFFontSize.s10))
+                        .foregroundStyle(DFColor.danger)
+                        .padding(.leading, DFSpace.xs)
+                }
+            }
 
             // **v1.11.4 (2026-05-18) — Hip pitch trim slider**.
             // 종전 13.0° 하드코딩 → 사용자가 cradle 캘리브레이션 중 0/5/13° 비교 가능.
@@ -151,19 +171,15 @@ public struct AdvancedSlidersPanel: View {
             }
 
             // 메시지
+            // **V280-E (2026-05-24)**: hardcoded inline notice → DFInlineNotice.
+            // critical 점수 = .error severity, 그 외 = .warning.
             if !stability.messages.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(stability.messages, id: \.self) { msg in
-                        HStack(alignment: .top, spacing: DFSpace.xs) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: DFFontSize.s9))
-                                .foregroundStyle(stability.category == .critical
-                                                  ? DFColor.danger : DFColor.warning)
-                            Text(msg)
-                                .font(.system(size: DFFontSize.s10))
-                                .foregroundStyle(DFColor.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        DFInlineNotice(
+                            title: msg,
+                            severity: stability.category == .critical ? .error : .warning
+                        )
                     }
                 }
                 .padding(.top, DFSpace.xs2)

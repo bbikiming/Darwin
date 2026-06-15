@@ -22,3 +22,7 @@ tracing-subscriber.workspace = true
 serialport = { version = "4.7", default-features = false }
 # Bonjour/mDNS 자동 광고. 같은 네트워크의 클라이언트가 `_forge._tcp`로 발견.
 mdns-sd = "0.13"
+# **사이클 120 (audit #27, P0 safety)**: SIGINT 시 torque OFF 보장.
+# forge motion play 실행 중 Ctrl+C → step loop 다음 진입 시 emergency_stop 강제.
+# 종전 std-only placeholder 는 SIGINT 후 자세 hold 만 → 사용자 위험 (모터 잠금 상태).
+ctrlc = { version = "3.4", features = ["termination"] }

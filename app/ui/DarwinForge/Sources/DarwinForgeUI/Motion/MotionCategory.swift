@@ -6,7 +6,7 @@ import SwiftUI
 /// 자동 분류 — id range / name pattern 기반. `MotionPage` 자체를 수정하지 않고
 /// helper 로 추론 → 기존 도큐먼트 호환성 유지.
 ///
-/// **ID 매핑 규약 (MotionStudioView.starterDoc 와 일치)**:
+/// **ID 매핑 규약 (StarterMotionLibrary.starterDoc 와 일치 — 사이클 246)**:
 /// - 1..=54: ROBOTIS 공식 motion_4096.bin catalog → `.official`
 /// - 110..=119: ReferenceMotionLibrary walk progression → `.walking`
 /// - 120..=129: ergonomic → `.daily`

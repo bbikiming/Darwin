@@ -52,7 +52,31 @@ public struct DataQualityReport: Codable, Equatable, Sendable {
     public let appliedZeroOK: Bool          // ≤ 0.30 (corrector 활성 확인. observeOnly 면 별도)
     public let isObserveOnly: Bool          // appliedZero 해석용 context
 
+    // MARK: - v1.11.25 (2026-05-21) audit log-A — v1.11.24 신규 필드 검증
+    //
+    // 종전 한계: requestedPreset / startBlockedReason / motorWriteStarted 가 jsonl 에 들어가지만
+    // 어떤 analyzer 도 read 안 함 → 사실상 "dark data". 본 fix 가 fail rule 추가로 활용.
+
+    /// header.startBlockedReason 이 nil 이 아니면 — preflight 진입 실패 흔적. 보행 데이터 분석 무의미.
+    public let startBlockedReason: String?
+    /// header.startBlockedReason 가 nil 이면 OK (preflight 통과).
+    public let startBlockedOK: Bool
+    /// header.motorWriteStarted (footer 가 immutable header 자리 점령 — 항상 nil. 실 footer 필요).
+    /// 본 필드는 향후 logger 가 motorWriteStarted 를 header 에 write 하면 유효.
+    public let motorWriteStarted: Bool?
+    /// motorWriteStarted=true 또는 unknown(nil) 이면 OK. false 면 명시 fail.
+    public let motorWriteStartedOK: Bool
+
+    /// v1.11.25 audit-E — sim 데이터 명시. UI/Critic 가 sim 결과를 실 robot 권고로 misuse 차단.
+    /// `header.isRealRobot=false` 이거나 realRobotRatio < 0.5 면 true (sim-only 결과).
+    public let isSimulationOnly: Bool
+
     /// 통계 계산 → verdict 자동 산출.
+    ///
+    /// v1.11.25 audit-L: durationSec ≤ 0 edge case → empty(verdict=fail) 강제.
+    /// 종전: 1 sample + duration=0 시 rate=Inf → JSONEncoder fail.
+    /// v1.11.25 audit-K: V1 legacy session (walkingEngine 등 v2 핵심 필드 누락) →
+    /// 자동 verdict=fail. critic V2 가 nil quality 에 fake pass 못 받게.
     public static func compute(
         samples: [WalkSessionSample],
         header: WalkSessionHeader,
@@ -61,6 +85,34 @@ public struct DataQualityReport: Codable, Equatable, Sendable {
         let n = samples.count
         guard n > 0 else {
             return empty(durationSec: durationSec)
+        }
+        guard durationSec > 0 else {
+            // audit-L: 1 sample + duration=0 → rate=Inf 차단.
+            return empty(durationSec: 0)
+        }
+        // audit-K: V1 legacy 감지 — header AND sample 양쪽에서 v2 필드 모두 nil 일 때만 fail.
+        // header 만 minimal (예: 테스트 fixture) 이지만 sample 에는 v2 필드 있으면 V1 아님.
+        // 분석가가 V1 mixed batch 에 섞어 결론 오도하는 케이스만 차단.
+        let v2HeaderMissing = (header.walkingEngine == nil && header.balanceAlgorithmMode == nil)
+        let v2SampleMissing = samples.allSatisfy { $0.balanceAlgorithmMode == nil && $0.walkPhase01 == nil }
+        if v2HeaderMissing && v2SampleMissing {
+            return DataQualityReport(
+                verdict: .fail,
+                reasons: ["V1 legacy 세션 (header + sample 모두 v2 필드 부재) — V2 분석 incompatible"],
+                durationSec: durationSec, durationOK: false,
+                sampleCount: n, sampleCountOK: false,
+                sampleRateHz: 0, sampleRateOK: false,
+                staleSampleRatio: 0, staleRatioOK: true,
+                duplicateImuRatio: 0, duplicateOK: true,
+                busWriteFailureDelta: 0, busWriteOK: true,
+                realRobotRatio: 0, realRobotOK: false,
+                phaseCoverageCount: 0, phaseCoverageOK: false,
+                appliedZeroRatio: 0, appliedZeroOK: true,
+                isObserveOnly: false,
+                startBlockedReason: nil, startBlockedOK: true,
+                motorWriteStarted: nil, motorWriteStartedOK: true,
+                isSimulationOnly: !header.isRealRobot
+            )
         }
 
         // 1. duration / sample count / rate
@@ -143,6 +195,15 @@ public struct DataQualityReport: Codable, Equatable, Sendable {
         tally(phaseOK,       fail: coveredPhases < 3,   reason: "phaseCoverage \(coveredPhases)/6 < 4")
         tally(appliedZeroOK, fail: appliedZeroRatio > 0.80 && !isObserveOnly, reason: "appliedZeroRatio \(String(format: "%.2f", appliedZeroRatio)) > 0.30 (corrector 비활성)")
 
+        // v1.11.25 audit log-A — v1.11.24 신규 필드 검증.
+        let startBlockedReason = header.startBlockedReason
+        let startBlockedOK = (startBlockedReason == nil)
+        let motorWriteStarted = header.motorWriteStarted
+        // false 가 명시되면 fail. nil 또는 true 면 OK (구버전 jsonl 호환).
+        let motorWriteStartedOK = motorWriteStarted != false
+        tally(startBlockedOK, fail: true, reason: "preflight 차단됨: \(startBlockedReason ?? "unknown") (audit P0-1)")
+        tally(motorWriteStartedOK, fail: true, reason: "motor write 시작 안 됨 (audit P1-2): preflight 통과했지만 motor 송출 0회 → bus race / disconnect 의심")
+
         let verdict: Verdict = {
             if failCount > 0 { return .fail }
             if weakCount > 0 { return .weak }
@@ -160,7 +221,14 @@ public struct DataQualityReport: Codable, Equatable, Sendable {
             realRobotRatio: realRatio, realRobotOK: realOK,
             phaseCoverageCount: coveredPhases, phaseCoverageOK: phaseOK,
             appliedZeroRatio: appliedZeroRatio, appliedZeroOK: appliedZeroOK,
-            isObserveOnly: isObserveOnly
+            isObserveOnly: isObserveOnly,
+            // v1.11.25 audit log-A
+            startBlockedReason: startBlockedReason,
+            startBlockedOK: startBlockedOK,
+            motorWriteStarted: motorWriteStarted,
+            motorWriteStartedOK: motorWriteStartedOK,
+            // v1.11.25 audit-E
+            isSimulationOnly: !header.isRealRobot || realRatio < 0.5
         )
     }
 
@@ -178,7 +246,10 @@ public struct DataQualityReport: Codable, Equatable, Sendable {
             realRobotRatio: 0, realRobotOK: false,
             phaseCoverageCount: 0, phaseCoverageOK: false,
             appliedZeroRatio: 0, appliedZeroOK: true,
-            isObserveOnly: false
+            isObserveOnly: false,
+            startBlockedReason: nil, startBlockedOK: true,
+            motorWriteStarted: nil, motorWriteStartedOK: true,
+            isSimulationOnly: false
         )
     }
 }

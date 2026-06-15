@@ -278,9 +278,11 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         // onCleared callback 이 호출되어 activeExperimentId/BaselineSessionId clear.
         XCTAssertNil(session.activeExperimentId)
         XCTAssertNil(session.activeBaselineSessionId)
-        // finalize 가 Task { await saveHistory() } fire-and-forget 이라 잠시 대기 후
-        // 원래 상태로 복원 (cap 30 누적 + 다른 test 의 history 가드 충돌 방지).
-        try await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+        // settle wait — finalize 내부 Task { await saveHistory() } 가 fire-and-forget 이라
+        // 완료 신호가 없음. restoreSharedHistoryFile 호출 전에 write 완료를 보장해야 함.
+        // 대안 없음: finalize 가 saveHistory 완료를 외부에 노출하지 않음
+        // (TODO: finalize 가 완료 신호를 반환하도록 개선).
+        try await Task.sleep(nanoseconds: 300_000_000)  // 300ms settle wait
         await restoreSharedHistoryFile(historyBefore)
     }
 
@@ -645,7 +647,15 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
 
         let historyBefore = await readSharedHistoryFile()
         session.triggerAutoLoopIfActive(summaryId: experimentSessionId, baseDir: tempDir)
-        try await Task.sleep(nanoseconds: 500_000_000)
+
+        // **사이클 136 (flaky fix)**: 종전 500ms sleep — async chain (5 hops + disk IO)
+        // 이 heavy parallel test load 에서 timing 부족 → 3 assertion fail.
+        // polling 방식으로 변경 — verdict 도착 또는 2초 timeout. isolated 실행 시 빠르게
+        // 통과, 부하 시 최대 2초 대기.
+        let deadline = Date().addingTimeInterval(2.0)
+        while controller.lastComparison?.verdict == nil, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)  // 50ms polling
+        }
 
         XCTAssertEqual(controller.lastComparison?.verdict, .failRollback,
                        "peakPitch +12 → failRollback")
@@ -821,7 +831,12 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         let historyBefore = await readSharedHistoryFile()
         _ = session.rollbackExperiment()
         // controller.cancel 은 Task { @MainActor } fire-and-forget — 대기.
-        try await Task.sleep(nanoseconds: 200_000_000)
+        // **사이클 142 (codex proactive fix)**: 200ms sleep → polling. 부하 시 race 회피.
+        let rollbackDeadline = Date().addingTimeInterval(2.0)
+        while (session.activeExperimentId != nil || controller.current != nil),
+              Date() < rollbackDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)  // 50ms polling
+        }
         XCTAssertNil(session.activeExperimentId, "session 측 clear")
         XCTAssertNil(controller.current,
                      "controller.current 도 clear — 새 실험 가능")
@@ -948,8 +963,13 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         session.triggerAutoLoopIfActive(summaryId: experimentSessionId, baseDir: tempDir)
 
         // 4. async Task 완료 대기 — appendSession + load + compare + lastRobotEvent.
-        // 디스크 IO + main actor hop 포함이라 500ms 충분.
-        try await Task.sleep(nanoseconds: 500_000_000)
+        // **사이클 142 (codex MAJOR fix)**: 종전 500ms sleep — cycle 136 line 653 동일 패턴
+        // 적용. heavy parallel test load 에서 timing 부족 → 3 assertion fail (재현).
+        // polling 방식 — verdict 도착 또는 2초 timeout. isolated 빠르게 통과, 부하 시 대기.
+        let e2eDeadline = Date().addingTimeInterval(2.0)
+        while controller.lastComparison?.verdict == nil, Date() < e2eDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)  // 50ms polling
+        }
 
         // 5. 검증.
         XCTAssertNotNil(controller.lastComparison, "compareWithBaseline 호출됨")
@@ -973,7 +993,9 @@ final class WalkLabV1114FeedbackLoopTests: XCTestCase {
         // activeExperimentId 미설정 — trigger no-op 기대.
         XCTAssertNil(session.activeExperimentId)
         session.triggerAutoLoopIfActive(summaryId: "any")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        // settle wait — 부재(negative) 를 검증: compare 가 호출되지 않아야 함.
+        // 폴링으로 부재를 확인할 수 없어 고정 대기 유지 (100ms 이면 async chain 이 완료될 충분한 시간).
+        try await Task.sleep(nanoseconds: 100_000_000)  // settle wait — negative assertion
         XCTAssertNil(controller.lastComparison, "active 없음 → compare 호출 X")
     }
 

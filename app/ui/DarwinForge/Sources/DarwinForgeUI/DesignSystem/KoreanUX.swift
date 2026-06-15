@@ -245,3 +245,77 @@ public enum KoreanUX {
         public static let saved = "저장했어요"
     }
 }
+
+// MARK: - V279-3: Voice & Tone Matrix + Error 3단 Struct
+
+/// 사이클 V279-3 (V278-1 권고) — Voice & Tone matrix.
+///
+/// # 비유
+///
+/// Voice = DarwinForge 의 "캐릭터" (전문적이지만 따뜻한 안전 보조자) — 변하지 않음.
+/// Tone = 상황 별 "말투" — situation 에 따라 강도 조절.
+///
+/// 카페에 비유하면: 바리스타의 인성(Voice)은 항상 친절하지만,
+/// "에스프레소 나왔어요"(success)와 "원두가 떨어졌어요"(error)는 톤이 다르다.
+///
+/// Mailchimp Content Style Guide + Shopify Polaris Voice & Tone 영감.
+/// 한국어 적용 (해요체 통일, 비난 금지, 액션 안내).
+public extension KoreanUX {
+
+    /// 메시지 tone 변형 — 5 상황 별 microcopy 패턴.
+    ///
+    /// 사용 예: `KoreanUX.Tone.error.sample` -> 권고 메시지 형식 검증.
+    enum Tone {
+        case success    // 차분한 확인 — 감탄사 금지
+        case info       // 중립 안내
+        case warning    // 부드러운 주의
+        case error      // 공감 + 해결책
+        case critical   // 즉각 + 명확
+
+        /// Tone 별 권고 microcopy 예시 (검증 / 테스트 용).
+        public var sample: String {
+            switch self {
+            case .success:  return "연결됐어요"
+            case .info:     return "준비 중이에요"
+            case .warning:  return "관절 온도가 조금 높아요. 잠시 식혀주세요"
+            case .error:    return "USB 케이블이 빠진 것 같아요. 다시 꽂아 주세요"
+            case .critical: return "긴급정지: 즉시 전원을 차단해 주세요"
+            }
+        }
+    }
+
+    /// Error 메시지 3단 구조 — IBM Carbon Content + 토스 가이드 통합.
+    ///
+    /// # 비유
+    ///
+    /// 응급실 의사의 설명:
+    /// 1. why: "감기에 걸리셨네요" (원인)
+    /// 2. what: "이 약을 3일 먹어요" (해결)
+    /// 3. detail: "혈액검사 결과: WBC 12,000" (선택, 진단)
+    ///
+    /// 기존 `ErrorMessage` (title/body/action 4 필드) 와 별개의
+    /// 경량 struct — 단순 inline / toast 노출에 사용.
+    struct ErrorMsg: Equatable, Hashable {
+        public let why: String
+        public let what: String
+        public let detail: String?
+
+        public init(why: String, what: String, detail: String? = nil) {
+            self.why = why
+            self.what = what
+            self.detail = detail
+        }
+
+        /// 사용자 메시지 — "[원인]. [해결책]" 형식.
+        public var userMessage: String {
+            "\(why). \(what)"
+        }
+
+        /// 권고 사용 예시 — USB 연결 끊김.
+        public static let usbDisconnected = ErrorMsg(
+            why: "USB 케이블이 빠진 것 같아요",
+            what: "다시 꽂아 주세요",
+            detail: "ioreg 진단 결과: USB 장치 미인식"
+        )
+    }
+}

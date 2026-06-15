@@ -19,6 +19,41 @@ import Foundation
 /// 모든 페이지는 `RobotPose.walkReady` 에서 시작·종료해 안전 anchor 보장.
 public enum OfficialCatalogReference {
 
+    // MARK: - 사이클 155 (codex MINOR #2 fix): single source of truth for safety classification.
+    //
+    // 종전: MotionLibraryView.swift / StarterEntry.safetyColor / 본 파일 docstring 의 3 곳에
+    // ID set 가 중복 → 변경 시 drift 위험.
+    // 신규: 본 enum 의 static set 가 canonical — 모든 호출자 본 source 참조.
+
+    /// **Safe** — 실 합성 + 안전 분류. 11 entries.
+    public static let safeIDs: Set<Int> = [1, 2, 3, 4, 9, 15, 23, 24, 27, 38, 54]
+
+    /// **Caution + Placeholder** — walkReady hold 만 구현, 의도는 낙상 복구. 2 entries.
+    public static let placeholderCautionIDs: Set<Int> = [10, 11]
+
+    /// **HighRisk + Placeholder** — walkReady hold 만 구현, 실 robot 송출 금지. 1 entry.
+    public static let placeholderHighRiskIDs: Set<Int> = [17]
+
+    /// **HighRisk** — 실 합성, 단발 지지 / 정비 스탠드 필수. 2 entries.
+    public static let highRiskIDs: Set<Int> = [12, 13]
+
+    /// 사이클 155: convenience 통합 — placeholder 전체 (caution + highRisk).
+    public static var placeholderIDs: Set<Int> {
+        placeholderCautionIDs.union(placeholderHighRiskIDs)
+    }
+
+    /// 사이클 155: convenience — 실 robot 위험 (placeholder highRisk 포함).
+    public static var allHighRiskIDs: Set<Int> {
+        highRiskIDs.union(placeholderHighRiskIDs)
+    }
+
+    /// 본 enum 에 등록된 모든 ID — 16 entries.
+    public static var allOfficialIDs: Set<Int> {
+        safeIDs.union(placeholderCautionIDs)
+               .union(placeholderHighRiskIDs)
+               .union(highRiskIDs)
+    }
+
     /// 16 페이지 + 시작 ID 부여. Motion Studio / Expert 동작 라이브러리 양쪽 사용.
     /// 기본 startId = 1 — ROBOTIS 공식 slot ID 와 일치.
     public static func allPages(startId: Int = 1) -> [MotionPage] {
@@ -280,7 +315,9 @@ public enum OfficialCatalogReference {
     public static func getUpFront(id: Int) -> MotionPage {
         MotionPage(
             id: UInt8(clamping: id),
-            name: "공식 10 — Get Up Front (앞 낙상 복구) ⚠ Caution",
+            // 사이클 143 (IMPLEMENTATION audit #7): placeholder 라벨 명시화.
+            // 실 robot 송출은 `forge motion play --slot 10 --engage`. UI 목록은 preview only.
+            name: "공식 10 — [placeholder] Get Up Front (앞 낙상 복구) ⚠ Caution",
             steps: [
                 .from(pose: .walkReady, playMs: 1500, pauseMs: 200)
             ]
@@ -291,7 +328,8 @@ public enum OfficialCatalogReference {
     public static func getUpBack(id: Int) -> MotionPage {
         MotionPage(
             id: UInt8(clamping: id),
-            name: "공식 11 — Get Up Back (뒤 낙상 복구) ⚠ Caution",
+            // 사이클 143 (IMPLEMENTATION audit #7): placeholder 라벨.
+            name: "공식 11 — [placeholder] Get Up Back (뒤 낙상 복구) ⚠ Caution",
             steps: [
                 .from(pose: .walkReady, playMs: 1500, pauseMs: 200)
             ]
@@ -369,7 +407,8 @@ public enum OfficialCatalogReference {
     public static func handStanding(id: Int) -> MotionPage {
         MotionPage(
             id: UInt8(clamping: id),
-            name: "공식 17 — Hand Standing (물구나무) 🔴 HighRisk",
+            // 사이클 143 (IMPLEMENTATION audit #7): placeholder 라벨.
+            name: "공식 17 — [placeholder] Hand Standing (물구나무) 🔴 HighRisk",
             steps: [
                 .from(pose: .walkReady, playMs: 2000, pauseMs: 500)
             ]

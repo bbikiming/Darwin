@@ -56,12 +56,27 @@ public final class InitialSetupState: ObservableObject {
         .vnc: .pending, .robotSetup: .pending,
         .macSSHKey: .pending, .connect: .pending
     ]
-    @Published public var host: String = "192.168.123.1"
+    @Published public var host: String = DFConnectionConstants.robotEthernetIP
     @Published public var username: String = "robotis"
 
     private var pollTask: Task<Void, Never>?
 
+    /// 사이클 194 (cycle 190 audit P0 #2): wizard 첫 진입 시각 — completed 이벤트 의
+    /// elapsed_ms 계산용. startAutoVerification 호출 시 set.
+    private var wizardStartedAt: Date?
+    /// 사이클 194: completed 이벤트 가 한 번만 발화 보장.
+    private var completedFired: Bool = false
+
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
+    }
+
     public func startAutoVerification() {
+        // 사이클 194: 첫 진입 시각 기록 (재진입 시 reset 안 함 — 누적 시간 정확).
+        if wizardStartedAt == nil { wizardStartedAt = Date() }
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -77,7 +92,28 @@ public final class InitialSetupState: ObservableObject {
     }
 
     public func mark(_ step: Step, _ status: StepStatus) {
+        // 사이클 194 (cycle 190 audit P0 #2): 모든 step status 전환 telemetry.
+        // 단일 hook — 자동 verify + 수동 button 둘 다 본 method 경유 → 발화 site 통합.
+        let from = statuses[step] ?? .pending
+        guard from != status else { return }  // no-op transition skip.
         statuses[step] = status
+        harness.record(
+            .setupWizardStepChanged, level: .info, actor: .user,
+            data: ["step": AnyCodable(String(describing: step)),
+                   "from": AnyCodable(String(describing: from)),
+                   "to": AnyCodable(String(describing: status))]
+        )
+        // 사이클 194: 모든 step completed 첫 전환 → wizard completed telemetry.
+        if !completedFired && allDone {
+            completedFired = true
+            let elapsedMs = wizardStartedAt.map {
+                Int(Date().timeIntervalSince($0) * 1000)
+            } ?? 0
+            harness.record(
+                .setupWizardCompleted, level: .notice, actor: .user,
+                data: ["elapsed_ms": AnyCodable(elapsedMs)]
+            )
+        }
     }
 
     public var allDone: Bool {
@@ -97,14 +133,15 @@ public final class InitialSetupState: ObservableObject {
             return false
         }()
         if bothOpen, statuses[.robotSetup] != .completed {
-            statuses[.robotSetup] = .completed
+            // 사이클 194: 자동 verify path 도 mark() 경유 — telemetry 일관성.
+            mark(.robotSetup, .completed)
         }
 
         // Mac SSH key: SSH BatchMode 즉시 응답.
         if statuses[.robotSetup] == .completed {
             let sshOK = await SSHShell.isReachable(host: host, user: username, timeout: 2.0)
             if sshOK, statuses[.macSSHKey] != .completed {
-                statuses[.macSSHKey] = .completed
+                mark(.macSSHKey, .completed)
             }
         }
     }
@@ -265,6 +302,13 @@ public struct InitialSetupWizardView: View {
             Text("로봇 데스크톱을 Mac에 띄워 가상 키보드로 명령을 입력합니다.")
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.textSecondary)
+            // **사이클 130 (audit #23, P0)**: 수동 확인 명시 — VNC 연결 자체는 자동 검증 안 됨.
+            // 종전 "VNC 데스크톱 열기" 클릭 → 즉시 .completed → 사용자가 "Mac이 VNC 연결을
+            // 검증했다" 로 오해. 신규 라벨로 "수동 확인 — 화면 표시되면 클릭" 강조.
+            Text("⚠️ 자동 검증 X — 화면 표시 후 사용자가 수동 확인")
+                .font(DFFont.caption)
+                .foregroundStyle(.orange)
+                .padding(.bottom, 2)
             HStack(spacing: DFSpace.sm) {
                 Button {
                     if let u = URL(string: "vnc://\(state.host):5900") {
@@ -272,7 +316,7 @@ public struct InitialSetupWizardView: View {
                     }
                     state.mark(.vnc, .completed)
                 } label: {
-                    Label("VNC 데스크톱 열기", systemImage: "display")
+                    Label("VNC 열고 — 화면 표시 시 수동 확인", systemImage: "display")
                         .padding(.horizontal, 12).padding(.vertical, 6)
                         .background(DFColor.accent)
                         .foregroundStyle(.white)
@@ -299,7 +343,10 @@ public struct InitialSetupWizardView: View {
                     pb.clearContents()
                     pb.setString(RobotSetupCommand.masterSetup, forType: .string)
                     copyToast = "✓ VNC 터미널에 붙여넣기"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copyToast = nil }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        copyToast = nil
+                    }
                     state.mark(.robotSetup, .inProgress)
                 } label: {
                     Label("마스터 셋업 복사", systemImage: "doc.on.clipboard.fill")
@@ -329,6 +376,35 @@ public struct InitialSetupWizardView: View {
                     .font(.system(size: DFFontSize.s10))
             }
             .foregroundStyle(DFColor.textSecondary)
+
+            // **사이클 140 (audit #22 codex follow-up)**: rollback UI wire-up.
+            // cycle 131 에서 const 만 정의, UI 미연결 (codex MINOR) → 사용자가 발견 불가.
+            // 본 disclosureGroup 으로 노출 — 명시 expand 시만 복사 가능 (사고 방지).
+            DisclosureGroup("⚠️ 셋업 원상복구 (rollback) — 부분 실패 시") {
+                Text("masterSetup 도중 단계 5 (df-inbox) 실패 등으로 partial state 발생 시\n실행. SSH/dialout 은 보존 — 다른 용도 가능성.")
+                    .font(.system(size: DFFontSize.s10))
+                    .foregroundStyle(DFColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(RobotSetupCommand.masterSetupRollback, forType: .string)
+                    copyToast = "✓ rollback 명령 복사 — VNC 터미널 붙여넣기"
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        copyToast = nil
+                    }
+                } label: {
+                    Label("rollback 복사", systemImage: "arrow.uturn.backward")
+                        .font(.system(size: DFFontSize.s10))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.orange.opacity(0.15))
+                        .foregroundStyle(.orange)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .font(DFFont.caption)
         }
     }
 
@@ -346,7 +422,10 @@ public struct InitialSetupWizardView: View {
                     pb.setString(SSHShell.keyAuthSetupCommand(host: state.host, user: state.username),
                                  forType: .string)
                     copyToast = "✓ Mac 터미널 (cmd+space → Terminal) 에 붙여넣기"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copyToast = nil }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        copyToast = nil
+                    }
                 } label: {
                     Label("SSH key 셋업 복사", systemImage: "key.fill")
                         .padding(.horizontal, 12).padding(.vertical, 6)

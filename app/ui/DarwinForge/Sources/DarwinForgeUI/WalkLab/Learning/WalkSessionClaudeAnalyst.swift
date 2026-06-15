@@ -19,13 +19,45 @@ import Foundation
 /// 처리하든 (Anthropic API or local LLM) caller 책임 아님. 사용자가 명시 실행.
 public actor WalkSessionClaudeAnalyst {
 
-    /// claude CLI 후보 path list — `which` 결과 또는 흔한 위치.
-    public static let candidatePaths: [String] = [
-        "/Users/bbikiming/.local/bin/claude",
-        "/usr/local/bin/claude",
-        "/opt/homebrew/bin/claude",
-        "/Users/bbikiming/.npm-global/bin/claude",
-    ]
+    /// claude CLI 후보 path list — 현재 사용자 home 동적 expand + 흔한 시스템 위치.
+    ///
+    /// **v1.11.25 (2026-05-21) audit-A fix**: 종전 `/Users/bbikiming/...` hardcode 가 배포 시
+    /// 즉시 깨짐 (다른 사용자명 환경). `~` expansion 으로 동적화 + `which claude` shell fallback
+    /// 으로 사용자 PATH 의 모든 경로 검색.
+    public static var candidatePaths: [String] {
+        let home = NSHomeDirectory()
+        return [
+            "\(home)/.local/bin/claude",
+            "/usr/local/bin/claude",
+            "/opt/homebrew/bin/claude",
+            "\(home)/.npm-global/bin/claude",
+            "\(home)/.claude/local/claude",
+        ]
+    }
+
+    /// `which claude` shell 호출 fallback. PATH 환경변수 끝까지 검색 + symlink resolve.
+    /// candidatePaths / env PATH 모두 miss 시 마지막 시도.
+    private static func whichClaudeFallback() -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["which", "claude"]
+        let outPipe = Pipe()
+        p.standardOutput = outPipe
+        p.standardError = Pipe()
+        do {
+            try p.run()
+            p.waitUntilExit()
+            if p.terminationStatus != 0 { return nil }
+            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let result = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let r = result, !r.isEmpty,
+                  FileManager.default.isExecutableFile(atPath: r) else { return nil }
+            return r
+        } catch {
+            return nil
+        }
+    }
 
     /// 분석 timeout (초). default 120 (Claude Code 응답 길이 고려).
     public let timeoutSeconds: TimeInterval
@@ -58,7 +90,8 @@ public actor WalkSessionClaudeAnalyst {
                 return candidate
             }
         }
-        return nil
+        // v1.11.25 audit-A: 마지막 fallback — `which claude` shell.
+        return whichClaudeFallback()
     }
 
     /// prompt 를 claude CLI 에 전달 + 응답 받기.

@@ -67,9 +67,8 @@ public enum MotionBuilder {
 
         // wrap: 시작/끝에 walk_ready 추가.
         var finalSteps: [MotionStep] = []
-        if wrapWithReady {
-            let ready = PoseLibrary.get("walk_ready")!
-            finalSteps.append(MotionStep.from(pose: ready.pose, playMs: 300, pauseMs: 0))
+        if wrapWithReady, let readyPose = PoseLibrary.get("walk_ready")?.pose {
+            finalSteps.append(MotionStep.from(pose: readyPose, playMs: 300, pauseMs: 0))
         }
 
         for (i, entry) in poses.enumerated() {
@@ -87,13 +86,16 @@ public enum MotionBuilder {
                                               pauseMs: Int(spec.pauseMs)))
         }
 
-        if wrapWithReady {
-            let ready = PoseLibrary.get("walk_ready")!
-            finalSteps.append(MotionStep.from(pose: ready.pose, playMs: 500, pauseMs: 200))
+        if wrapWithReady, let readyPose = PoseLibrary.get("walk_ready")?.pose {
+            finalSteps.append(MotionStep.from(pose: readyPose, playMs: 500, pauseMs: 200))
         }
 
-        let nextId = UInt8.random(in: 100...250)  // 임시 — 호출자가 ID 재할당
-        return MotionPage(id: nextId, name: name, steps: finalSteps)
+        // **사이클 126 (audit #34, P2)**: 결정적 placeholder ID 사용.
+        // 종전 `UInt8.random(in: 100...250)` 은 caller 가 id 재할당 잊으면 비결정성 + 충돌 위험.
+        // 신규: 명시 `0` 사용 — caller 가 id == 0 인지 검사하면 "ID 재할당 필요" detect 가능.
+        // (.unassigned 같은 enum 도 가능하나 MotionPage.id 가 UInt8 이라 sentinel 0 채택.)
+        let placeholderId: UInt8 = 0
+        return MotionPage(id: placeholderId, name: name, steps: finalSteps)
     }
 
     /// 자연어 명령 → StepSpec 시퀀스 (휴리스틱).
@@ -175,19 +177,6 @@ public enum MotionBuilder {
 
         return steps
     }
-
-    /// "왼" / "오른" 같은 좌우 키워드 감지 — 향후 mirror 적용용.
-    public static func detectSide(_ command: String) -> Side {
-        let n = command.lowercased()
-        let leftKeys  = ["왼", "left", "왼쪽", "왼손", "왼팔", "왼발"]
-        let rightKeys = ["오른", "right", "오른쪽", "오른손", "오른팔", "오른발"]
-        let l = leftKeys.contains { n.contains($0) }
-        let r = rightKeys.contains { n.contains($0) }
-        if l && !r { return .left }
-        if r && !l { return .right }
-        return .neutral
-    }
-    public enum Side { case left, right, neutral }
 
     // MARK: - Helpers
 

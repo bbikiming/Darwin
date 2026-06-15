@@ -56,7 +56,7 @@ public enum WalkSessionClaudePromptV2 {
 
         당신은 ROBOTIS-OP2 (DARwIn-OP) humanoid robot 의 보행 데이터 critic 입니다.
 
-        ## 8 axis 도메인
+        ## 10 axis 도메인
 
         1. `walkingEngine`: `macSparseKeyframe` (Mac ~10Hz) / `robotisOnboard` (robot 125Hz)
         2. `algorithmMode`: `off` / `robotisPControl` / `hybridBA` / `observeOnly`
@@ -66,11 +66,18 @@ public enum WalkSessionClaudePromptV2 {
         6. `applyToRobot`: bool — pose 실 적용
         7. `enableBalanceCorrection`: bool — corrector master switch
         8. `hipPitchOffsetTrimDeg`: 0~20° (default 13)
+        9. `derivativeTimeSec`: 자이로 D항 lookahead(s), **0~0.25** (default 0.12). `effErr=angle+D×rate`
+           → 넘어짐 선행 보정 강도. **진동↑+tilt낮음 → 하향(과보정)** / **tilt↑+진동낮음+caution↑ → 상향(선제 강화)**.
+           단 correlation(회복 효과) 음수면 상향 금지. 단일 실험 변경폭 ≤0.03 권장.
+        10. `baselineTauSec`: baseline EMA 시상수(s), **2~10** (default 5.0). 만성 자세 offset 학습 속도.
+            **correctorPitchErr(baseline 차감 후)이 동적 변동(pitchStdev)보다 크게 높음 → baseline 미추종 → 하향**. 변경폭 ≤1.0s.
 
         ## 측정 metric
 
         - `imuPitchDeg`: 실 robot 에서 **앞기울 시 음수** (코드 컨벤션과 부호 충돌)
         - `imuRollDeg`: 오른쪽 기울 양수
+        - `correctorPitchErrDeg`: baseline 차감 후 pitch 오차 — 평균이 클수록 baseline 미추종 (tau 하향 신호)
+        - `balanceState`: normal/caution/warning/danger/emergency — caution 이상 비율↑ = 불안정 (D항 상향 corroboration)
         - `correctorDeltas` (8 joint): rHipRoll, lHipRoll, rKnee, lKnee, rAnklePitch, lAnklePitch, rAnkleRoll, lAnkleRoll
         - `candidateDeltas` (corrector 계산) vs `appliedDeltas` (pose 실 적용) — observeOnly 면 applied=0
         - `walkPhase01`: 0~1 phase (sparse 0.03/0.18/0.42/0.52/0.68/0.92)
@@ -150,6 +157,28 @@ public enum WalkSessionClaudePromptV2 {
                 }
                 if let base = h.baselineSessionId {
                     out += headerLine("baselineSession", base)
+                }
+                // v1.11.25 audit log-A — v1.11.24 신규 진단 필드 dump.
+                if let req = h.requestedPreset, req != h.preset {
+                    out += headerLine("requestedPreset", "\(req) (≠ active \(h.preset) — preflight 차단 흔적)")
+                }
+                if let block = h.startBlockedReason {
+                    out += headerLine("startBlockedReason", block)
+                }
+                if h.walkCycleTaskActiveAtStart == true {
+                    out += headerLine("walkCycleTaskActiveAtStart", "true (audit §1 race window)")
+                }
+                if let mws = h.motorWriteStarted {
+                    out += headerLine("motorWriteStarted", String(describing: mws))
+                }
+                if let count = h.motorWriteStepCount {
+                    out += headerLine("motorWriteStepCount", "\(count)")
+                }
+                if let ack = h.onboardAckStatus {
+                    out += headerLine("onboardAckStatus", ack)
+                }
+                if let lastEvt = h.lastRobotEventAtStart {
+                    out += headerLine("lastRobotEventAtStart", lastEvt)
                 }
             } else {
                 out += "  (header 미수신 — V1 legacy session)\n"

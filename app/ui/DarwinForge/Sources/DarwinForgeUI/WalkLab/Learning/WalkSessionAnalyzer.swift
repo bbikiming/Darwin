@@ -24,6 +24,12 @@ public enum WalkSessionAnalyzer {
     public static let correlationNegativeThreshold: Double = -0.3  // 명백한 fall 가속.
     public static let minSampleCountForRecommendation: Int = 60   // 3초 @ 20Hz.
 
+    // **데이터 기반 자동 튜닝 (2026-05-30)**: 안정성 파라미터 권고 임계.
+    /// corrector pitch 오차 평균이 이 값 초과 + 동적 변동보다 크면 baseline 미추종 → tau 하향.
+    public static let correctorErrHighDeg: Double = 8.0
+    /// caution 이상 상태 비율이 이 값 초과면 불안정 corroboration (D항 상향 게이트).
+    public static let cautionElevatedRatio: Double = 0.10
+
     /// **v1.11.10 (2026-05-19)** — header 받아서 V2 metric 모두 산출.
     /// header 없으면 backward-compat path (V1).
     public static func analyze(_ samples: [WalkSessionSample],
@@ -31,7 +37,11 @@ public enum WalkSessionAnalyzer {
                                 startTime: Date,
                                 durationSec: Double,
                                 intensityLevelUsed: Int,
-                                header: WalkSessionHeader? = nil) -> WalkSessionSummary {
+                                header: WalkSessionHeader? = nil,
+                                // **데이터 기반 자동 튜닝 (2026-05-30)**: 권고 방향 산출 기준.
+                                // 기본값 = 현행 default (legacy caller 무영향).
+                                derivativeTimeSecUsed: Double = 0.12,
+                                baselineTauSecUsed: Double = 5.0) -> WalkSessionSummary {
         guard !samples.isEmpty else {
             return emptySummary(preset: preset,
                                 startTime: startTime,
@@ -82,15 +92,44 @@ public enum WalkSessionAnalyzer {
         let sagittal = SagittalMetric.compute(samples: samples, durationSec: durationSec)
         let candidateApplied = CandidateAppliedSplit.compute(samples: samples)
 
+        // **데이터 기반 자동 튜닝 (2026-05-30)**: 균형 안정성 파라미터(tau/D항) 권고.
+        // corrector pitch 오차(baseline 차감 후)·caution 비율은 별도 신호.
+        let meanAbsCorrectorPitchErr = samples.map { abs($0.correctorPitchErrDeg) }
+            .reduce(0, +) / Double(samples.count)
+        let cautionCount = samples.filter { $0.balanceState != "normal" }.count
+        let cautionRatio = Double(cautionCount) / Double(samples.count)
+        let dTermRec = recommendDerivativeTimeSec(
+            current: derivativeTimeSecUsed,
+            meanTilt: max(meanAbsRoll, meanAbsPitch),
+            oscillation: oscillationScore,
+            correlation: effectiveness,
+            cautionRatio: cautionRatio,
+            sampleCount: samples.count
+        )
+        let tauRec = recommendBaselineTauSec(
+            current: baselineTauSecUsed,
+            meanAbsCorrectorPitchErr: meanAbsCorrectorPitchErr,
+            pitchStdev: pitchStdev,
+            sampleCount: samples.count
+        )
+        let dChanged = abs(dTermRec.value - derivativeTimeSecUsed) > 1e-9
+        let tauChanged = abs(tauRec.value - baselineTauSecUsed) > 1e-9
+        var stabilityConfidence: Double = (dChanged || tauChanged)
+            ? max(dChanged ? dTermRec.confidence : 0, tauChanged ? tauRec.confidence : 0)
+            : min(dTermRec.confidence, tauRec.confidence)
+        let stabilityReason = "D항: \(dTermRec.reason) │ tau: \(tauRec.reason) │ caution \(Int((cautionRatio * 100).rounded()))%"
+
         // **v1.11.10**: quality.fail 이면 권고 confidence 강제 0 (재수집 안내).
         var finalReason = reason
         var finalConfidence = confidence
         if let q = quality, q.verdict == .fail {
             finalReason = "데이터 품질 fail — 재수집 권고. 이유: \(q.reasons.prefix(2).joined(separator: ", "))"
             finalConfidence = 0
+            stabilityConfidence = 0   // 안정성 권고도 fail 시 차단.
         } else if let q = quality, q.verdict == .weak {
             // weak 면 confidence cap.
             finalConfidence = min(confidence, 0.5)
+            stabilityConfidence = min(stabilityConfidence, 0.5)
         }
 
         return WalkSessionSummary(
@@ -113,8 +152,63 @@ public enum WalkSessionAnalyzer {
             confidence: finalConfidence,
             dataQuality: quality,
             sagittal: sagittal,
-            candidateApplied: candidateApplied
+            candidateApplied: candidateApplied,
+            derivativeTimeSecUsed: derivativeTimeSecUsed,
+            recommendedDerivativeTimeSec: dTermRec.value,
+            baselineTauSecUsed: baselineTauSecUsed,
+            recommendedBaselineTauSec: tauRec.value,
+            stabilityRecommendationReason: stabilityReason,
+            stabilityConfidence: stabilityConfidence,
+            cautionRatio: cautionRatio
         )
+    }
+
+    // MARK: - 데이터 기반 자동 튜닝 (2026-05-30) — 안정성 파라미터 권고 (pure)
+
+    /// 자이로 D항(lookahead) 권고. 단일 step 보수적 조정.
+    /// - 진동 높음 + tilt 낮음 → over-correction → 하향.
+    /// - tilt 높음 + 진동 낮음 + 회복 정상(correlation≥0) + caution 상승 → under-correction → 상향.
+    /// - correlation 음수(fall 가속) → 상향 금지 (보수적 유지).
+    static func recommendDerivativeTimeSec(
+        current: Double, meanTilt: Double, oscillation: Double,
+        correlation: Double, cautionRatio: Double, sampleCount: Int
+    ) -> (value: Double, reason: String, confidence: Double) {
+        let step = 0.03, minD = 0.0, maxD = 0.25
+        if sampleCount < minSampleCountForRecommendation {
+            return (current, "데이터 부족 — D항 유지", 0.0)
+        }
+        if oscillation > oscillationHighHz && meanTilt < tiltLowDeg && current > minD {
+            let v = max(minD, current - step)
+            return (v, String(format: "진동 %.1fHz·tilt %.1f° 안정 → D항 %.2f→%.2f 하향(선제 보정 과함)",
+                              oscillation, meanTilt, current, v), 0.70)
+        }
+        if meanTilt > tiltHighDeg && oscillation < oscillationHighHz
+            && correlation >= 0 && cautionRatio > cautionElevatedRatio && current < maxD {
+            let v = min(maxD, current + step)
+            return (v, String(format: "tilt %.1f°(높음)·진동 낮음·caution↑ → D항 %.2f→%.2f 상향(선제 보정 강화)",
+                              meanTilt, current, v), 0.65)
+        }
+        return (current, String(format: "안정(tilt %.1f°, 진동 %.1fHz) → D항 %.2f 유지",
+                                meanTilt, oscillation, current), 0.80)
+    }
+
+    /// baseline EMA tau 권고. corrector pitch 오차(baseline 차감 후) 평균이 동적 변동보다
+    /// 크게 높으면 → 만성 자세 미추종 → tau 하향(학습 가속). 그 외 유지.
+    static func recommendBaselineTauSec(
+        current: Double, meanAbsCorrectorPitchErr: Double, pitchStdev: Double, sampleCount: Int
+    ) -> (value: Double, reason: String, confidence: Double) {
+        let step = 1.0, minTau = 2.0
+        if sampleCount < minSampleCountForRecommendation {
+            return (current, "데이터 부족 — tau 유지", 0.0)
+        }
+        if meanAbsCorrectorPitchErr > correctorErrHighDeg
+            && meanAbsCorrectorPitchErr > pitchStdev * 1.5 && current > minTau {
+            let v = max(minTau, current - step)
+            return (v, String(format: "corrector pitch 오차 %.1f°>동적 %.1f° → baseline 미추종, tau %.1f→%.1fs 하향",
+                              meanAbsCorrectorPitchErr, pitchStdev, current, v), 0.60)
+        }
+        return (current, String(format: "baseline 추종 양호(오차 %.1f°) → tau %.1fs 유지",
+                                meanAbsCorrectorPitchErr, current), 0.75)
     }
 
     // MARK: - Helpers

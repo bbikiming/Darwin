@@ -27,6 +27,8 @@ public struct Robot3DViewport<TopLeading: View, BottomLeading: View>: View {
     public let showAxes: Bool
     @ObservedObject public var camera: CameraController
     public let onMeshFallback: ((Bool) -> Void)?
+    /// **W2**: 화면별 3D 환경 프리셋. 기본 `.studio`.
+    public let preset: ScenePreset
     public let topLeading: () -> TopLeading
     public let bottomLeading: () -> BottomLeading
 
@@ -37,6 +39,7 @@ public struct Robot3DViewport<TopLeading: View, BottomLeading: View>: View {
         showAxes: Bool = true,
         camera: CameraController,
         onMeshFallback: ((Bool) -> Void)? = nil,
+        preset: ScenePreset = .studio,
         @ViewBuilder topLeading: @escaping () -> TopLeading = { EmptyView() },
         @ViewBuilder bottomLeading: @escaping () -> BottomLeading = { EmptyView() }
     ) {
@@ -46,6 +49,7 @@ public struct Robot3DViewport<TopLeading: View, BottomLeading: View>: View {
         self.showAxes = showAxes
         self.camera = camera
         self.onMeshFallback = onMeshFallback
+        self.preset = preset
         self.topLeading = topLeading
         self.bottomLeading = bottomLeading
     }
@@ -59,7 +63,8 @@ public struct Robot3DViewport<TopLeading: View, BottomLeading: View>: View {
                 highlight: highlight,
                 showAxes: showAxes,
                 onMeshFallback: onMeshFallback,
-                cameraController: camera
+                cameraController: camera,
+                preset: preset
             )
             // v1.11.15 cycle 2 (2026-05-19): 3D 뷰포트는 항상 어두운 배경.
             // 회색 mesh 모델 시인성 + Apple Reality Composer / Xcode SceneKit Editor
@@ -98,11 +103,13 @@ public extension Robot3DViewport where TopLeading == EmptyView, BottomLeading ==
         highlight: JointID? = nil,
         showAxes: Bool = true,
         camera: CameraController,
-        onMeshFallback: ((Bool) -> Void)? = nil
+        onMeshFallback: ((Bool) -> Void)? = nil,
+        preset: ScenePreset = .studio
     ) {
         self.init(
             pose: pose, footTrace: footTrace, highlight: highlight,
             showAxes: showAxes, camera: camera, onMeshFallback: onMeshFallback,
+            preset: preset,
             topLeading: { EmptyView() },
             bottomLeading: { EmptyView() }
         )
@@ -117,11 +124,13 @@ public extension Robot3DViewport where BottomLeading == EmptyView {
         showAxes: Bool = true,
         camera: CameraController,
         onMeshFallback: ((Bool) -> Void)? = nil,
+        preset: ScenePreset = .studio,
         @ViewBuilder topLeading: @escaping () -> TopLeading
     ) {
         self.init(
             pose: pose, footTrace: footTrace, highlight: highlight,
             showAxes: showAxes, camera: camera, onMeshFallback: onMeshFallback,
+            preset: preset,
             topLeading: topLeading,
             bottomLeading: { EmptyView() }
         )

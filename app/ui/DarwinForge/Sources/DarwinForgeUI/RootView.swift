@@ -25,10 +25,32 @@ public struct RootView: View {
     // 종전 WalkLabView 내 @StateObject — WalkDataView 의 실험 승인 흐름이 같은
     // session 인스턴스 (현재 config) 를 읽고 변경하도록 RootView 로 hoist.
     // 라이프사이클: 앱 전체. 메뉴/탭 전환 시 보존.
-    @StateObject private var walkLabSession = WalkLabSession()
+    @State private var walkLabSession = WalkLabSession()
+    /// **v1.20.1 사이클 7-fix HIGH 1 (코덱스 검수)** — Pilot bridge production wiring.
+    /// `WalkLabSession.pilotBridge` 가 `nil` 이면 trial finalize 시 pilot summary 첨부가
+    /// no-op. RootView 의 onAppear 에서 bridge 인스턴스 생성 + 양방향 wiring.
+    /// telloLink 는 init 시 socket 안 열림 (start() 호출 시에만). nil = 아직 onAppear 안 됨.
+    @State private var pilotBridge: WalkLabRCBridge? = nil
+    /// **v1.20.35 사이클 18** — Tello state listener (UDP 8890) lifecycle owner.
+    /// bridge 와 listener 사이 wiring 담당. start() 시 listener bind → onState callback
+    /// 이 MainActor hop 후 bridge.updateTelloState 호출.
+    /// nil = bridge alloc 전 (onAppear 후 일괄 alloc).
+    @State private var telloStateOwner: TelloStateListenerOwner? = nil
+
+    /// **사이클 85 — PilotPreferences 영속 store**: UserDefaults (.standard) 기반.
+    /// app launch 시 bridge alloc 직후 load → sensitivity / smoothing 사용자 설정 적용.
+    /// 향후 settings UI panel 이 store.save() 호출해서 update.
+    @State private var pilotPreferencesStore: PilotPreferencesStore = UserDefaultsPilotPreferencesStore()
     // **v1.11.15 (2026-05-19)** — 테마 매니저. DarwinForgeApp 이 environmentObject 로 주입.
     @EnvironmentObject private var themeManager: DFThemeManager
     private let commander: ClaudeCommander
+    /// **V291-1** — Mobile Pilot Relay controller. RootView 가 소유하여 toolbar chip 과
+    /// floating panel (MobileRelayBootstrap) 이 같은 인스턴스를 공유한다.
+    /// placeholder port 로 init → onAppear 에서 live port 로 교체 (Bootstrap 의 .task 처리).
+    @StateObject private var mobileRelayController: MobileRelayController
+    /// **v1.20.1 사이클 7-fix HIGH 1** — Tello UDP 송신 채널.
+    /// `start()` 호출 전까지 socket 안 열림 → 사용자가 Tello 연결 시까지 idle.
+    private let telloLink: TelloLink
 
     @State private var section: Section = .studio
     @State private var expertTab: ExpertTab = .board
@@ -39,11 +61,35 @@ public struct RootView: View {
     @State private var wizardAutoShown: Bool = false
     @State private var dashboardOpen: Bool = false
     @State private var showRecoveryConfirm: Bool = false
+    /// **V291-1** — 첫 실행 onboarding popover 표시 여부.
+    /// `mobilePilot.firstRunSeen` UserDefaults key 가 false 일 때 앱 시작 3초 후 표시.
+    @State private var mobileRelayFirstRunPopover: Bool = false
 
     public init() {
         let d = IntentDispatcher()
         _dispatcher = StateObject(wrappedValue: d)
         self.commander = ClaudeCommander()
+        // **v1.20.1 사이클 7-fix HIGH 1** — Tello UDP 채널 생성 (no-op until start()).
+        // init 은 socket 미생성 → cost 없음. 사용자가 Tello 연결 시 start() 발화.
+        self.telloLink = TelloLink()
+        // **V291-1** — MobileRelayController 를 placeholder port 로 초기화.
+        // Bootstrap.task 에서 live port 로 swapPort() 호출.
+        let placeholder = ConnectionStoreSafetyPort(hooks: .init(
+            armAsync:          { false },
+            disarmSync:        { },
+            emergencyStopSync: { false },
+            sendMotion:        { _, _ in false },
+            sendWalk:          { _ in false },
+            sendStop:          { _ in true },
+            snapshot:          {
+                MobileRelayTelemetryFactory.make(
+                    macConnected: true, robotConnected: false, armed: false,
+                    dxlPower: false, busBusy: false, endpoint: nil,
+                    batteryV: nil, maxTempC: nil, latencyMs: 0,
+                    lastAckAgeMs: nil, estopActive: false)
+            }))
+        _mobileRelayController = StateObject(
+            wrappedValue: MobileRelayController(port: placeholder))
     }
 
     /// Status bar 높이 — sidebar 끝에 보정용 빈 공간을 둘 때 사용.
@@ -78,6 +124,17 @@ public struct RootView: View {
                         dashboardOverlay
                     }
                     recoveryToastOverlay
+                    safetyAlertBannerOverlay
+                    // **V294** — Mobile Relay bootstrap 는 toolbar chip popover 로 통합됨.
+                    // floating panel 완전 제거. MobileRelayBootstrap 의 hook wiring 은
+                    // 0×0 hidden view 로 유지 — ConnectionStore 포트 교체 (rebindHooks)
+                    // 가 .task modifier 안에서 실행되어야 live hooks 가 controller 에 주입됨.
+                    MobileRelayBootstrap(store: store,
+                                         controller: mobileRelayController,
+                                         walkSession: walkLabSession)
+                        .frame(width: 0, height: 0)
+                        .hidden()
+                        .allowsHitTesting(false)
                 }
             }
             // `.balanced` — 좁은 윈도우에서도 사이드바 자동 collapse 안 함.
@@ -106,20 +163,69 @@ public struct RootView: View {
             // 첫 onAppear (앱 시작 직후) 에서 wiring 하여 race window 최소화. 또한
             // idempotent (같은 controller 받으면 closure overwrite, 동작 동일).
             walkLabSession.setExperimentLoop(experimentLoop)
+            // **v1.20.1 사이클 7-fix HIGH 1** — Pilot bridge production wiring.
+            // 일회성: 이미 생성된 경우 skip (idempotent — onAppear 가 view re-mount 시 재발화 가능).
+            // 양방향: session→bridge (weak, finalize 시 snapshot) + bridge→session (weak, amplitude 적용).
+            if pilotBridge == nil {
+                let bridge = WalkLabRCBridge(tello: telloLink)
+                bridge.session = walkLabSession
+                walkLabSession.pilotBridge = bridge
+                pilotBridge = bridge
+                // **사이클 85 — PilotPreferences 영속 wire-up**: 저장된 사용자 sensitivity /
+                // smoothing 을 launch 시점에 bridge 에 적용. 첫 실행 시 default 값 (TelloRCMapper
+                // .Scale.default 와 일치) — backward compat.
+                let prefs = pilotPreferencesStore.load()
+                bridge.scale = TelloRCMapper.Scale(
+                    fb: prefs.scaleFB, lr: prefs.scaleLR, yaw: prefs.scaleYaw
+                )
+                bridge.smoothingFactor = prefs.smoothingFactor
+                // **사이클 86**: 청각 안전 피드백 wire-up — emergency 시 NSBeep.
+                bridge.audioFeedback = NSBeepFeedbackPlayer()
+            }
+            // **v1.20.35 사이클 18 + 사이클 73 (코덱스 HIGH-2 fix)** — Tello listener owner alloc.
+            // 종전: onAppear 에서 owner.start() 즉시 호출 → macOS 가 의도 없이 권한 다이얼로그
+            // 표시 (UX 나쁨) + silent fail 시 사용자 안내 부재.
+            // 신규: alloc 만, start() 는 TelloPilotHud 의 "Tello 활성화" 버튼이 호출 — VoicePilotPanel
+            // 의 마이크 권한 정책과 일관. owner.health() 가 banner 분기 정보 제공.
+            if telloStateOwner == nil, let bridge = pilotBridge {
+                telloStateOwner = TelloStateListenerOwner(bridge: bridge)
+            }
             // 첫 실행 자동 연결/자동 마법사는 제거됨 — 사용자가 직접
             // 우측 상단 "Auto Connect" 버튼 또는 마법사를 눌러서 연결.
+            // **V291-1** — Mobile Pilot 첫 실행 onboarding: 3초 후 chip popover 표시.
+            // `mobilePilot.firstRunSeen` 이 아직 기록되지 않은 경우에만 실행 (1회성).
+            if !UserDefaults.standard.bool(forKey: "mobilePilot.firstRunSeen") {
+                Task {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    mobileRelayFirstRunPopover = true
+                }
+            }
         }
         .onReceive(store.$bus) { bus in
             dispatcher.mode = bus != nil ? .hardware : .simulation
         }
         // P0-G: macOS Menu (DarwinForgeApp.commands) → RootView 액션 분배.
         .onReceive(NotificationCenter.default.publisher(for: .dfSwitchSection)) { note in
-            if let raw = note.object as? String, let s = Section(id: raw) {
+            // 방어선: 숨겨진 섹션(App Store 빌드의 .conversation/.remote 등)으로는
+            // 문자열 라우트가 도달해도 전환하지 않는다(sidebarVisible 만 허용).
+            if let raw = note.object as? String, let s = Section(id: raw),
+               Section.sidebarVisible.contains(s) {
                 section = s
             }
         }
+        // v1.12.0 telemetry — section 변경 추적 (메뉴/단축키/사이드바 모두 포착).
+        // **사이클 141 (Swift 6 deprecated fix)**: 1-param onChange → 2-param closure (macOS 14+).
+        // **Wave 3 Phase 3.3 (사이클 243)** — root level 이므로 LiveHarness.shared 직접 사용.
+        // (RootView 가 `\.harness` 의 root injector — 자신의 환경엔 parent default 만 존재.)
+        .onChange(of: section) { _, newValue in
+            LiveHarness.shared.record(
+                .uiSectionChanged, level: .info, actor: .user,
+                data: ["to": AnyCodable(newValue.rawValue)]
+            )
+        }
         .onReceive(NotificationCenter.default.publisher(for: .dfOpenPalette)) { _ in
             paletteOpen = true
+            LiveHarness.shared.record(.uiPaletteOpened, level: .info, actor: .user)
         }
         .onReceive(NotificationCenter.default.publisher(for: .dfAutoConnect)) { _ in
             store.autoConnect()
@@ -149,7 +255,21 @@ public struct RootView: View {
         .environmentObject(remoteShell)
         .environmentObject(claudeCritic)
         .environmentObject(experimentLoop)
-        .environmentObject(walkLabSession)
+        // **v1.14.9 (2026-05-21) Fix #7** — @Observable 은 .environment(_:) 로 주입.
+        .environment(walkLabSession)
+        // **Wave 3 Phase 3.2 (사이클 242)** — Harness DI 주입. RemoteShellView 등
+        // `@Environment(\.harness)` 사용 View 가 production LiveHarness 받음.
+        // 미주입 시 NoopHarness default → 디스크 telemetry 누락. 필수.
+        .environment(\.harness, LiveHarness.shared)
+        // **사이클 73 (2026-05-22) 코덱스 HIGH-2 fix** — TelloPilotHud 가 status banner /
+        // "활성화" 토글 / "다시 시도" 버튼 표시할 수 있도록 owner reference 전파.
+        // 옵셔널 — bridge alloc 전 (cold start race) 면 nil. SwiftUI 의 @Environment(...self)
+        // 가 Optional Observable 지원 (macOS 14+).
+        .environment(telloStateOwner)
+        // **사이클 86 — PilotSettingsPanel 영속 store 전파**: WalkLabView 의 pilotOverlay
+        // 가 자식 panel 에 store 를 환경으로 자동 propagate. UserDefaults backed
+        // (production) 인스턴스를 한 번 wiring.
+        .environment(\.pilotPreferencesStore, pilotPreferencesStore)
         // 글로벌 단축키 (메뉴와 같은 단축키 — 메뉴 enabled 일 때 메뉴가 우선 처리)
         .background(globalShortcuts)
     }
@@ -169,6 +289,8 @@ public struct RootView: View {
                 HStack(spacing: DFSpace.sm2) {
                     connectionToolbarPill   // 항상 표시 (핵심 상태).
                     if !size.isCompact {
+                        // 보행 ↔ 관절편집 원클릭 전환 (SSH 도달 시 활성, 미연결 시 비활성).
+                        ConnectionModeSwitcher()
                         // regular / wide — 보조 pill 모두 표시. 텍스트는 wide 에서만.
                         batteryToolbarPill
                         temperatureToolbarPill
@@ -177,6 +299,14 @@ public struct RootView: View {
                 }
                 .padding(.horizontal, DFSpace.sm)
             }
+        }
+        // **V291-1** — Mobile Pilot Relay 상태 chip. 모든 탭/섹션에서 항상 표시.
+        // .status 배치: macOS unified toolbar 의 trailing 영역 (status bar zone).
+        ToolbarItem(placement: .status) {
+            MobileRelayStatusChip(controller: mobileRelayController)
+                .popover(isPresented: $mobileRelayFirstRunPopover, arrowEdge: .bottom) {
+                    mobileRelayFirstRunPopoverContent
+                }
         }
         // 우측 액션 그룹 — 단일 ToolbarItem 으로 묶어 macOS 자동 배치(타이트) 회피.
         ToolbarItem(placement: .primaryAction) {
@@ -207,15 +337,60 @@ public struct RootView: View {
         .help("명령 팔레트 (⌘K)")
     }
 
+    // MARK: - Mobile Relay first-run onboarding popover
+
+    /// **V291-1** — 첫 실행 onboarding popover 내용.
+    /// `mobilePilot.firstRunSeen` = false 시 앱 시작 3초 뒤 자동 표시.
+    /// "다시 안 보기" → UserDefaults 기록 후 dismiss.
+    private var mobileRelayFirstRunPopoverContent: some View {
+        VStack(alignment: .leading, spacing: DFSpace.md) {
+            HStack(spacing: DFSpace.xs2) {
+                Image(systemName: "iphone.gen2.radiowaves.left.and.right")
+                    .font(.system(size: DFFontSize.s16, weight: .semibold))
+                    .foregroundStyle(DFColor.accent)
+                Text("모바일에서 로봇을 조종하세요")
+                    .font(.system(size: DFFontSize.s14, weight: .semibold))
+            }
+            Text("iPhone 에서 Darwin Pilot 앱을 열고\n여기를 켜면 바로 연결할 수 있어요.")
+                .font(.system(size: DFFontSize.s12))
+                .foregroundStyle(DFColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: DFSpace.sm) {
+                Button("지금 시작") {
+                    mobileRelayFirstRunPopover = false
+                    UserDefaults.standard.set(true, forKey: "mobilePilot.firstRunSeen")
+                    Task { await mobileRelayController.start() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(DFColor.accent)
+                Spacer()
+                Button("다시 안 보기") {
+                    mobileRelayFirstRunPopover = false
+                    UserDefaults.standard.set(true, forKey: "mobilePilot.firstRunSeen")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(DFColor.textSecondary)
+            }
+        }
+        .padding(DFSpace.md)
+        .frame(minWidth: 260, maxWidth: 320)
+    }
+
+    /// **사이클 137 (audit #8, codex MAJOR sweep)**: quickConnectHost/Port 는
+    /// `DFConnectionConstants` 로 이전. 호환성을 위한 typealiases.
+    public static var quickConnectHost: String { DFConnectionConstants.robotEthernetIP }
+    public static var quickConnectPort: UInt16 { DFConnectionConstants.bridgePort }
+
     /// CTA 액션 — Task로 감싸 메인 스레드 block 회피. connect()의 boardSnapshot 동기 호출이
     /// 메인 스레드에서 ~1초 block되면 UI freeze로 "동작 안 함"으로 인식됨.
     private func triggerQuickConnect() {
         Task { @MainActor in
             // 즉시 status .connecting 으로 전환 (사용자 피드백).
-            store.status = .connecting("192.168.123.1:5530")
+            store.status = .connecting("\(Self.quickConnectHost):\(Self.quickConnectPort)")
             // 짧은 yield 후 실제 connect — UI 가 .connecting 상태로 한 번 그려진 후 진행.
             try? await Task.sleep(nanoseconds: 50_000_000)
-            store.connect(endpoint: .network(host: "192.168.123.1", port: 5530))
+            store.connect(endpoint: .network(host: Self.quickConnectHost,
+                                              port: Self.quickConnectPort))
         }
     }
 
@@ -241,7 +416,7 @@ public struct RootView: View {
             .shadow(color: tint.opacity(DFOpacity.strong), radius: DFSpace.xs, y: DFSpace.micro)
         }
         .buttonStyle(.plain)
-        .help("이더넷 직결 192.168.123.1:5530 으로 즉시 연결")
+        .help("이더넷 직결 \(Self.quickConnectHost):\(Self.quickConnectPort) 으로 즉시 연결")
     }
 
     // MARK: - Quick connect CTA
@@ -502,7 +677,7 @@ public struct RootView: View {
             // 높은 윈도우에서는 자연스럽게 fill, 짧은 윈도우에서는 scroll.
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: DFSpace.none) {
-                    ForEach(Section.allCases, id: \.self) { s in
+                    ForEach(Section.sidebarVisible, id: \.self) { s in
                         sidebarRow(section: s)
                     }
 
@@ -516,7 +691,7 @@ public struct RootView: View {
                         .padding(.top, DFSpace.xs)
                         .padding(.bottom, 2)
 
-                    ForEach(ExpertTab.allCases) { tab in
+                    ForEach(ExpertTab.visibleCases) { tab in
                         expertTabRow(tab)
                     }
                 }
@@ -681,6 +856,52 @@ public struct RootView: View {
         }
     }
 
+    /// E-Stop 검증 실패 배너 (V291-12) — 상단 상시 노출. 사용자가 탭하면 dismiss.
+    ///
+    /// # 비유
+    ///
+    /// 자동차 경고등: 멈춤 버튼을 눌렀는데 차가 실제로 멈췄는지 확인이 안 되면
+    /// 대시보드에 붉은 경고등이 켜져 운전자가 즉시 인지.
+    @ViewBuilder
+    private var safetyAlertBannerOverlay: some View {
+        if let alert = store.lastSafetyAlert {
+            VStack {
+                HStack(spacing: DFSpace.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DFColor.danger)
+                    Text(alert)
+                        .font(DFFont.bodyEmph)
+                        .foregroundStyle(DFColor.textPrimary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button {
+                        store.publishSafetyAlert(nil)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(DFColor.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(DFColor.danger.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.md))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DFRadius.md)
+                        .stroke(DFColor.danger.opacity(0.45), lineWidth: 0.8)
+                )
+                .shadow(color: Color.black.opacity(DFOpacity.o15), radius: 8, y: 2)
+                .padding(.horizontal, DFSpace.md)
+                .padding(.top, 8)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: alert)
+        }
+    }
+
     /// 복구 결과 토스트 — 4 초 후 자동 dismiss. 상단 중앙.
     @ViewBuilder
     private var recoveryToastOverlay: some View {
@@ -735,7 +956,7 @@ public struct RootView: View {
         let host: String = {
             if let ep = store.activeEndpoint, case .network(let h, _) = ep { return h }
             if let ep = store.lastSuccessfulEndpoint, case .network(let h, _) = ep { return h }
-            return "192.168.123.1"
+            return DFConnectionConstants.robotEthernetIP
         }()
         return VStack(alignment: .leading, spacing: DFSpace.xs) {
             Text("원격 도구")
@@ -802,10 +1023,16 @@ public struct RootView: View {
             section = .expert
             expertTab = tab
         } label: {
-            HStack {
+            HStack(spacing: DFSpace.xs2) {
                 Image(systemName: tab.icon).frame(width: 22)
                 Text(tab.label)
                     .font(DFFont.body)
+                // V279-2 (P1 discoverability fix): harness 탭은 라벨이 "실시간 센서
+                // 데이터" 로 변경되었어도 사용자가 어떤 데이터를 보는지 모름. info
+                // icon 으로 hover 안내 (전체 ExpertTab 에 표시 — 일관성).
+                Image(systemName: "info.circle")
+                    .font(DFFont.micro)
+                    .foregroundStyle(DFColor.textSecondary.opacity(DFOpacity.subtle))
                 Spacer()
             }
             .padding(.vertical, 4)
@@ -822,6 +1049,8 @@ public struct RootView: View {
             .padding(.horizontal, DFSpace.sm)
         }
         .buttonStyle(.plain)
+        .help(tab.helpText)
+        .accessibilityHint(tab.helpText)
     }
 
     // MARK: - Detail
@@ -843,6 +1072,8 @@ public struct RootView: View {
             RemotePilotView()
         case .remote:
             RemoteShellView()
+        case .cockpit:
+            PilotCockpitView()
         case .expert:
             expertDetail
         }
@@ -857,6 +1088,18 @@ public struct RootView: View {
         case .walk:     WalkDiagnosticsView()
         case .walkData: WalkDataView()
         case .strategy: StrategyView()
+        case .harness:  HarnessInspectorView()
+        case .mic:      MicCheckView()
+        case .allyFpv:
+            // App Store 빌드(§4): allyFpv 는 cargo/SSH 의존 → visibleCases 에서 제외돼
+            // 도달 불가하지만 switch exhaustiveness 위해 ExpertDashboard 로 폴백.
+            #if APPSTORE
+            ExpertDashboard()
+            #else
+            AllyFpvLauncherView(remoteShell: remoteShell,
+                                macRobotHost: store.activeConnectionHost,
+                                store: store)
+            #endif
         }
     }
 
@@ -936,13 +1179,16 @@ public struct RootView: View {
                 for j in JointID.allCases { try? bus.setTorque(j, enable: true) }
             }
         case .sleep:
-            try? store.bus?.emergencyStop()
+            // V288-3: store.emergencyStop() chain 경유 (torque OFF + dxlPower=false + walk cancel).
+            store.emergencyStop()
         case .emergencyStop:
             store.emergencyStop()
         case .switchSection(let id):
-            if let s = Section(id: id) { section = s }
+            // 방어선: 숨겨진 섹션으로는 팔레트 디스패치도 전환 불가(sidebarVisible 만 허용).
+            if let s = Section(id: id), Section.sidebarVisible.contains(s) { section = s }
         case .switchExpertTab(let id):
-            if let t = ExpertTab(rawValue: id) {
+            // 방어선: 숨겨진 전문가 탭(App Store 빌드의 .allyFpv)으로는 라우트 불가.
+            if let t = ExpertTab(rawValue: id), ExpertTab.visibleCases.contains(t) {
                 section = .expert
                 expertTab = t
             }
@@ -983,12 +1229,19 @@ public struct RootView: View {
             Button("Section 4") { section = .walk }
                 .keyboardShortcut("4", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
+            // App Store 빌드(§4)에서는 Conversation(Claude CLI) 단축키도 제거 —
+            // 사이드바 숨김과 일관(⌘5 로도 진입 불가).
+            #if !APPSTORE
             Button("Section 5") { section = .conversation }
                 .keyboardShortcut("5", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
+            #endif
+            // App Store 빌드(§4): Remote(ssh/scp/ping) 단축키도 제거 — 사이드바 숨김과 일관.
+            #if !APPSTORE
             Button("Section 6") { section = .remote }
                 .keyboardShortcut("6", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
+            #endif
             Button("Section 7") { section = .expert }
                 .keyboardShortcut("7", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0)
@@ -1005,10 +1258,23 @@ public struct RootView: View {
 // MARK: - Sections
 
 private enum Section: String, CaseIterable, Hashable {
-    case studio, teach, motion, walk, conversation, remote, expert, pilot
+    case studio, teach, motion, walk, conversation, remote, expert, pilot, cockpit
 
     init?(id: String) {
         self.init(rawValue: id)
+    }
+
+    /// 사이드바에 노출할 섹션 — **App Store 빌드(§4)에서는 외부 CLI 의존 섹션을 숨긴다.**
+    /// - `.conversation`: `claude` CLI 의존
+    /// - `.remote`: ssh/scp/ping(원격 명령) 의존 — App Sandbox 에서 거부됨
+    /// 리뷰어 머신엔 해당 도구가 없거나 샌드박스에서 막혀 깨진 기능으로 보이므로
+    /// 아예 노출하지 않는다(가이드라인 2.1 완성도). 개발 빌드는 전체 노출.
+    static var sidebarVisible: [Section] {
+        #if APPSTORE
+        return allCases.filter { $0 != .conversation && $0 != .remote }
+        #else
+        return allCases
+        #endif
     }
 
     var label: String {
@@ -1021,6 +1287,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .pilot:         return "원격 조종"
         case .remote:        return "원격 명령"
         case .expert:        return "전문가"
+        case .cockpit:       return "조종 시뮬"
         }
     }
 
@@ -1034,6 +1301,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .pilot:         return "gamecontroller.fill"
         case .remote:        return "terminal.fill"
         case .expert:        return "wrench.and.screwdriver"
+        case .cockpit:       return "scope"
         }
     }
 
@@ -1047,6 +1315,7 @@ private enum Section: String, CaseIterable, Hashable {
         case .remote:        return "⌘6"
         case .expert:        return "⌘7"
         case .pilot:         return "⌘8"
+        case .cockpit:       return "⌘9"
         }
     }
 
@@ -1060,13 +1329,26 @@ private enum Section: String, CaseIterable, Hashable {
         case .pilot:         return DFColor.accent
         case .remote:        return DFColor.warning
         case .expert:        return DFColor.textSecondary
+        case .cockpit:       return DFColor.success
         }
     }
 }
 
 private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
-    case board, joints, motion, walk, walkData, strategy
+    case board, joints, motion, walk, walkData, strategy, harness, mic, allyFpv
     var id: String { rawValue }
+
+    /// 전문가 탭 노출 목록 — **App Store 빌드(§4)에서는 `.allyFpv`(ROG Ally FPV)를 숨긴다.**
+    /// allyFpv 는 `cargo test`/`cargo run -p ally-cli` 를 SSH 로 실행하므로 리뷰어
+    /// 머신/샌드박스에서 동작하지 않는다. `.walkData`(보행 데이터)는 유지 — 그 안의
+    /// Claude sub-tab 은 WalkDataView.DetailMode.visibleCases 로 별도 차단한다.
+    static var visibleCases: [ExpertTab] {
+        #if APPSTORE
+        return allCases.filter { $0 != .allyFpv }
+        #else
+        return allCases
+        #endif
+    }
 
     var label: String {
         switch self {
@@ -1076,6 +1358,27 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .walk:     return "보행 진단"
         case .walkData: return "보행 데이터"
         case .strategy: return "전략 FSM"
+        // V279-2 (P1 discoverability fix): "텔레메트리" 는 일반 사용자에게 모호.
+        // → "실시간 센서 데이터" 로 변경 (한국어 + 직관적 의미).
+        case .harness:  return "실시간 센서 데이터"
+        case .mic:      return "마이크 체크"
+        case .allyFpv: return "FPV 조종"
+        }
+    }
+
+    /// V279-2 (P1 discoverability fix): 탭별 hover help — "텔레메트리" 등 전문 용어
+    /// 에 대해 사용자가 무엇을 볼 수 있는지 1줄 안내.
+    var helpText: String {
+        switch self {
+        case .board:    return "보드 연결 상태 + 펌웨어 버전 + 통신 진단"
+        case .joints:   return "관절 별 토크 / 위치 / 속도 실시간 제어"
+        case .motion:   return "저장된 동작 페이지 라이브러리 — 재생 / 편집"
+        case .walk:     return "보행 진단 — gait 안정성 + 자이로 보정"
+        case .walkData: return "저장된 보행 trial 기록 + 분석 차트"
+        case .strategy: return "전략 FSM — 자율 보행 / 환경 인식 / 결정 트리"
+        case .harness:  return "로봇 관성(IMU) · 압력 · 온도 · 보행 cycle 등의 실시간 데이터를 차트로 볼 수 있어요."
+        case .mic:      return "다윈 마이크로 음성을 캡처해 맥으로 가져오고 인식되는지 확인하는 실험 도구"
+        case .allyFpv: return "ROG Ally 를 들고 로봇 1인칭 영상을 보며 패드로 조종하는 데모 — 연결부터 출격까지 안내하고, 스위치 조종석 연결은 고급 섹션에 흡수했어요."
         }
     }
     var icon: String {
@@ -1086,6 +1389,9 @@ private enum ExpertTab: String, CaseIterable, Identifiable, Hashable {
         case .walk:     return "waveform.path.ecg"
         case .walkData: return "chart.line.uptrend.xyaxis"
         case .strategy: return "brain.head.profile"
+        case .harness:  return "tray.and.arrow.down"
+        case .mic:      return "mic.fill"
+        case .allyFpv: return "video.fill"
         }
     }
 }
@@ -1111,6 +1417,12 @@ extension Notification.Name {
     public static let dfTransferPoseToStudio = Notification.Name("DarwinForge.TransferPoseToStudio")
     /// Studio → MotionStudio 로 자세 전달. object 는 RobotPose.
     public static let dfTransferPoseToMotion = Notification.Name("DarwinForge.TransferPoseToMotion")
+    /// 사이클 180 (P0 #3.2 fix, cycle 177 audit): Synth → MotionStudio 로 합성 결과 페이지
+    /// 전달. object 는 `[MotionPage]` (합성 결과 의 pages 배열).
+    /// 이전엔 SynthInspectorPanel 가 resultJSON 만 model 에 저장 → 사용자가 외부 CLI 로
+    /// 옮겨야만 활용 가능. 이제 한 클릭 으로 Motion Studio 에 합쳐짐.
+    public static let dfImportSynthPagesToMotionStudio =
+        Notification.Name("DarwinForge.ImportSynthPagesToMotionStudio")
 
     /// **2026-05-16**: WalkLab fall prevention 모니터링 dashboard 토글.
     /// 메뉴바 "보기 → Fall Prevention 모니터링" (⌘⇧M) → WalkLabView 가 listen.

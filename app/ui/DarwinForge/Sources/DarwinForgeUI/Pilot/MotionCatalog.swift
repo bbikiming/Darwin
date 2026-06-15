@@ -177,15 +177,17 @@ public enum MotionCatalog {
               mp3Sync: "No.mp3", bodyRegions: [.head],
               icon: "arrow.right.circle",
               v1TargetPoseID: "shake_target"),
+        // 사이클 143 (IMPLEMENTATION audit #7): [placeholder] 명시 — 현재 합성은 walkReady hold.
         .init(slot: 10, rawName: "f up",
-              displayName: "Get Up Front", displayNameKo: "앞 일어서기",
+              displayName: "[placeholder] Get Up Front", displayNameKo: "[placeholder] 앞 일어서기",
               safetyClass: .caution, durationMs: 3200,
               mp3Sync: nil,
               bodyRegions: [.rightArm, .leftArm, .rightLeg, .leftLeg],
               icon: "figure.stand",
               v1TargetPoseID: nil),     // v1.6 — multi-step chain 필요 (낙상 자세 → 무릎 → 직립)
+        // 사이클 143 (IMPLEMENTATION audit #7): [placeholder] 명시.
         .init(slot: 11, rawName: "b up",
-              displayName: "Get Up Back", displayNameKo: "뒤 일어서기",
+              displayName: "[placeholder] Get Up Back", displayNameKo: "[placeholder] 뒤 일어서기",
               safetyClass: .caution, durationMs: 4200,
               mp3Sync: nil,
               bodyRegions: [.rightArm, .leftArm, .rightLeg, .leftLeg],

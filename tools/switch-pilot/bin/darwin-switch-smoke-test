@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="${DARWIN_SWITCH_ROOT:-/opt/darwin-switch-agent}"
+CONFIG_PATH="${DARWIN_SWITCH_CONFIG:-/etc/darwin-switch-agent/config.json}"
+BASE_URL="${DARWIN_SWITCH_URL:-http://127.0.0.1:8765}"
+STRICT=0
+
+usage() {
+  cat <<'EOF'
+Usage: darwin-switch-smoke-test [--installed] [--root PATH] [--config PATH] [--base-url URL] [--strict]
+
+Run post-install smoke checks for Darwin Switch Agent. This is read-only and
+does not send robot motion commands.
+EOF
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --installed)
+      ROOT_DIR="/opt/darwin-switch-agent"
+      CONFIG_PATH="/etc/darwin-switch-agent/config.json"
+      shift
+      ;;
+    --root)
+      [[ "$#" -ge 2 ]] || { echo "ERROR: --root needs a path" >&2; exit 2; }
+      ROOT_DIR="$2"
+      shift 2
+      ;;
+    --config)
+      [[ "$#" -ge 2 ]] || { echo "ERROR: --config needs a path" >&2; exit 2; }
+      CONFIG_PATH="$2"
+      shift 2
+      ;;
+    --base-url)
+      [[ "$#" -ge 2 ]] || { echo "ERROR: --base-url needs a URL" >&2; exit 2; }
+      BASE_URL="${2%/}"
+      shift 2
+      ;;
+    --strict)
+      STRICT=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+bad=0
+warn=0
+
+ok() { echo "[OK] $*"; }
+mark_warn() { warn=1; echo "[WARN] $*"; }
+mark_bad() { bad=1; echo "[BAD] $*"; }
+
+PREFLIGHT=""
+if command -v darwin-switch-preflight >/dev/null 2>&1; then
+  PREFLIGHT="$(command -v darwin-switch-preflight)"
+elif [[ -x "${ROOT_DIR}/bin/darwin-switch-preflight" ]]; then
+  PREFLIGHT="${ROOT_DIR}/bin/darwin-switch-preflight"
+fi
+
+if [[ -n "${PREFLIGHT}" ]]; then
+  if output="$("${PREFLIGHT}" --root "${ROOT_DIR}" --config "${CONFIG_PATH}" --installed --json 2>&1)"; then
+    level="$(python3 - <<'PY' "${output}"
+from __future__ import annotations
+import json
+import sys
+try:
+    print(json.loads(sys.argv[1]).get("level", "warn"))
+except Exception:
+    print("bad")
+PY
+)"
+    case "${level}" in
+      good) ok "installed preflight: GOOD" ;;
+      warn) mark_warn "installed preflight: WARN" ;;
+      *) mark_bad "installed preflight: ${level}" ;;
+    esac
+  else
+    mark_bad "installed preflight failed: ${output}"
+  fi
+else
+  mark_bad "darwin-switch-preflight not found"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  if systemctl is-active --quiet darwin-switch-agent.service; then
+    ok "darwin-switch-agent.service active"
+  else
+    mark_bad "darwin-switch-agent.service not active"
+  fi
+else
+  mark_warn "systemctl not available"
+fi
+
+set +e
+python3 - <<'PY' "${BASE_URL}" "${STRICT}"
+from __future__ import annotations
+
+import json
+import sys
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
+
+base = sys.argv[1].rstrip("/")
+strict = sys.argv[2] == "1"
+bad = 0
+warn = 0
+
+def ok(message: str) -> None:
+    print(f"[OK] {message}")
+
+def mark_warn(message: str) -> None:
+    global warn
+    warn = 1
+    print(f"[WARN] {message}")
+
+def mark_bad(message: str) -> None:
+    global bad
+    bad = 1
+    print(f"[BAD] {message}")
+
+def fetch(path: str) -> tuple[int, bytes, str]:
+    url = f"{base}{path}"
+    try:
+        with urlopen(url, timeout=2.0) as fp:
+            return fp.status, fp.read(4096), fp.headers.get("Content-Type", "")
+    except HTTPError as exc:
+        return exc.code, exc.read(1024), exc.headers.get("Content-Type", "")
+    except (OSError, URLError) as exc:
+        mark_bad(f"{path}: {exc.__class__.__name__}")
+        return 0, b"", ""
+
+status, body, _ctype = fetch("/api/state")
+if status == 200:
+    try:
+        data = json.loads(body.decode("utf-8"))
+        mode = data.get("mode", "-")
+        target = data.get("target", "-")
+        ok(f"/api/state mode={mode} target={target}")
+    except Exception as exc:
+        mark_bad(f"/api/state invalid JSON ({exc.__class__.__name__})")
+else:
+    mark_bad(f"/api/state HTTP {status}")
+
+status, body, _ctype = fetch("/api/health")
+if status == 200:
+    try:
+        data = json.loads(body.decode("utf-8"))
+        level = data.get("level", "warn")
+        if level == "good":
+            ok("/api/health GOOD")
+        elif level == "warn":
+            mark_warn("/api/health WARN")
+        else:
+            mark_bad(f"/api/health {level}")
+    except Exception as exc:
+        mark_bad(f"/api/health invalid JSON ({exc.__class__.__name__})")
+else:
+    mark_bad(f"/api/health HTTP {status}")
+
+for path in ("/index.html", "/setup.html", "/model-check.html", "/manifest.webmanifest", "/sw.js"):
+    status, body, ctype = fetch(path)
+    if status == 200 and body:
+        ok(f"{path} HTTP 200 {ctype or 'unknown'}")
+    else:
+        mark_bad(f"{path} HTTP {status}")
+
+if bad:
+    print("RESULT: BAD")
+    raise SystemExit(2)
+if warn:
+    print("RESULT: WARN")
+    raise SystemExit(1 if strict else 0)
+print("RESULT: GOOD")
+PY
+http_status="$?"
+set -e
+case "${http_status}" in
+  0) ;;
+  1) warn=1 ;;
+  *) bad=1 ;;
+esac
+
+if [[ "${bad}" -eq 1 ]]; then
+  echo "RESULT: BAD"
+  exit 2
+fi
+if [[ "${warn}" -eq 1 ]]; then
+  echo "RESULT: WARN"
+  [[ "${STRICT}" -eq 1 ]] && exit 1
+  exit 0
+fi
+echo "RESULT: GOOD"

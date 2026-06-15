@@ -43,6 +43,9 @@ public struct PilotModePicker: View {
     /// nil = 미확인, true = 자동 SOCCER 진입 가능, false = 사용자가 후면 버튼 필요.
     let patchedDemoInstalled: Bool?
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init(mode: Binding<PilotMode>, flags: PilotFeatureFlags,
                 demoStatus: PilotDemoStatus = .idle,
                 patchedDemoInstalled: Bool? = nil) {
@@ -75,6 +78,11 @@ public struct PilotModePicker: View {
                 .accessibilityValue(mode == .manual ? "수동" : "공 추적")
                 .disabled(!flags.ballFollow && mode != .manual)
                 .onChange(of: mode) { _, newMode in
+                    harness.record(
+                        .pilotModeChanged, level: .info, actor: .user,
+                        data: ["mode": AnyCodable(newMode.rawValue),
+                               "ball_follow_enabled": AnyCodable(flags.ballFollow)]
+                    )
                     if newMode == .ballFollow && !flags.ballFollow {
                         mode = .manual
                     }

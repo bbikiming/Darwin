@@ -43,6 +43,7 @@ public struct ConversationView: View {
                     .buttonStyle(.plain)
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .help("새 대화 시작 (⌘⇧N)")
+                    .accessibilityLabel("새 대화 시작")
                 }
             }
         ) {

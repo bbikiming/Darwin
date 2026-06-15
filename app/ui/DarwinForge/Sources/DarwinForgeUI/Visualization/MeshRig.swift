@@ -12,7 +12,7 @@ import SceneKit
 /// 출처:
 /// - `vendor/robotis-op2-common/urdf/robotis_op2.structure.{leg,arm,head}.xacro`
 /// - `vendor/robotis-op2-common/meshes/*.stl` (Apache 2.0)
-final class MeshRig {
+final class MeshRig: RigSkeleton {
 
     let root: SCNNode
 
@@ -22,6 +22,21 @@ final class MeshRig {
     private var meshes: [JointID: SCNNode] = [:]
     private var allMeshNodes: [SCNNode] = []
     private var originalEmissions: [ObjectIdentifier: NSColor] = [:]
+    /// **W3**: 발 anchor(ank_roll) — 지지 다각형·FSR 접지 worldTransform 원천.
+    private var footNodes: [FootSide: SCNNode] = [:]
+
+    // MARK: emission 채널 (W3) — highlight 와 한계 경고가 같은 채널 공유.
+    /// 현재 highlight 된 선택 관절(highlight 채널).
+    private var highlightedJoint: JointID?
+    /// 관절별 한계 경고 상태(warn 채널) — .warn85/.warn95 만 보관.
+    private var warnStates: [JointID: EmissionState] = [:]
+
+    /// **사이클 125 (audit #19/#36, P1/P2)**: 개별 STL 로드 실패 카운트. 호출자 (Robot3DViewport)
+    /// 가 본 count 를 구독 → ≥1 이면 사용자에게 "일부 mesh 실패 (plain cube fallback)" overlay.
+    /// 종전 silent fallback (OSLog only) → caller flag 구독 안 하면 사용자 통지 0.
+    private(set) var stlLoadFailureCount: Int = 0
+    /// **사이클 125 (audit #36)**: 실패 mesh 이름 — debugging + UI 표시용.
+    private(set) var stlLoadFailureNames: [String] = []
 
     /// URDF axis (ROBOTIS world): 회전 부호와 축 방향.
     /// 방향이 음수면 양수 명령에 음 방향 회전.
@@ -57,15 +72,54 @@ final class MeshRig {
         }
     }
 
+    /// **W3**: 선택 관절 highlight. emission 채널을 직접 쓰지 않고 우선순위 합성을
+    /// 경유 — 한계 경고(warn85/warn95)가 켜진 관절은 highlight 가 덮어쓰지 않는다.
     func highlight(_ joint: JointID?) {
-        for n in allMeshNodes {
-            let key = ObjectIdentifier(n)
-            n.geometry?.firstMaterial?.emission.contents =
-                originalEmissions[key] ?? NSColor.black
+        let prev = highlightedJoint
+        highlightedJoint = joint
+        if let p = prev { refreshEmission(p) }
+        if let j = joint { refreshEmission(j) }
+    }
+
+    // MARK: - RigSkeleton (W3)
+
+    var rootNode: SCNNode { root }
+
+    func jointAnchor(_ joint: JointID) -> SCNNode? { joints[joint] }
+
+    func linkWorldPosition(_ joint: JointID) -> SCNVector3? {
+        joints[joint]?.worldPosition
+    }
+
+    func footNode(_ side: FootSide) -> SCNNode? { footNodes[side] }
+
+    func jointAxisDirection(_ joint: JointID) -> SCNVector3? { jointAxes[joint] }
+
+    /// 한계 경고(warn) 채널 갱신 — highlight 채널은 `highlight(_:)` 소유.
+    /// `.highlight` 입력은 무시(설계: highlight 는 별도 경로). `.none` 은 warn 해제.
+    func setEmissionState(_ joint: JointID, _ state: EmissionState) {
+        guard state != .highlight else { return }
+        if state == .none {
+            warnStates[joint] = nil
+        } else {
+            warnStates[joint] = state
         }
-        guard let j = joint, let mesh = meshes[j] else { return }
+        refreshEmission(joint)
+    }
+
+    /// 관절의 최종 emission 상태 = warn(95>85) > highlight > none.
+    private func resolvedEmission(_ joint: JointID) -> EmissionState {
+        if let w = warnStates[joint] { return w }
+        if joint == highlightedJoint { return .highlight }
+        return .none
+    }
+
+    /// 합성 결과를 실제 mesh emission 에 반영. 원래 색은 originalEmissions 캐시.
+    private func refreshEmission(_ joint: JointID) {
+        guard let mesh = meshes[joint] else { return }
+        let key = ObjectIdentifier(mesh)
         mesh.geometry?.firstMaterial?.emission.contents =
-            NSColor.systemOrange.withAlphaComponent(0.55)
+            resolvedEmission(joint).emissionColor ?? originalEmissions[key] ?? NSColor.black
     }
 
     // MARK: - Build
@@ -100,6 +154,8 @@ final class MeshRig {
                          meshRPY: SCNVector3(0, Float.pi, Float.pi / 2),
                          linkID: .headTilt,
                          applyDefaultZRotation: false)
+        // 눈·이마 카메라·정수리 LED 액센트는 제거 — 실기와 무관한 장식이라 STL 원형만
+        // 표시한다 (사용자 결정 2026-06-12).
 
         // ── 좌측 팔
         try buildArm(side: .left, body: body)
@@ -204,8 +260,14 @@ final class MeshRig {
         // l_ank_roll origin (0,0,0) — URDF
         ankPitchAnchor.addChildNode(ankRollAnchor)
         attachVisualMesh(named: "\(prefix)_foot", to: ankRollAnchor, linkID: nil)
+        // **W3**: 발 anchor 기록 — 지지 다각형·FSR 접지 오버레이의 worldTransform 원천.
+        footNodes[side == .left ? .left : .right] = ankRollAnchor
     }
 
+    // MARK: - Head details (W4)
+
+    /// **W4 (2026-06-12)**: 프리미티브 rig(`DarwinOP2Rig`)에만 있던 얼굴 디테일을
+    /// STL 머리에도 이식 — 보라 LED 눈 2개(디스크, emission 0.85) + 이마 카메라 +
     // MARK: - Helpers
 
     /// joint anchor 노드 생성 — 부모 frame에서의 origin + 초기 회전(rpy).
@@ -245,11 +307,9 @@ final class MeshRig {
                                    linkID: JointID? = nil,
                                    applyDefaultZRotation: Bool = true) {
         do {
-            let geom = try STLLoader.loadGeometry(
-                named: name,
-                scale: 0.001,
-                diffuse: Self.linkColor(for: linkID, name: name)
-            )
+            let geom = try STLLoader.loadGeometry(named: name, scale: 0.001)
+            // **W1**: PBR 머티리얼 주입(부위 카테고리별 metalness/roughness).
+            geom.firstMaterial = RigMaterials.material(forLinkNamed: name)
             let meshNode = SCNNode(geometry: geom)
             // visuals.xacro는 모든 mesh에 rpy(0, 0, -π/2)를 적용.
             // 일부 (head_tilt)는 별도 rpy를 가지므로 override.
@@ -270,21 +330,14 @@ final class MeshRig {
             // mesh 로드 실패 시 그냥 plain color cube placeholder.
             // v1.11.23: print → OSLog (subsystem "com.darwinforge" / category "visualization").
             // Codex HIGH fix: privacy=.public — name + error 명시 공개 (Console 에서 표시).
+            // **사이클 125 (audit #19/#36, P1/P2)**: stlLoadFailureCount 누적 — caller 가 구독
+            // 가능한 flag. plain cube fallback 도 명시 — 종전 silent fallback 위험.
+            stlLoadFailureCount += 1
+            if !stlLoadFailureNames.contains(name) {
+                stlLoadFailureNames.append(name)
+            }
             DFLog.visualization.warning("STL load failed for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    /// 부위별 색상 — 실제 OP2 사진을 참고한 회색 톤 + 디테일 강조.
-    private static func linkColor(for joint: JointID?, name: String) -> NSColor {
-        // 머리는 약간 darker, 본체는 light gray, foot은 dark.
-        if name.contains("head") { return NSColor(white: 0.32, alpha: 1.0) }
-        if name.contains("foot") { return NSColor(white: 0.18, alpha: 1.0) }
-        if name.contains("ankle") { return NSColor(white: 0.25, alpha: 1.0) }
-        if name.contains("body") { return NSColor(white: 0.78, alpha: 1.0) }
-        if name.contains("shoulder") || name.contains("hip") {
-            return NSColor(white: 0.52, alpha: 1.0)
-        }
-        // 기본: bodyShell 회색
-        return NSColor(white: 0.74, alpha: 1.0)
-    }
 }

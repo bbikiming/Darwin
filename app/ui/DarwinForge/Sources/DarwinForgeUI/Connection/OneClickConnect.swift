@@ -73,7 +73,12 @@ public final class OneClickConnect: ObservableObject {
     private var bonjour: BonjourBrowser?
     private var scanTask: Task<Void, Never>?
 
-    public init() {}
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    private let harness: any HarnessFacade
+
+    public init(harness: (any HarnessFacade)? = nil) {
+        self.harness = harness ?? LiveHarness.shared
+    }
 
     public func bind(store: ConnectionStore, bonjour: BonjourBrowser) {
         self.store = store
@@ -99,12 +104,23 @@ public final class OneClickConnect: ObservableObject {
         candidates = Self.initialCandidates()
         lastDiagnosticAt = Date()
 
+        harness.record(
+            .setupConnOneClickStarted, level: .info, actor: .user,
+            data: ["has_last_endpoint": AnyCodable(store?.lastSuccessfulEndpoint != nil),
+                   "candidate_count": AnyCodable(candidates.count)]
+        )
+
         scanTask = Task { [weak self] in
             // 1단계: 마지막 성공 endpoint 우선 시도.
             if let store = self?.store,
                let last = store.lastSuccessfulEndpoint {
                 await self?.tryConnect(label: "마지막 — \(last.detail)", endpoint: last)
                 if case .connected = await MainActor.run(body: { store.status }) {
+                    self?.harness.record(
+                        .setupConnOneClickResult, level: .info, actor: .system,
+                        data: ["success": AnyCodable(true),
+                               "winning_kind": AnyCodable("last_successful")]
+                    )
                     return
                 }
             }
@@ -119,6 +135,11 @@ public final class OneClickConnect: ObservableObject {
         phase = .scanning
         candidates = Self.initialCandidates()
         lastDiagnosticAt = Date()
+
+        harness.record(
+            .setupConnDiagnosticsStarted, level: .info, actor: .user,
+            data: ["candidate_count": AnyCodable(candidates.count)]
+        )
 
         scanTask = Task { [weak self] in
             await self?.probeAll(connectIfFound: false)
@@ -146,7 +167,23 @@ public final class OneClickConnect: ObservableObject {
                 })
                 if allFailed {
                     self.phase = .allFailed
+                    harness.record(
+                        .setupConnOneClickResult, level: .warn, actor: .system,
+                        data: ["success": AnyCodable(false)]
+                    )
                 }
+            }
+            if case .connected = self.phase {
+                let winnerKind = self.candidates
+                    .first(where: {
+                        if case .readyToConnect = $0.stage { return true }
+                        return false
+                    })?.kind.rawValue ?? "unknown"
+                harness.record(
+                    .setupConnOneClickResult, level: .info, actor: .system,
+                    data: ["success": AnyCodable(true),
+                           "winning_kind": AnyCodable(winnerKind)]
+                )
             }
         }
     }
@@ -198,11 +235,23 @@ public final class OneClickConnect: ObservableObject {
                     endpoint: .usbSerial(path: chosen),
                     detail: name
                 )
+                harness.record(
+                    .setupConnCandidateProbed, level: .trace, actor: .system,
+                    data: ["candidate_id": AnyCodable("usb"),
+                           "candidate_kind": AnyCodable("usb"),
+                           "stage": AnyCodable("ready")]
+                )
             } else {
                 self.updateCandidate(
                     id: "usb",
                     stage: .failed(reason: "USB serial 디바이스 없음. 케이블·전원·드라이버 확인."),
                     detail: "케이블 미연결 추정"
+                )
+                harness.record(
+                    .setupConnCandidateProbed, level: .trace, actor: .system,
+                    data: ["candidate_id": AnyCodable("usb"),
+                           "candidate_kind": AnyCodable("usb"),
+                           "stage": AnyCodable("failed")]
                 )
             }
         }
@@ -264,6 +313,18 @@ public final class OneClickConnect: ObservableObject {
                         "응답 없음")
             }
         }()
+
+        let stageLabel: String = {
+            if case .readyToConnect = stage { return "ready" }
+            return "failed"
+        }()
+        harness.record(
+            .setupConnCandidateProbed, level: .trace, actor: .system,
+            data: ["candidate_id": AnyCodable(id),
+                   "candidate_kind": AnyCodable("tcp"),
+                   "stage": AnyCodable(stageLabel),
+                   "host_hash": AnyCodable(Harness.shortHash(host))]
+        )
 
         await MainActor.run {
             self.updateCandidate(
@@ -380,7 +441,7 @@ public final class OneClickConnect: ObservableObject {
     private static func lanCandidates() -> [CandidateState] {
         var out: [CandidateState] = []
         let candidates = NetworkProbe.likelyRobotCandidates()
-        for (i, host) in candidates.enumerated() where host != "192.168.123.1" && i < 3 {
+        for (i, host) in candidates.enumerated() where host != DFConnectionConstants.robotEthernetIP && i < 3 {
             out.append(CandidateState(
                 id: "lan-\(i)", kind: .lan,
                 label: "같은 LAN — \(host)",
@@ -392,9 +453,9 @@ public final class OneClickConnect: ObservableObject {
     }
 
     private static func tcpProbeTargets() -> [(id: String, host: String)] {
-        var targets: [(String, String)] = [("tcp-op2", "192.168.123.1")]
+        var targets: [(String, String)] = [("tcp-op2", DFConnectionConstants.robotEthernetIP)]
         let candidates = NetworkProbe.likelyRobotCandidates()
-        for (i, host) in candidates.enumerated() where host != "192.168.123.1" && i < 3 {
+        for (i, host) in candidates.enumerated() where host != DFConnectionConstants.robotEthernetIP && i < 3 {
             targets.append(("lan-\(i)", host))
         }
         return targets
@@ -435,6 +496,10 @@ public final class OneClickConnect: ObservableObject {
     public func manualProbe(host: String) {
         let trimmed = host.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
+        harness.record(
+            .setupConnManualProbe, level: .info, actor: .user,
+            data: ["host_hash": AnyCodable(Harness.shortHash(trimmed))]
+        )
         isManualProbing = true
         Task { [weak self] in
             async let p = NetworkProbe.pingProbe(host: trimmed, timeout: 1.5)

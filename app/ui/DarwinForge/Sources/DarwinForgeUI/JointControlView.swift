@@ -6,6 +6,9 @@ public struct JointControlView: View {
     @EnvironmentObject var store: ConnectionStore
     @State private var selected: JointID = .headPan
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     public init() {}
 
     public var body: some View {
@@ -55,6 +58,9 @@ struct JointDetailView: View {
     @State private var isAdjusting: Bool = false
     @State private var lastError: String?
 
+    // MARK: - Harness DI (Wave 3 Phase 3.3, 사이클 243)
+    @Environment(\.harness) private var harness
+
     /// 보수적 한계: 1024..3072. forge-core JointLimits::default()와 동일.
     private let positionRange: ClosedRange<Double> = 1024...3072
 
@@ -81,17 +87,27 @@ struct JointDetailView: View {
 
             HStack(spacing: DFSpace.sm3) {
                 Button("Torque ON") {
-                    runJointAction { try store.bus?.setTorque(joint, enable: true) }
+                    runJointAction("torque_on") { try store.bus?.setTorque(joint, enable: true) }
                 }
                 Button("Torque OFF") {
-                    runJointAction { try store.bus?.setTorque(joint, enable: false) }
+                    runJointAction("torque_off") { try store.bus?.setTorque(joint, enable: false) }
                 }
                 Button("Refresh") {
+                    // 사이클 203 (cycle 199 critic missing #2): refresh 버튼 telemetry.
+                    // jointActionRequested 패턴 일관 — action="refresh".
+                    harness.record(
+                        .jointActionRequested, level: .info, actor: .user,
+                        data: ["action": AnyCodable("refresh"),
+                               "joint_id": AnyCodable(joint.rawValue),
+                               "joint_name": AnyCodable(joint.name)]
+                    )
                     store.refreshJointState(joint)
                 }
                 Spacer()
                 Button {
-                    runJointAction { try store.bus?.emergencyStop() }
+                    // V282-2 CRITICAL-2 fix: bus?.emergencyStop() 직접 호출 → store.emergencyStop() chain
+                    // (bus torque OFF + WalkLabSession + telemetry 전체 chain 보장)
+                    runJointAction("e_stop") { store.emergencyStop() }
                 } label: {
                     Label("E-Stop ALL", systemImage: "exclamationmark.octagon.fill")
                 }
@@ -168,22 +184,44 @@ struct JointDetailView: View {
     }
 
     private func commitPosition() {
-        runJointAction {
+        runJointAction("set_position") {
             _ = try store.bus?.setPosition(joint, raw: UInt16(goalPosition))
             store.refreshJointState(joint)
         }
     }
 
-    private func runJointAction(_ action: () throws -> Void) {
+    private func runJointAction(_ actionName: String, _ action: () throws -> Void) {
         guard store.bus != nil else {
             lastError = "Not connected"
             return
         }
+        harness.record(
+            .jointActionRequested, level: .info, actor: .user,
+            data: [
+                "action": AnyCodable(actionName),
+                "joint_id": AnyCodable(joint.rawValue),
+                "joint_name": AnyCodable(joint.name)
+            ]
+        )
         do {
             try action()
             lastError = nil
         } catch {
+            // UI 표시 — 로컬라이즈 된 메시지 (사용자 노출 OK).
             lastError = error.localizedDescription
+            // 사이클 202 (codex critic MAJOR-1 cycle 199 fix): telemetry payload 에
+            // raw `error.localizedDescription` 전송 X — 파일 경로 / 호스트명 / IP /
+            // username 등 PII 노출 위험. cycle 182 shellErrorCase / cycle 187
+            // DispatcherError.telemetryCase 패턴 일관 — type 만 + hash.
+            harness.record(
+                .jointActionFailed, level: .error, actor: .user,
+                data: [
+                    "action": AnyCodable(actionName),
+                    "joint_id": AnyCodable(joint.rawValue),
+                    "error_type": AnyCodable(String(describing: type(of: error))),
+                    "error_hash": AnyCodable(Harness.shortHash(error.localizedDescription))
+                ]
+            )
         }
     }
 }

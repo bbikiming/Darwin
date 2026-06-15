@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALLED_ROOT="${DARWIN_SWITCH_ROOT:-/opt/darwin-switch-agent}"
+if [[ -d "${SCRIPT_ROOT}/src/darwin_switch_agent" ]]; then
+  ROOT_DIR="${SCRIPT_ROOT}"
+elif [[ -d "${INSTALLED_ROOT}/src/darwin_switch_agent" ]]; then
+  ROOT_DIR="${INSTALLED_ROOT}"
+else
+ROOT_DIR="${SCRIPT_ROOT}"
+fi
+DRY_RUN=0
+IF_NEEDED=0
+LOG_ROOT="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/darwin-switch-cockpit/logs"
+LOG="${DARWIN_SWITCH_BOOTSTRAP_LOG:-${LOG_ROOT}/bootstrap.log}"
+CURRENT_STEP="startup"
+
+usage() {
+  cat <<'EOF'
+Usage: darwin-switch-bootstrap-os [--if-needed] [--dry-run]
+
+Prepare a fresh Switchroot L4T Ubuntu boot for Darwin Switch Agent install.
+It installs small runtime packages when missing, enables SSH/joycond when
+present, and leaves robot-control configuration untouched.
+EOF
+}
+
+for arg in "$@"; do
+  case "${arg}" in
+    --if-needed) IF_NEEDED=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "ERROR: unknown argument: ${arg}" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+mkdir -p "${LOG_ROOT}"
+if [[ -f "${LOG}" && "$(wc -c < "${LOG}" | tr -d ' ')" =~ ^[0-9]+$ ]] \
+  && [[ "$(wc -c < "${LOG}" | tr -d ' ')" -gt 1048576 ]]; then
+  mv "${LOG}" "${LOG}.1" 2>/dev/null || true
+fi
+exec > >(tee -a "${LOG}") 2>&1
+
+log() {
+  printf '%s %s\n' "$(date -Iseconds 2>/dev/null || date)" "$*"
+}
+
+on_error() {
+  local code="$1"
+  local line="$2"
+  echo "" >&2
+  echo "ERROR: OS bootstrap failed during '${CURRENT_STEP}' at line ${line} (exit ${code})." >&2
+  echo "Log: ${LOG}" >&2
+  echo "If this failed during apt update/install, confirm Switchroot Wi-Fi, DNS, date/time, and package repositories, then rerun:" >&2
+  echo "  ./bin/darwin-switch-bootstrap-os --if-needed" >&2
+}
+
+trap 'code=$?; on_error "$code" "$LINENO"; exit "$code"' ERR
+
+log "Darwin Switch OS bootstrap starting"
+log "bundle=${ROOT_DIR}"
+log "dry_run=${DRY_RUN}"
+log "if_needed=${IF_NEEDED}"
+log "log=${LOG}"
+
+sudo_cmd=()
+if [[ "${EUID}" -ne 0 ]]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "ERROR: sudo not found. Switchroot admin account is required." >&2
+    exit 2
+  fi
+  sudo_cmd=(sudo)
+fi
+
+run() {
+  echo "+ $*"
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    "$@"
+  fi
+}
+
+run_sudo() {
+  echo "+ ${sudo_cmd[*]} $*"
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    "${sudo_cmd[@]}" "$@"
+  fi
+}
+
+has_browser() {
+  command -v firefox >/dev/null 2>&1 \
+    || command -v firefox-esr >/dev/null 2>&1 \
+    || command -v chromium-browser >/dev/null 2>&1 \
+    || command -v chromium >/dev/null 2>&1 \
+    || command -v google-chrome >/dev/null 2>&1
+}
+
+apt_candidate() {
+  local pkg="$1"
+  local candidate=""
+  command -v apt-cache >/dev/null 2>&1 || return 1
+  candidate="$(apt-cache policy "${pkg}" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+  [[ -n "${candidate}" && "${candidate}" != "(none)" ]]
+}
+
+install_packages() {
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+  run_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
+}
+
+missing_packages=()
+command -v python3 >/dev/null 2>&1 || missing_packages+=(python3)
+command -v ssh >/dev/null 2>&1 || missing_packages+=(openssh-client)
+command -v sshd >/dev/null 2>&1 || missing_packages+=(openssh-server)
+command -v autossh >/dev/null 2>&1 || missing_packages+=(autossh)
+command -v xdg-open >/dev/null 2>&1 || missing_packages+=(xdg-utils)
+command -v curl >/dev/null 2>&1 || missing_packages+=(curl)
+if ! python3 - <<'PY' >/dev/null 2>&1
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+PY
+then
+  missing_packages+=(python3-gi gir1.2-gtk-3.0)
+fi
+
+needs_browser=0
+has_browser || needs_browser=1
+if [[ "${#missing_packages[@]}" -gt 0 ]]; then
+  log "missing_packages=${missing_packages[*]}"
+else
+  log "missing_packages=none"
+fi
+log "browser_present=$((needs_browser == 0 ? 1 : 0))"
+
+if [[ "${IF_NEEDED}" -eq 1 && "${#missing_packages[@]}" -eq 0 && "${needs_browser}" -eq 0 ]]; then
+  echo "OS bootstrap: required runtime commands already present."
+else
+  if ! command -v apt-get >/dev/null 2>&1; then
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+      echo "DRY-RUN: apt-get not found here; Switchroot Ubuntu must provide apt-get for real bootstrap."
+    else
+      echo "ERROR: apt-get not found. Run this on Switchroot Ubuntu." >&2
+      exit 2
+    fi
+  fi
+
+  echo "== Darwin Switch OS bootstrap =="
+  echo "Bundle: ${ROOT_DIR}"
+  echo ""
+
+  CURRENT_STEP="apt-get update"
+  run_sudo apt-get update
+
+  if [[ "${#missing_packages[@]}" -gt 0 ]]; then
+    CURRENT_STEP="apt-get install runtime packages"
+    install_packages "${missing_packages[@]}"
+  fi
+
+  if [[ "${needs_browser}" -eq 1 ]]; then
+    browser_installed=0
+    for pkg in firefox firefox-esr chromium-browser chromium; do
+      CURRENT_STEP="apt-cache browser candidate ${pkg}"
+      if apt_candidate "${pkg}"; then
+        CURRENT_STEP="apt-get install browser ${pkg}"
+        if install_packages "${pkg}"; then
+          browser_installed=1
+          log "browser_installed=${pkg}"
+          break
+        fi
+      fi
+    done
+    if [[ "${browser_installed}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
+      echo "ERROR: no installable kiosk browser package found." >&2
+      echo "       Install Firefox or Chromium from the Switchroot image tooling, then rerun." >&2
+      exit 2
+    fi
+  fi
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  ssh_unit=""
+  if systemctl list-unit-files 2>/dev/null | grep -q '^ssh\.service'; then
+    ssh_unit="ssh"
+  elif systemctl list-unit-files 2>/dev/null | grep -q '^sshd\.service'; then
+    ssh_unit="sshd"
+  fi
+  if [[ -n "${ssh_unit}" ]]; then
+    CURRENT_STEP="enable ${ssh_unit}"
+    run_sudo systemctl enable --now "${ssh_unit}"
+  else
+    echo "WARN: ssh.service not found. Install openssh-server to allow Mac SSH control."
+  fi
+
+  if systemctl list-unit-files 2>/dev/null | grep -q '^joycond\.service'; then
+    CURRENT_STEP="enable joycond"
+    run_sudo systemctl enable --now joycond
+  else
+    echo "WARN: joycond.service not found. Pair Joy-Cons in Horizon, dump BT data in Hekate Nyx, then install/enable joycond if needed."
+  fi
+else
+  echo "WARN: systemctl not found; cannot enable joycond."
+fi
+
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] \
+  && getent group input >/dev/null 2>&1; then
+  if id -nG "${SUDO_USER}" 2>/dev/null | tr ' ' '\n' | grep -qx input; then
+    echo "User ${SUDO_USER} already in group input."
+  else
+    CURRENT_STEP="add ${SUDO_USER} to input group"
+    run_sudo usermod -aG input "${SUDO_USER}"
+    echo "Input group membership needs logout/login or reboot to apply."
+  fi
+fi
+
+if [[ -x "${ROOT_DIR}/bin/darwin-switch-preflight" ]]; then
+  CURRENT_STEP="post-bootstrap preflight"
+  "${ROOT_DIR}/bin/darwin-switch-preflight" \
+    --root "${ROOT_DIR}" \
+    --config "${ROOT_DIR}/config.example.json" || true
+fi
+
+echo "OS bootstrap done."

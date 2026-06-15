@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ===== V297-10 — Developer ID notarized 배포용 entitlements =====
+         Mac App Store 외 직접 배포 (Sparkle 자동 업데이트 가능, USB/외부 하드웨어
+         자유로움). sandbox 활성 가능 (notarization 통과 가능) 하지만 USB
+         entitlement 가 더 관대.
+
+         포함 항목은 App Store 와 동일 — 단 hardened runtime 강도가 동일 강제.
+         차이점: 배포 시 codesign 에 "Developer ID Application" 사용 + xcrun notarytool
+         submit 단계. ExportOptions.plist 의 method = "developer-id".
+         -->
+
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <key>com.apple.security.device.usb</key>
+    <true/>
+
+    <!-- USB-Serial 디바이스 노드 (/dev/cu.usbserial-*) — POSIX serial open 에 별도 필요. -->
+    <key>com.apple.security.device.serial</key>
+    <true/>
+
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- ===== Hardened Runtime =====
+         notarization 의 hardened runtime 은 codesign 의 runtime option (`options=runtime`) 으로
+         활성화된다. 예외 entitlement (cs.allow-jit 등) 는 부재 = 모든 예외 차단
+         (most secure). App Store 와 동일하게 명시 false 키는 제거 — Apple 자동
+         검사가 false 값을 거부하며 (QA1773), 부재가 가장 안전한 표현이다.
+         2026-06-11 App Store 반려 정정과 동일 정책 적용 (일관성). -->
+</dict>
+</plist>
