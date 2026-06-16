@@ -1,4 +1,4 @@
-<#
+﻿<#
 DARwIn FPV — Ally 온디바이스 브링업 (빌드 → 검증 → 실행)
 
 로봇 + Ally 가 연결됐을 때 한 줄로: git pull → cargo build → 헤드리스 검증 → 콕핏 실행.

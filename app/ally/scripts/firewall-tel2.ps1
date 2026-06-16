@@ -1,4 +1,4 @@
-# DARwIn FPV — TEL2 인바운드 UDP 방화벽 규칙 (W1 유선 게이트 선행)
+﻿# DARwIn FPV — TEL2 인바운드 UDP 방화벽 규칙 (W1 유선 게이트 선행)
 #
 # 왜 필요한가:
 #   전송(ally-link UdpControlTransport)은 임시(ephemeral) 포트로 bind 하고 그 포트를
