@@ -38,6 +38,11 @@ use crate::state::{ConnPath, ConnTransport, StateHub};
 use crate::supervisor::{Heartbeat, PadWatch};
 use crate::tx::TxPipeline;
 
+/// SshFile 폴백 중 UDP 재프로브 주기(틱 수). 20Hz 틱 기준 20틱 = ~1Hz.
+/// SshFile 을 일방통행 트랩으로 두지 않기 위한 self-heal 주기 — 자세한 근거는
+/// control-tx 루프의 `Transport::SshFile` 분기 주석 참조.
+const UDP_REPROBE_TICKS: u64 = 20;
+
 /// 로봇 종단점.
 pub enum Endpoint {
     /// 실로봇: 호스트 + SSH identity + 표시 경로. §7 핸드셰이크/uplink/철회를 수행.
@@ -293,6 +298,26 @@ impl Runtime {
                             // 비차단 위임 — 워커가 최신승으로 5Hz 기록(블로킹은 워커에서).
                             if let (Some(j), true) = (&ssh_jobs, seq.is_multiple_of(4)) {
                                 let _ = j.send(SshJob::Cmd(out.line.clone()));
+                            }
+                            // UDP 재프로브(~1Hz) — SshFile 을 일방통행 트랩으로 두지 않는다.
+                            // 폴백 중에도 주기적으로 UDP cmd 한 발을 보내, 경로가 (다시)
+                            // 건강해지면 ACK 가 도착해 last_ack 가 갱신되고 다음 틱
+                            // decide_transport 가 UDP 로 승격된다(self-heal). 실기(2026-06-16):
+                            // robot→Ally UDP 는 정상인데(별도 PowerShell DFCMD 로 ACK 수신 확인)
+                            // 콕핏이 초기 프로브 1회 실패(재연결 시 로봇 채널 재읽기 1s vs
+                            // ACK_PROBE_MS 1.5s 토큰 채택 레이스) 후 UDP 무송신으로 영구
+                            // SshFile 고착 → connected:false·텔레메트리 무수신이던 결함. 재프로브로
+                            // 경로 회복 시 ~1s 내 자동 승격. send_at 기록은 UDP 분기와 동일.
+                            if seq.is_multiple_of(UDP_REPROBE_TICKS)
+                                && udp.send_cmd(seq, &out.line).is_ok()
+                            {
+                                if let Ok(mut m) = sent_at.lock() {
+                                    m.insert(seq as i64, t);
+                                    if m.len() > 256 {
+                                        let cut = seq as i64 - 256;
+                                        m.retain(|&k, _| k >= cut);
+                                    }
+                                }
                             }
                         }
                     }
