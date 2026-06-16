@@ -158,14 +158,19 @@ fn reader_loop(
                         active = None;
                     }
                 }
-                EventType::ButtonPressed(btn, _) => {
-                    // 활성 패드만 — 다른 패드의 입력은 무시(콕핏 단일 조종자).
-                    if active.is_none() {
+                // 사용자가 실제로 만지는 패드를 active 로 따라간다. Ally 처럼 게임 컨트롤러가
+                // 여러 개(더미 "HID-compliant game controller" + 실제 "Xbox 360 Controller")
+                // 열거되면, 첫 enumerate 가 더미라 축이 0 으로 고정되던 결함 수정(2026-06-16
+                // 실기: 스틱 휘저어도 controller 축 0.00). 의미있는 축 변화(>0.5)가 오는 패드로
+                // 즉시 전환 — 더미는 입력을 안 내므로 실제 패드가 자동 채택된다.
+                EventType::AxisChanged(_, value, _) => {
+                    if value.abs() > 0.5 {
                         active = Some(ev.id);
                     }
-                    if active != Some(ev.id) {
-                        continue;
-                    }
+                }
+                EventType::ButtonPressed(btn, _) => {
+                    // 입력이 발생한 패드를 active 로 채택(단일 조종자 = 마지막 입력 패드).
+                    active = Some(ev.id);
                     match btn {
                         // B(East) — E-STOP 즉시 무손실 발화(INV-1: 스로틀·디바운스 금지).
                         Button::East => {
