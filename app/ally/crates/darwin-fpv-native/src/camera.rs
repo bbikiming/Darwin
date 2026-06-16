@@ -9,8 +9,10 @@ use std::time::Duration;
 
 use crate::app_state::{epoch_ms, AppState};
 
-/// 로봇 읽기 최소 간격(ms) — 그 안엔 캐시 반환.
-const RATE_MS: i64 = 200;
+/// 로봇 읽기 최소 간격(ms) — 그 안엔 캐시 반환. ~8fps (클라 CAMERA_SNAPSHOT_REFRESH_MS 와 정합).
+/// 이 로봇 mjpg-streamer 의 ?action=stream 은 프레임을 굶겨(실측 0fps) 콕핏은 snapshot 폴링을
+/// 쓴다 — 그 폴링을 5→8fps 로 올려 체감 실시간성 개선(2026-06-16 실기).
+const RATE_MS: i64 = 120;
 /// 로봇 도달 실패 시 마지막 프레임을 유지하는 한도(ms).
 const STALE_MS: i64 = 3000;
 

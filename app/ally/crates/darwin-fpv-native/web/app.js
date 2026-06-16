@@ -1,5 +1,5 @@
 const CAMERA_RELOAD_MS = 240000; // ~4 min: recycle the MJPEG decoder (GPU/mem leak)
-const CAMERA_SNAPSHOT_REFRESH_MS = 180; // local frame proxy refresh; robot reads are rate-limited server-side
+const CAMERA_SNAPSHOT_REFRESH_MS = 120; // 프록시 폴링 ~8fps (서버 RATE_MS 와 정합). 로봇 reads 는 서버서 캐시·레이트리밋
 const CAMERA_FRAME_TIMEOUT_MS = 900;
 const CAMERA_RETRY_BASE_MS = 3000; // first auto-retry delay after an error
 const CAMERA_RETRY_MAX_MS = 30000; // backoff cap
@@ -861,11 +861,12 @@ function renderCamera(camera, controlMode, runtime = {}) {
   const enabled = Boolean(camera.enabled);
   const streamUrl = String(camera.stream_url || "");
   const snapshotUrl = String(camera.snapshot_url || "");
-  // **2026-06-16 수정** — 실시간 우선: MJPEG 스트림(?action=stream, 멀티파트 연속)을 직접 쓴다.
-  // 종전엔 snapshot_url 존재 시 무조건 /api/camera-frame.jpg(단일 JPEG ~5fps 폴링)로 폴백해
-  // "영상이 실시간이 아님". loadCameraStream 이 MJPEG 를 처리하므로 stream_url 을 우선하고,
-  // stream_url 이 없을 때만 스냅샷 프록시로 폴백한다. (Ally→로봇:8080 직결, 동일 HTTP 오리진 무관.)
-  const displayUrl = streamUrl ? streamUrl : (snapshotUrl ? CAMERA_FRAME_PROXY_URL : "");
+  // **2026-06-16 재수정(실기)** — 스냅샷 프록시 우선. 이 로봇의 mjpg-streamer ?action=stream
+  // 은 연결만 200 되고 프레임을 0 으로 굶긴다(실측: 3초 0바이트, 스냅샷은 매번 새 JPEG 정상).
+  // 직전 "스트림 우선" 수정은 오히려 멈춤을 유발 → snapshot 프록시(/api/camera-frame.jpg,
+  // 서버가 로봇 ?action=snapshot 을 폴링·캐시)로 되돌린다. 갱신 페이스는 renderCameraLive 가
+  // 프록시 URL 도 빠른 폴링으로 분류하도록 함께 수정(아래). stream_url 은 프록시 불가 시 폴백.
+  const displayUrl = snapshotUrl ? CAMERA_FRAME_PROXY_URL : streamUrl;
   const label = String(camera.label || "Robot Camera");
   const route = String(camera.route || "ssh-tunnel");
   const image = $("camera-stream");
@@ -971,7 +972,12 @@ function renderModelMode(cameraLevel) {
 // dodge the long-running MJPEG GPU/process-memory leak. No per-poll flicker.
 function renderCameraLive(image, streamUrl) {
   const cam = state.camera;
-  const refreshMs = streamUrl.indexOf("action=snapshot") >= 0 ? CAMERA_SNAPSHOT_REFRESH_MS : CAMERA_RELOAD_MS;
+  // 스냅샷류(로봇 직접 ?action=snapshot 또는 서버 프록시 /api/camera-frame.jpg)는 빠른 폴링
+  // (단일 JPEG → 매 프레임 재요청). 연속 MJPEG 스트림만 4분 디코더 리사이클. 프록시 URL 에
+  // action=snapshot 이 없어 종전엔 4분(=한 프레임에서 멈춤)으로 오분류되던 결함을 함께 수정.
+  const isPolledSnapshot =
+    streamUrl.indexOf("action=snapshot") >= 0 || streamUrl.indexOf("camera-frame") >= 0;
+  const refreshMs = isPolledSnapshot ? CAMERA_SNAPSHOT_REFRESH_MS : CAMERA_RELOAD_MS;
   if (!cam.pending && Date.now() - cam.lastReloadMs >= refreshMs) {
     loadCameraStream(image, streamUrl, {
       reloadCounter: cam.reloadCounter, loaded: cam.loaded, retryAtMs: 0, backoffMs: 0, errorCount: 0
