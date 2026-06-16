@@ -861,7 +861,11 @@ function renderCamera(camera, controlMode, runtime = {}) {
   const enabled = Boolean(camera.enabled);
   const streamUrl = String(camera.stream_url || "");
   const snapshotUrl = String(camera.snapshot_url || "");
-  const displayUrl = snapshotUrl ? CAMERA_FRAME_PROXY_URL : streamUrl;
+  // **2026-06-16 수정** — 실시간 우선: MJPEG 스트림(?action=stream, 멀티파트 연속)을 직접 쓴다.
+  // 종전엔 snapshot_url 존재 시 무조건 /api/camera-frame.jpg(단일 JPEG ~5fps 폴링)로 폴백해
+  // "영상이 실시간이 아님". loadCameraStream 이 MJPEG 를 처리하므로 stream_url 을 우선하고,
+  // stream_url 이 없을 때만 스냅샷 프록시로 폴백한다. (Ally→로봇:8080 직결, 동일 HTTP 오리진 무관.)
+  const displayUrl = streamUrl ? streamUrl : (snapshotUrl ? CAMERA_FRAME_PROXY_URL : "");
   const label = String(camera.label || "Robot Camera");
   const route = String(camera.route || "ssh-tunnel");
   const image = $("camera-stream");
