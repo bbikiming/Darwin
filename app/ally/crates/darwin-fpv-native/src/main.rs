@@ -176,7 +176,10 @@ fn try_firewall_allow() {
             "action=allow",
             &format!("program={exe}"),
             "protocol=udp",
-            "profile=private,domain",
+            // **2026-06-16 수정** — public 포함. 로봇 직결 어댑터(LocalNetwork)는 Windows 가
+            // 보통 Public 으로 분류한다(실기: 이더넷 2 = Public). private,domain 만이면 로봇→Ally
+            // TEL2 UDP 가 차단돼 connected:false·IMU 무데이터·HUD 공백이 된다.
+            "profile=private,domain,public",
             "enable=yes",
         ])
         .stdout(Stdio::null())
