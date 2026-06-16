@@ -8,4 +8,10 @@ license.workspace = true
 # W1: gilrs(XInput 폴링) + df-wire(MotionCommand·GaitConfig·게이트 보간) 추가.
 [dependencies]
 df-wire = { path = "../df-wire" }
-gilrs = "0.11"
+# XInput 백엔드 강제(default-features=false 로 wgi 차단). gilrs 0.11 의 Windows 기본
+# 백엔드는 WGI(Windows.Gaming.Input)인데, WGI 는 **프로세스가 포커스된 창을 소유**해야
+# 패드 입력을 전달한다. 콕핏은 gilrs 를 창 없는 HTTP 서버 프로세스(Edge 는 별도)에서
+# 돌려 포커스 창이 없으므로 WGI 가 입력을 0 으로 굶겼다(2026-06-17 실기: "게임패드 연결"
+# 인데 스틱 잡아도 축 0.00). XInput 은 포커스 무관 백그라운드 폴링이라 창 없는 서버에서
+# 동작하고, XInput 슬롯만 열거해 더미 "HID-compliant game controller"(DirectInput)도 무시한다.
+gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
