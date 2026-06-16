@@ -104,6 +104,17 @@ fn wait_port(port: u16, timeout_ms: u64) -> bool {
 #[cfg(windows)]
 fn launch_browser(url: &str, kiosk: bool) {
     use std::process::Command;
+    // **전용 Edge 프로필 (2026-06-16)** — 사용자의 기존 Edge 인스턴스와 ProcessSingleton 잠금이
+    // 충돌해 콕핏 창이 안 뜨던 문제 수정(실기: "Lock file can not be created! Error code: 32" →
+    // Edge abort). 별도 user-data-dir 로 격리하면 독립 인스턴스로 떠 충돌하지 않는다.
+    let profile = std::env::var("LOCALAPPDATA")
+        .map(|p| format!(r"{p}\DarwinFpv\edge-profile"))
+        .unwrap_or_else(|_| {
+            std::env::temp_dir()
+                .join("darwin-fpv-edge")
+                .to_string_lossy()
+                .into_owned()
+        });
     let candidates = [
         "msedge",
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -118,7 +129,8 @@ fn launch_browser(url: &str, kiosk: bool) {
         } else {
             cmd.arg(format!("--app={url}"));
         }
-        cmd.arg("--no-first-run")
+        cmd.arg(format!("--user-data-dir={profile}"))
+            .arg("--no-first-run")
             .arg("--disable-features=Translate,msEdgeSplitScreen");
         if cmd.spawn().is_ok() {
             return;
