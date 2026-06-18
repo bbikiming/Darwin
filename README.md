@@ -31,7 +31,7 @@ bash scripts/check-mac-drivers.sh
 ### 빌드 + 실행
 
 ```sh
-# Rust 코어 + cbindgen 헤더 + Vendor/ 자동 생성 + (옵션) swift build
+# Rust 코어 + cbindgen 헤더 + Vendor/ 자동 생성 + 로봇 STL 메시 동기화 + (옵션) swift build
 bash scripts/build-mac.sh -u --swift
 
 # 앱 실행
@@ -40,6 +40,12 @@ swift run --package-path app/ui/DarwinForge DarwinForgeApp
 # 또는 Xcode
 xed app/ui/DarwinForge/Package.swift
 ```
+
+> **로봇 3D 모델 메시**: `Resources/Meshes/*.stl`(21개)은 `.gitignore` 대상이라 fresh
+> clone / git worktree 에는 없다. `build-mac.sh --swift`·`build-app.sh` 가 빌드 전 자동으로
+> `vendor/robotis-op2-common/meshes`(SSOT) → `Resources/Meshes` 동기화한다. Xcode/
+> `swift run` 으로 직접 빌드하기 전엔 한 번 `bash scripts/sync-meshes.sh` 를 실행하라.
+> 메시가 없으면 3D 뷰포트에 로봇이 안 보이고 바닥만 렌더된다.
 
 자세한 가이드: [`docs/MAC_RUN_GUIDE.md`](docs/MAC_RUN_GUIDE.md)
 

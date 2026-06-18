@@ -114,6 +114,12 @@ else
 fi
 echo "  ✓ Vendor 준비 완료"
 
+# ===== Step 1b: STL 메시 동기화 (vendor → Resources/Meshes) =====
+# 로봇 3D 모델 메시는 .gitignore 대상이라 fresh clone / worktree 에는 없다.
+# 누락 시 로봇이 렌더되지 않으므로(바닥만 보임) swift build 전 항상 동기화한다.
+# (--skip-rust 경로에서도 build-mac.sh 를 건너뛰므로 여기서 독립적으로 수행.)
+bash "$REPO_ROOT/scripts/sync-meshes.sh"
+
 echo "▶ Step 2: swift build -c release --product $EXEC_NAME${APPSTORE_FLAGS:+ (APPSTORE)}"
 cd "$PKG_ROOT"
 swift build -c release --product "$EXEC_NAME" $APPSTORE_FLAGS 2>&1 | tail -3
@@ -282,6 +288,23 @@ for path in "${EXPECTED[@]}"; do
         exit 1
     fi
 done
+
+# 로봇 3D 메시 가드 — 번들에 STL 이 0개면 3D 뷰포트에 로봇이 안 보이고 바닥만 렌더된다.
+# 메시는 .gitignore 대상이라 동기화/리소스 경로가 깨지면 조용히 robot-less 앱이 나간다.
+# Step 1b 동기화가 무엇 때문이든(스크립트 버그·Package.swift 리소스 경로 변경·vendor 이동)
+# 실패하면 여기서 빌드를 실패시켜 robot-less 앱 배포를 원천 차단한다.
+SRC_MESH_N=$(find "$REPO_ROOT/vendor/robotis-op2-common/meshes" -maxdepth 1 -name '*.stl' 2>/dev/null | wc -l | tr -d ' ')
+BUNDLE_MESH_N=$(find "$APP_BUNDLE" -path '*/Meshes/*.stl' -exec basename {} \; 2>/dev/null | sort -u | wc -l | tr -d ' ')
+if [ "$BUNDLE_MESH_N" -eq 0 ]; then
+    echo "✗ 로봇 메시 가드 실패: 번들에 STL 0개 — 로봇 3D 모델이 렌더되지 않습니다." >&2
+    echo "  원인 후보: Resources/Meshes 동기화 누락 · Package.swift 리소스 경로 변경 · vendor 이동." >&2
+    echo "  조치: bash scripts/sync-meshes.sh 후 재빌드. (SSOT=vendor/robotis-op2-common/meshes)" >&2
+    exit 1
+fi
+if [ "$SRC_MESH_N" -gt 0 ] && [ "$BUNDLE_MESH_N" -ne "$SRC_MESH_N" ]; then
+    echo "⚠ 로봇 메시 가드 경고: 번들 STL ${BUNDLE_MESH_N}개 ≠ vendor 원본 ${SRC_MESH_N}개 (일부 누락)" >&2
+fi
+echo "  ✓ 로봇 메시 가드: 번들 고유 STL ${BUNDLE_MESH_N}개 (vendor 원본 ${SRC_MESH_N}개)"
 
 # Info.plist 핵심 키 확인.
 BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null)

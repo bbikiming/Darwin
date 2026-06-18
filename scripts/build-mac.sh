@@ -125,6 +125,9 @@ echo "  $SWIFT_VENDOR/lib/libforge_core.a ($(du -h "$SWIFT_VENDOR/lib/libforge_c
 
 if [[ $SWIFT_BUILD -eq 1 ]]; then
   echo
+  # 로봇 3D 모델 STL 메시 동기화 (vendor → Resources/Meshes). 메시는 .gitignore 대상이라
+  # fresh clone / worktree 에는 없다. 누락 시 로봇이 안 보이므로 swift build 전 항상 수행.
+  bash "$ROOT/scripts/sync-meshes.sh"
   echo "▶ swift build"
   cd "$SWIFT_PKG"
   if ! command -v swift >/dev/null 2>&1; then
