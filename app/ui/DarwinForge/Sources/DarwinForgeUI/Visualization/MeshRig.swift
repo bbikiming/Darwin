@@ -53,13 +53,12 @@ final class MeshRig: RigSkeleton {
             2.0 * CGFloat.pi / 3.0,
             -n, n, n
         )
-        // 발이 Y=0 평면에 닿도록 들어올림.
-        // **Sprint 16 정정**: walkReady 가 deep squat (knee ±53°) 로 변경되면서
-        // 발 IK 위치가 더 멀어짐. 이전 0.345 m 은 발이 floor 아래로 침수 →
-        // robot 이 공중에 떠있어 보임 (의자에 앉기 등 깊은 squat 자세). 새 hip
-        // 높이 0.265 m — walkReady deep squat 시 발 floor 정확 접지.
+        // 발이 Y=0 평면에 닿도록 들어올림(초기 추정값). 정확한 접지는 buildBody 후
+        // groundToFloor() 가 실제 지오메트리 최저점을 측정해 보정한다 — 하드코딩 0.265 m 는
+        // walkReady deep-squat 전용이라 .center(다리 곧음) 등 다른 포즈에선 발이 바닥을 뚫었다.
         root.position = SCNVector3(0, 0.265, 0)
         try buildBody()
+        groundToFloor()
     }
 
     // MARK: - Pose application
@@ -70,6 +69,33 @@ final class MeshRig: RigSkeleton {
             let rad = Float(pose.radians(j))
             node.rotation = SCNVector4(axis.x, axis.y, axis.z, CGFloat(rad))
         }
+        // 포즈가 바뀌면 발 높이도 바뀌므로 다시 접지(최저 발이 항상 바닥에).
+        groundToFloor()
+    }
+
+    /// 현재 포즈의 최저 지오메트리 정점이 바닥(Y=0)에 닿도록 root 높이를 자동 보정.
+    /// 모든 mesh 노드의 bounding-box 8코너를 월드(=root parent) 좌표로 변환해 최소 Y 를
+    /// 구하고, 그만큼 root.position.y 를 올린다(음수면 침수 → 들어올림, 양수면 부유 → 내림).
+    /// 포즈/메시 무관하게 항상 정확 접지하므로 pose-tuned 상수의 한계를 제거한다.
+    func groundToFloor() {
+        var minY = CGFloat.greatestFiniteMagnitude
+        root.enumerateHierarchy { node, _ in
+            guard node.geometry != nil else { return }
+            let lo = node.boundingBox.min
+            let hi = node.boundingBox.max
+            let corners = [
+                SCNVector3(lo.x, lo.y, lo.z), SCNVector3(hi.x, lo.y, lo.z),
+                SCNVector3(lo.x, hi.y, lo.z), SCNVector3(hi.x, hi.y, lo.z),
+                SCNVector3(lo.x, lo.y, hi.z), SCNVector3(hi.x, lo.y, hi.z),
+                SCNVector3(lo.x, hi.y, hi.z), SCNVector3(hi.x, hi.y, hi.z),
+            ]
+            for c in corners {
+                let w = node.convertPosition(c, to: nil)   // root parent(=scene) 좌표
+                if w.y < minY { minY = w.y }
+            }
+        }
+        guard minY.isFinite else { return }
+        root.position.y -= minY
     }
 
     /// **W3**: 선택 관절 highlight. emission 채널을 직접 쓰지 않고 우선순위 합성을
