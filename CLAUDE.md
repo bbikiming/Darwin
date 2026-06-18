@@ -36,7 +36,9 @@ clone / `git worktree` checkout has none — without them `STLLoader` fails and 
 `build-app.sh` run `scripts/sync-meshes.sh` (vendor → Resources/Meshes, SSOT =
 `vendor/robotis-op2-common/meshes/`) before `swift build`. Building via raw
 `swift run` / Xcode on a fresh checkout requires running `bash scripts/sync-meshes.sh`
-once first.
+once first. `build-app.sh` Step 6 also **guards** the assembled bundle — it fails the
+build if the `.app` ends up with zero STL meshes, so a robot-less app can't ship even
+if the sync mechanism later breaks.
 
 **Mic / TCC features must run as a real .app bundle**, not `swift run` / `make run`
 — `swift run` has no Info.plist, so pressing the mic triggers a TCC crash. Use

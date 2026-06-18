@@ -60,12 +60,18 @@ worktree의 `Resources/Meshes`에 vendor 메시 21개 복사 → 재빌드 → �
   설치본 실행 후 unified log `STL load failed` **0건**, 크래시 0건.
 
 ### 4.2 근본 수정 (재발 방지)
+**(a) 동기화 — 모든 빌드 경로가 빌드 전 메시를 채운다**
 - 신규 `scripts/sync-meshes.sh` — vendor(SSOT) → `Resources/Meshes` 멱등 동기화. 단독 실행 가능.
 - `scripts/build-app.sh` (설치/배포 경로) — `swift build` 전 `sync-meshes.sh` 호출.
   `--skip-rust` 경로에서도 독립 수행.
 - `scripts/build-mac.sh` (`make run`/`make app`/`--swift` 개발 경로) — `swift build` 전 호출.
-- 검증: `Resources/Meshes` 삭제(fresh checkout 시뮬) 후 `sync-meshes.sh` → 21개 복원.
-  세 스크립트 `bash -n` 통과.
+
+**(b) 가드 — robot-less 앱 배포 원천 차단 (defense-in-depth)**
+- `scripts/build-app.sh` Step 6 에 **포스트빌드 메시 가드** 추가: 어셈블된 `.app` 의
+  고유 STL 수를 세어 **0개면 빌드 실패(exit 1)**, vendor 원본 수와 다르면 경고.
+- 이유: 동기화가 *무엇 때문이든*(스크립트 버그·`Package.swift` 리소스 경로 변경·vendor
+  이동) 깨져도 조용히 robot-less 앱이 나가지 않도록 빌드 자체를 멈춘다. 원인별 개별
+  방어가 아니라 **결과(번들에 메시 존재)를 직접 검증**하므로 미래의 미지 원인까지 커버.
 
 ## 5. 문서 업데이트
 - `README.md` 빌드 섹션 — 메시 동기화 + 수동 명령 안내.
@@ -73,12 +79,45 @@ worktree의 `Resources/Meshes`에 vendor 메시 21개 복사 → 재빌드 → �
 - `docs/MAC_RUN_GUIDE.md` 트러블슈팅 — "로봇이 안 보이고 바닥만 렌더" 행 추가.
 - 본 보고서.
 
-## 6. 변경 분류 / 추적
+## 6. 추가 검증 (2026-06-18 22:00 KST)
+
+### 6.1 전(全) `.app` 산출 경로 감사 — 메시 동기화 커버리지
+
+| 경로 | `.app` 산출 | 메시 동기화 | 비고 |
+|---|---|---|---|
+| `build-app.sh` (설치/배포) | ✅ | ✅ 직접(sync-meshes.sh) + **포스트빌드 가드** | 사용자 설치 경로 |
+| `build-mac.sh --swift` / `make app`·`run` (개발) | ✅ | ✅ 직접 | |
+| `archive-app.sh` (App Store/dist xcarchive) | ✅ | ✅ build-app.sh 위임(line 100) | 가드도 상속 |
+| `run-app.sh` (마이크/TCC 번들) | ✅ | ✅ build-mac.sh --swift 위임(line 14) | |
+| CI `swift build`+`swift test` | ❌(빌드/테스트만) | ⚠️ 별도 step, `--swift` 미경유 | shippable 아님, 메시 부재 허용(`.copy` 빈 디렉터리 tolerate). 셸 산출물 없으므로 무해 |
+
+→ **shippable `.app` 을 만드는 모든 경로가 메시를 동기화**하고, 배포 정본 경로(build-app.sh)는
+가드까지 갖춰 robot-less 앱을 빌드 단계에서 차단한다.
+
+### 6.2 fresh-checkout 파이프라인 실증 (가장 강한 증거)
+`git worktree` 로 **메시가 전혀 없는 진짜 fresh-checkout** 상태(`Resources/Meshes` 부재 확인)에서
+실제 `scripts/build-app.sh` 풀 파이프라인 실행:
+- 로그: `✓ STL 메시 동기화: 21 개 (vendor → Resources/Meshes)` 자동 수행 → `swift build` → `EXIT=0`.
+- 산출 번들 `Contents/Resources/DarwinForge_DarwinForgeUI.bundle/Meshes/` = **21 STL** (총 42, 루트+Resources).
+
+### 6.3 가드 pass/fail 단위 검증
+- 메시 보유 번들 → `✓ GUARD PASS: 번들 고유 STL 21개 (vendor 21)`, exit 0.
+- 메시 제거 번들 → `✗ GUARD FAIL: 번들 STL 0개`, **exit 1**.
+- `bash -n` 3개 스크립트 통과.
+
+### 6.4 설치본 런타임 증거
+- `/Applications/DarwinForge.app` 1.24.0(739), 번들 STL 42개, 실행 pid 살아있음, 크래시 0.
+- unified log(`process == DarwinForgeApp`, 60s) `STL load failed` **0건** → 21개 메시 정상 로드.
+
+## 7. 변경 분류 / 추적
 - 빌드 수정 + 문서: PR https://github.com/bbikiming/Darwin/pull/44
   (branch `fix/build-mesh-sync`, base = `claude/robotis-darwin-op-setup-oyzTi`).
   default 브랜치 직접 푸시는 정책상 차단되어 PR로 리뷰 경유.
 - W0 실패원인 보고서 SUPERSEDED 배너: `claude/ally-w1-core` (커밋 b5c8966).
 
-## 7. 잔여
-- PR #44 리뷰·머지 (머지되면 모든 빌드 경로에서 fresh checkout 로봇 렌더 보장).
-- 사용자 육안 최종 확인(스크린샷 권한 미부여로 로그 증거로 갈음).
+## 8. 잔여
+- PR #44 리뷰·머지 (머지되면 default 및 파생 브랜치 모든 빌드 경로에서 fresh checkout
+  로봇 렌더 + 가드 보장).
+- (선택) CI `swift build` step 앞에 `sync-meshes.sh` 호출 추가로 개발/CI 완전 패리티 — 현재는
+  shippable 산출물이 아니라 미적용.
+- 사용자 육안 최종 확인(스크린샷 권한 미부여로 로그·번들·가드 증거로 갈음).
