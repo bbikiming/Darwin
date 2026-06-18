@@ -137,6 +137,7 @@ bash scripts/smoke-test.sh
 | 관절 슬라이더 응답 X | 첫 동작 전 토크 ON 필요 |
 | 배터리 전압 < 9.5 V 경고 | LiPo 충전 (cell당 < 3.3 V면 즉시 중지) |
 | `forge` 빌드 실패: cbindgen | `cargo install cbindgen --locked` 후 재시도 |
+| **3D 뷰포트에 로봇이 안 보이고 바닥만 렌더** | 로봇 STL 메시(`Resources/Meshes/*.stl`)는 `.gitignore` 대상이라 fresh clone / git worktree 에는 없다. `bash scripts/sync-meshes.sh` 실행(또는 `build-mac.sh`/`build-app.sh` 사용 — 빌드 시 자동 동기화). SSOT = `vendor/robotis-op2-common/meshes/` |
 
 ## 6. 개발 워크플로
 

@@ -30,6 +30,14 @@ cbindgen, and fills `app/ui/DarwinForge/Vendor/CForgeCore/{lib,include}` that th
 Swift package links against. Flags: `-u` universal (arm64+x86_64), `--swift` also
 `swift build`, `--run` then run, `--skip-rust` reuse existing Vendor/.
 
+**Robot 3D meshes**: the 21 `Resources/Meshes/*.stl` are git-ignored, so a fresh
+clone / `git worktree` checkout has none — without them `STLLoader` fails and the
+3D viewport shows only the floor (no robot). `build-mac.sh --swift` and
+`build-app.sh` run `scripts/sync-meshes.sh` (vendor → Resources/Meshes, SSOT =
+`vendor/robotis-op2-common/meshes/`) before `swift build`. Building via raw
+`swift run` / Xcode on a fresh checkout requires running `bash scripts/sync-meshes.sh`
+once first.
+
 **Mic / TCC features must run as a real .app bundle**, not `swift run` / `make run`
 — `swift run` has no Info.plist, so pressing the mic triggers a TCC crash. Use
 `bash scripts/run-app.sh`, which packages the binary into `.build/DarwinForge.app`

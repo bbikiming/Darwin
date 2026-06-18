@@ -115,23 +115,10 @@ fi
 echo "  ✓ Vendor 준비 완료"
 
 # ===== Step 1b: STL 메시 동기화 (vendor → Resources/Meshes) =====
-# 로봇 3D 모델 메시는 .gitignore 대상(`Resources/Meshes/*.stl`)이라 fresh clone /
-# git worktree 체크아웃에는 존재하지 않는다. vendor/robotis-op2-common/meshes 가 SSOT.
-# 누락 시 STLLoader 가 전부 실패 → 로봇이 렌더되지 않으므로(바닥만 보임) 빌드 전 항상 동기화.
+# 로봇 3D 모델 메시는 .gitignore 대상이라 fresh clone / worktree 에는 없다.
+# 누락 시 로봇이 렌더되지 않으므로(바닥만 보임) swift build 전 항상 동기화한다.
 # (--skip-rust 경로에서도 build-mac.sh 를 건너뛰므로 여기서 독립적으로 수행.)
-MESH_SRC="$REPO_ROOT/vendor/robotis-op2-common/meshes"
-MESH_DST="$PKG_ROOT/Sources/DarwinForgeUI/Resources/Meshes"
-if [ -d "$MESH_SRC" ]; then
-    mkdir -p "$MESH_DST"
-    cp -f "$MESH_SRC"/*.stl "$MESH_DST"/ 2>/dev/null || true
-    MESH_N="$(find "$MESH_DST" -maxdepth 1 -name '*.stl' | wc -l | tr -d ' ')"
-    echo "  ✓ STL 메시 동기화: $MESH_N 개 (vendor → Resources/Meshes)"
-    if [ "$MESH_N" -eq 0 ]; then
-        echo "  ⚠ Resources/Meshes 가 비어 있음 — 로봇 3D 모델이 렌더되지 않습니다" >&2
-    fi
-else
-    echo "  ⚠ vendor 메시 디렉터리 없음: $MESH_SRC — 로봇 3D 모델 누락 위험" >&2
-fi
+bash "$REPO_ROOT/scripts/sync-meshes.sh"
 
 echo "▶ Step 2: swift build -c release --product $EXEC_NAME${APPSTORE_FLAGS:+ (APPSTORE)}"
 cd "$PKG_ROOT"
