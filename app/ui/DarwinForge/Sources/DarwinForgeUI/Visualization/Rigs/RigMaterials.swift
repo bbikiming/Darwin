@@ -82,7 +82,10 @@ enum RigMaterials {
     }
 
     static func category(forLinkNamed name: String) -> Category {
-        if name.contains("foot") { return .rubberFoot }
+        // **발등 커버 흰색(사용자 요청 2026-06-19)**: 실기 DARwIn-OP 발 윗면은 흰 플라스틱
+        // 커버다. foot STL 은 커버+밑창이 한 메시라 발 전체가 흰 쉘이 된다(밑창만 검게
+        // 두려면 별도 sole 지오메트리 필요 — 현재 단일 메시). `.rubberFoot` 는 보존(미사용).
+        if name.contains("foot") { return .whiteShell }
         if name.contains("ankle") || name.contains("neck") { return .aluminum }
         if name.contains("shoulder") || name.contains("hip") { return .aluminum }
         // head, lower-arm 은 흰 쉘로 통일(사용자 요청 2026-06-11).
