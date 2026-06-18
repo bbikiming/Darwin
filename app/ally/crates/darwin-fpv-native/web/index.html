@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#090b0e" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -615,6 +615,25 @@
         ensure();
       }
     }
+  </script>
+  <script>
+    // 몰입형 전체화면(Fullscreen 기본 모드) — requestFullscreen 은 사용자 제스처 필수라
+    // 기동 즉시 자동 진입 불가. 첫 터치/클릭/키에서 1회 진입. --kiosk 면 이미 전체화면이라
+    // no-op, --windowed 면 사용자가 창모드를 택한 것이라 그대로 둠(실패 무해).
+    (function () {
+      let done = false;
+      function enter() {
+        if (done) return; done = true;
+        const el = document.documentElement;
+        if (el.requestFullscreen) el.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+        window.removeEventListener("pointerdown", enter);
+        window.removeEventListener("touchend", enter);
+        window.removeEventListener("keydown", enter);
+      }
+      window.addEventListener("pointerdown", enter, { once: false });
+      window.addEventListener("touchend", enter, { once: false });
+      window.addEventListener("keydown", enter, { once: false });
+    })();
   </script>
 </body>
 </html>
